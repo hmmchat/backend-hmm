@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies (skip if no package.json)
+        if: hashFiles('package.json') != ''
+        run: npm ci
+
+      - name: Lint (optional)
+        if: hashFiles('package.json') != ''
+        run: npm run lint || true
+
+      - name: Tests
+        if: hashFiles('package.json') != ''
+        run: npm test

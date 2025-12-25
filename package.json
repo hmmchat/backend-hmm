@@ -7,9 +7,17 @@
     "start": "node ./dist/index.js || echo \"Build output missing\"",
     "build": "echo \"Add your build step (tsc/webpack/esbuild)\"",
     "lint": "echo \"OK\" && exit 0",
-    "test": "echo \"OK\" && exit 0"
+    "test": "echo \"OK\" && exit 0",
+    "build:all": "npm run -ws --if-present build",
+    "lint:all": "npm run -ws --if-present lint",
+    "test:all": "npm run -ws --if-present test",
+    "docs:merge": "ts-node scripts/merge-openapi.ts"
   },
   "engines": {
     "node": ">=22"
-  }
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ]
 }

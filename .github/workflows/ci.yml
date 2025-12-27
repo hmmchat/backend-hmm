@@ -21,7 +21,7 @@ jobs:
 
       - name: Install dependencies (skip if no package.json)
         if: hashFiles('package.json') != ''
-        run: npm ci
+        run: npm install
 
       - name: Lint (optional)
         if: hashFiles('package.json') != ''

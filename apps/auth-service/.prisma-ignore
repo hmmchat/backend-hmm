@@ -1,0 +1,4 @@
+# Prisma 6 Configuration
+# This file indicates we're using Prisma 6, not Prisma 7
+# The url in datasource is correct for Prisma 6
+

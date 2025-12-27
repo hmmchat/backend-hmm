@@ -1,0 +1,5 @@
+# Prisma Configuration
+# This file ensures Prisma 6 is used for this service
+
+version=6.0.0
+

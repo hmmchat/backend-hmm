@@ -13,6 +13,7 @@ pnpm-lock.yaml
 # Logs
 logs/
 *.log
+/tmp/
 
 # OS
 .DS_Store
@@ -20,3 +21,6 @@ logs/
 # IDE
 .vscode/
 .idea/
+
+# Prisma
+.prisma/

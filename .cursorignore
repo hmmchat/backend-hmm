@@ -1,0 +1,6 @@
+# Cursor ignore file
+# This file tells Cursor to ignore certain diagnostics
+
+# Prisma 7 validation errors (we're using Prisma 6)
+apps/auth-service/prisma/schema.prisma
+

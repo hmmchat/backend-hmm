@@ -16,12 +16,11 @@ import {
 import { JWK } from "jose";
 import * as argon2 from "argon2";
 
-const PUBLIC_JWK = JSON.parse(process.env.JWT_PUBLIC_JWK!) as JWK;
-const PRIVATE_KEY = process.env.JWT_PRIVATE_KEY!;
-
 @Injectable()
 export class AuthService implements OnModuleInit {
   private verifyAccess!: (token: string) => Promise<AccessPayload>;
+  private publicJwk!: JWK;
+  private privateKey!: string;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -34,7 +33,23 @@ export class AuthService implements OnModuleInit {
   /* ---------- Init ---------- */
 
   async onModuleInit() {
-    this.verifyAccess = await verifyToken(PUBLIC_JWK);
+    // Load JWT keys from environment variables
+    const jwkStr = process.env.JWT_PUBLIC_JWK;
+    const keyStr = process.env.JWT_PRIVATE_KEY;
+
+    if (!jwkStr || jwkStr === "undefined") {
+      throw new Error("JWT_PUBLIC_JWK environment variable is not set or is invalid");
+    }
+    if (!keyStr || keyStr === "undefined") {
+      throw new Error("JWT_PRIVATE_KEY environment variable is not set or is invalid");
+    }
+
+    // Remove surrounding quotes if present
+    const cleanedJwk = jwkStr.trim().replace(/^['"]|['"]$/g, "");
+    this.publicJwk = JSON.parse(cleanedJwk) as JWK;
+    this.privateKey = keyStr.trim().replace(/^['"]|['"]$/g, "");
+
+    this.verifyAccess = await verifyToken(this.publicJwk);
   }
 
   /* ---------- Auth flows ---------- */
@@ -142,7 +157,7 @@ export class AuthService implements OnModuleInit {
       const valid = await argon2.verify(session.refreshHash, refreshToken);
       if (!valid) continue;
 
-      const accessToken = await signAccessToken(PRIVATE_KEY, {
+      const accessToken = await signAccessToken(this.privateKey, {
         sub: session.userId,
         uid: session.userId
       });
@@ -208,12 +223,12 @@ export class AuthService implements OnModuleInit {
         }
       }));
 
-    const accessToken = await signAccessToken(PRIVATE_KEY, {
+    const accessToken = await signAccessToken(this.privateKey, {
       sub: user.id,
       uid: user.id
     });
 
-    const refreshToken = await signRefreshToken(PRIVATE_KEY, {
+    const refreshToken = await signRefreshToken(this.privateKey, {
       sub: user.id,
       uid: user.id
     });

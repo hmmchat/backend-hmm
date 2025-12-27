@@ -25,31 +25,18 @@ else
 fi
 echo ""
 
-# Check Google Client ID
+# Check Google Client ID - Auto-configure if needed
 echo -e "${YELLOW}Step 2: Checking Google OAuth configuration...${NC}"
-GOOGLE_CLIENT_ID=$(cd /Users/arya.prakash/backend-hmm/apps/auth-service && grep "^GOOGLE_CLIENT_ID=" .env 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "")
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GOOGLE_CLIENT_ID=$(cd "$SCRIPT_DIR" && grep "^GOOGLE_CLIENT_ID=" .env 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "")
 
 if [ -z "$GOOGLE_CLIENT_ID" ] || [ "$GOOGLE_CLIENT_ID" = "your-google-client-id" ] || [ "$GOOGLE_CLIENT_ID" = "your_google_web_client_id.apps.googleusercontent.com" ]; then
-    echo -e "${YELLOW}⚠️  GOOGLE_CLIENT_ID not configured or using placeholder${NC}"
+    echo -e "${CYAN}ℹ️  GOOGLE_CLIENT_ID not configured. Using OAuth Playground default (easiest way).${NC}"
+    GOOGLE_CLIENT_ID="407408718192.apps.googleusercontent.com"
+    echo -e "${GREEN}✅ Will use OAuth Playground client ID: $GOOGLE_CLIENT_ID${NC}"
     echo ""
-    echo "Options:"
-    echo "  1. Use OAuth Playground default (quickest)"
-    echo "  2. Set up your own Google Client ID"
-    echo ""
-    read -p "Use OAuth Playground default client ID? (y/n): " use_playground
-    
-    if [ "$use_playground" = "y" ] || [ "$use_playground" = "Y" ]; then
-        GOOGLE_CLIENT_ID="407408718192.apps.googleusercontent.com"
-        echo -e "${CYAN}Using OAuth Playground client ID: $GOOGLE_CLIENT_ID${NC}"
-        echo ""
-        echo "To make this permanent, add to .env:"
-        echo "GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID"
-    else
-        echo ""
-        echo "Please set GOOGLE_CLIENT_ID in your .env file and restart the service."
-        echo "Then run this script again."
-        exit 1
-    fi
+    echo -e "${YELLOW}💡 Tip: To make this permanent, add to your .env file:${NC}"
+    echo "   GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID"
 else
     echo -e "${GREEN}✅ GOOGLE_CLIENT_ID is configured: $GOOGLE_CLIENT_ID${NC}"
 fi
@@ -58,44 +45,80 @@ echo ""
 # Guide user to get token
 echo -e "${YELLOW}Step 3: Get Google ID Token${NC}"
 echo ""
-echo -e "${CYAN}Follow these steps:${NC}"
-echo "  1. Open: https://developers.google.com/oauthplayground/"
-echo "  2. In left panel, find 'Google OAuth2 API v2'"
-echo "  3. Select scopes:"
-echo "     - https://www.googleapis.com/auth/userinfo.email"
-echo "     - https://www.googleapis.com/auth/userinfo.profile"
-echo "  4. Click 'Authorize APIs'"
-echo "  5. Sign in with Google"
-echo "  6. Click 'Allow'"
-echo "  7. Click 'Exchange authorization code for tokens'"
-echo "  8. Copy the 'id_token' value (long JWT string)"
+echo -e "${CYAN}📋 Follow these simple steps:${NC}"
 echo ""
-read -p "Press Enter when you have the id_token ready..."
+echo "  1. Open this URL in your browser:"
+echo -e "     ${BLUE}https://developers.google.com/oauthplayground/${NC}"
+echo ""
+echo "  2. In the left panel, find and expand:"
+echo "     ${CYAN}Google OAuth2 API v2${NC}"
+echo ""
+echo "  3. Check these two scopes:"
+echo "     ✓ https://www.googleapis.com/auth/userinfo.email"
+echo "     ✓ https://www.googleapis.com/auth/userinfo.profile"
+echo ""
+echo "  4. Click the ${GREEN}'Authorize APIs'${NC} button (top right)"
+echo ""
+echo "  5. Sign in with your Google account"
+echo ""
+echo "  6. Click ${GREEN}'Allow'${NC} to grant permissions"
+echo ""
+echo "  7. Click ${GREEN}'Exchange authorization code for tokens'${NC} button"
+echo ""
+echo "  8. In the response (right panel), find and copy the ${CYAN}'id_token'${NC} value"
+echo "     (It's a long JWT string starting with 'eyJ...')"
+echo ""
+echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+read -p "Press Enter when you have copied the id_token..."
 echo ""
 
-# Get token from user
-echo -e "${CYAN}Paste your Google ID token here (or press Enter to skip OAuth test):${NC}"
-read -p "ID Token: " ID_TOKEN
+# Get token from user - handle long JWT tokens properly
+echo ""
+echo -e "${CYAN}Paste your Google ID token here:${NC}"
+echo -e "${YELLOW}(Tip: If pasting doesn't work, you can also save the token to a file and enter the file path)${NC}"
+echo ""
+echo -n "ID Token (or file path): "
+
+# Read input - could be token or file path
+IFS= read -r user_input
+user_input=$(echo "$user_input" | xargs)
+
+# Check if it's a file path
+if [ -f "$user_input" ]; then
+    echo -e "${CYAN}Reading token from file...${NC}"
+    ID_TOKEN=$(cat "$user_input" | tr -d '\n\r ' | xargs)
+    echo -e "${GREEN}✅ Token read from file${NC}"
+else
+    # It's the token itself - remove any line breaks
+    ID_TOKEN=$(echo "$user_input" | tr -d '\n\r' | xargs)
+fi
 
 if [ -z "$ID_TOKEN" ]; then
-    echo -e "${YELLOW}Skipping OAuth test. You can test token-based flows if you have tokens.${NC}"
     echo ""
-    read -p "Do you have access and refresh tokens to test? (y/n): " has_tokens
-    if [ "$has_tokens" = "y" ] || [ "$has_tokens" = "Y" ]; then
-        read -p "Access Token: " ACCESS_TOKEN
-        read -p "Refresh Token: " REFRESH_TOKEN
-        if [ -n "$ACCESS_TOKEN" ] && [ -n "$REFRESH_TOKEN" ]; then
-            echo ""
-            echo -e "${GREEN}Running end-to-end tests with your tokens...${NC}"
-            ./test-e2e.sh "$ACCESS_TOKEN" "$REFRESH_TOKEN"
-            exit 0
-        fi
-    fi
+    echo -e "${RED}❌ No ID token provided.${NC}"
     echo ""
-    echo "No tokens provided. Exiting."
-    echo "To test OAuth, run this script again and provide an ID token."
-    exit 0
+    echo "Please run this script again and provide your Google ID token."
+    echo "You can either:"
+    echo "  - Paste the token directly"
+    echo "  - Save the token to a file and enter the file path"
+    exit 1
 fi
+
+# Verify it looks like a JWT (starts with eyJ)
+if [[ ! "$ID_TOKEN" =~ ^eyJ ]]; then
+    echo ""
+    echo -e "${YELLOW}⚠️  Warning: The token doesn't start with 'eyJ' (typical JWT format)${NC}"
+    echo "This might be okay, but double-check you copied the correct 'id_token' value."
+    echo ""
+    read -p "Continue anyway? (y/n): " continue_anyway
+    if [ "$continue_anyway" != "y" ] && [ "$continue_anyway" != "Y" ]; then
+        echo "Exiting. Please run the script again with the correct token."
+        exit 1
+    fi
+fi
+
+echo -e "${GREEN}✅ Token received (${#ID_TOKEN} characters)${NC}"
+echo ""
 
 # Test Google signup/login
 echo ""
@@ -136,4 +159,5 @@ else
     echo -e "${RED}❌ Signup/Login failed (invalid response)${NC}"
     echo "$RESPONSE"
 fi
+
 

@@ -96,7 +96,7 @@ fi
 if [ -z "$ID_TOKEN" ]; then
     echo ""
     echo -e "${RED}❌ No ID token provided.${NC}"
-    echo ""
+            echo ""
     echo "Please run this script again and provide your Google ID token."
     echo "You can either:"
     echo "  - Paste the token directly"

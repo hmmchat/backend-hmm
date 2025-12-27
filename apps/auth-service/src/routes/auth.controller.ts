@@ -40,14 +40,22 @@ export class AuthController {
 
   @Post("phone/send-otp")
   async sendOtp(@Body() body: any) {
-    const { phone } = z.object({ phone: z.string().min(8) }).parse(body);
+    const { phone } = z.object({ 
+      phone: z.string()
+        .min(10)
+        .refine((val) => val.startsWith("+91"), "Phone number must be from India (+91)")
+        .refine((val) => /^\+91[6-9]\d{9}$/.test(val), "Invalid Indian phone number format. Must be +91 followed by 10 digits starting with 6-9")
+    }).parse(body);
     return this.auth.sendPhoneOtp(phone);
   }
 
   @Post("phone/verify")
   async verifyOtp(@Body() body: any) {
     const schema = z.object({
-      phone: z.string().min(8),
+      phone: z.string()
+        .min(10)
+        .refine((val) => val.startsWith("+91"), "Phone number must be from India (+91)")
+        .refine((val) => /^\+91[6-9]\d{9}$/.test(val), "Invalid Indian phone number format. Must be +91 followed by 10 digits starting with 6-9"),
       code: z.string().min(4).max(8)
     }).and(termsSchema);
     const dto = schema.parse(body);

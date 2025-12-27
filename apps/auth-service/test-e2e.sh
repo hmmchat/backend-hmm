@@ -1,14 +1,19 @@
 #!/bin/bash
 
 # End-to-End Testing Script for Auth Service
-# Usage: ./test-e2e.sh [ACCESS_TOKEN] [REFRESH_TOKEN]
-# Or set environment variables: ACCESS_TOKEN and REFRESH_TOKEN
+# Interactive script to test all token-based authentication flows
+# 
+# Usage:
+#   ./test-e2e.sh                                    # Interactive mode (will ask for tokens)
+#   ./test-e2e.sh ACCESS_TOKEN REFRESH_TOKEN         # Pass tokens as arguments
+#   ACCESS_TOKEN=... REFRESH_TOKEN=... ./test-e2e.sh # Pass tokens as environment variables
 
 BASE_URL="${BASE_URL:-http://localhost:3001}"
 GREEN='\033[0;32m'
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Get tokens from args or env
@@ -29,28 +34,70 @@ else
 fi
 echo ""
 
-# Check if tokens are provided
+# Check if tokens are provided - if not, ask interactively
 if [ -z "$ACCESS_TOKEN" ] || [ -z "$REFRESH_TOKEN" ]; then
     echo -e "${YELLOW}⚠️  No tokens provided.${NC}"
     echo ""
-    echo "To test end-to-end flows, you need access and refresh tokens."
+    echo -e "${CYAN}To test end-to-end flows, you need access and refresh tokens.${NC}"
     echo ""
-    echo "Options:"
-    echo "  1. Get tokens from OAuth flow (Google/Facebook/Apple)"
-    echo "  2. Get tokens from Phone OTP flow (requires Twilio)"
+    echo "You can get tokens by:"
+    echo "  1. Running ./test-full-flow.sh (easiest - gets tokens from Google OAuth automatically)"
+    echo "  2. Using OAuth flow (Google/Facebook/Apple)"
+    echo "  3. Using Phone OTP flow (requires Twilio)"
     echo ""
-    echo "Usage:"
-    echo "  ./test-e2e.sh ACCESS_TOKEN REFRESH_TOKEN"
-    echo "  OR"
-    echo "  export ACCESS_TOKEN=... REFRESH_TOKEN=..."
-    echo "  ./test-e2e.sh"
+    echo -e "${YELLOW}💡 For detailed instructions, see: HOW_TO_GET_TOKENS.md${NC}"
     echo ""
-    echo "See E2E_TESTING.md for instructions on getting tokens."
-    exit 0
+    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo -e "${CYAN}Please provide your tokens:${NC}"
+    echo -e "${YELLOW}(Tip: If pasting doesn't work, you can save tokens to files and enter file paths)${NC}"
+    echo ""
+    
+    # Get Access Token
+    echo -n "Access Token (or file path): "
+    IFS= read -r access_input
+    access_input=$(echo "$access_input" | xargs)
+    
+    if [ -f "$access_input" ]; then
+        echo -e "${CYAN}Reading access token from file...${NC}"
+        ACCESS_TOKEN=$(cat "$access_input" | tr -d '\n\r ' | xargs)
+        echo -e "${GREEN}✅ Access token read from file${NC}"
+    else
+        ACCESS_TOKEN=$(echo "$access_input" | tr -d '\n\r' | xargs)
+    fi
+    
+    if [ -z "$ACCESS_TOKEN" ]; then
+        echo -e "${RED}❌ No access token provided.${NC}"
+        exit 1
+    fi
+    
+    echo ""
+    
+    # Get Refresh Token
+    echo -n "Refresh Token (or file path): "
+    IFS= read -r refresh_input
+    refresh_input=$(echo "$refresh_input" | xargs)
+    
+    if [ -f "$refresh_input" ]; then
+        echo -e "${CYAN}Reading refresh token from file...${NC}"
+        REFRESH_TOKEN=$(cat "$refresh_input" | tr -d '\n\r ' | xargs)
+        echo -e "${GREEN}✅ Refresh token read from file${NC}"
+    else
+        REFRESH_TOKEN=$(echo "$refresh_input" | tr -d '\n\r' | xargs)
+    fi
+    
+    if [ -z "$REFRESH_TOKEN" ]; then
+        echo -e "${RED}❌ No refresh token provided.${NC}"
+        exit 1
 fi
 
+    echo ""
+    echo -e "${GREEN}✅ Tokens received (Access: ${#ACCESS_TOKEN} chars, Refresh: ${#REFRESH_TOKEN} chars)${NC}"
+    echo ""
+else
 echo -e "${GREEN}✅ Tokens provided${NC}"
 echo ""
+fi
 
 # Test 1: Get User Info
 echo -e "${YELLOW}2. Testing GET /me (get user info)...${NC}"
@@ -192,18 +239,19 @@ echo ""
 
 echo -e "${GREEN}✅ End-to-end tests complete!${NC}"
 echo ""
-echo -e "${BLUE}📝 Summary:${NC}"
+echo -e "${BLUE}📝 Test Summary:${NC}"
 echo "  ✅ Get user info"
 echo "  ✅ Update preferences (with location)"
 echo "  ✅ Update preferences (without location)"
 echo "  ✅ Refresh access token"
+echo "  ✅ Verify new access token works"
 echo "  ✅ Logout"
 echo "  ✅ Verify refresh token invalidated"
 echo ""
-echo -e "${YELLOW}💡 Next Steps:${NC}"
-echo "  1. Test OAuth flows with real tokens (Google, Facebook, Apple)"
-echo "  2. Test phone OTP with Twilio credentials"
-echo "  3. Test error cases (expired tokens, invalid tokens, etc.)"
+echo -e "${YELLOW}💡 Tips:${NC}"
+echo "  • To get new tokens easily, run: ./test-full-flow.sh"
+echo "  • To test other OAuth providers, see: E2E_TESTING.md"
+echo "  • To test phone OTP, configure Twilio in .env"
 echo ""
-echo "See E2E_TESTING.md for detailed instructions"
+echo -e "${CYAN}📚 For more details, see: E2E_TESTING.md${NC}"
 

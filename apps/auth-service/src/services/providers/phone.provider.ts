@@ -14,8 +14,9 @@ export class ProviderPhone {
 
   async send(phone: string) {
     try {
+      // Phone already includes +91 prefix from validation
       await this.client.verify.v2.services(process.env.TWILIO_VERIFY_SID!)
-        .verifications.create({ to: `+${phone}`, channel: "sms" });
+        .verifications.create({ to: phone, channel: "sms" });
       return { ok: true };
     } catch (err) {
       throw new Error("Failed to send SMS OTP: " + (err as Error).message);
@@ -24,8 +25,9 @@ export class ProviderPhone {
 
   async verify(phone: string, code: string) {
     try {
+      // Phone already includes +91 prefix from validation
       const result = await this.client.verify.v2.services(process.env.TWILIO_VERIFY_SID!)
-        .verificationChecks.create({ to: `+${phone}`, code });
+        .verificationChecks.create({ to: phone, code });
       if (result.status !== "approved") throw new Error("Invalid or expired OTP");
       return { ok: true };
     } catch (err) {

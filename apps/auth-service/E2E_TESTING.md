@@ -1,5 +1,102 @@
 # End-to-End Testing Guide
 
+Complete guide for testing all authentication flows end-to-end.
+
+---
+
+## ✅ Prerequisites Checklist
+
+Before running `./test-e2e.sh`, ensure you have:
+
+### 1. **Service Running**
+- ✅ Auth service is running on `http://localhost:3001`
+- ✅ Start with: `cd apps/auth-service && npm run start:dev`
+
+### 2. **Database Setup**
+- ✅ PostgreSQL is running
+- ✅ Database created and Prisma schema synced:
+  ```bash
+  cd apps/auth-service
+  npm run prisma:generate
+  npm run prisma:push
+  ```
+
+### 3. **Redis Running** (for metrics)
+- ✅ Redis is running: `redis-cli ping` should return `PONG`
+- ✅ Start with: `brew services start redis` (Mac) or `redis-server`
+
+### 4. **Environment Variables** (in `apps/auth-service/.env`)
+- ✅ `DATABASE_URL` - PostgreSQL connection string
+- ✅ `JWT_PUBLIC_JWK` - JWT public key (JSON format)
+- ✅ `JWT_PRIVATE_KEY` - JWT private key
+- ✅ `REDIS_URL` - Redis connection string (default: `redis://localhost:6379`)
+- ✅ `PORT` - Service port (default: 3001)
+
+### 5. **OAuth Provider Setup** (At least one required to get tokens)
+
+**Minimum Required:** You only need ONE method to get tokens and run `test-e2e.sh`. Choose the easiest:
+
+#### Option A: Google OAuth (Easiest - Recommended)
+- ✅ `GOOGLE_CLIENT_ID` in `.env`
+  - Easiest: Use OAuth Playground default: `407408718192.apps.googleusercontent.com`
+  - No Google Cloud setup needed
+  - **Recommended for first-time testing**
+
+#### Option B: Facebook OAuth (Easy)
+- ✅ Facebook account (for Graph API Explorer)
+- ✅ No app setup needed - use Graph API Explorer default app
+- ✅ No environment variables needed
+
+#### Option C: Phone OTP (Moderate)
+- ✅ Twilio account (free trial: https://www.twilio.com/try-twilio)
+- ✅ `TWILIO_ACCOUNT_SID` in `.env` - From Twilio Console dashboard
+- ✅ `TWILIO_AUTH_TOKEN` in `.env` - From Twilio Console (click "View" to reveal)
+- ✅ `TWILIO_VERIFY_SID` in `.env` - Create Verify Service in Twilio Console
+
+#### Option D: Apple Sign-In (Advanced)
+- ✅ Apple Developer account (free or paid)
+- ✅ App configured in Apple Developer Portal with Sign In with Apple enabled
+- ✅ `APPLE_AUD` in `.env` - Your Apple Bundle ID or Service ID
+
+**Note:** You don't need all of them! Start with Google OAuth (Option A) - it's the easiest.
+
+### 6. **System Tools**
+- ✅ `curl` - Usually pre-installed
+- ✅ `jq` - JSON parser (install: `brew install jq` on Mac)
+
+### 7. **Tokens** (Required to run tests)
+- ✅ Access Token and Refresh Token from any authentication method
+- ✅ Get tokens by running: `./test-full-flow.sh` (Google OAuth)
+- ✅ Or follow instructions in: `HOW_TO_GET_TOKENS.md`
+
+---
+
+## 🚀 Quick Start
+
+Once all prerequisites are met:
+
+```bash
+cd apps/auth-service
+./test-e2e.sh
+```
+
+The script will ask for your access and refresh tokens if not provided.
+
+---
+
+## 📋 What Gets Tested
+
+The `test-e2e.sh` script tests:
+1. ✅ Get user info (`GET /me`)
+2. ✅ Update preferences with location (`PATCH /me/preferences`)
+3. ✅ Update preferences without location (`PATCH /me/preferences`)
+4. ✅ Refresh access token (`POST /auth/refresh`)
+5. ✅ Verify new access token works (`GET /me`)
+6. ✅ Logout (`POST /auth/logout`)
+7. ✅ Verify refresh token is invalidated (`POST /auth/refresh`)
+
+---
+
 Now that basic tests pass, here's how to test complete authentication flows.
 
 ## 🎯 Testing Strategy
@@ -32,7 +129,20 @@ Now that basic tests pass, here's how to test complete authentication flows.
 
 ## 🚀 Quick Start: Test Token-Based Flows
 
-### Option 1: Use a Test Token (If you have one)
+### Option 1: Use the Interactive Test Script (Easiest)
+
+**Recommended for first-time testing:**
+
+```bash
+cd apps/auth-service
+./test-e2e.sh
+```
+
+The script will guide you through everything interactively. If you don't have tokens yet, run `./test-full-flow.sh` first to get tokens from Google OAuth.
+
+---
+
+### Option 2: Use a Test Token (If you have one)
 
 If you already have an `accessToken` from a previous test:
 
@@ -185,7 +295,7 @@ curl -X POST http://localhost:3001/auth/apple \
 # Step 1: Send OTP
 curl -X POST http://localhost:3001/auth/phone/send-otp \
   -H "Content-Type: application/json" \
-  -d '{"phone": "+1234567890"}' | jq .
+  -d '{"phone": "+918073656316"}' | jq .
 
 # Step 2: Check your phone/SMS for the OTP code
 
@@ -193,7 +303,7 @@ curl -X POST http://localhost:3001/auth/phone/send-otp \
 curl -X POST http://localhost:3001/auth/phone/verify \
   -H "Content-Type: application/json" \
   -d '{
-    "phone": "+1234567890",
+    "phone": "+918073656316",
     "code": "123456",
     "acceptedTerms": true,
     "acceptedTermsVer": "v1.0"
@@ -347,7 +457,40 @@ curl -X POST http://localhost:3001/auth/refresh \
 
 ## 🛠️ Helper Script
 
-See `test-e2e.sh` for an automated script that helps test token-based flows once you have tokens.
+### Quick Test with `test-e2e.sh` (Recommended)
+
+The easiest way to test all token-based flows:
+
+```bash
+cd apps/auth-service
+./test-e2e.sh
+```
+
+The script will:
+1. ✅ Check if the service is running
+2. ✅ Ask for your access and refresh tokens (interactive)
+3. ✅ Test all token-based flows automatically:
+   - Get user info
+   - Update preferences (with and without location)
+   - Refresh access token
+   - Logout
+   - Verify token invalidation
+
+**Getting Tokens:**
+- **Easiest way**: Run `./test-full-flow.sh` first - it will get tokens from Google OAuth and automatically run the e2e tests
+- **Manual**: Get tokens from OAuth flows (see sections below) and paste them when prompted
+- **📖 Detailed guide**: See `HOW_TO_GET_TOKENS.md` for complete instructions on all methods
+
+**Alternative Usage:**
+```bash
+# Pass tokens as arguments
+./test-e2e.sh ACCESS_TOKEN REFRESH_TOKEN
+
+# Or as environment variables
+export ACCESS_TOKEN="..."
+export REFRESH_TOKEN="..."
+./test-e2e.sh
+```
 
 ---
 

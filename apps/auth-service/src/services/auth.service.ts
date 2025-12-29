@@ -59,8 +59,6 @@ export class AuthService implements OnModuleInit {
     return this.signInOrUp(
       {
         email: g.email,
-        name: g.name,
-        photoUrl: g.picture,
         googleSub: g.sub
       },
       termsVer
@@ -72,7 +70,6 @@ export class AuthService implements OnModuleInit {
     return this.signInOrUp(
       {
         email: a.email,
-        name: a.name,
         appleSub: a.sub
       },
       termsVer
@@ -84,8 +81,6 @@ export class AuthService implements OnModuleInit {
     return this.signInOrUp(
       {
         email: f.email,
-        name: f.name,
-        photoUrl: f.picture,
         facebookId: f.id
       },
       termsVer
@@ -100,50 +95,6 @@ export class AuthService implements OnModuleInit {
   async verifyPhoneOtp(phone: string, code: string, termsVer: string) {
     await this.phone.verify(phone, code);
     return this.signInOrUp({ phone }, termsVer);
-  }
-
-  /* ---------- User ---------- */
-
-  async getMe(accessToken: string) {
-    const payload = await this.verifyAccess(accessToken);
-
-    const user = await this.prisma.user.findUnique({
-      where: { id: payload.sub },
-      include: { preferences: true }
-    });
-
-    if (!user) throw new Error("User not found");
-    return { user };
-  }
-
-  async updatePreferences(
-    accessToken: string,
-    prefs: {
-      videoEnabled: boolean;
-      meetMode: "both" | "location";
-      location?: { lat: number; lng: number };
-    }
-  ) {
-    const payload = await this.verifyAccess(accessToken);
-
-    const preferences = await this.prisma.preference.upsert({
-      where: { userId: payload.sub },
-      create: {
-        userId: payload.sub,
-        videoEnabled: prefs.videoEnabled,
-        meetMode: prefs.meetMode,
-        latitude: prefs.location?.lat,
-        longitude: prefs.location?.lng
-      },
-      update: {
-        videoEnabled: prefs.videoEnabled,
-        meetMode: prefs.meetMode,
-        latitude: prefs.location?.lat,
-        longitude: prefs.location?.lng
-      }
-    });
-
-    return { preferences };
   }
 
   /* ---------- Tokens ---------- */
@@ -188,8 +139,6 @@ export class AuthService implements OnModuleInit {
     data: Partial<{
       email: string | null;
       phone: string | null;
-      name: string | null;
-      photoUrl: string | null;
       googleSub: string | null;
       appleSub: string | null;
       facebookId: string | null;
@@ -212,8 +161,6 @@ export class AuthService implements OnModuleInit {
         data: {
           email: data.email ?? undefined,
           phone: data.phone ?? undefined,
-          name: data.name ?? undefined,
-          photoUrl: data.photoUrl ?? undefined,
           googleSub: data.googleSub ?? undefined,
           appleSub: data.appleSub ?? undefined,
           facebookId: data.facebookId ?? undefined,

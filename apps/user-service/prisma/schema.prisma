@@ -1,8 +1,189 @@
-// Prisma schema for user-service (add models when needed).
-// datasource db {
-//   provider = "postgresql"
-//   url      = env("DATABASE_URL")
-// }
-// generator client {
-//   provider = "prisma-client-js"
-// }
+// Prisma schema for user-service
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  NON_BINARY
+  PREFER_NOT_TO_SAY
+}
+
+enum UserStatus {
+  IDLE
+  IN_MATCHMAKING
+  IN_ONE_ON_ONE_CALL
+  IN_SQUAD
+  IN_BROADCAST
+  WATCHING_HMM_TV
+}
+
+model User {
+  id            String   @id // Links to auth-service User.id (must match auth-service user id)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Profile Creation Fields (from Figma 1)
+  username      String?  @unique // * mandatory, unique
+  dateOfBirth   DateTime? // * mandatory, immutable once set
+  gender        Gender?  // Can change once from PREFER_NOT_TO_SAY to any other, but not otherwise
+  genderChanged Boolean  @default(false) // Track if user changed from PREFER_NOT_TO_SAY
+  displayPictureUrl String? // * mandatory, must be validated for NSFW before acceptance
+  
+  // Additional Photos (max 4)
+  photos        UserPhoto[] @relation("UserPhotos")
+  
+  // Music Preference (like Instagram Reels - Song + Artist)
+  musicPreference Song?  @relation("UserMusicPreference", fields: [musicPreferenceId], references: [id])
+  musicPreferenceId String?
+  
+  // Brand References (4-5 brands from provided list)
+  brandPreferences UserBrand[]
+  
+  // Interests (max 4 from provided list)
+  interests     UserInterest[]
+  
+  // Values (max 4 from provided list)
+  values        UserValue[]
+  
+  // User Status
+  status        UserStatus @default(IDLE)
+  
+  // Moderation & Flags
+  reported      Boolean  @default(false) // 1 = yes, 0 = no
+  badgeMember   Boolean  @default(false) // 1 = yes, 0 = no
+  
+  // Intent/Bio (max 50 characters)
+  intent        String?  @db.VarChar(50)
+  
+  // Location (for "miles away" calculation)
+  latitude      Float?
+  longitude     Float?
+  locationUpdatedAt DateTime?
+  
+  // Video Preferences (on/off)
+  videoEnabled  Boolean  @default(true)
+  
+  // Profile Completion Tracking
+  profileCompleted Boolean @default(false) // True when username, DOB, gender, displayPicture are set
+
+  @@index([username])
+  @@index([status])
+  @@index([latitude, longitude]) // For location-based queries
+  @@map("users")
+}
+
+// Additional Photos (max 4 per user)
+model UserPhoto {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation("UserPhotos", fields: [userId], references: [id], onDelete: Cascade)
+  url       String   // URL to file in files-service/Cloudflare R2
+  order     Int      // Display order (0-3)
+  createdAt DateTime @default(now())
+  
+  @@unique([userId, order])
+  @@index([userId])
+  @@map("user_photos")
+}
+
+// Music Preference (Song + Artist)
+model Song {
+  id          String   @id @default(cuid())
+  name        String   // Song name
+  artist      String   // Artist name
+  spotifyId   String?  @unique // Optional: Spotify track ID for integration
+  createdAt   DateTime @default(now())
+  
+  // Users who have this as their music preference
+  users       User[]   @relation("UserMusicPreference")
+  
+  @@unique([name, artist])
+  @@index([name, artist])
+  @@map("songs")
+}
+
+// Brand Preferences (4-5 brands from provided list)
+model Brand {
+  id          String   @id @default(cuid())
+  name        String   @unique // Brand name (e.g., "JBL", "Apple", "Nike", "BMW")
+  logoUrl     String?  // Optional: Brand logo URL
+  createdAt   DateTime @default(now())
+  
+  userPreferences UserBrand[]
+  
+  @@map("brands")
+}
+
+model UserBrand {
+  id        String   @id @default(cuid())
+  userId    String
+  brandId   String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  brand     Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  order     Int      // Display order (0-4)
+  createdAt DateTime @default(now())
+  
+  @@unique([userId, brandId])
+  @@unique([userId, order]) // Enforce max 5 brands per user
+  @@index([userId])
+  @@map("user_brands")
+}
+
+// Interests (max 4 from provided list)
+model Interest {
+  id        String   @id @default(cuid())
+  name      String   @unique // Interest name
+  createdAt DateTime @default(now())
+  
+  userPreferences UserInterest[]
+  
+  @@map("interests")
+}
+
+model UserInterest {
+  id        String   @id @default(cuid())
+  userId    String
+  interestId String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  interest  Interest @relation(fields: [interestId], references: [id], onDelete: Cascade)
+  order     Int      // Display order (0-3)
+  createdAt DateTime @default(now())
+  
+  @@unique([userId, interestId])
+  @@unique([userId, order]) // Enforce max 4 interests per user
+  @@index([userId])
+  @@map("user_interests")
+}
+
+// Values (max 4 from provided list)
+model Value {
+  id        String   @id @default(cuid())
+  name      String   @unique // Value name
+  createdAt DateTime @default(now())
+  
+  userPreferences UserValue[]
+  
+  @@map("values")
+}
+
+model UserValue {
+  id        String   @id @default(cuid())
+  userId    String
+  valueId   String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  value     Value    @relation(fields: [valueId], references: [id], onDelete: Cascade)
+  order     Int      // Display order (0-3)
+  createdAt DateTime @default(now())
+  
+  @@unique([userId, valueId])
+  @@unique([userId, order]) // Enforce max 4 values per user
+  @@index([userId])
+  @@map("user_values")
+}

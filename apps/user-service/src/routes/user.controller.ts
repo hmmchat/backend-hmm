@@ -43,12 +43,13 @@ export class UserController {
   }
 
   @Get("users/:userId")
-  async getProfile(@Param("userId") userId: string) {
-    return this.userService.getProfile(userId);
+  async getProfile(@Param("userId") userId: string, @Query("fields") fields?: string) {
+    const fieldArray = fields ? fields.split(",").map(f => f.trim()).filter(Boolean) : undefined;
+    return this.userService.getProfile(userId, fieldArray);
   }
 
   @Get("me")
-  async getMyProfile(@Headers("authorization") authz?: string) {
+  async getMyProfile(@Headers("authorization") authz?: string, @Query("fields") fields?: string) {
     const token = this.getTokenFromHeader(authz);
     if (!token) throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
 
@@ -63,7 +64,8 @@ export class UserController {
     const verifyAccess = await verifyToken(publicJwk);
     const payload = await verifyAccess(token);
 
-    return this.userService.getProfile(payload.sub);
+    const fieldArray = fields ? fields.split(",").map(f => f.trim()).filter(Boolean) : undefined;
+    return this.userService.getProfile(payload.sub, fieldArray);
   }
 
   @Get("me/profile-completion")
@@ -131,6 +133,23 @@ export class UserController {
     const token = this.getTokenFromHeader(authz);
     if (!token) throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
     return this.userService.deletePhoto(token, photoId);
+  }
+
+  /* ---------- Catalog Data (Public Endpoints) ---------- */
+
+  @Get("brands")
+  async getBrands() {
+    return this.userService.getBrands();
+  }
+
+  @Get("interests")
+  async getInterests() {
+    return this.userService.getInterests();
+  }
+
+  @Get("values")
+  async getValues() {
+    return this.userService.getValues();
   }
 
   /* ---------- Music Preference ---------- */

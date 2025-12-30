@@ -87,7 +87,7 @@ If you already have a user in auth-service, use that `userId` and get a token vi
 **Endpoint:** `POST /users/:userId/profile`
 
 **Required fields:**
-- `username` (unique, 3-30 chars, alphanumeric + underscore)
+- `username` (3-30 chars, alphanumeric + underscore, can be duplicate/common names like "John", "Sarah")
 - `dateOfBirth` (ISO datetime, user must be 18+)
 - `gender` (MALE, FEMALE, NON_BINARY, PREFER_NOT_TO_SAY)
 - `displayPictureUrl` (valid URL)
@@ -102,6 +102,80 @@ curl -X POST http://localhost:3002/users/YOUR_USER_ID/profile \
     "gender": "MALE",
     "displayPictureUrl": "https://example.com/profile.jpg"
   }'
+```
+
+---
+
+### 1.2 Get User Profile (with Field Selection)
+
+**Endpoint:** `GET /users/:userId`
+
+**Query Parameters:**
+- `fields` (optional): Comma-separated list of fields to return. If not specified, returns full profile.
+
+**Available Fields:**
+- Basic fields: `username`, `dateOfBirth`, `gender`, `displayPictureUrl`, `status`, `intent`, `latitude`, `longitude`, `videoEnabled`, `profileCompleted`, `genderChanged`, `reported`, `badgeMember`, `createdAt`, `updatedAt`, `locationUpdatedAt`
+- Relation fields: `photos`, `musicPreference`, `brandPreferences`, `interests`, `values`
+- Special: `profileCompletion` (include profile completion percentage)
+
+**Examples:**
+
+```bash
+# Get full profile (default)
+curl http://localhost:3002/users/USER_ID
+
+# Get only username and display picture
+curl "http://localhost:3002/users/USER_ID?fields=username,displayPictureUrl"
+
+# Get status and intent
+curl "http://localhost:3002/users/USER_ID?fields=status,intent"
+
+# Get photos and music preference
+curl "http://localhost:3002/users/USER_ID?fields=photos,musicPreference"
+
+# Get username with profile completion
+curl "http://localhost:3002/users/USER_ID?fields=username,profileCompletion"
+
+# Get multiple fields
+curl "http://localhost:3002/users/USER_ID?fields=username,status,displayPictureUrl,photos"
+```
+
+**Note:** The `id` field is always included in the response, even if not specified in fields.
+
+**Response (with fields):**
+```json
+{
+  "user": {
+    "id": "user123",
+    "username": "john",
+    "displayPictureUrl": "https://example.com/profile.jpg"
+  }
+}
+```
+
+**Response (without fields - full profile):**
+```json
+{
+  "user": {
+    "id": "user123",
+    "username": "john",
+    "dateOfBirth": "2000-01-01T00:00:00.000Z",
+    "gender": "MALE",
+    "displayPictureUrl": "https://example.com/profile.jpg",
+    "photos": [...],
+    "musicPreference": {...},
+    "brandPreferences": [...],
+    "interests": [...],
+    "values": [...],
+    // ... all other fields
+  },
+  "profileCompletion": {
+    "percentage": 75.0,
+    "completed": 18,
+    "total": 24,
+    "details": {...}
+  }
+}
 ```
 
 **Expected Response (200):**
@@ -273,7 +347,7 @@ curl http://localhost:3002/me/profile-completion \
 **Endpoint:** `PATCH /me/profile`
 
 **Allowed fields:**
-- `username` (must be unique)
+- `username` (can be duplicate/common names)
 - `gender` (see gender rules below)
 - `intent` (max 50 characters)
 - `musicPreferenceId` (string)
@@ -297,7 +371,6 @@ curl -X PATCH http://localhost:3002/me/profile \
 
 **Error Cases:**
 - `400 Bad Request` - Gender cannot be changed
-- `409 Conflict` - Username already taken
 - `401 Unauthorized` - Invalid or expired token
 
 ---
@@ -439,13 +512,34 @@ curl -X PATCH http://localhost:3002/me/music-preference \
 
 ### 5.1 Get Available Brands
 
-First, get list of available brands:
+**Endpoint:** `GET /brands` (Public - No authentication required)
+
+Get list of all available brands:
 
 ```bash
-psql postgres -d hmm_user -c "SELECT id, name FROM brands;"
+curl http://localhost:3002/brands
 ```
 
-Or query via API (if you add a list endpoint later).
+**Response:**
+```json
+{
+  "brands": [
+    {
+      "id": "cm...",
+      "name": "Apple",
+      "createdAt": "2025-12-30T..."
+    },
+    {
+      "id": "cm...",
+      "name": "JBL",
+      "createdAt": "2025-12-30T..."
+    },
+    ...
+  ]
+}
+```
+
+**Note:** Brands are sorted alphabetically by name.
 
 ---
 
@@ -498,9 +592,34 @@ curl -X PATCH http://localhost:3002/me/brand-preferences \
 
 ### 6.1 Get Available Interests
 
+**Endpoint:** `GET /interests` (Public - No authentication required)
+
+Get list of all available interests:
+
 ```bash
-psql postgres -d hmm_user -c "SELECT id, name FROM interests;"
+curl http://localhost:3002/interests
 ```
+
+**Response:**
+```json
+{
+  "interests": [
+    {
+      "id": "cm...",
+      "name": "Art",
+      "createdAt": "2025-12-30T..."
+    },
+    {
+      "id": "cm...",
+      "name": "Cooking",
+      "createdAt": "2025-12-30T..."
+    },
+    ...
+  ]
+}
+```
+
+**Note:** Interests are sorted alphabetically by name.
 
 ---
 
@@ -535,9 +654,34 @@ curl -X PATCH http://localhost:3002/me/interests \
 
 ### 7.1 Get Available Values
 
+**Endpoint:** `GET /values` (Public - No authentication required)
+
+Get list of all available values:
+
 ```bash
-psql postgres -d hmm_user -c "SELECT id, name FROM values;"
+curl http://localhost:3002/values
 ```
+
+**Response:**
+```json
+{
+  "values": [
+    {
+      "id": "cm...",
+      "name": "Compassion",
+      "createdAt": "2025-12-30T..."
+    },
+    {
+      "id": "cm...",
+      "name": "Creativity",
+      "createdAt": "2025-12-30T..."
+    },
+    ...
+  ]
+}
+```
+
+**Note:** Values are sorted alphabetically by name.
 
 ---
 
@@ -668,11 +812,11 @@ curl "http://localhost:3002/users/nearby?latitude=37.7749&longitude=-122.4194&ra
 
 ## Step 11: Validation Testing
 
-### 11.1 Test Username Uniqueness
+### 11.1 Test Username Can Be Duplicate
 
 ```bash
-# Try creating profile with existing username
-curl -X POST http://localhost:3002/users/ANOTHER_USER_ID/profile \
+# Create profiles with same username (should work - usernames can be duplicate)
+curl -X POST http://localhost:3002/users/USER_ID_1/profile \
   -H "Content-Type: application/json" \
   -d '{
     "username": "testuser123",
@@ -682,7 +826,7 @@ curl -X POST http://localhost:3002/users/ANOTHER_USER_ID/profile \
   }'
 ```
 
-**Expected:** `409 Conflict` - "Username already taken"
+**Expected:** `201 Created` - Both profiles created successfully (usernames can be duplicate/common names)
 
 ---
 
@@ -703,17 +847,46 @@ curl -X POST http://localhost:3002/users/NEW_USER_ID/profile \
 
 ---
 
-### 11.3 Test Gender Change Rules
+### 11.3 Test Gender Change Rules (PREFER_NOT_TO_SAY → Other)
+
+**Test Flow:**
+1. Create profile with `PREFER_NOT_TO_SAY`
+2. Change to `MALE` (should succeed)
+3. Try to change again to `FEMALE` (should fail)
 
 ```bash
-# Try changing gender from MALE to FEMALE (should fail)
+# Step 1: Create profile with PREFER_NOT_TO_SAY
+USER_ID="testuser_gender_$(date +%s)"
+curl -X POST http://localhost:3002/users/$USER_ID/profile \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "testuser",
+    "dateOfBirth": "2000-01-01T00:00:00Z",
+    "gender": "PREFER_NOT_TO_SAY",
+    "displayPictureUrl": "https://example.com/safe-profile.jpg"
+  }'
+
+# Step 2: Change gender from PREFER_NOT_TO_SAY to MALE (should succeed)
+curl -X PATCH http://localhost:3002/me/profile \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"gender": "MALE"}'
+# Expected: HTTP 200 - Gender changed successfully, genderChanged: true
+
+# Step 3: Try to change gender again to FEMALE (should fail)
 curl -X PATCH http://localhost:3002/me/profile \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"gender": "FEMALE"}'
+# Expected: HTTP 400 - "Gender cannot be changed. It can only be changed once from 'prefer not to say' to another value."
 ```
 
-**Expected:** `400 Bad Request` - "Gender cannot be changed. It can only be changed once from 'prefer not to say' to another value."
+**Expected Behavior:**
+- ✅ First change from `PREFER_NOT_TO_SAY` to `MALE/FEMALE/NON_BINARY` → Succeeds (HTTP 200)
+- ❌ Second change attempt → Fails (HTTP 400)
+- ✅ `genderChanged` flag is set to `true` after first change
+
+**See also:** `apps/user-service/GENDER_CHANGE_TEST.md` for detailed test script
 
 ---
 
@@ -980,6 +1153,9 @@ lsof -i :3002
 | GET | `/me/photos` | Yes | Get user photos |
 | POST | `/me/photos` | Yes | Add photo |
 | DELETE | `/me/photos/:photoId` | Yes | Delete photo |
+| GET | `/brands` | No | Get list of all available brands |
+| GET | `/interests` | No | Get list of all available interests |
+| GET | `/values` | No | Get list of all available values |
 | POST | `/music/preferences` | No | Create/get music preference |
 | PATCH | `/me/music-preference` | Yes | Update music preference |
 | PATCH | `/me/brand-preferences` | Yes | Update brand preferences |
@@ -1005,4 +1181,31 @@ After testing:
 6. ✅ Set up monitoring and logging
 
 Happy Testing! 🚀
+
+---
+
+## Automated Testing Script
+
+A comprehensive test script is available at the root of the repository:
+
+```bash
+# Run comprehensive tests for all flows (from repository root)
+cd /path/to/backend-hmm
+./tests/user-service/complete-test-run.sh
+
+# Or from tests directory
+cd /path/to/backend-hmm/tests/user-service
+./complete-test-run.sh
+```
+
+This script tests:
+- Moderation service (safe/unsafe image checks)
+- User profile creation and retrieval
+- Profile completion percentage
+- Validation rules (username can be duplicate, age, moderation integration)
+- Gender change rules (PREFER_NOT_TO_SAY → other genders allowed once, then cannot change again)
+- Music preference creation
+- Database seed data availability
+
+The script provides detailed output and a summary of passed/failed tests.
 

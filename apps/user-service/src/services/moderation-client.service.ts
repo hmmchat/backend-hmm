@@ -4,11 +4,14 @@ import fetch from "node-fetch";
 interface ModerationResult {
   safe: boolean;
   confidence: number;
+  isHuman?: boolean;
   categories?: {
     adult?: number;
     racy?: number;
     violence?: number;
   };
+  failureReasons?: string[];
+  error?: string;
 }
 
 @Injectable()
@@ -39,8 +42,25 @@ export class ModerationClientService {
       const result = await response.json() as ModerationResult;
 
       if (!result.safe) {
+        // Use specific error messages if available, otherwise use generic message
+        const errorMessage = result.failureReasons && result.failureReasons.length > 0
+          ? result.failureReasons.join(" ")
+          : "Image failed moderation check. Please upload an appropriate photo of yourself.";
+        
         throw new HttpException(
-          "Image failed moderation check. Please upload a safe for work image.",
+          errorMessage,
+          HttpStatus.BAD_REQUEST
+        );
+      }
+
+      // Also check if human (even if safe, if not human it should fail)
+      if (result.isHuman === false) {
+        const errorMessage = result.failureReasons && result.failureReasons.length > 0
+          ? result.failureReasons.join(" ")
+          : "Image must contain a human person. Please upload a photo of yourself.";
+        
+        throw new HttpException(
+          errorMessage,
           HttpStatus.BAD_REQUEST
         );
       }

@@ -114,7 +114,7 @@ You have **3 main options** for how the frontend team can access the backend:
 
 3. **Share documentation:**
    - Send them `FRONTEND_INTEGRATION.md`
-   - Send them `FRONTEND_SUMMARY.md`
+   - Send them `FRONTEND_SETUP.md`
    - Point them to the documentation
 
 ### For Frontend Team:
@@ -207,8 +207,8 @@ This guide includes:
 
 ### Essential:
 - [ ] `FRONTEND_INTEGRATION.md` - Complete API documentation
-- [ ] `FRONTEND_SUMMARY.md` - Quick overview
-- [ ] Base URL (local or deployed)
+- [ ] `FRONTEND_SETUP.md` - Setup guide
+- [ ] Base URLs (local or deployed)
 
 ### If Local Development:
 - [ ] Repository access/URL
@@ -239,9 +239,9 @@ This guide includes:
 2. **Share with frontend team:**
    - Repository URL/access
    - `FRONTEND_INTEGRATION.md`
-   - `FRONTEND_SUMMARY.md`
+   - `FRONTEND_SETUP.md`
    - Tell them: "Backend is ready. You can either:
-     - Clone and run locally (see DEPLOYMENT_GUIDE.md)
+     - Clone and run locally (see FRONTEND_SETUP.md)
      - Or wait for dev server deployment"
 
 3. **Let them choose:**
@@ -279,23 +279,16 @@ A: Production deployment comes later when both frontend and backend are ready fo
 ## 🚀 Quick Start for Frontend Team
 
 **If using local development:**
+See `FRONTEND_SETUP.md` for complete setup instructions.
+
+**Quick summary:**
 ```bash
 # 1. Clone repo
 git clone <repo-url>
-cd backend-hmm/apps/auth-service
+cd backend-hmm
 
-# 2. Install & setup
-npm install
-# Add .env file with required variables
-npm run prisma:generate
-npm run prisma:push
-
-# 3. Start services
-redis-server  # In separate terminal
-npm run start:dev
-
-# 4. Verify
-curl http://localhost:3001/me/metrics
+# 2. Follow FRONTEND_SETUP.md for detailed instructions
+# Setup includes: auth-service, user-service, moderation-service
 ```
 
 **If using dev server:**

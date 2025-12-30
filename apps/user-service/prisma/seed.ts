@@ -7,22 +7,24 @@ async function main() {
 
   // Seed Brands
   console.log("📦 Seeding brands...");
+  // Note: Update logoUrl values with actual CDN/file storage URLs for production
+  // Logo images should be hosted on your file storage (Cloudflare R2, AWS S3, etc.)
   const brands = [
-    { name: "JBL" },
-    { name: "Apple" },
-    { name: "Nike" },
-    { name: "BMW" },
-    { name: "Adidas" },
-    { name: "Samsung" },
-    { name: "Sony" },
-    { name: "Tesla" },
-    { name: "Gucci" },
-    { name: "Chanel" },
-    { name: "Bose" },
-    { name: "Mercedes-Benz" },
-    { name: "Puma" },
-    { name: "Microsoft" },
-    { name: "Google" }
+    { name: "JBL", logoUrl: null }, // TODO: Add logo URL: "https://your-cdn.com/logos/jbl.png"
+    { name: "Apple", logoUrl: null }, // TODO: Add logo URL: "https://your-cdn.com/logos/apple.png"
+    { name: "Nike", logoUrl: null }, // TODO: Add logo URL: "https://your-cdn.com/logos/nike.png"
+    { name: "BMW", logoUrl: null }, // TODO: Add logo URL: "https://your-cdn.com/logos/bmw.png"
+    { name: "Adidas", logoUrl: null }, // TODO: Add logo URL: "https://your-cdn.com/logos/adidas.png"
+    { name: "Samsung", logoUrl: null }, // TODO: Add logo URL: "https://your-cdn.com/logos/samsung.png"
+    { name: "Sony", logoUrl: null }, // TODO: Add logo URL: "https://your-cdn.com/logos/sony.png"
+    { name: "Tesla", logoUrl: null }, // TODO: Add logo URL: "https://your-cdn.com/logos/tesla.png"
+    { name: "Gucci", logoUrl: null }, // TODO: Add logo URL: "https://your-cdn.com/logos/gucci.png"
+    { name: "Chanel", logoUrl: null }, // TODO: Add logo URL: "https://your-cdn.com/logos/chanel.png"
+    { name: "Bose", logoUrl: null }, // TODO: Add logo URL: "https://your-cdn.com/logos/bose.png"
+    { name: "Mercedes-Benz", logoUrl: null }, // TODO: Add logo URL: "https://your-cdn.com/logos/mercedes-benz.png"
+    { name: "Puma", logoUrl: null }, // TODO: Add logo URL: "https://your-cdn.com/logos/puma.png"
+    { name: "Microsoft", logoUrl: null }, // TODO: Add logo URL: "https://your-cdn.com/logos/microsoft.png"
+    { name: "Google", logoUrl: null } // TODO: Add logo URL: "https://your-cdn.com/logos/google.png"
   ];
 
   for (const brand of brands) {

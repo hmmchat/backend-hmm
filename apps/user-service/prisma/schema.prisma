@@ -30,7 +30,7 @@ model User {
   updatedAt     DateTime @updatedAt
 
   // Profile Creation Fields (from Figma 1)
-  username      String?  @unique // * mandatory, unique
+  username      String?  // * mandatory, can be duplicate (e.g., common first names like "John", "Sarah")
   dateOfBirth   DateTime? // * mandatory, immutable once set
   gender        Gender?  // Can change once from PREFER_NOT_TO_SAY to any other, but not otherwise
   genderChanged Boolean  @default(false) // Track if user changed from PREFER_NOT_TO_SAY

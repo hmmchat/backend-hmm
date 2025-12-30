@@ -28,7 +28,8 @@ echo ""
 # Check Google Client ID - Auto-configure if needed
 echo -e "${YELLOW}Step 2: Checking Google OAuth configuration...${NC}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-GOOGLE_CLIENT_ID=$(cd "$SCRIPT_DIR" && grep "^GOOGLE_CLIENT_ID=" .env 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "")
+AUTH_SERVICE_DIR="$(cd "$SCRIPT_DIR/../../apps/auth-service" && pwd)"
+GOOGLE_CLIENT_ID=$(grep "^GOOGLE_CLIENT_ID=" "$AUTH_SERVICE_DIR/.env" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "")
 
 if [ -z "$GOOGLE_CLIENT_ID" ] || [ "$GOOGLE_CLIENT_ID" = "your-google-client-id" ] || [ "$GOOGLE_CLIENT_ID" = "your_google_web_client_id.apps.googleusercontent.com" ]; then
     echo -e "${CYAN}ℹ️  GOOGLE_CLIENT_ID not configured. Using OAuth Playground default (easiest way).${NC}"
@@ -145,7 +146,7 @@ if echo "$RESPONSE" | jq . > /dev/null 2>&1; then
         echo ""
         
         # Run e2e tests
-        ./test-e2e.sh "$ACCESS_TOKEN" "$REFRESH_TOKEN"
+        "$SCRIPT_DIR/test-e2e.sh" "$ACCESS_TOKEN" "$REFRESH_TOKEN"
     else
         echo -e "${RED}❌ Signup/Login failed${NC}"
         echo "$RESPONSE" | jq .

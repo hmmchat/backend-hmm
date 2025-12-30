@@ -1,10 +1,13 @@
-# Auth Service API - Frontend Integration
+# Backend API - Frontend Integration
 
 ## 🚀 Getting Started
 
 **Local Setup:** See `FRONTEND_SETUP.md` for backend setup instructions.
 
-**Base URL:** `http://localhost:3001` (development)
+**Base URLs (Development):**
+- Auth Service: `http://localhost:3001`
+- User Service: `http://localhost:3002`
+- Moderation Service: `http://localhost:3003` (called automatically by user-service)
 
 All endpoints accept `Content-Type: application/json` and return JSON responses.
 
@@ -132,7 +135,7 @@ All endpoints accept `Content-Type: application/json` and return JSON responses.
 
 ---
 
-## Authenticated Endpoints
+## Authenticated Endpoints (Auth Service)
 
 All authenticated endpoints require header:
 ```
@@ -141,7 +144,7 @@ Authorization: Bearer {accessToken}
 
 ### Get User Info
 
-**Endpoint:** `GET /me`
+**Endpoint:** `GET http://localhost:3001/me`
 
 **Response:**
 ```json
@@ -170,7 +173,7 @@ Authorization: Bearer {accessToken}
 
 ### Update Preferences
 
-**Endpoint:** `PATCH /me/preferences`
+**Endpoint:** `PATCH http://localhost:3001/me/preferences`
 
 **Request:**
 ```json
@@ -200,7 +203,441 @@ Authorization: Bearer {accessToken}
 
 ---
 
-## Token Management
+## User Service Endpoints
+
+### 1. Create User Profile
+
+After user signs up, they need to create their profile:
+
+**Endpoint:** `POST http://localhost:3002/users/:userId/profile`
+
+**Request:**
+```json
+{
+  "username": "johndoe",  // 3-30 chars, alphanumeric + underscore (can be duplicate/common names)
+  "dateOfBirth": "2000-01-01T00:00:00Z",  // User must be 18+
+  "gender": "MALE",  // MALE | FEMALE | NON_BINARY | PREFER_NOT_TO_SAY
+  "displayPictureUrl": "https://your-cdn.com/profile.jpg"  // Photo already uploaded to your CDN
+}
+```
+
+**Response:**
+```json
+{
+  "user": {
+    "id": "string",
+    "username": "string",
+    "dateOfBirth": "string",
+    "gender": "string",
+    "displayPictureUrl": "string",
+    // ... other fields
+  },
+  "profileCompletion": {
+    "percentage": 45.5,
+    "completed": 5,
+    "total": 11,
+    "details": { ... }
+  }
+}
+```
+
+**Important Notes:**
+- `displayPictureUrl` must be uploaded to your CDN/storage first
+- Photo will be automatically checked by moderation service
+- If photo fails moderation, profile creation will fail
+
+---
+
+### 2. Get User Profile
+
+**Endpoint:** `GET http://localhost:3002/users/:userId` (public)  
+**Endpoint:** `GET http://localhost:3002/me` (authenticated, own profile)
+
+**Query Parameters:**
+- `fields` (optional): Comma-separated list of fields to return (e.g., `?fields=username,status,photos`)
+
+**Examples:**
+```javascript
+// Get full profile
+GET http://localhost:3002/me
+
+// Get specific fields only (optimized)
+GET http://localhost:3002/me?fields=username,status,displayPictureUrl
+
+// Get public user profile
+GET http://localhost:3002/users/{userId}?fields=username,photos,brandPreferences
+```
+
+**Response (full profile):**
+```json
+{
+  "user": {
+    "id": "string",
+    "username": "string",
+    "dateOfBirth": "string",
+    "gender": "string",
+    "displayPictureUrl": "string",
+    "photos": [...],
+    "musicPreference": {...},
+    "brandPreferences": [...],
+    "interests": [...],
+    "values": [...],
+    "status": "IDLE",
+    "intent": "string",
+    "latitude": 0,
+    "longitude": 0,
+    // ... other fields
+  },
+  "profileCompletion": {
+    "percentage": 75.5,
+    "completed": 15,
+    "total": 24,
+    "details": { ... }
+  }
+}
+```
+
+**Field Selection:**
+- Available fields: `username`, `dateOfBirth`, `gender`, `displayPictureUrl`, `status`, `intent`, `photos`, `musicPreference`, `brandPreferences`, `interests`, `values`, etc.
+- `id` field is always included automatically
+- Use `profileCompletion` in fields to include completion percentage
+
+---
+
+### 3. Update Profile
+
+**Endpoint:** `PATCH http://localhost:3002/me/profile`
+
+**Request:**
+```json
+{
+  "username": "newusername",  // Optional, can be duplicate/common names
+  "intent": "Here to meet new people",  // Optional, max 50 chars
+  "videoEnabled": false  // Optional
+}
+```
+
+**Response:**
+```json
+{
+  "user": {
+    // Updated user object
+  },
+  "profileCompletion": {
+    // Updated completion percentage
+  }
+}
+```
+
+**Gender Change Rules:**
+- Can change **once** from `PREFER_NOT_TO_SAY` to any other value
+- Cannot change from any other value
+- Cannot change if already changed once
+
+---
+
+### 4. Photo Management
+
+#### Add Photo
+
+**Endpoint:** `POST http://localhost:3002/me/photos`
+
+**Request:**
+```json
+{
+  "url": "https://your-cdn.com/photo.jpg",  // Photo already uploaded to CDN
+  "order": 0  // Must be unique: 0, 1, 2, or 3 (max 4 photos)
+}
+```
+
+**Limit:** Maximum 4 photos (excluding display picture)
+
+#### Get Photos
+
+**Endpoint:** `GET http://localhost:3002/me/photos` (authenticated)  
+**Endpoint:** `GET http://localhost:3002/users/:userId/photos` (public)
+
+#### Delete Photo
+
+**Endpoint:** `DELETE http://localhost:3002/me/photos/:photoId`
+
+---
+
+### 5. Music Preference
+
+#### Create/Get Music Preference
+
+**Endpoint:** `POST http://localhost:3002/music/preferences`
+
+**Request:**
+```json
+{
+  "songName": "Baby I Do",
+  "artistName": "Karan Aujila"
+}
+```
+
+#### Update Music Preference
+
+**Endpoint:** `PATCH http://localhost:3002/me/music-preference`
+
+**Request:**
+```json
+{
+  "songName": "New Song",
+  "artistName": "New Artist"
+}
+```
+
+---
+
+### 6. Brand Preferences
+
+**Endpoint:** `PATCH http://localhost:3002/me/brand-preferences`
+
+**Request:**
+```json
+{
+  "brandIds": ["brand-id-1", "brand-id-2", "brand-id-3", "brand-id-4"]  // Max 5 brands
+}
+```
+
+---
+
+### 7. Interests
+
+**Endpoint:** `PATCH http://localhost:3002/me/interests`
+
+**Request:**
+```json
+{
+  "interestIds": ["interest-id-1", "interest-id-2", "interest-id-3"]  // Max 4 interests
+}
+```
+
+---
+
+### 8. Values
+
+**Endpoint:** `PATCH http://localhost:3002/me/values`
+
+**Request:**
+```json
+{
+  "valueIds": ["value-id-1", "value-id-2", "value-id-3", "value-id-4"]  // Max 4 values
+}
+```
+
+---
+
+### 9. Location
+
+**Endpoint:** `PATCH http://localhost:3002/me/location`
+
+**Request:**
+```json
+{
+  "latitude": 28.7041,
+  "longitude": 77.1025
+}
+```
+
+---
+
+### 10. User Status
+
+**Endpoint:** `PATCH http://localhost:3002/me/status`
+
+**Request:**
+```json
+{
+  "status": "IDLE"  // IDLE | IN_MATCHMAKING | IN_1V1_CALL | IN_SQUAD | IN_BROADCAST | WATCHING_HMM_TV
+}
+```
+
+---
+
+### 11. Profile Completion
+
+**Endpoint:** `GET http://localhost:3002/me/profile-completion`
+
+**Response:**
+```json
+{
+  "percentage": 75.5,
+  "completed": 15,
+  "total": 24,
+  "details": {
+    "required": {
+      "username": true,
+      "dateOfBirth": true,
+      "gender": true,
+      "displayPictureUrl": true
+    },
+    "optional": {
+      "photos": { "filled": 2, "max": 4 },
+      "musicPreference": true,
+      "brandPreferences": { "filled": 3, "max": 5 },
+      "interests": { "filled": 2, "max": 4 },
+      "values": { "filled": 1, "max": 4 },
+      "intent": true,
+      "location": true
+    }
+  }
+}
+```
+
+---
+
+### 12. Catalog Endpoints (Public)
+
+#### Get All Brands
+
+**Endpoint:** `GET http://localhost:3002/brands`
+
+**Response:**
+```json
+{
+  "brands": [
+    {
+      "id": "string",
+      "name": "JBL",
+      "logoUrl": "https://cdn.example.com/logos/jbl.png",  // May be null
+      "createdAt": "2025-01-01T00:00:00Z"
+    },
+    // ... more brands (sorted alphabetically)
+  ]
+}
+```
+
+**Note:** Brands include `logoUrl` field for displaying logos. In production, these will be populated.
+
+#### Get All Interests
+
+**Endpoint:** `GET http://localhost:3002/interests`
+
+**Response:**
+```json
+{
+  "interests": [
+    {
+      "id": "string",
+      "name": "Music",
+      "createdAt": "2025-01-01T00:00:00Z"
+    },
+    // ... more interests (sorted alphabetically)
+  ]
+}
+```
+
+#### Get All Values
+
+**Endpoint:** `GET http://localhost:3002/values`
+
+**Response:**
+```json
+{
+  "values": [
+    {
+      "id": "string",
+      "name": "Honesty",
+      "createdAt": "2025-01-01T00:00:00Z"
+    },
+    // ... more values (sorted alphabetically)
+  ]
+}
+```
+
+---
+
+### 13. Batch User Lookup
+
+**Endpoint:** `POST http://localhost:3002/users/batch`
+
+**Request:**
+```json
+{
+  "userIds": ["user-id-1", "user-id-2", "user-id-3"]
+}
+```
+
+**Response:**
+```json
+{
+  "users": [
+    // Array of user objects
+  ]
+}
+```
+
+---
+
+### 14. Nearby Users
+
+**Endpoint:** `GET http://localhost:3002/users/nearby?latitude=28.7041&longitude=77.1025&radius=10`
+
+**Query Parameters:**
+- `latitude` (required): User's latitude
+- `longitude` (required): User's longitude
+- `radius` (optional): Search radius in kilometers (default: 10)
+
+**Response:**
+```json
+{
+  "users": [
+    // Array of nearby user objects
+  ]
+}
+```
+
+---
+
+## Photo Upload & Moderation Flow
+
+### Overview
+
+When uploading photos (display picture or additional photos), moderation happens automatically:
+
+```
+1. User selects photo in frontend
+2. Upload photo to your CDN/storage (Cloudflare R2, AWS S3, etc.)
+3. Get photo URL from CDN
+4. Send URL to user-service (for display picture or additional photos)
+5. User-service automatically calls moderation-service
+6. Moderation checks:
+   - ✅ Contains a human person (not objects/landscapes)
+   - ✅ No NSFW content (nudity, adult content)
+   - ✅ No violence or offensive content
+7. If checks pass → Photo accepted
+8. If checks fail → Request rejected with error message
+```
+
+### Error Messages
+
+The backend will return specific error messages:
+
+- **No Human Detected:**
+  ```
+  "Image must contain a human person. Please upload a photo of yourself."
+  ```
+
+- **NSFW Content:**
+  ```
+  "Image contains inappropriate adult content. Please upload a safe, appropriate photo."
+  ```
+
+- **Suggestive Content:**
+  ```
+  "Image contains suggestive content. Please upload a more appropriate photo."
+  ```
+
+**Best Practice:** Show these error messages directly to the user so they know what to fix.
+
+**Note:** Frontend should not call moderation service directly. It's called automatically by user-service when photos are uploaded.
+
+---
+
+## Token Management (Auth Service)
 
 ### Refresh Access Token
 
@@ -257,29 +694,50 @@ Retry original request with new accessToken
 
 ---
 
-## Flows
+## Complete User Flows
 
 ### Signup/Login Flow
 ```
 1. User selects method (Google/Facebook/Apple/Phone)
 2. Get OAuth token from provider SDK
-3. POST /auth/{provider} with token + acceptedTerms
+3. POST http://localhost:3001/auth/{provider} with token + acceptedTerms
 4. Store accessToken + refreshToken
 ```
 
 ### Phone OTP Flow
 ```
-1. User enters phone → POST /auth/phone/send-otp
+1. User enters phone → POST http://localhost:3001/auth/phone/send-otp
 2. User receives SMS OTP
-3. User enters OTP → POST /auth/phone/verify
+3. User enters OTP → POST http://localhost:3001/auth/phone/verify
 4. Receive accessToken + refreshToken
 ```
 
 ### Authenticated Request Flow
 ```
 1. Include: Authorization: Bearer {accessToken}
-2. If 401 → POST /auth/refresh
+2. If 401 → POST http://localhost:3001/auth/refresh
 3. Retry with new accessToken
+```
+
+### Complete Profile Setup Flow
+```
+1. User signs up (via auth-service)
+2. Get userId from JWT token (decode or call /me endpoint)
+3. Upload display picture to CDN
+4. POST http://localhost:3002/users/{userId}/profile with profile data
+   - Moderation check happens automatically
+5. (Optional) Add additional photos (max 4)
+6. (Optional) Fetch catalog data (brands, interests, values)
+7. (Optional) Update preferences (brands, interests, values, music, location, etc.)
+```
+
+### Fetching Catalog Data Flow
+```
+1. GET http://localhost:3002/brands → Display brands in UI (with logos if logoUrl available)
+2. GET http://localhost:3002/interests → Display interests in UI
+3. GET http://localhost:3002/values → Display values in UI
+4. User selects items
+5. PATCH http://localhost:3002/me/{brand-preferences|interests|values} with selected IDs
 ```
 
 ---
@@ -311,13 +769,19 @@ All signup endpoints require:
 
 **Common Status Codes:**
 - `200` - Success
-- `400` - Bad Request (validation error)
+- `201` - Created (resource created successfully)
+- `400` - Bad Request (validation error, moderation failure)
 - `401` - Unauthorized (invalid/expired token)
+- `404` - Not Found (resource doesn't exist)
+- `409` - Conflict (resource already exists)
 - `500` - Internal Server Error
+- `503` - Service Unavailable (moderation service unavailable)
 
 ---
 
 ## Endpoint Reference
+
+### Auth Service (http://localhost:3001)
 
 | Endpoint | Method | Auth | Purpose |
 |----------|--------|------|---------|
@@ -328,14 +792,63 @@ All signup endpoints require:
 | `/auth/phone/verify` | POST | No | Verify OTP & signup/login |
 | `/me` | GET | Yes | Get user info |
 | `/me/preferences` | PATCH | Yes | Update preferences |
+| `/me/metrics` | GET | No | Get live meetings count |
 | `/auth/refresh` | POST | No | Refresh access token |
 | `/auth/logout` | POST | No | Logout user |
+
+### User Service (http://localhost:3002)
+
+| Endpoint | Method | Auth | Purpose |
+|----------|--------|------|---------|
+| `/users/:userId/profile` | POST | No | Create user profile |
+| `/users/:userId` | GET | No | Get user profile (public, supports ?fields=...) |
+| `/me` | GET | Yes | Get own profile (supports ?fields=...) |
+| `/me/profile` | PATCH | Yes | Update profile |
+| `/me/profile-completion` | GET | Yes | Get profile completion percentage |
+| `/me/photos` | GET | Yes | Get own photos |
+| `/me/photos` | POST | Yes | Add photo (max 4) |
+| `/me/photos/:photoId` | DELETE | Yes | Delete photo |
+| `/users/:userId/photos` | GET | No | Get user photos (public) |
+| `/brands` | GET | No | Get all available brands |
+| `/interests` | GET | No | Get all available interests |
+| `/values` | GET | No | Get all available values |
+| `/music/preferences` | POST | No | Create/get music preference |
+| `/me/music-preference` | PATCH | Yes | Update music preference |
+| `/me/brand-preferences` | PATCH | Yes | Update brand preferences (4-5 brands) |
+| `/me/interests` | PATCH | Yes | Update interests (max 4) |
+| `/me/values` | PATCH | Yes | Update values (max 4) |
+| `/me/location` | PATCH | Yes | Update location |
+| `/me/status` | PATCH | Yes | Update user status |
+| `/users/batch` | POST | No | Get multiple users by IDs |
+| `/users/nearby` | GET | No | Get nearby users |
+
+### Moderation Service (http://localhost:3003)
+
+| Endpoint | Method | Auth | Purpose |
+|----------|--------|------|---------|
+| `/moderation/check-image` | POST | No | Check image (called by user-service, not directly) |
+
+**Note:** Frontend should not call moderation service directly. It's called automatically by user-service when photos are uploaded.
 
 ---
 
 ## Data Types
 
-**Meet Mode Values:**
+**Gender Values:**
+- `"MALE"`
+- `"FEMALE"`
+- `"NON_BINARY"`
+- `"PREFER_NOT_TO_SAY"`
+
+**User Status Values:**
+- `"IDLE"`
+- `"IN_MATCHMAKING"`
+- `"IN_1V1_CALL"`
+- `"IN_SQUAD"`
+- `"IN_BROADCAST"`
+- `"WATCHING_HMM_TV"`
+
+**Meet Mode Values (Auth Service):**
 - `"location"` - Location-based only
 - `"video"` - Video calls only
 - `"both"` - Both location and video
@@ -357,3 +870,10 @@ All signup endpoints require:
 **Setup:** See `FRONTEND_SETUP.md` for local backend setup
 
 **Questions:** Contact backend team with endpoint name, request payload, and error details
+
+**Key Notes:**
+- Username can be duplicate/common names (uniqueness not enforced)
+- Field selection (`?fields=`) can optimize API calls by fetching only needed data
+- Brand logos: `logoUrl` field is available but may be `null` until production CDN is set up
+- Photo moderation happens automatically - frontend just needs to handle error messages
+- Gender can only be changed once from `PREFER_NOT_TO_SAY` to any other value

@@ -64,14 +64,7 @@ export class UserService implements OnModuleInit {
       throw new HttpException("Profile already exists", HttpStatus.BAD_REQUEST);
     }
 
-    // Check username uniqueness
-    const usernameTaken = await this.prisma.user.findUnique({
-      where: { username: data.username }
-    });
-
-    if (usernameTaken) {
-      throw new HttpException("Username already taken", HttpStatus.CONFLICT);
-    }
+    // Username is not required to be unique - can be common names like "John", "Sarah"
 
     // Validate date of birth (user must be at least 18 years old)
     const age = new Date().getFullYear() - data.dateOfBirth.getFullYear();
@@ -79,7 +72,8 @@ export class UserService implements OnModuleInit {
       throw new HttpException("User must be at least 18 years old", HttpStatus.BAD_REQUEST);
     }
 
-    // Validate display picture for NSFW content
+    // Validate display picture for NSFW content - MUST be checked before creating profile
+    // This will throw HttpException if image is unsafe or service is unavailable
     await this.moderationClient.checkImage(data.displayPictureUrl);
 
     // Create user profile
@@ -108,7 +102,7 @@ export class UserService implements OnModuleInit {
     return { user, profileCompletion: completion };
   }
 
-  async getProfile(userId: string) {
+  async getProfile(userId: string, fields?: string[]) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       include: {
@@ -133,10 +127,100 @@ export class UserService implements OnModuleInit {
       throw new HttpException("User profile not found", HttpStatus.NOT_FOUND);
     }
 
-    // Calculate profile completion percentage
-    const completion = await this.profileCompletion.calculateCompletion(userId);
+    // If fields are specified, filter the response
+    let filteredUser: any = user;
+    if (fields && fields.length > 0) {
+      filteredUser = this.filterUserFields(user, fields);
+    }
 
-    return { user, profileCompletion: completion };
+    // Calculate profile completion percentage (only if not filtering or if completion is requested)
+    let completion;
+    const shouldIncludeCompletion = !fields || fields.length === 0 || fields.includes("profileCompletion");
+    
+    if (shouldIncludeCompletion) {
+      try {
+        completion = await this.profileCompletion.calculateCompletion(userId);
+      } catch (error) {
+        console.error("Error calculating profile completion:", error);
+        // If calculation fails, return a default completion object
+        completion = {
+          percentage: 0,
+          completed: 0,
+          total: 0,
+          details: {
+            required: {
+              username: !!user.username,
+              dateOfBirth: !!user.dateOfBirth,
+              gender: !!user.gender,
+              displayPictureUrl: !!user.displayPictureUrl
+            },
+            optional: {
+              photos: { filled: user.photos.length, max: 4 },
+              musicPreference: !!user.musicPreferenceId,
+              brandPreferences: { filled: user.brandPreferences.length, max: 5 },
+              interests: { filled: user.interests.length, max: 4 },
+              values: { filled: user.values.length, max: 4 },
+              intent: !!user.intent,
+              location: !!(user.latitude && user.longitude)
+            }
+          }
+        };
+      }
+    }
+
+    const result: any = { user: filteredUser };
+    if (completion !== undefined) {
+      result.profileCompletion = completion;
+    }
+
+    return result;
+  }
+
+  /**
+   * Filter user object to include only specified fields
+   * Supports nested fields like "photos.url", "musicPreference.name"
+   */
+  private filterUserFields(user: any, fields: string[]): any {
+    const filtered: any = {};
+
+    // Always include id
+    filtered.id = user.id;
+
+    // Map of field paths to their actual locations in user object
+    const fieldMap: Record<string, string> = {
+      // Basic fields
+      username: "username",
+      dateOfBirth: "dateOfBirth",
+      gender: "gender",
+      displayPictureUrl: "displayPictureUrl",
+      status: "status",
+      intent: "intent",
+      latitude: "latitude",
+      longitude: "longitude",
+      videoEnabled: "videoEnabled",
+      profileCompleted: "profileCompleted",
+      genderChanged: "genderChanged",
+      reported: "reported",
+      badgeMember: "badgeMember",
+      createdAt: "createdAt",
+      updatedAt: "updatedAt",
+      locationUpdatedAt: "locationUpdatedAt",
+      // Relation fields
+      photos: "photos",
+      musicPreference: "musicPreference",
+      brandPreferences: "brandPreferences",
+      interests: "interests",
+      values: "values"
+    };
+
+    for (const field of fields) {
+      const fieldPath = fieldMap[field];
+      if (fieldPath && user[fieldPath] !== undefined) {
+        filtered[field] = user[fieldPath];
+      }
+    }
+
+    return filtered;
   }
 
   async updateProfile(accessToken: string, data: UpdateProfileDto) {
@@ -150,16 +234,7 @@ export class UserService implements OnModuleInit {
       throw new HttpException("User profile not found", HttpStatus.NOT_FOUND);
     }
 
-    // Validate username uniqueness if changing
-    if (data.username && data.username !== existingUser.username) {
-      const usernameTaken = await this.prisma.user.findUnique({
-        where: { username: data.username }
-      });
-
-      if (usernameTaken) {
-        throw new HttpException("Username already taken", HttpStatus.CONFLICT);
-      }
-    }
+    // Username is not required to be unique - can be common names like "John", "Sarah"
 
     // Gender change validation: Can only change once from PREFER_NOT_TO_SAY to any other
     if (data.gender) {
@@ -445,6 +520,29 @@ export class UserService implements OnModuleInit {
     });
 
     return { values: userValues };
+  }
+
+  /* ---------- Catalog Data (Public) ---------- */
+
+  async getBrands() {
+    const brands = await this.prisma.brand.findMany({
+      orderBy: { name: "asc" }
+    });
+    return { brands };
+  }
+
+  async getInterests() {
+    const interests = await this.prisma.interest.findMany({
+      orderBy: { name: "asc" }
+    });
+    return { interests };
+  }
+
+  async getValues() {
+    const values = await this.prisma.value.findMany({
+      orderBy: { name: "asc" }
+    });
+    return { values };
   }
 
   /* ---------- Location ---------- */

@@ -71,6 +71,12 @@ This service manages user profiles after authentication. Users authenticate via 
 - `POST /me/photos` - Add photo (max 4)
 - `DELETE /me/photos/:photoId` - Delete photo
 
+### Catalog Data (Public - No Auth Required)
+
+- `GET /brands` - Get list of all available brands
+- `GET /interests` - Get list of all available interests
+- `GET /values` - Get list of all available values
+
 ### Preferences
 
 - `PATCH /me/brand-preferences` - Update brand preferences (max 5)

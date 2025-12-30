@@ -79,11 +79,12 @@ if echo "$RESPONSE" | jq . > /dev/null 2>&1; then
         
         if [ "$run_tests" = "y" ] || [ "$run_tests" = "Y" ]; then
             echo ""
-            ./test-e2e.sh "$ACCESS_TOKEN" "$REFRESH_TOKEN"
+            SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+            "$SCRIPT_DIR/test-e2e.sh" "$ACCESS_TOKEN" "$REFRESH_TOKEN"
         else
             echo ""
             echo -e "${CYAN}To run tests later, use:${NC}"
-            echo "  ./test-e2e.sh \"$ACCESS_TOKEN\" \"$REFRESH_TOKEN\""
+            echo "  ../../tests/auth-service/test-e2e.sh \"$ACCESS_TOKEN\" \"$REFRESH_TOKEN\""
         fi
     else
         echo -e "${RED}❌ Verification failed${NC}"

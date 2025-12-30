@@ -55,3 +55,9 @@ coverage/
 tmp/
 temp/
 *.tmp
+test*_response.json
+*_response.json
+test-run-output.txt
+current_test_user.txt
+tests/*.txt
+tests/*.log

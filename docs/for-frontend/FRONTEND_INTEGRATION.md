@@ -365,15 +365,64 @@ GET http://localhost:3002/users/{userId}?fields=username,photos,brandPreferences
 
 ### 5. Music Preference
 
-#### Create/Get Music Preference
+#### Search for Songs
+
+**Endpoint:** `GET http://localhost:3002/music/search?q={query}&limit={limit}`
+
+**Query Parameters:**
+- `q` (required): Search query (song name, artist name, or both)
+- `limit` (optional): Number of results to return (1-50, default: 20)
+
+**Response:**
+```json
+{
+  "songs": [
+    {
+      "name": "Sicko Mode",
+      "artist": "Travis Scott",
+      "albumArtUrl": "https://i.scdn.co/image/ab67616d0000b273...",
+      "spotifyId": "2xLMifQCjDGFmkHkpNLD9h",
+      "albumName": "ASTROWORLD",
+      "spotifyUrl": "https://open.spotify.com/track/2xLMifQCjDGFmkHkpNLD9h"
+    },
+    // ... more results
+  ]
+}
+```
+
+**Note:** This endpoint uses Spotify Web API (completely FREE - no payment required). 
+The backend needs `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` environment variables.
+To get these credentials:
+1. Register a free account at https://developer.spotify.com/
+2. Create a new app in the Dashboard
+3. Copy the Client ID and Client Secret
+4. Set them as environment variables
+
+#### Create/Get Music Preference (from search result)
 
 **Endpoint:** `POST http://localhost:3002/music/preferences`
 
 **Request:**
 ```json
 {
-  "songName": "Baby I Do",
-  "artistName": "Karan Aujila"
+  "songName": "Sicko Mode",
+  "artistName": "Travis Scott",
+  "albumArtUrl": "https://i.scdn.co/image/ab67616d0000b273...",
+  "spotifyId": "2xLMifQCjDGFmkHkpNLD9h"
+}
+```
+
+**Response:**
+```json
+{
+  "song": {
+    "id": "song-id",
+    "name": "Sicko Mode",
+    "artist": "Travis Scott",
+    "albumArtUrl": "https://i.scdn.co/image/ab67616d0000b273...",
+    "spotifyId": "2xLMifQCjDGFmkHkpNLD9h",
+    "createdAt": "2025-01-01T00:00:00Z"
+  }
 }
 ```
 
@@ -384,10 +433,132 @@ GET http://localhost:3002/users/{userId}?fields=username,photos,brandPreferences
 **Request:**
 ```json
 {
-  "songName": "New Song",
-  "artistName": "New Artist"
+  "musicPreferenceId": "song-id"
 }
 ```
+
+**Response:**
+```json
+{
+  "user": {
+    "id": "user-id",
+    "musicPreference": {
+      "id": "song-id",
+      "name": "Sicko Mode",
+      "artist": "Travis Scott",
+      "albumArtUrl": "https://i.scdn.co/image/ab67616d0000b273...",
+      "spotifyId": "2xLMifQCjDGFmkHkpNLD9h"
+    }
+  }
+}
+```
+
+**Complete Flow:**
+
+Here's the step-by-step flow for adding a music preference with album art:
+
+1. **User searches for songs:**
+   ```javascript
+   GET /music/search?q=sicko mode&limit=20
+   ```
+   Response includes songs with `albumArtUrl`, `name`, `artist`, `spotifyId`, etc.
+
+2. **Frontend displays results:**
+   - Show each song with its album art (`albumArtUrl`)
+   - Display song name and artist name
+   - User can see visual preview before selecting
+
+3. **User selects a song:**
+   - User clicks on a song from the search results
+   - Frontend has access to: `name`, `artist`, `albumArtUrl`, `spotifyId`
+
+4. **Frontend creates/gets the song in database:**
+   ```javascript
+   POST /music/preferences
+   {
+     "songName": "Sicko Mode",
+     "artistName": "Travis Scott",
+     "albumArtUrl": "https://i.scdn.co/image/ab67616d0000b273...",
+     "spotifyId": "2xLMifQCjDGFmkHkpNLD9h"
+   }
+   ```
+   Response returns the song with its database `id`.
+
+5. **Frontend updates user's music preference:**
+   ```javascript
+   PATCH /me/music-preference
+   Authorization: Bearer {accessToken}
+   {
+     "musicPreferenceId": "song-id-from-step-4"
+   }
+   ```
+   User's profile now has this song as their music preference.
+
+**Example Frontend Code:**
+```javascript
+// 1. Search for songs
+const searchSongs = async (query) => {
+  const response = await fetch(`http://localhost:3002/music/search?q=${encodeURIComponent(query)}`);
+  const data = await response.json();
+  return data.songs; // Array with albumArtUrl, name, artist, etc.
+};
+
+// 2. Display results (React example)
+{songs.map(song => (
+  <div key={song.spotifyId} onClick={() => selectSong(song)}>
+    <img src={song.albumArtUrl} alt={song.name} />
+    <p>{song.name}</p>
+    <p>{song.artist}</p>
+  </div>
+))}
+
+// 3. Create song and set as preference
+const selectSong = async (song) => {
+  // Create/get song in database
+  const createResponse = await fetch('http://localhost:3002/music/preferences', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      songName: song.name,
+      artistName: song.artist,
+      albumArtUrl: song.albumArtUrl,
+      spotifyId: song.spotifyId
+    })
+  });
+  const { song: createdSong } = await createResponse.json();
+  
+  // Set as user's music preference
+  await fetch('http://localhost:3002/me/music-preference', {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${accessToken}`
+    },
+    body: JSON.stringify({
+      musicPreferenceId: createdSong.id
+    })
+  });
+};
+```
+
+**Displaying Music Preference:**
+When fetching user profile, the `musicPreference` object includes `albumArtUrl`:
+```javascript
+GET /me?fields=musicPreference
+// Response includes:
+{
+  "user": {
+    "musicPreference": {
+      "id": "song-id",
+      "name": "Sicko Mode",
+      "artist": "Travis Scott",
+      "albumArtUrl": "https://i.scdn.co/image/ab67616d0000b273...",
+      "spotifyId": "2xLMifQCjDGFmkHkpNLD9h"
+    }
+  }
+}
+```
+You can display this with the album art, song name, and artist name in your UI.
 
 ---
 
@@ -812,6 +983,7 @@ All signup endpoints require:
 | `/brands` | GET | No | Get all available brands |
 | `/interests` | GET | No | Get all available interests |
 | `/values` | GET | No | Get all available values |
+| `/music/search` | GET | No | Search for songs (requires Spotify API credentials) |
 | `/music/preferences` | POST | No | Create/get music preference |
 | `/me/music-preference` | PATCH | Yes | Update music preference |
 | `/me/brand-preferences` | PATCH | Yes | Update brand preferences (4-5 brands) |

@@ -12,6 +12,7 @@ import {
   Query
 } from "@nestjs/common";
 import { UserService } from "../services/user.service.js";
+import { MusicService } from "../services/music.service.js";
 import {
   CreateProfileSchema,
   UpdateProfileSchema,
@@ -26,7 +27,10 @@ import {
 
 @Controller()
 export class UserController {
-  constructor(private readonly userService: UserService) {}
+  constructor(
+    private readonly userService: UserService,
+    private readonly musicService: MusicService
+  ) {}
 
   private getTokenFromHeader(h?: string) {
     if (!h) return null;
@@ -153,6 +157,19 @@ export class UserController {
   }
 
   /* ---------- Music Preference ---------- */
+
+  @Get("music/search")
+  async searchSongs(@Query("q") query?: string, @Query("limit") limit?: string) {
+    if (!query || query.trim().length === 0) {
+      throw new HttpException("Search query (q) is required", HttpStatus.BAD_REQUEST);
+    }
+    const limitNum = limit ? parseInt(limit, 10) : 20;
+    if (isNaN(limitNum) || limitNum < 1 || limitNum > 50) {
+      throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);
+    }
+    const results = await this.musicService.searchSongs(query, limitNum);
+    return { songs: results };
+  }
 
   @Post("music/preferences")
   async createMusicPreference(@Body() body: any) {

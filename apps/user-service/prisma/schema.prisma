@@ -98,7 +98,8 @@ model Song {
   id          String   @id @default(cuid())
   name        String   // Song name
   artist      String   // Artist name
-  spotifyId   String?  @unique // Optional: Spotify track ID for integration
+  albumArtUrl String?  // Album art URL (from Spotify)
+  spotifyId   String?  @unique // Optional: Spotify track ID for reference
   createdAt   DateTime @default(now())
   
   // Users who have this as their music preference

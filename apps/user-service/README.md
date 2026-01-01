@@ -38,7 +38,15 @@ This service manages user profiles after authentication. Users authenticate via 
    JWT_PUBLIC_JWK='{"kty":"EC",...}' # Same as auth-service
    PORT=3002
    ALLOWED_ORIGINS="http://localhost:3000,http://localhost:5173"
+   
+   # Spotify API (FREE - no payment required)
+   # Register at https://developer.spotify.com/ and create an app
+   # Then copy Client ID and Client Secret
+   SPOTIFY_CLIENT_ID="your-client-id"
+   SPOTIFY_CLIENT_SECRET="your-client-secret"
    ```
+   
+   **Note**: Spotify credentials are optional. If not set, music search will be disabled but other features work normally.
 
 3. **Generate Prisma Client**:
    ```bash
@@ -96,6 +104,7 @@ This service manages user profiles after authentication. Users authenticate via 
 
 ### Music Catalog
 
+- `GET /music/search?q={query}&limit={limit}` - Search for songs (requires Spotify API credentials)
 - `POST /music/preferences` - Create or get music preference (song + artist)
 
 ## Business Rules

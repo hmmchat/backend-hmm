@@ -370,9 +370,14 @@ export class UserService implements OnModuleInit {
       create: {
         name: data.songName,
         artist: data.artistName,
+        albumArtUrl: data.albumArtUrl || null,
         spotifyId: data.spotifyId
       },
-      update: {}
+      update: {
+        // Update album art and spotify ID if provided and different
+        albumArtUrl: data.albumArtUrl !== undefined ? (data.albumArtUrl || null) : undefined,
+        spotifyId: data.spotifyId !== undefined ? data.spotifyId : undefined
+      }
     });
 
     return { song };

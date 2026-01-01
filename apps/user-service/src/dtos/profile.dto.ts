@@ -61,6 +61,7 @@ export const UpdateStatusSchema = z.object({
 export const CreateMusicPreferenceSchema = z.object({
   songName: z.string().min(1),
   artistName: z.string().min(1),
+  albumArtUrl: z.string().url().optional().nullable(),
   spotifyId: z.string().optional()
 });
 

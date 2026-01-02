@@ -1,0 +1,37 @@
+// Prisma schema for discovery-service
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+// Gender filter preference for users
+// Note: Gender enum is defined in user-service schema and shared via same database
+model GenderFilterPreference {
+  id               String    @id @default(cuid())
+  userId           String    @unique
+  genders          Json // Array of Gender enum values: ["MALE", "FEMALE", "NON_BINARY"] (stored as JSON)
+  screensRemaining Int       @default(0) // Number of screens remaining for this filter
+  expiresAt        DateTime? // When the filter expires (if applicable)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("gender_filter_preferences")
+}
+
+// Configuration for gender filter pricing
+model GenderFilterConfig {
+  id          String   @id @default(cuid())
+  key         String   @unique // e.g., "gender_filter_coins_per_screen"
+  value       String // JSON string for complex values, or simple string/number
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("gender_filter_configs")
+}

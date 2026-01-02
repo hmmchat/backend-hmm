@@ -969,6 +969,21 @@ All signup endpoints require:
 | `/auth/refresh` | POST | No | Refresh access token |
 | `/auth/logout` | POST | No | Logout user |
 
+### Discovery Service (http://localhost:3004)
+
+| Endpoint | Method | Auth | Purpose |
+|----------|--------|------|---------|
+| `/metrics/meetings` | GET | No | Get live meetings count |
+| `/gender-filters` | GET | Yes | Get available gender filters |
+| `/gender-filters/apply` | POST | Yes | Purchase and activate gender filter |
+
+### Wallet Service (http://localhost:3005)
+
+| Endpoint | Method | Auth | Purpose |
+|----------|--------|------|---------|
+| `/me/balance` | GET | Yes | Get coin balance |
+| `/me/transactions/gender-filter` | POST | Yes | Deduct coins for gender filter (internal use) |
+
 ### User Service (http://localhost:3002)
 
 | Endpoint | Method | Auth | Purpose |
@@ -1041,9 +1056,223 @@ All signup endpoints require:
 
 ---
 
+## Discovery Service Endpoints
+
+### 1. Get Live Meetings Count
+
+**Endpoint:** `GET http://localhost:3004/metrics/meetings`
+
+**Description:** Returns the count of users currently active and available for meetings. This includes users with statuses: `AVAILABLE`, `IN_SQUAD`, `IN_SQUAD_AVAILABLE`, `IN_BROADCAST`, `IN_BROADCAST_AVAILABLE`.
+
+**Response:**
+```json
+{
+  "liveMeetings": 1250
+}
+```
+
+**Example Usage:**
+```javascript
+// Get live meetings count for homepage
+const response = await fetch('http://localhost:3004/metrics/meetings');
+const { liveMeetings } = await response.json();
+// Display: "1,250 meeting now"
+```
+
+**Note:** This endpoint is public (no authentication required).
+
+---
+
+### 2. Get Gender Filters
+
+**Endpoint:** `GET http://localhost:3004/gender-filters`
+
+**Headers:**
+```
+Authorization: Bearer {accessToken}
+```
+
+**Description:** Returns available gender filter options based on the user's gender. Users with `PREFER_NOT_TO_SAY` gender cannot use gender filters.
+
+**Response (for MALE/FEMALE users):**
+```json
+{
+  "applicable": true,
+  "availableFilters": [
+    {
+      "gender": "MALE",
+      "label": "Guys",
+      "cost": 200,
+      "screens": 10
+    },
+    {
+      "gender": "FEMALE",
+      "label": "Girls",
+      "cost": 200,
+      "screens": 10
+    }
+  ],
+  "currentPreference": {
+    "genders": ["MALE", "FEMALE"],
+    "screensRemaining": 5
+  },
+  "config": {
+    "coinsPerScreen": 200,
+    "screensPerPurchase": 10
+  }
+}
+```
+
+**Response (for NON_BINARY users):**
+```json
+{
+  "applicable": true,
+  "availableFilters": [
+    {
+      "gender": "MALE",
+      "label": "Guys",
+      "cost": 200,
+      "screens": 10
+    },
+    {
+      "gender": "FEMALE",
+      "label": "Girls",
+      "cost": 200,
+      "screens": 10
+    },
+    {
+      "gender": "NON_BINARY",
+      "label": "Nonbinary",
+      "cost": 200,
+      "screens": 10
+    }
+  ],
+  "config": {
+    "coinsPerScreen": 200,
+    "screensPerPurchase": 10
+  }
+}
+```
+
+**Response (for PREFER_NOT_TO_SAY users):**
+```json
+{
+  "applicable": false,
+  "reason": "User needs to give consent to their gender to filter others"
+}
+```
+
+**Business Rules:**
+- **MALE/FEMALE users:** Can only see and filter by MALE and FEMALE (2 options)
+- **NON_BINARY users:** Can see and filter by all 3 options (MALE, FEMALE, NON_BINARY)
+- **PREFER_NOT_TO_SAY users:** Filter is disabled
+
+**Example Usage:**
+```javascript
+// Get available gender filters
+const response = await fetch('http://localhost:3004/gender-filters', {
+  headers: {
+    'Authorization': `Bearer ${accessToken}`
+  }
+});
+const data = await response.json();
+
+if (!data.applicable) {
+  // Show message: "You need to set your gender to use filters"
+  console.log(data.reason);
+} else {
+  // Display filter options in UI
+  data.availableFilters.forEach(filter => {
+    console.log(`${filter.label}: ${filter.cost} coins for ${filter.screens} screens`);
+  });
+  
+  // Show current preference if exists
+  if (data.currentPreference) {
+    console.log(`Currently filtering by: ${data.currentPreference.genders.join(', ')}`);
+    console.log(`Screens remaining: ${data.currentPreference.screensRemaining}`);
+  }
+}
+```
+
+---
+
+### 3. Apply Gender Filter
+
+**Endpoint:** `POST http://localhost:3004/gender-filters/apply`
+
+**Headers:**
+```
+Authorization: Bearer {accessToken}
+Content-Type: application/json
+```
+
+**Request:**
+```json
+{
+  "genders": ["MALE", "FEMALE"]
+}
+```
+
+**Description:** Purchases and activates gender filter. Deducts coins from wallet and creates/updates filter preference. One payment covers all selected genders (you pay once regardless of how many genders you select).
+
+**Response:**
+```json
+{
+  "success": true,
+  "screensRemaining": 10,
+  "newBalance": 4800
+}
+```
+
+**Business Rules:**
+- Cost: 200 coins (configurable, default: 200)
+- Screens per purchase: 10 (configurable, default: 10)
+- If user already has a preference, screens are added to existing count
+- Selected genders must be valid based on user's gender:
+  - MALE/FEMALE users: Can only select MALE or FEMALE
+  - NON_BINARY users: Can select any combination
+
+**Error Responses:**
+- `400 Bad Request` - Invalid gender selection or insufficient balance
+- `401 Unauthorized` - Missing or invalid token
+- `403 Forbidden` - User has PREFER_NOT_TO_SAY gender
+
+**Example Usage:**
+```javascript
+// Apply gender filter
+const response = await fetch('http://localhost:3004/gender-filters/apply', {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${accessToken}`,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    genders: ['MALE', 'FEMALE'] // User selects which genders to filter by
+  })
+});
+
+if (response.ok) {
+  const { screensRemaining, newBalance } = await response.json();
+  console.log(`Filter activated! ${screensRemaining} screens remaining`);
+  console.log(`New balance: ${newBalance} coins`);
+} else {
+  const error = await response.json();
+  console.error('Failed to apply filter:', error.message);
+}
+```
+
+**Complete Flow:**
+1. User opens filter screen → `GET /gender-filters` to see options
+2. User selects genders → `POST /gender-filters/apply` to purchase
+3. Coins deducted, filter activated
+4. When user views matches, screens are decremented (handled by backend)
+5. When screens reach 0, user needs to purchase again
+
+---
+
 ## Wallet Service Endpoints
 
-### Get Coin Balance
+### 1. Get Coin Balance
 
 **Endpoint:** `GET http://localhost:3005/me/balance`
 
@@ -1082,9 +1311,40 @@ const { balance } = await response.json();
 
 ---
 
-## Discovery Service Endpoints
+### 2. Deduct Coins for Gender Filter
 
-**Note:** Discovery service is currently being set up. Homepage aggregation endpoint will be available in future iterations.
+**Endpoint:** `POST http://localhost:3005/me/transactions/gender-filter`
+
+**Headers:**
+```
+Authorization: Bearer {accessToken}
+Content-Type: application/json
+```
+
+**Request:**
+```json
+{
+  "amount": 200,
+  "screens": 10
+}
+```
+
+**Description:** Deducts coins from wallet for gender filter purchase. Creates a transaction record. This endpoint is typically called by discovery-service, not directly by frontend.
+
+**Response:**
+```json
+{
+  "newBalance": 4800,
+  "transactionId": "transaction-id-123"
+}
+```
+
+**Error Responses:**
+- `400 Bad Request` - Insufficient balance or invalid amount
+- `401 Unauthorized` - Missing or invalid token
+- `500 Internal Server Error` - Server error
+
+**Note:** Frontend should use `POST /gender-filters/apply` (discovery-service) instead of calling this endpoint directly. The discovery-service handles the wallet deduction automatically.
 
 ---
 
@@ -1100,4 +1360,7 @@ const { balance } = await response.json();
 - Brand logos: `logoUrl` field is available but may be `null` until production CDN is set up
 - Photo moderation happens automatically - frontend just needs to handle error messages
 - Gender can only be changed once from `PREFER_NOT_TO_SAY` to any other value
-- **Services are independently deployable** - Frontend calls each service directly (auth-service, user-service, wallet-service, etc.)
+- **Services are independently deployable** - Frontend calls each service directly (auth-service, user-service, wallet-service, discovery-service, etc.)
+- **Gender Filter:** Users with `PREFER_NOT_TO_SAY` gender cannot use gender filters
+- **Wallet:** Wallet is automatically created with 0 balance when first accessed (lazy initialization)
+- **Live Meetings:** Count includes users with statuses: `AVAILABLE`, `IN_SQUAD`, `IN_SQUAD_AVAILABLE`, `IN_BROADCAST`, `IN_BROADCAST_AVAILABLE`

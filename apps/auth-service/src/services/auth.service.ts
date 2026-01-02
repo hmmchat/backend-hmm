@@ -1,4 +1,4 @@
-import { Injectable, OnModuleInit } from "@nestjs/common";
+import { Injectable, OnModuleInit, HttpException, HttpStatus } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 
 import { ProviderGoogle } from "./providers/google.provider.js";
@@ -75,8 +75,15 @@ export class AuthService implements OnModuleInit {
   }
 
   async sendPhoneOtp(phone: string) {
-    await this.phone.send(phone);
-    return { ok: true };
+    try {
+      await this.phone.send(phone);
+      return { ok: true };
+    } catch (err) {
+      throw new HttpException(
+        err instanceof Error ? err.message : "Failed to send OTP",
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
   }
 
   async verifyPhoneOtp(phone: string, code: string, termsVer: string) {

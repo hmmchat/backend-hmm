@@ -576,7 +576,7 @@ export class UserService implements OnModuleInit {
       where: { id: userId },
       data: {
         status: data.status as UserStatus
-      }
+      } as any // Type assertion needed due to Prisma type generation issue
     });
 
     return { user };
@@ -594,7 +594,7 @@ export class UserService implements OnModuleInit {
           include: { brand: true },
           orderBy: { order: "asc" }
         }
-      }
+      } as any // Type assertion needed due to Prisma type generation issue
     });
 
     return { users };

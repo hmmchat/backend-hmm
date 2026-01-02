@@ -8,13 +8,15 @@ Simple step-by-step guide to run all backend services locally.
 
 ### Services Overview
 
-You'll need to run **3 backend services**:
+You'll need to run **5 backend services**:
 
 | Service | Port | Purpose |
 |---------|------|---------|
 | **Auth Service** | 3001 | Authentication, OAuth, tokens |
 | **User Service** | 3002 | User profiles, photos, preferences |
 | **Moderation Service** | 3003 | Photo validation (human detection, NSFW check) |
+| **Discovery Service** | 3004 | Gender filters, live meetings metrics, homepage aggregation |
+| **Wallet Service** | 3005 | Coin balance, transactions, wallet management |
 
 ### Prerequisites Check
 
@@ -58,6 +60,16 @@ cd ../..
 
 # Moderation Service
 cd apps/moderation-service
+npm install
+cd ../..
+
+# Discovery Service
+cd apps/discovery-service
+npm install
+cd ../..
+
+# Wallet Service
+cd apps/wallet-service
 npm install
 cd ../..
 ```
@@ -159,6 +171,56 @@ AWS_SECRET_ACCESS_KEY="your-aws-secret"
 AWS_REGION="us-east-1"
 ```
 
+### 3.4 Discovery Service
+
+Create a `.env` file in `apps/discovery-service/` directory:
+
+```bash
+cd apps/discovery-service
+touch .env
+```
+
+Open `.env` file and add these variables (ask backend team for values):
+
+```bash
+# Server
+PORT=3004
+ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
+
+# Database
+DATABASE_URL="postgresql://username:password@localhost:5432/hmm_discovery?schema=public"
+
+# JWT (same as auth-service)
+JWT_PUBLIC_JWK='{"kty":"EC","crv":"P-256","x":"...","y":"..."}'
+
+# Service URLs
+USER_SERVICE_URL=http://localhost:3002
+WALLET_SERVICE_URL=http://localhost:3005
+```
+
+### 3.5 Wallet Service
+
+Create a `.env` file in `apps/wallet-service/` directory:
+
+```bash
+cd apps/wallet-service
+touch .env
+```
+
+Open `.env` file and add these variables (ask backend team for values):
+
+```bash
+# Server
+PORT=3005
+ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
+
+# Database
+DATABASE_URL="postgresql://username:password@localhost:5432/hmm_wallet?schema=public"
+
+# JWT (same as auth-service)
+JWT_PUBLIC_JWK='{"kty":"EC","crv":"P-256","x":"...","y":"..."}'
+```
+
 **💡 Tip:** Ask the backend team for `.env.example` files or the actual values.
 
 ---
@@ -174,6 +236,8 @@ psql postgres
 # Create databases (in psql prompt)
 CREATE DATABASE hmm_auth;
 CREATE DATABASE hmm_user;
+CREATE DATABASE hmm_discovery;
+CREATE DATABASE hmm_wallet;
 
 # Exit psql
 \q
@@ -210,6 +274,37 @@ npm run seed
 
 **✅ Success:** You should see "Database synchronized successfully" and seed completion messages
 
+### 4.4 Set Up Discovery Service Database Schema
+
+```bash
+cd apps/discovery-service
+
+# Generate Prisma client
+npm run prisma:generate
+
+# Create database tables
+npm run prisma:push
+
+# Seed initial data (gender filter config)
+npm run prisma:seed
+```
+
+**✅ Success:** You should see "Database synchronized successfully" and seed completion messages
+
+### 4.5 Set Up Wallet Service Database Schema
+
+```bash
+cd apps/wallet-service
+
+# Generate Prisma client
+npm run prisma:generate
+
+# Create database tables
+npm run prisma:push
+```
+
+**✅ Success:** You should see "Database synchronized successfully"
+
 ---
 
 ## 🔴 Step 5: Start Redis
@@ -236,7 +331,7 @@ redis-cli ping
 
 ## 🚀 Step 6: Start All Services
 
-You'll need **3 terminals** to run all services:
+You'll need **5 terminals** to run all services:
 
 **Terminal 1: Auth Service**
 ```bash
@@ -271,6 +366,28 @@ npm run start:dev
 🚀 Moderation service running on http://localhost:3003
 ```
 
+**Terminal 4: Discovery Service**
+```bash
+cd apps/discovery-service
+npm run start:dev
+```
+
+**✅ Success:** You should see:
+```
+🚀 Discovery service running on http://localhost:3004
+```
+
+**Terminal 5: Wallet Service**
+```bash
+cd apps/wallet-service
+npm run start:dev
+```
+
+**✅ Success:** You should see:
+```
+🚀 Wallet service running on http://localhost:3005
+```
+
 **Keep all terminals open** - the services run here.
 
 ---
@@ -293,6 +410,14 @@ curl -X POST http://localhost:3003/moderation/check-image \
   -H "Content-Type: application/json" \
   -d '{"imageUrl": "https://example.com/test.jpg"}'
 # Expected: JSON response with moderation result
+
+# Check discovery service
+curl http://localhost:3004/metrics/meetings
+# Expected: {"liveMeetings":0}
+
+# Check wallet service (requires auth token - see FRONTEND_INTEGRATION.md)
+# curl http://localhost:3005/me/balance -H "Authorization: Bearer <token>"
+# Expected: {"balance":0}
 ```
 
 If all services respond, **backend is running successfully!** ✅
@@ -306,6 +431,8 @@ Now you can connect your frontend application to:
 - **Auth Service:** `http://localhost:3001`
 - **User Service:** `http://localhost:3002`
 - **Moderation Service:** `http://localhost:3003` (called automatically by user-service)
+- **Discovery Service:** `http://localhost:3004`
+- **Wallet Service:** `http://localhost:3005`
 
 **Example API calls:**
 ```javascript
@@ -332,7 +459,7 @@ fetch('http://localhost:3002/brands')
 
 ## ❓ Troubleshooting
 
-### "Port 3001/3002/3003 already in use"
+### "Port 3001/3002/3003/3004/3005 already in use"
 **Solution:** Another service is using the port. Either:
 - Stop the other service
 - Change PORT in the respective `.env` file to a different number
@@ -341,7 +468,7 @@ fetch('http://localhost:3002/brands')
 **Solution:** 
 - Check PostgreSQL is running: `psql -l`
 - Verify `DATABASE_URL` in `.env` is correct
-- Make sure databases exist: `psql -l | grep hmm_auth` and `psql -l | grep hmm_user`
+- Make sure databases exist: `psql -l | grep hmm_auth`, `psql -l | grep hmm_user`, `psql -l | grep hmm_discovery`, and `psql -l | grep hmm_wallet`
 
 ### "Redis connection failed"
 **Solution:**
@@ -358,6 +485,14 @@ npm run prisma:generate
 # For user service
 cd apps/user-service
 npm run prisma:generate
+
+# For discovery service
+cd apps/discovery-service
+npm run prisma:generate
+
+# For wallet service
+cd apps/wallet-service
+npm run prisma:generate
 ```
 
 ### "Seed data not found" (user-service)
@@ -365,6 +500,13 @@ npm run prisma:generate
 ```bash
 cd apps/user-service
 npm run seed
+```
+
+### "Seed data not found" (discovery-service)
+**Solution:**
+```bash
+cd apps/discovery-service
+npm run prisma:seed
 ```
 
 ### "Module not found" errors
@@ -410,6 +552,14 @@ npm run start:dev
 # Terminal 4: Start moderation service
 cd apps/moderation-service
 npm run start:dev
+
+# Terminal 5: Start discovery service
+cd apps/discovery-service
+npm run start:dev
+
+# Terminal 6: Start wallet service
+cd apps/wallet-service
+npm run start:dev
 ```
 
 **Check if running:**
@@ -419,12 +569,16 @@ curl http://localhost:3002/brands      # User service
 curl -X POST http://localhost:3003/moderation/check-image \
   -H "Content-Type: application/json" \
   -d '{"imageUrl": "https://example.com/test.jpg"}'  # Moderation service
+curl http://localhost:3004/metrics/meetings  # Discovery service
+# Wallet service requires auth token - see FRONTEND_INTEGRATION.md
 ```
 
 **Base URLs for frontend:**
 - Auth Service: `http://localhost:3001`
 - User Service: `http://localhost:3002`
 - Moderation Service: `http://localhost:3003` (internal use only)
+- Discovery Service: `http://localhost:3004`
+- Wallet Service: `http://localhost:3005`
 
 ---
 
@@ -450,11 +604,14 @@ curl -X POST http://localhost:3003/moderation/check-image \
 - [ ] Repository cloned
 - [ ] Dependencies installed for all services (`npm install`)
 - [ ] `.env` files created for all services with all variables
-- [ ] Databases created (`hmm_auth` and `hmm_user`)
+- [ ] Databases created (`hmm_auth`, `hmm_user`, `hmm_discovery`, `hmm_wallet`)
 - [ ] Auth service database schema set up (`npm run prisma:push`)
 - [ ] User service database schema set up (`npm run prisma:push`)
 - [ ] User service seed data populated (`npm run seed`)
-- [ ] All 3 backend services running (`npm run start:dev`)
+- [ ] Discovery service database schema set up (`npm run prisma:push`)
+- [ ] Discovery service seed data populated (`npm run prisma:seed`)
+- [ ] Wallet service database schema set up (`npm run prisma:push`)
+- [ ] All 5 backend services running (`npm run start:dev`)
 - [ ] All services verified with curl commands
 
 **All checked?** You're ready to integrate! 🎉

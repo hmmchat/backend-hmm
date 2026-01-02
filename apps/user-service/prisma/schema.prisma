@@ -68,6 +68,10 @@ model User {
   longitude     Float?
   locationUpdatedAt DateTime?
   
+  // Preferred Cities (array of city names for location-based matching)
+  // Empty array means user can connect with anyone from anywhere
+  preferredCities String[] @default([])
+  
   // Video Preferences (on/off)
   videoEnabled  Boolean  @default(true)
   

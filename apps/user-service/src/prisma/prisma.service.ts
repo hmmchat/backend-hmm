@@ -1,5 +1,4 @@
 import { Injectable, OnModuleInit, OnModuleDestroy } from "@nestjs/common";
-// @ts-ignore - Prisma client module resolution issue
 import { PrismaClient } from "@prisma/client";
 
 @Injectable()

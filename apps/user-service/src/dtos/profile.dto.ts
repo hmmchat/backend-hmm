@@ -52,6 +52,11 @@ export const UpdateLocationSchema = z.object({
   longitude: z.number().min(-180).max(180)
 });
 
+// Preferred Cities DTO
+export const UpdatePreferredCitiesSchema = z.object({
+  cities: z.array(z.string().min(1)).max(10) // Max 10 preferred cities
+});
+
 // Status DTO
 export const UpdateStatusSchema = z.object({
   status: UserStatusEnum
@@ -72,6 +77,7 @@ export type UpdateBrandPreferencesDto = z.infer<typeof UpdateBrandPreferencesSch
 export type UpdateInterestsDto = z.infer<typeof UpdateInterestsSchema>;
 export type UpdateValuesDto = z.infer<typeof UpdateValuesSchema>;
 export type UpdateLocationDto = z.infer<typeof UpdateLocationSchema>;
+export type UpdatePreferredCitiesDto = z.infer<typeof UpdatePreferredCitiesSchema>;
 export type UpdateStatusDto = z.infer<typeof UpdateStatusSchema>;
 export type CreateMusicPreferenceDto = z.infer<typeof CreateMusicPreferenceSchema>;
 

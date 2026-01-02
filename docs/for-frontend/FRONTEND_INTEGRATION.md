@@ -603,7 +603,7 @@ You can display this with the album art, song name, and artist name in your UI.
 
 ---
 
-### 9. Location
+### 9. Location (GPS Coordinates)
 
 **Endpoint:** `PATCH http://localhost:3002/me/location`
 
@@ -614,6 +614,27 @@ You can display this with the album art, song name, and artist name in your UI.
   "longitude": 77.1025
 }
 ```
+
+**Note:** This endpoint updates GPS coordinates. For location-based matching with preferred cities, use the Discovery Service location endpoints (`/location/preference`). See "Location Feature" section under Discovery Service endpoints.
+
+---
+
+### 9.1 Preferred Cities (Location-Based Matching)
+
+**Note:** Preferred cities are managed through the Discovery Service. See "Location Feature" section under Discovery Service endpoints.
+
+**Summary:**
+- **Get preferred cities:** `GET http://localhost:3004/location/preference` (requires auth)
+- **Update preferred cities:** `PATCH http://localhost:3004/location/preference` (requires auth)
+- **Get popular cities:** `GET http://localhost:3004/location/cities` (public)
+- **Search cities:** `GET http://localhost:3004/location/search?q=mumbai` (public)
+- **Locate me:** `POST http://localhost:3004/location/locate-me` (public)
+
+**Business Logic:**
+- Empty preferred cities array = user can connect with anyone from anywhere (default)
+- Non-empty array = user prefers to connect with people from these cities
+- Maximum 10 cities allowed
+- Cities are stored as strings (exact match for filtering)
 
 ---
 
@@ -974,6 +995,11 @@ All signup endpoints require:
 | Endpoint | Method | Auth | Purpose |
 |----------|--------|------|---------|
 | `/metrics/meetings` | GET | No | Get live meetings count |
+| `/location/cities` | GET | No | Get cities with maximum users |
+| `/location/search` | GET | No | Search for cities |
+| `/location/locate-me` | POST | No | Get city from GPS coordinates |
+| `/location/preference` | GET | Yes | Get user's preferred cities |
+| `/location/preference` | PATCH | Yes | Update user's preferred cities |
 | `/gender-filters` | GET | Yes | Get available gender filters |
 | `/gender-filters/apply` | POST | Yes | Purchase and activate gender filter |
 
@@ -1006,7 +1032,9 @@ All signup endpoints require:
 | `/me/brand-preferences` | PATCH | Yes | Update brand preferences (4-5 brands) |
 | `/me/interests` | PATCH | Yes | Update interests (max 4) |
 | `/me/values` | PATCH | Yes | Update values (max 4) |
-| `/me/location` | PATCH | Yes | Update location |
+| `/me/location` | PATCH | Yes | Update location (lat/lng) |
+| `/me/preferred-cities` | PATCH | Yes | Update preferred cities (internal use) |
+| `/metrics/cities` | GET | No | Get cities with max users (internal use) |
 | `/me/status` | PATCH | Yes | Update user status |
 | `/users/batch` | POST | No | Get multiple users by IDs |
 | `/users/nearby` | GET | No | Get nearby users |
@@ -1058,7 +1086,276 @@ All signup endpoints require:
 
 ## Discovery Service Endpoints
 
-### 1. Get Live Meetings Count
+### 1. Location Feature
+
+The location feature allows users to:
+- View cities with the most users
+- Search for cities
+- Get their current city from GPS coordinates
+- Set preferred cities for location-based matching
+
+#### 1.1 Get Cities with Maximum Users
+
+**Endpoint:** `GET http://localhost:3004/location/cities`
+
+**Query Parameters:**
+- `limit` (optional): Number of cities to return (1-100, default: 20)
+
+**Description:** Returns a list of cities sorted by the number of users who have set that city as preferred. Useful for showing popular cities on the homepage.
+
+**Response:**
+```json
+[
+  {
+    "city": "Mumbai",
+    "userCount": 1250,
+    "onlineCount": 450,
+    "chattingCount": 120
+  },
+  {
+    "city": "Delhi",
+    "userCount": 980,
+    "onlineCount": 320,
+    "chattingCount": 95
+  },
+  {
+    "city": "Bangalore",
+    "userCount": 750,
+    "onlineCount": 280,
+    "chattingCount": 80
+  }
+]
+```
+
+**Example Usage:**
+```javascript
+// Get top 10 cities
+const response = await fetch('http://localhost:3004/location/cities?limit=10');
+const cities = await response.json();
+// Display cities in UI with user counts
+```
+
+**Note:** This endpoint is public (no authentication required).
+
+---
+
+#### 1.2 Search Cities
+
+**Endpoint:** `GET http://localhost:3004/location/search`
+
+**Query Parameters:**
+- `q` (required): Search query (city name, min 1 char, max 100 chars)
+- `limit` (optional): Number of results to return (1-100, default: 20)
+
+**Description:** Searches for cities using OpenStreetMap Nominatim API. Returns matching cities with country and state information.
+
+**Response:**
+```json
+[
+  {
+    "city": "Mumbai",
+    "country": "India",
+    "state": "Maharashtra"
+  },
+  {
+    "city": "Mumbai Beach",
+    "country": "United States",
+    "state": "Florida"
+  }
+]
+```
+
+**Example Usage:**
+```javascript
+// Search for cities
+const response = await fetch(`http://localhost:3004/location/search?q=${encodeURIComponent('mumbai')}&limit=10`);
+const cities = await response.json();
+// Display search results in UI
+```
+
+**Note:** This endpoint is public (no authentication required). Uses OpenStreetMap Nominatim API for city search.
+
+---
+
+#### 1.3 Locate Me (Get City from GPS Coordinates)
+
+**Endpoint:** `POST http://localhost:3004/location/locate-me`
+
+**Request:**
+```json
+{
+  "latitude": 19.0760,
+  "longitude": 72.8777
+}
+```
+
+**Description:** Uses reverse geocoding to get the city name from GPS coordinates. Useful for "Locate Me" button that gets user's current location.
+
+**Response:**
+```json
+{
+  "city": "Mumbai",
+  "country": "India",
+  "state": "Maharashtra"
+}
+```
+
+**Example Usage:**
+```javascript
+// Get user's current location using browser Geolocation API
+navigator.geolocation.getCurrentPosition(async (position) => {
+  const { latitude, longitude } = position.coords;
+  
+  // Get city from coordinates
+  const response = await fetch('http://localhost:3004/location/locate-me', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ latitude, longitude })
+  });
+  const { city, country, state } = await response.json();
+  // Display: "Mumbai, Maharashtra, India"
+});
+```
+
+**Note:** This endpoint is public (no authentication required). Uses OpenStreetMap Nominatim API for reverse geocoding.
+
+**Coordinate Validation:**
+- `latitude`: -90 to 90
+- `longitude`: -180 to 180
+
+---
+
+#### 1.4 Get Preferred Cities
+
+**Endpoint:** `GET http://localhost:3004/location/preference`
+
+**Headers:**
+```
+Authorization: Bearer {accessToken}
+```
+
+**Description:** Returns the user's currently preferred cities. Empty array means user can connect with anyone from anywhere (default state).
+
+**Response:**
+```json
+{
+  "cities": ["Mumbai", "Delhi", "Bangalore"]
+}
+```
+
+**Response (no preferred cities - default):**
+```json
+{
+  "cities": []
+}
+```
+
+**Example Usage:**
+```javascript
+// Get user's preferred cities
+const response = await fetch('http://localhost:3004/location/preference', {
+  headers: {
+    'Authorization': `Bearer ${accessToken}`
+  }
+});
+const { cities } = await response.json();
+
+if (cities.length === 0) {
+  // User can connect with anyone from anywhere
+  console.log('No location preference set');
+} else {
+  // User prefers these cities
+  console.log(`Preferred cities: ${cities.join(', ')}`);
+}
+```
+
+---
+
+#### 1.5 Update Preferred Cities
+
+**Endpoint:** `PATCH http://localhost:3004/location/preference`
+
+**Headers:**
+```
+Authorization: Bearer {accessToken}
+Content-Type: application/json
+```
+
+**Request:**
+```json
+{
+  "cities": ["Mumbai", "Delhi", "Pune"]
+}
+```
+
+**Request (clear preference - allow anyone from anywhere):**
+```json
+{
+  "cities": []
+}
+```
+
+**Description:** Updates the user's preferred cities. Users can set up to 10 cities. Empty array clears the preference (user can connect with anyone from anywhere).
+
+**Response:**
+```json
+{
+  "cities": ["Mumbai", "Delhi", "Pune"]
+}
+```
+
+**Validation Rules:**
+- Maximum 10 cities
+- Each city name must be at least 1 character
+- Empty array is allowed (clears preference)
+
+**Example Usage:**
+```javascript
+// Set preferred cities
+const response = await fetch('http://localhost:3004/location/preference', {
+  method: 'PATCH',
+  headers: {
+    'Authorization': `Bearer ${accessToken}`,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    cities: ['Mumbai', 'Delhi', 'Bangalore']
+  })
+});
+const { cities } = await response.json();
+
+// Clear preference (allow anyone from anywhere)
+const clearResponse = await fetch('http://localhost:3004/location/preference', {
+  method: 'PATCH',
+  headers: {
+    'Authorization': `Bearer ${accessToken}`,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    cities: []
+  })
+});
+```
+
+**Business Rules:**
+- **Empty array (`[]`):** User can connect with anyone from anywhere (default state)
+- **Non-empty array:** User prefers to connect with people from these cities
+- **Maximum 10 cities:** Prevents excessive selections
+- **City names:** Stored as strings (exact match required for filtering)
+
+**Complete Location Flow:**
+1. User clicks "Location" button on homepage
+2. Frontend shows list of cities: `GET /location/cities?limit=20`
+3. User can:
+   - **Search for cities:** `GET /location/search?q=mumbai`
+   - **Use "Locate Me":** Get GPS → `POST /location/locate-me` with coordinates
+   - **Select from popular cities:** Display results from step 2
+4. User selects cities and saves: `PATCH /location/preference` with selected cities
+5. User's preference is stored and used for matching
+
+---
+
+### 2. Get Live Meetings Count
 
 **Endpoint:** `GET http://localhost:3004/metrics/meetings`
 
@@ -1425,3 +1722,9 @@ Content-Type: application/json
 - **Gender Filter:** Users with `PREFER_NOT_TO_SAY` gender can only use the "All Gender" option (default/unfiltered state)
 - **Wallet:** Wallet is automatically created with 0 balance when first accessed (lazy initialization)
 - **Live Meetings:** Count includes users with statuses: `AVAILABLE`, `IN_SQUAD`, `IN_SQUAD_AVAILABLE`, `IN_BROADCAST`, `IN_BROADCAST_AVAILABLE`
+- **Location Feature:**
+  - Empty preferred cities array = user can connect with anyone from anywhere (default state)
+  - Non-empty preferred cities = user prefers to connect with people from those cities
+  - Maximum 10 cities allowed per user
+  - City search and "locate me" use OpenStreetMap Nominatim API (public, no API key required)
+  - Popular cities list shows cities sorted by user count (from users who have set preferred cities)

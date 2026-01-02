@@ -196,6 +196,9 @@ JWT_PUBLIC_JWK='{"kty":"EC","crv":"P-256","x":"...","y":"..."}'
 # Service URLs
 USER_SERVICE_URL=http://localhost:3002
 WALLET_SERVICE_URL=http://localhost:3005
+
+# Geocoding API (OpenStreetMap Nominatim - defaults to public instance if not set)
+GEOCODING_API_URL=https://nominatim.openstreetmap.org
 ```
 
 ### 3.5 Wallet Service

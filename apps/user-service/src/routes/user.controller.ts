@@ -21,6 +21,7 @@ import {
   UpdateInterestsSchema,
   UpdateValuesSchema,
   UpdateLocationSchema,
+  UpdatePreferredCitiesSchema,
   UpdateStatusSchema,
   CreateMusicPreferenceSchema
 } from "../dtos/profile.dto.js";
@@ -233,6 +234,14 @@ export class UserController {
     return this.userService.updateLocation(token, dto);
   }
 
+  @Patch("me/preferred-cities")
+  async updatePreferredCities(@Headers("authorization") authz: string, @Body() body: any) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    const dto = UpdatePreferredCitiesSchema.parse(body);
+    return this.userService.updatePreferredCities(token, dto);
+  }
+
   /* ---------- Status ---------- */
 
   @Patch("me/status")
@@ -274,6 +283,15 @@ export class UserController {
   }
 
   /* ---------- Metrics ---------- */
+
+  @Get("metrics/cities")
+  async getCitiesWithMaxUsers(@Query("limit") limit?: string) {
+    const limitNum = limit ? parseInt(limit, 10) : 20;
+    if (isNaN(limitNum) || limitNum < 1 || limitNum > 100) {
+      throw new HttpException("Limit must be between 1 and 100", HttpStatus.BAD_REQUEST);
+    }
+    return this.userService.getCitiesWithMaxUsers(limitNum);
+  }
 
   @Get("metrics/active-meetings")
   async getActiveMeetingsCount() {

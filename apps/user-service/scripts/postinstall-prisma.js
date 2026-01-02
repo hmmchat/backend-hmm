@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Postinstall script to create @prisma/client package.json for proper module resolution
+// Postinstall script to create @prisma/client symlink for proper module resolution
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -10,25 +10,38 @@ const __dirname = path.dirname(__filename);
 const prismaClientDir = path.join(__dirname, '../node_modules/@prisma/client');
 const prismaGeneratedDir = path.join(__dirname, '../node_modules/.prisma/client');
 
-// Create @prisma/client directory if it doesn't exist
-if (!fs.existsSync(prismaClientDir)) {
-  fs.mkdirSync(prismaClientDir, { recursive: true });
+// Remove existing @prisma/client if it exists (could be directory or symlink)
+if (fs.existsSync(prismaClientDir)) {
+  try {
+    if (fs.lstatSync(prismaClientDir).isSymbolicLink()) {
+      fs.unlinkSync(prismaClientDir);
+    } else {
+      fs.rmSync(prismaClientDir, { recursive: true, force: true });
+    }
+  } catch (error) {
+    console.error('Error removing existing @prisma/client:', error.message);
+  }
 }
 
-// Create package.json that points to the generated client
-// The package.json is in node_modules/@prisma/client/
-// The generated client is in node_modules/.prisma/client/
-// So we need to go up one level, then into .prisma
-const packageJson = {
-  name: '@prisma/client',
-  main: '../.prisma/client/index.js',
-  types: '../.prisma/client/index.d.ts'
-};
-
-fs.writeFileSync(
-  path.join(prismaClientDir, 'package.json'),
-  JSON.stringify(packageJson, null, 2)
-);
-
-console.log('✅ Created @prisma/client package.json for user-service');
+// Create symlink from @prisma/client to .prisma/client
+try {
+  fs.symlinkSync('../.prisma/client', prismaClientDir, 'dir');
+  console.log('✅ Created @prisma/client symlink for user-service');
+} catch (error) {
+  // If symlink fails (e.g., on Windows), create package.json as fallback
+  console.warn('⚠️  Symlink failed, creating package.json fallback:', error.message);
+  if (!fs.existsSync(prismaClientDir)) {
+    fs.mkdirSync(prismaClientDir, { recursive: true });
+  }
+  const packageJson = {
+    name: '@prisma/client',
+    main: '../.prisma/client/index.js',
+    types: '../.prisma/client/index.d.ts'
+  };
+  fs.writeFileSync(
+    path.join(prismaClientDir, 'package.json'),
+    JSON.stringify(packageJson, null, 2)
+  );
+  console.log('⚠️  Created @prisma/client package.json (symlink failed)');
+}
 

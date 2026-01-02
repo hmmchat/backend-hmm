@@ -3,10 +3,130 @@
 MODERATION_URL="http://localhost:3003"
 USER_SERVICE_URL="http://localhost:3002"
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
 echo "=========================================="
 echo "  COMPREHENSIVE TEST RUN"
 echo "  Testing All Flows from TESTING.md"
 echo "=========================================="
+echo ""
+
+# ==========================================
+# PHASE 0: CLEANUP AND STARTUP
+# ==========================================
+
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "PHASE 0: CLEANUP AND STARTUP"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+
+# Step 1: Stop all services
+echo "Step 0.1: Stopping all services..."
+pkill -f "nest start" 2>/dev/null
+pkill -f "node.*main.js" 2>/dev/null
+pkill -f "auth-service" 2>/dev/null
+pkill -f "user-service" 2>/dev/null
+pkill -f "moderation-service" 2>/dev/null
+sleep 2
+echo "✅ All services stopped"
+echo ""
+
+# Step 2: Check infrastructure
+echo "Step 0.2: Checking infrastructure..."
+if pg_isready -q 2>/dev/null; then
+    echo "✅ PostgreSQL is running"
+else
+    echo "❌ PostgreSQL is not running. Please start it first."
+    exit 1
+fi
+
+if redis-cli ping > /dev/null 2>&1; then
+    echo "✅ Redis is running"
+else
+    echo "⚠️  Redis is not running (optional for user-service)"
+fi
+echo ""
+
+# Step 3: Start moderation-service
+echo "Step 0.3: Starting moderation-service..."
+cd "$PROJECT_ROOT/apps/moderation-service"
+npm run start:dev > /tmp/moderation-service-test.log 2>&1 &
+MODERATION_PID=$!
+echo "  Started with PID: $MODERATION_PID"
+echo ""
+
+# Step 4: Start user-service
+echo "Step 0.4: Starting user-service..."
+cd "$PROJECT_ROOT/apps/user-service"
+npm run start:dev > /tmp/user-service-test.log 2>&1 &
+USER_PID=$!
+echo "  Started with PID: $USER_PID"
+echo ""
+
+# Step 5: Wait for services to be ready
+echo "Step 0.5: Waiting for services to be ready..."
+MAX_WAIT=30
+WAIT_COUNT=0
+
+# Wait for moderation-service
+MODERATION_READY=false
+while [ $WAIT_COUNT -lt $MAX_WAIT ]; do
+    if curl -s -X POST "$MODERATION_URL/moderation/check-image" -H "Content-Type: application/json" -d '{"imageUrl":"test"}' > /dev/null 2>&1; then
+        echo "✅ Moderation service is ready"
+        MODERATION_READY=true
+        break
+    fi
+    WAIT_COUNT=$((WAIT_COUNT + 1))
+    sleep 1
+done
+
+# Wait for user-service
+WAIT_COUNT=0
+USER_READY=false
+while [ $WAIT_COUNT -lt $MAX_WAIT ]; do
+    if curl -s "$USER_SERVICE_URL/users/test" > /dev/null 2>&1; then
+        echo "✅ User service is ready"
+        USER_READY=true
+        break
+    fi
+    WAIT_COUNT=$((WAIT_COUNT + 1))
+    sleep 1
+done
+echo ""
+
+if [ "$MODERATION_READY" != "true" ] || [ "$USER_READY" != "true" ]; then
+    echo "❌ Services failed to start within $MAX_WAIT seconds"
+    echo "Moderation service logs: tail -f /tmp/moderation-service-test.log"
+    echo "User service logs: tail -f /tmp/user-service-test.log"
+    kill $MODERATION_PID $USER_PID 2>/dev/null
+    exit 1
+fi
+
+# Step 6: Seed database if needed
+echo "Step 0.6: Checking database seed data..."
+BRAND_COUNT=$(psql postgres -d hmm_user -t -c "SELECT COUNT(*) FROM brands;" 2>/dev/null | tr -d ' ' || echo "0")
+if [ "$BRAND_COUNT" = "0" ]; then
+    echo "  Seeding database..."
+    cd "$PROJECT_ROOT/apps/user-service"
+    npm run seed > /tmp/user-service-seed.log 2>&1
+    if [ $? -eq 0 ]; then
+        echo "  ✅ Database seeded"
+    else
+        echo "  ⚠️  Seed failed (may already be seeded)"
+    fi
+else
+    echo "  ✅ Database already seeded (Brands: $BRAND_COUNT)"
+fi
+echo ""
+
+# ==========================================
+# PHASE 1: TESTING
+# ==========================================
+
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "PHASE 1: TESTING"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
 # Test results

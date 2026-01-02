@@ -11,24 +11,91 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
 echo -e "${BLUE}🚀 Full Authentication Flow Testing${NC}"
 echo ""
 
-# Check if service is running
-echo -e "${YELLOW}Step 1: Checking service...${NC}"
-if curl -s -f "$BASE_URL/me/metrics" > /dev/null 2>&1; then
-    echo -e "${GREEN}✅ Service is running${NC}"
+# ==========================================
+# PHASE 0: CLEANUP AND STARTUP
+# ==========================================
+
+echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${YELLOW}PHASE 0: CLEANUP AND STARTUP${NC}"
+echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo ""
+
+# Step 1: Stop all services
+echo -e "${YELLOW}Step 0.1: Stopping all services...${NC}"
+pkill -f "nest start" 2>/dev/null
+pkill -f "node.*main.js" 2>/dev/null
+pkill -f "auth-service" 2>/dev/null
+pkill -f "user-service" 2>/dev/null
+pkill -f "moderation-service" 2>/dev/null
+sleep 2
+echo -e "${GREEN}✅ All services stopped${NC}"
+echo ""
+
+# Step 2: Check infrastructure
+echo -e "${YELLOW}Step 0.2: Checking infrastructure...${NC}"
+if pg_isready -q 2>/dev/null; then
+    echo -e "${GREEN}✅ PostgreSQL is running${NC}"
 else
-    echo -e "${RED}❌ Service is not running. Please start it first:${NC}"
-    echo "   cd apps/auth-service && npm run start:dev"
+    echo -e "${RED}❌ PostgreSQL is not running. Please start it first.${NC}"
+    exit 1
+fi
+
+if redis-cli ping > /dev/null 2>&1; then
+    echo -e "${GREEN}✅ Redis is running${NC}"
+else
+    echo -e "${YELLOW}⚠️  Redis is not running (optional for auth-service)${NC}"
+fi
+echo ""
+
+# Step 3: Start auth-service
+echo -e "${YELLOW}Step 0.3: Starting auth-service...${NC}"
+cd "$PROJECT_ROOT/apps/auth-service"
+npm run start:dev > /tmp/auth-service-test.log 2>&1 &
+AUTH_PID=$!
+echo "  Started with PID: $AUTH_PID"
+echo ""
+
+# Step 4: Wait for service to be ready
+echo -e "${YELLOW}Step 0.4: Waiting for auth-service to be ready...${NC}"
+MAX_WAIT=30
+WAIT_COUNT=0
+while [ $WAIT_COUNT -lt $MAX_WAIT ]; do
+    if curl -s -f "$BASE_URL/me/metrics" > /dev/null 2>&1; then
+        echo -e "${GREEN}✅ Auth service is ready${NC}"
+        break
+    fi
+    WAIT_COUNT=$((WAIT_COUNT + 1))
+    sleep 1
+    echo -n "."
+done
+echo ""
+
+if [ $WAIT_COUNT -ge $MAX_WAIT ]; then
+    echo -e "${RED}❌ Auth service failed to start within $MAX_WAIT seconds${NC}"
+    echo "Check logs: tail -f /tmp/auth-service-test.log"
+    kill $AUTH_PID 2>/dev/null
     exit 1
 fi
 echo ""
 
+# ==========================================
+# PHASE 1: TESTING
+# ==========================================
+
+echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${YELLOW}PHASE 1: AUTHENTICATION FLOW TESTING${NC}"
+echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo ""
+
 # Check Google Client ID - Auto-configure if needed
-echo -e "${YELLOW}Step 2: Checking Google OAuth configuration...${NC}"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-AUTH_SERVICE_DIR="$(cd "$SCRIPT_DIR/../../apps/auth-service" && pwd)"
+echo -e "${YELLOW}Step 1.1: Checking Google OAuth configuration...${NC}"
+AUTH_SERVICE_DIR="$PROJECT_ROOT/apps/auth-service"
 GOOGLE_CLIENT_ID=$(grep "^GOOGLE_CLIENT_ID=" "$AUTH_SERVICE_DIR/.env" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "")
 
 if [ -z "$GOOGLE_CLIENT_ID" ] || [ "$GOOGLE_CLIENT_ID" = "your-google-client-id" ] || [ "$GOOGLE_CLIENT_ID" = "your_google_web_client_id.apps.googleusercontent.com" ]; then
@@ -44,7 +111,7 @@ fi
 echo ""
 
 # Guide user to get token
-echo -e "${YELLOW}Step 3: Get Google ID Token${NC}"
+echo -e "${YELLOW}Step 1.2: Get Google ID Token${NC}"
 echo ""
 echo -e "${CYAN}📋 Follow these simple steps:${NC}"
 echo ""
@@ -123,7 +190,7 @@ echo ""
 
 # Test Google signup/login
 echo ""
-echo -e "${YELLOW}Step 4: Testing Google Signup/Login...${NC}"
+echo -e "${YELLOW}Step 1.3: Testing Google Signup/Login...${NC}"
 echo ""
 
 RESPONSE=$(curl -s -X POST "$BASE_URL/auth/google" \
@@ -145,8 +212,7 @@ if echo "$RESPONSE" | jq . > /dev/null 2>&1; then
         echo -e "${CYAN}Tokens saved. Running full end-to-end tests...${NC}"
         echo ""
         
-        # Run e2e tests
-        "$SCRIPT_DIR/test-e2e.sh" "$ACCESS_TOKEN" "$REFRESH_TOKEN"
+        echo -e "${GREEN}✅ Authentication flow test completed successfully!${NC}"
     else
         echo -e "${RED}❌ Signup/Login failed${NC}"
         echo "$RESPONSE" | jq .

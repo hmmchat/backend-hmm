@@ -11,7 +11,7 @@ import { GenderFilterService } from "../services/gender-filter.service.js";
 import { z } from "zod";
 
 const ApplyGenderFilterSchema = z.object({
-  genders: z.array(z.enum(["MALE", "FEMALE", "NON_BINARY"])).min(1)
+  genders: z.array(z.enum(["MALE", "FEMALE", "NON_BINARY", "ALL"])).min(1)
 });
 
 @Controller()

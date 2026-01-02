@@ -200,14 +200,16 @@ if [ ! -z "$TOKEN_PREFER_NOT_TO_SAY" ]; then
     BODY=$(echo "$RESPONSE" | sed '/HTTP_STATUS/d')
     
     if [ "$HTTP_STATUS" = "200" ]; then
-        HAS_APPLICABLE_FALSE=$(echo "$BODY" | grep -q '"applicable":false' && echo "yes" || echo "no")
-        HAS_REASON=$(echo "$BODY" | grep -q '"reason"' && echo "yes" || echo "no")
+        HAS_APPLICABLE_TRUE=$(echo "$BODY" | grep -q '"applicable":true' && echo "yes" || echo "no")
+        HAS_ALL_FILTER=$(echo "$BODY" | grep -q '"gender":"ALL"' && echo "yes" || echo "no")
+        NO_MALE_FILTER=$(echo "$BODY" | grep -q '"gender":"MALE"' && echo "no" || echo "yes")
+        NO_FEMALE_FILTER=$(echo "$BODY" | grep -q '"gender":"FEMALE"' && echo "no" || echo "yes")
+        NO_NON_BINARY_FILTER=$(echo "$BODY" | grep -q '"gender":"NON_BINARY"' && echo "no" || echo "yes")
         
-        if [ "$HAS_APPLICABLE_FALSE" = "yes" ] && [ "$HAS_REASON" = "yes" ]; then
-            REASON=$(echo "$BODY" | grep -o '"reason":"[^"]*"' | cut -d'"' -f4)
-            echo "  ✅ Filter is not applicable for PREFER_NOT_TO_SAY user"
-            echo "  Reason: $REASON"
-            test_result 0 "PREFER_NOT_TO_SAY user filter disabled"
+        if [ "$HAS_APPLICABLE_TRUE" = "yes" ] && [ "$HAS_ALL_FILTER" = "yes" ] && [ "$NO_MALE_FILTER" = "yes" ] && [ "$NO_FEMALE_FILTER" = "yes" ] && [ "$NO_NON_BINARY_FILTER" = "yes" ]; then
+            echo "  ✅ PREFER_NOT_TO_SAY user gets 'All Gender' option only"
+            echo "  ✅ Does not show paid filters (MALE, FEMALE, NON_BINARY)"
+            test_result 0 "PREFER_NOT_TO_SAY user sees only ALL option"
         else
             echo "  Response: $BODY"
             test_result 1 "PREFER_NOT_TO_SAY user filter check"
@@ -235,11 +237,12 @@ if [ ! -z "$TOKEN_MALE" ]; then
         HAS_APPLICABLE_TRUE=$(echo "$BODY" | grep -q '"applicable":true' && echo "yes" || echo "no")
         HAS_MALE_FILTER=$(echo "$BODY" | grep -q '"gender":"MALE"' && echo "yes" || echo "no")
         HAS_FEMALE_FILTER=$(echo "$BODY" | grep -q '"gender":"FEMALE"' && echo "yes" || echo "no")
+        HAS_ALL_FILTER=$(echo "$BODY" | grep -q '"gender":"ALL"' && echo "yes" || echo "no")
         NO_NON_BINARY=$(echo "$BODY" | grep -q '"gender":"NON_BINARY"' && echo "no" || echo "yes")
         
-        if [ "$HAS_APPLICABLE_TRUE" = "yes" ] && [ "$HAS_MALE_FILTER" = "yes" ] && [ "$HAS_FEMALE_FILTER" = "yes" ] && [ "$NO_NON_BINARY" = "yes" ]; then
+        if [ "$HAS_APPLICABLE_TRUE" = "yes" ] && [ "$HAS_MALE_FILTER" = "yes" ] && [ "$HAS_FEMALE_FILTER" = "yes" ] && [ "$HAS_ALL_FILTER" = "yes" ] && [ "$NO_NON_BINARY" = "yes" ]; then
             echo "  ✅ Filter is applicable for MALE user"
-            echo "  ✅ Shows MALE and FEMALE filters only (2 options)"
+            echo "  ✅ Shows MALE, FEMALE, and All Gender filters (3 options)"
             echo "  ✅ Does not show NON_BINARY filter"
             test_result 0 "MALE user sees correct filters"
         else
@@ -269,11 +272,12 @@ if [ ! -z "$TOKEN_FEMALE" ]; then
         HAS_APPLICABLE_TRUE=$(echo "$BODY" | grep -q '"applicable":true' && echo "yes" || echo "no")
         HAS_MALE_FILTER=$(echo "$BODY" | grep -q '"gender":"MALE"' && echo "yes" || echo "no")
         HAS_FEMALE_FILTER=$(echo "$BODY" | grep -q '"gender":"FEMALE"' && echo "yes" || echo "no")
+        HAS_ALL_FILTER=$(echo "$BODY" | grep -q '"gender":"ALL"' && echo "yes" || echo "no")
         NO_NON_BINARY=$(echo "$BODY" | grep -q '"gender":"NON_BINARY"' && echo "no" || echo "yes")
         
-        if [ "$HAS_APPLICABLE_TRUE" = "yes" ] && [ "$HAS_MALE_FILTER" = "yes" ] && [ "$HAS_FEMALE_FILTER" = "yes" ] && [ "$NO_NON_BINARY" = "yes" ]; then
+        if [ "$HAS_APPLICABLE_TRUE" = "yes" ] && [ "$HAS_MALE_FILTER" = "yes" ] && [ "$HAS_FEMALE_FILTER" = "yes" ] && [ "$HAS_ALL_FILTER" = "yes" ] && [ "$NO_NON_BINARY" = "yes" ]; then
             echo "  ✅ Filter is applicable for FEMALE user"
-            echo "  ✅ Shows MALE and FEMALE filters only (2 options)"
+            echo "  ✅ Shows MALE, FEMALE, and All Gender filters (3 options)"
             echo "  ✅ Does not show NON_BINARY filter"
             test_result 0 "FEMALE user sees correct filters"
         else
@@ -304,10 +308,11 @@ if [ ! -z "$TOKEN_NON_BINARY" ]; then
         HAS_MALE_FILTER=$(echo "$BODY" | grep -q '"gender":"MALE"' && echo "yes" || echo "no")
         HAS_FEMALE_FILTER=$(echo "$BODY" | grep -q '"gender":"FEMALE"' && echo "yes" || echo "no")
         HAS_NON_BINARY_FILTER=$(echo "$BODY" | grep -q '"gender":"NON_BINARY"' && echo "yes" || echo "no")
+        HAS_ALL_FILTER=$(echo "$BODY" | grep -q '"gender":"ALL"' && echo "yes" || echo "no")
         
-        if [ "$HAS_APPLICABLE_TRUE" = "yes" ] && [ "$HAS_MALE_FILTER" = "yes" ] && [ "$HAS_FEMALE_FILTER" = "yes" ] && [ "$HAS_NON_BINARY_FILTER" = "yes" ]; then
+        if [ "$HAS_APPLICABLE_TRUE" = "yes" ] && [ "$HAS_MALE_FILTER" = "yes" ] && [ "$HAS_FEMALE_FILTER" = "yes" ] && [ "$HAS_NON_BINARY_FILTER" = "yes" ] && [ "$HAS_ALL_FILTER" = "yes" ]; then
             echo "  ✅ Filter is applicable for NON_BINARY user"
-            echo "  ✅ Shows all 3 filters (MALE, FEMALE, NON_BINARY)"
+            echo "  ✅ Shows all 4 filters (MALE, FEMALE, NON_BINARY, All Gender)"
             test_result 0 "NON_BINARY user sees all filters"
         else
             echo "  Response: $BODY"

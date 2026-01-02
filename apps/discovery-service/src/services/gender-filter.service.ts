@@ -4,7 +4,7 @@ import { UserClientService } from "./user-client.service.js";
 import { WalletClientService } from "./wallet-client.service.js";
 
 interface GenderFilterOption {
-  gender: "MALE" | "FEMALE" | "NON_BINARY";
+  gender: "MALE" | "FEMALE" | "NON_BINARY" | "ALL";
   label: string;
   cost: number;
   screens: number;
@@ -73,16 +73,27 @@ export class GenderFilterService {
       throw new HttpException("User profile not found", HttpStatus.NOT_FOUND);
     }
 
-    // Rule 1: If user gender is "PREFER_NOT_TO_SAY", disable the filter
-    if (userGender === "PREFER_NOT_TO_SAY" || userGender === null) {
-      return {
-        applicable: false,
-        reason: "User needs to give consent to their gender to filter others"
-      };
-    }
-
     // Get configuration
     const config = await this.getConfig();
+
+    // Rule 1: If user gender is "PREFER_NOT_TO_SAY", only return "ALL" option (no filter)
+    if (userGender === "PREFER_NOT_TO_SAY" || userGender === null) {
+      return {
+        applicable: true,
+        availableFilters: [
+          {
+            gender: "ALL",
+            label: "All Gender",
+            cost: 0,
+            screens: 0
+          }
+        ],
+        config: {
+          coinsPerScreen: config.coinsPerScreen,
+          screensPerPurchase: config.screensPerPurchase
+        }
+      };
+    }
 
     // Get current preference if exists
     const currentPreference = await this.prisma.genderFilterPreference.findUnique({
@@ -91,6 +102,7 @@ export class GenderFilterService {
 
     // Rule 2: If user is MALE or FEMALE, they can only see 2 filters (MALE, FEMALE)
     // Rule 3: If user is NON_BINARY, they see all 3 filters
+    // Rule 4: All users see "All Gender" option (free, default, no filter)
     let availableFilters: GenderFilterOption[] = [];
 
     if (userGender === "MALE" || userGender === "FEMALE") {
@@ -131,6 +143,14 @@ export class GenderFilterService {
       ];
     }
 
+    // Add "All Gender" option at the end (free, default, no filter applied)
+    availableFilters.push({
+      gender: "ALL",
+      label: "All Gender",
+      cost: 0,
+      screens: 0
+    });
+
     const response: GenderFilterResponse = {
       applicable: true,
       availableFilters,
@@ -166,8 +186,8 @@ export class GenderFilterService {
    */
   async applyGenderFilter(
     token: string,
-    selectedGenders: ("MALE" | "FEMALE" | "NON_BINARY")[]
-  ): Promise<{ success: boolean; screensRemaining: number; newBalance: number }> {
+    selectedGenders: ("MALE" | "FEMALE" | "NON_BINARY" | "ALL")[]
+  ): Promise<{ success: boolean; screensRemaining?: number; newBalance?: number }> {
     // Validate selected genders
     if (!selectedGenders || selectedGenders.length === 0) {
       throw new HttpException("At least one gender must be selected", HttpStatus.BAD_REQUEST);
@@ -177,18 +197,40 @@ export class GenderFilterService {
     const userProfile = await this.userClient.getUserProfile(token);
     const userGender = userProfile.gender;
 
-    // Rule 1: If user gender is "PREFER_NOT_TO_SAY", disable the filter
+    // Handle "ALL" option (free, default, clears filter)
+    // This is allowed even for PREFER_NOT_TO_SAY users since it's the default state
+    if (selectedGenders.length === 1 && selectedGenders[0] === "ALL") {
+      // Delete existing preference if it exists (clear filter, back to default)
+      const existingPreference = await this.prisma.genderFilterPreference.findUnique({
+        where: { userId: userProfile.id }
+      });
+
+      if (existingPreference) {
+        await this.prisma.genderFilterPreference.delete({
+          where: { userId: userProfile.id }
+        });
+      }
+
+      // No wallet deduction, no storage needed - just clear the filter
+      return {
+        success: true
+        // No screensRemaining or newBalance for "ALL" option
+      };
+    }
+
+    // Rule: PREFER_NOT_TO_SAY users can only use "ALL" option
     if (userGender === "PREFER_NOT_TO_SAY" || userGender === null) {
       throw new HttpException(
-        "User needs to give consent to their gender to filter others",
+        "PREFER_NOT_TO_SAY users can only use the 'All Gender' option (no filter)",
         HttpStatus.FORBIDDEN
       );
     }
 
-    // Validate selected genders based on user's gender
+    // Validate selected genders based on user's gender (exclude "ALL" from validation)
+    const nonAllGenders = selectedGenders.filter(g => g !== "ALL");
     if (userGender === "MALE" || userGender === "FEMALE") {
-      // Can only select MALE or FEMALE
-      const invalidGenders = selectedGenders.filter(g => g !== "MALE" && g !== "FEMALE");
+      // Can only select MALE or FEMALE (excluding "ALL")
+      const invalidGenders = nonAllGenders.filter(g => g !== "MALE" && g !== "FEMALE");
       if (invalidGenders.length > 0) {
         throw new HttpException(
           "Invalid gender selection. Male/Female users can only filter by Male or Female.",
@@ -196,7 +238,7 @@ export class GenderFilterService {
         );
       }
     }
-    // NON_BINARY users can select any combination
+    // NON_BINARY users can select any combination (excluding "ALL")
 
     // Get configuration
     const config = await this.getConfig();
@@ -227,8 +269,9 @@ export class GenderFilterService {
       where: { userId: userProfile.id }
     });
 
-    // Store genders as JSON string
-    const gendersJson = JSON.stringify(selectedGenders);
+    // Store genders as JSON string (exclude "ALL" from storage as it's not a real filter)
+    const gendersToStore = selectedGenders.filter(g => g !== "ALL");
+    const gendersJson = JSON.stringify(gendersToStore);
 
     if (existingPreference) {
       // Update existing preference

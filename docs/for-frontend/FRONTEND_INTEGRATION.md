@@ -1092,7 +1092,7 @@ const { liveMeetings } = await response.json();
 Authorization: Bearer {accessToken}
 ```
 
-**Description:** Returns available gender filter options based on the user's gender. Users with `PREFER_NOT_TO_SAY` gender cannot use gender filters.
+**Description:** Returns available gender filter options based on the user's gender. Users with `PREFER_NOT_TO_SAY` gender can only use the "All Gender" option (default/unfiltered state).
 
 **Response (for MALE/FEMALE users):**
 ```json
@@ -1110,6 +1110,12 @@ Authorization: Bearer {accessToken}
       "label": "Girls",
       "cost": 200,
       "screens": 10
+    },
+    {
+      "gender": "ALL",
+      "label": "All Gender",
+      "cost": 0,
+      "screens": 0
     }
   ],
   "currentPreference": {
@@ -1145,6 +1151,12 @@ Authorization: Bearer {accessToken}
       "label": "Nonbinary",
       "cost": 200,
       "screens": 10
+    },
+    {
+      "gender": "ALL",
+      "label": "All Gender",
+      "cost": 0,
+      "screens": 0
     }
   ],
   "config": {
@@ -1157,14 +1169,28 @@ Authorization: Bearer {accessToken}
 **Response (for PREFER_NOT_TO_SAY users):**
 ```json
 {
-  "applicable": false,
-  "reason": "User needs to give consent to their gender to filter others"
+  "applicable": true,
+  "availableFilters": [
+    {
+      "gender": "ALL",
+      "label": "All Gender",
+      "cost": 0,
+      "screens": 0
+    }
+  ],
+  "config": {
+    "coinsPerScreen": 200,
+    "screensPerPurchase": 10
+  }
 }
 ```
 
+**Note:** PREFER_NOT_TO_SAY users can only use the "All Gender" option (no filter), which is the default state.
+
 **Business Rules:**
-- **MALE/FEMALE users:** Can only see and filter by MALE and FEMALE (2 options)
-- **NON_BINARY users:** Can see and filter by all 3 options (MALE, FEMALE, NON_BINARY)
+- **MALE/FEMALE users:** Can see and filter by MALE, FEMALE, and "All Gender" (3 options)
+- **NON_BINARY users:** Can see and filter by MALE, FEMALE, NON_BINARY, and "All Gender" (4 options)
+- **"All Gender" option:** Always available, free (cost: 0), clears filter (default/unfiltered state)
 - **PREFER_NOT_TO_SAY users:** Filter is disabled
 
 **Example Usage:**
@@ -1213,9 +1239,18 @@ Content-Type: application/json
 }
 ```
 
-**Description:** Purchases and activates gender filter. Deducts coins from wallet and creates/updates filter preference. One payment covers all selected genders (you pay once regardless of how many genders you select).
+**Request (to clear filter / set to default):**
+```json
+{
+  "genders": ["ALL"]
+}
+```
 
-**Response:**
+**Description:** 
+- Purchases and activates gender filter. Deducts coins from wallet and creates/updates filter preference. One payment covers all selected genders (you pay once regardless of how many genders you select).
+- **Special case:** Selecting `["ALL"]` clears the filter (no wallet deduction, no storage). This is the default/unfiltered state.
+
+**Response (for paid filters):**
 ```json
 {
   "success": true,
@@ -1224,13 +1259,25 @@ Content-Type: application/json
 }
 ```
 
+**Response (for "ALL" - clears filter):**
+```json
+{
+  "success": true
+}
+```
+
 **Business Rules:**
-- Cost: 200 coins (configurable, default: 200)
+- Cost: 200 coins per filter (configurable, default: 200)
 - Screens per purchase: 10 (configurable, default: 10)
 - If user already has a preference, screens are added to existing count
 - Selected genders must be valid based on user's gender:
-  - MALE/FEMALE users: Can only select MALE or FEMALE
-  - NON_BINARY users: Can select any combination
+  - MALE/FEMALE users: Can only select MALE or FEMALE (excluding "ALL")
+  - NON_BINARY users: Can select any combination (excluding "ALL")
+- **"ALL" option:**
+  - Free (cost: 0, no wallet deduction)
+  - Clears any existing filter preference (no storage)
+  - Represents the default/unfiltered state
+  - Always available for all users
 
 **Error Responses:**
 - `400 Bad Request` - Invalid gender selection or insufficient balance
@@ -1239,7 +1286,7 @@ Content-Type: application/json
 
 **Example Usage:**
 ```javascript
-// Apply gender filter
+// Apply gender filter (paid)
 const response = await fetch('http://localhost:3004/gender-filters/apply', {
   method: 'POST',
   headers: {
@@ -1250,6 +1297,20 @@ const response = await fetch('http://localhost:3004/gender-filters/apply', {
     genders: ['MALE', 'FEMALE'] // User selects which genders to filter by
   })
 });
+const { success, screensRemaining, newBalance } = await response.json();
+
+// Clear filter / set to default (free)
+const clearResponse = await fetch('http://localhost:3004/gender-filters/apply', {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${accessToken}`,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    genders: ['ALL'] // Clears filter, no cost
+  })
+});
+const { success: clearSuccess } = await clearResponse.json();
 
 if (response.ok) {
   const { screensRemaining, newBalance } = await response.json();
@@ -1361,6 +1422,6 @@ Content-Type: application/json
 - Photo moderation happens automatically - frontend just needs to handle error messages
 - Gender can only be changed once from `PREFER_NOT_TO_SAY` to any other value
 - **Services are independently deployable** - Frontend calls each service directly (auth-service, user-service, wallet-service, discovery-service, etc.)
-- **Gender Filter:** Users with `PREFER_NOT_TO_SAY` gender cannot use gender filters
+- **Gender Filter:** Users with `PREFER_NOT_TO_SAY` gender can only use the "All Gender" option (default/unfiltered state)
 - **Wallet:** Wallet is automatically created with 0 balance when first accessed (lazy initialization)
 - **Live Meetings:** Count includes users with statuses: `AVAILABLE`, `IN_SQUAD`, `IN_SQUAD_AVAILABLE`, `IN_BROADCAST`, `IN_BROADCAST_AVAILABLE`

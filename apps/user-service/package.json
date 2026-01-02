@@ -6,11 +6,12 @@
     "start:dev": "nest start --watch",
     "build": "nest build",
     "start": "node dist/main.js",
-    "prisma:generate": "prisma generate",
+    "prisma:generate": "prisma generate && node scripts/postinstall-prisma.js",
     "prisma:migrate": "prisma migrate dev",
     "prisma:push": "prisma db push --accept-data-loss",
     "prisma:deploy": "prisma migrate deploy",
-    "seed": "tsx prisma/seed.ts"
+    "seed": "tsx prisma/seed.ts",
+    "postinstall": "node scripts/postinstall-prisma.js"
   },
   "dependencies": {
     "@hmm/common": "*",
@@ -19,6 +20,7 @@
     "@nestjs/core": "^10.4.20",
     "@nestjs/platform-fastify": "^10.4.20",
     "@prisma/client": "6.0.0",
+    "@prisma/engines": "^7.2.0",
     "node-fetch": "^3.3.2",
     "zod": "^3.23.8"
   },

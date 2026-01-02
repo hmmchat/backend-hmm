@@ -1,6 +1,7 @@
 // Prisma 6.0.0 Schema
 // Note: This schema uses Prisma 6 syntax. The `url` in datasource is required and correct for Prisma 6.
 generator client {
+  output   = "../node_modules/.prisma/client"
   provider = "prisma-client-js"
 }
 

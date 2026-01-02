@@ -16,17 +16,13 @@ if (!fs.existsSync(prismaClientDir)) {
 }
 
 // Create package.json that points to the generated client
+// The package.json is in node_modules/@prisma/client/
+// The generated client is in node_modules/.prisma/client/
+// So we need to go up one level, then into .prisma
 const packageJson = {
   name: '@prisma/client',
-  main: './.prisma/client/index.js',
-  types: './.prisma/client/index.d.ts',
-  exports: {
-    '.': {
-      require: './.prisma/client/index.js',
-      import: './.prisma/client/index.js',
-      types: './.prisma/client/index.d.ts'
-    }
-  }
+  main: '../.prisma/client/index.js',
+  types: '../.prisma/client/index.d.ts'
 };
 
 fs.writeFileSync(

@@ -66,3 +66,6 @@ tests/*.log
 .test-token
 tests/**/.test-token
 *.test-token
+
+# Test tokens (contains sensitive JWT tokens)
+tests/discovery-service/.test-tokens

@@ -66,7 +66,9 @@ echo -e "${YELLOW}Step 0.4: Waiting for auth-service to be ready...${NC}"
 MAX_WAIT=30
 WAIT_COUNT=0
 while [ $WAIT_COUNT -lt $MAX_WAIT ]; do
-    if curl -s -f "$BASE_URL/me/metrics" > /dev/null 2>&1; then
+    # Try health endpoint or auth endpoint to check if service is up
+    if curl -s -f "$BASE_URL/health" > /dev/null 2>&1 || \
+       curl -s -X POST "$BASE_URL/auth/phone/send-otp" -H "Content-Type: application/json" -d '{"phone":"+918073656316"}' > /dev/null 2>&1; then
         echo -e "${GREEN}✅ Auth service is ready${NC}"
         break
     fi
@@ -110,65 +112,99 @@ else
 fi
 echo ""
 
-# Guide user to get token
-echo -e "${YELLOW}Step 1.2: Get Google ID Token${NC}"
-echo ""
-echo -e "${CYAN}📋 Follow these simple steps:${NC}"
-echo ""
-echo "  1. Open this URL in your browser:"
-echo -e "     ${BLUE}https://developers.google.com/oauthplayground/${NC}"
-echo ""
-echo "  2. In the left panel, find and expand:"
-echo "     ${CYAN}Google OAuth2 API v2${NC}"
-echo ""
-echo "  3. Check these two scopes:"
-echo "     ✓ https://www.googleapis.com/auth/userinfo.email"
-echo "     ✓ https://www.googleapis.com/auth/userinfo.profile"
-echo ""
-echo "  4. Click the ${GREEN}'Authorize APIs'${NC} button (top right)"
-echo ""
-echo "  5. Sign in with your Google account"
-echo ""
-echo "  6. Click ${GREEN}'Allow'${NC} to grant permissions"
-echo ""
-echo "  7. Click ${GREEN}'Exchange authorization code for tokens'${NC} button"
-echo ""
-echo "  8. In the response (right panel), find and copy the ${CYAN}'id_token'${NC} value"
-echo "     (It's a long JWT string starting with 'eyJ...')"
-echo ""
-echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-read -p "Press Enter when you have copied the id_token..."
+# Step 1.2: Get Google ID Token
+echo -e "${YELLOW}Step 1.2: Getting Google ID Token${NC}"
 echo ""
 
-# Get token from user - handle long JWT tokens properly
-echo ""
-echo -e "${CYAN}Paste your Google ID token here:${NC}"
-echo -e "${YELLOW}(Tip: If pasting doesn't work, you can also save the token to a file and enter the file path)${NC}"
-echo ""
-echo -n "ID Token (or file path): "
+# Check for token in multiple places (priority order):
+# 1. Environment variable GOOGLE_ID_TOKEN
+# 2. Token file: .test-token in test directory
+# 3. Token file: .test-token in project root
+# 4. Interactive prompt
 
-# Read input - could be token or file path
-IFS= read -r user_input
-user_input=$(echo "$user_input" | xargs)
+ID_TOKEN=""
+TOKEN_SOURCE=""
 
-# Check if it's a file path
-if [ -f "$user_input" ]; then
-    echo -e "${CYAN}Reading token from file...${NC}"
-    ID_TOKEN=$(cat "$user_input" | tr -d '\n\r ' | xargs)
-    echo -e "${GREEN}✅ Token read from file${NC}"
-else
-    # It's the token itself - remove any line breaks
-    ID_TOKEN=$(echo "$user_input" | tr -d '\n\r' | xargs)
+if [ -n "$GOOGLE_ID_TOKEN" ]; then
+    ID_TOKEN=$(echo "$GOOGLE_ID_TOKEN" | tr -d '\n\r ' | xargs)
+    TOKEN_SOURCE="environment variable GOOGLE_ID_TOKEN"
+elif [ -f "$SCRIPT_DIR/.test-token" ]; then
+    ID_TOKEN=$(cat "$SCRIPT_DIR/.test-token" | tr -d '\n\r ' | xargs)
+    TOKEN_SOURCE="file: $SCRIPT_DIR/.test-token"
+elif [ -f "$PROJECT_ROOT/.test-token" ]; then
+    ID_TOKEN=$(cat "$PROJECT_ROOT/.test-token" | tr -d '\n\r ' | xargs)
+    TOKEN_SOURCE="file: $PROJECT_ROOT/.test-token"
 fi
 
-if [ -z "$ID_TOKEN" ]; then
+if [ -n "$ID_TOKEN" ] && [ ${#ID_TOKEN} -gt 10 ]; then
+    echo -e "${GREEN}✅ Token found in $TOKEN_SOURCE${NC}"
+    echo -e "${CYAN}   Token length: ${#ID_TOKEN} characters${NC}"
     echo ""
-    echo -e "${RED}❌ No ID token provided.${NC}"
-            echo ""
-    echo "Please run this script again and provide your Google ID token."
-    echo "You can either:"
-    echo "  - Paste the token directly"
-    echo "  - Save the token to a file and enter the file path"
+else
+    # No token found, show instructions and prompt
+    echo -e "${CYAN}📋 No token found. To run tests automatically:${NC}"
+    echo ""
+    echo "  Option 1: Set environment variable:"
+    echo -e "    ${BLUE}export GOOGLE_ID_TOKEN='your_token_here'${NC}"
+    echo ""
+    echo "  Option 2: Save token to file:"
+    echo -e "    ${BLUE}echo 'your_token_here' > $SCRIPT_DIR/.test-token${NC}"
+    echo -e "    ${BLUE}# OR${NC}"
+    echo -e "    ${BLUE}echo 'your_token_here' > $PROJECT_ROOT/.test-token${NC}"
+    echo ""
+    echo -e "${CYAN}📋 To get a Google ID Token:${NC}"
+    echo ""
+    echo "  1. Open this URL in your browser:"
+    echo -e "     ${BLUE}https://developers.google.com/oauthplayground/${NC}"
+    echo ""
+    echo "  2. In the left panel, find and expand:"
+    echo "     ${CYAN}Google OAuth2 API v2${NC}"
+    echo ""
+    echo "  3. Check these two scopes:"
+    echo "     ✓ https://www.googleapis.com/auth/userinfo.email"
+    echo "     ✓ https://www.googleapis.com/auth/userinfo.profile"
+    echo ""
+    echo "  4. Click the ${GREEN}'Authorize APIs'${NC} button (top right)"
+    echo ""
+    echo "  5. Sign in with your Google account"
+    echo ""
+    echo "  6. Click ${GREEN}'Allow'${NC} to grant permissions"
+    echo ""
+    echo "  7. Click ${GREEN}'Exchange authorization code for tokens'${NC} button"
+    echo ""
+    echo "  8. In the response (right panel), find and copy the ${CYAN}'id_token'${NC} value"
+    echo "     (It's a long JWT string starting with 'eyJ...')"
+    echo ""
+    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    read -p "Press Enter when you have copied the id_token..."
+    echo ""
+    echo -e "${CYAN}Paste your Google ID token here (or press Ctrl+C to save to file first):${NC}"
+    echo ""
+    echo -n "ID Token: "
+    
+    # Read input - handle long JWT tokens properly
+    IFS= read -r user_input
+    user_input=$(echo "$user_input" | tr -d '\n\r' | xargs)
+    
+    if [ -f "$user_input" ]; then
+        echo -e "${CYAN}Reading token from file...${NC}"
+        ID_TOKEN=$(cat "$user_input" | tr -d '\n\r ' | xargs)
+        TOKEN_SOURCE="file: $user_input"
+    else
+        ID_TOKEN=$(echo "$user_input" | tr -d '\n\r' | xargs)
+        TOKEN_SOURCE="manual input"
+    fi
+fi
+
+if [ -z "$ID_TOKEN" ] || [ ${#ID_TOKEN} -lt 10 ]; then
+    echo ""
+    echo -e "${RED}❌ No valid ID token provided.${NC}"
+    echo ""
+    echo "Please provide your Google ID token using one of these methods:"
+    echo "  1. Set GOOGLE_ID_TOKEN environment variable"
+    echo "  2. Save token to: $SCRIPT_DIR/.test-token"
+    echo "  3. Save token to: $PROJECT_ROOT/.test-token"
+    echo "  4. Paste token when prompted"
     exit 1
 fi
 
@@ -178,14 +214,18 @@ if [[ ! "$ID_TOKEN" =~ ^eyJ ]]; then
     echo -e "${YELLOW}⚠️  Warning: The token doesn't start with 'eyJ' (typical JWT format)${NC}"
     echo "This might be okay, but double-check you copied the correct 'id_token' value."
     echo ""
-    read -p "Continue anyway? (y/n): " continue_anyway
-    if [ "$continue_anyway" != "y" ] && [ "$continue_anyway" != "Y" ]; then
-        echo "Exiting. Please run the script again with the correct token."
-        exit 1
+    if [ "$TOKEN_SOURCE" = "manual input" ]; then
+        read -p "Continue anyway? (y/n): " continue_anyway
+        if [ "$continue_anyway" != "y" ] && [ "$continue_anyway" != "Y" ]; then
+            echo "Exiting. Please run the script again with the correct token."
+            exit 1
+        fi
+    else
+        echo -e "${YELLOW}   Continuing with token from $TOKEN_SOURCE...${NC}"
     fi
 fi
 
-echo -e "${GREEN}✅ Token received (${#ID_TOKEN} characters)${NC}"
+echo -e "${GREEN}✅ Token ready from $TOKEN_SOURCE (${#ID_TOKEN} characters)${NC}"
 echo ""
 
 # Test Google signup/login

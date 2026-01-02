@@ -61,3 +61,8 @@ test-run-output.txt
 current_test_user.txt
 tests/*.txt
 tests/*.log
+
+# Test tokens (never commit!)
+.test-token
+tests/**/.test-token
+*.test-token

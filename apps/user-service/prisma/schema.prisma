@@ -17,12 +17,12 @@ enum Gender {
 }
 
 enum UserStatus {
-  IDLE
-  IN_MATCHMAKING
-  IN_ONE_ON_ONE_CALL
+  AVAILABLE
+  OFFLINE
   IN_SQUAD
+  IN_SQUAD_AVAILABLE
   IN_BROADCAST
-  WATCHING_HMM_TV
+  IN_BROADCAST_AVAILABLE
 }
 
 model User {
@@ -54,7 +54,7 @@ model User {
   values        UserValue[]
   
   // User Status
-  status        UserStatus @default(IDLE)
+  status        UserStatus @default(AVAILABLE)
   
   // Moderation & Flags
   reported      Boolean  @default(false) // 1 = yes, 0 = no

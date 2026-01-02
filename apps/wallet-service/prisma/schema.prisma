@@ -1,8 +1,44 @@
-// Prisma schema for wallet-service (add models when needed).
-// datasource db {
-//   provider = "postgresql"
-//   url      = env("DATABASE_URL")
-// }
-// generator client {
-//   provider = "prisma-client-js"
-// }
+// Prisma schema for wallet-service
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+model Wallet {
+  id        String   @id // Links to auth-service User.id (must match auth-service user id)
+  userId    String   @unique
+  balance   Int      @default(0) // Coin balance (non-negative)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Transaction history
+  transactions Transaction[]
+
+  @@map("wallets")
+}
+
+model Transaction {
+  id        String   @id @default(cuid())
+  walletId  String
+  wallet    Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  amount    Int      // Positive for credits, negative for debits
+  type      TransactionType
+  description String?
+  createdAt DateTime @default(now())
+
+  @@index([walletId])
+  @@index([createdAt])
+  @@map("transactions")
+}
+
+enum TransactionType {
+  CREDIT      // Coins added (e.g., purchase, reward, bonus)
+  DEBIT       // Coins spent (e.g., premium features, gifts)
+  REFUND      // Refund for a previous transaction
+  ADJUSTMENT  // Manual adjustment by admin
+}

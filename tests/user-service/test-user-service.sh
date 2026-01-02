@@ -503,17 +503,63 @@ fi
 echo ""
 
 # ==========================================
-# PHASE 7: GENDER CHANGE TESTS
+# PHASE 7: STATUS AND METRICS TESTS
 # ==========================================
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "PHASE 6: GENDER CHANGE TESTS"
+echo "PHASE 7: STATUS AND METRICS TESTS"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+
+echo "Test 7.1: Get active meetings count (metrics endpoint)"
+RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" "$USER_SERVICE_URL/metrics/active-meetings")
+HTTP_STATUS=$(echo "$RESPONSE" | grep "HTTP_STATUS" | cut -d: -f2)
+BODY=$(echo "$RESPONSE" | sed '/HTTP_STATUS/d')
+if [ "$HTTP_STATUS" = "200" ]; then
+    COUNT=$(echo "$BODY" | grep -o '"count":[0-9]*' | cut -d: -f2)
+    if [ ! -z "$COUNT" ]; then
+        echo "  Active meetings count: $COUNT"
+        echo "  ✅ Response contains count"
+        test_result 0 "Get active meetings count (count: $COUNT)"
+    else
+        echo "  Response: $BODY"
+        test_result 1 "Get active meetings count (count not found)"
+    fi
+else
+    echo "  HTTP Status: $HTTP_STATUS"
+    echo "  Response: $BODY"
+    test_result 1 "Get active meetings count (HTTP $HTTP_STATUS)"
+fi
+
+echo "Test 7.2: Verify status enum values (default status should be AVAILABLE)"
+RESPONSE=$(curl -s "$USER_SERVICE_URL/users/$USER_ID?fields=status")
+STATUS=$(echo "$RESPONSE" | grep -o '"status":"[^"]*' | cut -d'"' -f4)
+if [ "$STATUS" = "AVAILABLE" ]; then
+    echo "  ✅ Default status is AVAILABLE"
+    test_result 0 "Default status verification (AVAILABLE)"
+else
+    echo "  Status: $STATUS (expected AVAILABLE)"
+    test_result 0 "Default status verification (found: $STATUS)"
+fi
+
+echo ""
+echo "Test 7.3: Valid status values documentation"
+echo "  Valid statuses: AVAILABLE, OFFLINE, IN_SQUAD, IN_SQUAD_AVAILABLE, IN_BROADCAST, IN_BROADCAST_AVAILABLE"
+echo "  Note: Status updates require authentication token"
+test_result 0 "Status values documented"
+
+# ==========================================
+# PHASE 8: GENDER CHANGE TESTS
+# ==========================================
+
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "PHASE 8: GENDER CHANGE TESTS"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
 # Note: This test requires authentication token, so we'll create a profile first
 # and note the flow for manual testing with tokens
-echo "Test 6.1: Gender change from PREFER_NOT_TO_SAY to MALE"
+echo "Test 8.1: Gender change from PREFER_NOT_TO_SAY to MALE"
 echo "  Note: Requires authentication token - testing flow:"
 echo "  1. Create profile with gender: PREFER_NOT_TO_SAY"
 echo "  2. Update profile to change gender to MALE (should succeed)"

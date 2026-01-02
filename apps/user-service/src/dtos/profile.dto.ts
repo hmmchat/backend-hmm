@@ -3,12 +3,12 @@ import { z } from "zod";
 export const GenderEnum = z.enum(["MALE", "FEMALE", "NON_BINARY", "PREFER_NOT_TO_SAY"]);
 
 export const UserStatusEnum = z.enum([
-  "IDLE",
-  "IN_MATCHMAKING",
-  "IN_ONE_ON_ONE_CALL",
+  "AVAILABLE",
+  "OFFLINE",
   "IN_SQUAD",
+  "IN_SQUAD_AVAILABLE",
   "IN_BROADCAST",
-  "WATCHING_HMM_TV"
+  "IN_BROADCAST_AVAILABLE"
 ]);
 
 // Profile Creation/Update DTO

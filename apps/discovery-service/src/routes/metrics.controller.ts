@@ -7,7 +7,7 @@ export class MetricsController {
 
   @Get("meetings")
   async meetings() {
-    const count = await this.metricService.getMeetingsCount();
+    const count = await this.metricService.getActiveMeetingsCount();
     return { liveMeetings: count };
   }
 }

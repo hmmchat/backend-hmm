@@ -189,7 +189,7 @@ curl "http://localhost:3002/users/USER_ID?fields=username,status,displayPictureU
     "displayPictureUrl": "https://example.com/profile.jpg",
     "profileCompleted": true,
     "genderChanged": true,
-    "status": "IDLE",
+    "status": "AVAILABLE",
     "videoEnabled": true,
     "createdAt": "...",
     "updatedAt": "..."
@@ -736,12 +736,12 @@ curl -X PATCH http://localhost:3002/me/location \
 **Endpoint:** `PATCH /me/status`
 
 **Valid Statuses:**
-- `IDLE`
-- `IN_MATCHMAKING`
-- `IN_ONE_ON_ONE_CALL`
-- `IN_SQUAD`
-- `IN_BROADCAST`
-- `WATCHING_HMM_TV`
+- `AVAILABLE` - User is available on the app (default)
+- `OFFLINE` - Not available for calls
+- `IN_SQUAD` - In squad, not available for more calls
+- `IN_SQUAD_AVAILABLE` - In squad but available
+- `IN_BROADCAST` - Broadcasting, not available for more calls
+- `IN_BROADCAST_AVAILABLE` - Broadcasting and available
 
 **Example:**
 ```bash
@@ -749,8 +749,35 @@ curl -X PATCH http://localhost:3002/me/status \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "status": "IN_MATCHMAKING"
+    "status": "AVAILABLE"
   }'
+```
+
+---
+
+## Step 9.1: Metrics - Active Meetings Count
+
+**Endpoint:** `GET /metrics/active-meetings`
+
+Get count of users currently available or in calls (squad/broadcast).
+
+**Note:** This endpoint counts users with statuses:
+- `AVAILABLE` - Available users
+- `IN_SQUAD` - Users in squad
+- `IN_SQUAD_AVAILABLE` - Users in squad but available
+- `IN_BROADCAST` - Users broadcasting
+- `IN_BROADCAST_AVAILABLE` - Users broadcasting and available
+
+**Response:**
+```json
+{
+  "count": 1250
+}
+```
+
+**Example:**
+```bash
+curl http://localhost:3002/metrics/active-meetings
 ```
 
 ---
@@ -1066,7 +1093,7 @@ curl -X PATCH $BASE_URL/me/location \
 curl -X PATCH $BASE_URL/me/status \
   -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"status": "IN_MATCHMAKING"}'
+  -d '{"status": "AVAILABLE"}'
 
 # 10. Check profile completion percentage
 curl $BASE_URL/me/profile-completion \

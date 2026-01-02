@@ -8,18 +8,13 @@ import { ProviderPhone } from "./providers/phone.provider.js";
 
 import {
   signAccessToken,
-  signRefreshToken,
-  verifyToken,
-  AccessPayload
+  signRefreshToken
 } from "@hmm/common";
 
-import { JWK } from "jose";
 import * as argon2 from "argon2";
 
 @Injectable()
 export class AuthService implements OnModuleInit {
-  private verifyAccess!: (token: string) => Promise<AccessPayload>;
-  private publicJwk!: JWK;
   private privateKey!: string;
 
   constructor(
@@ -33,23 +28,15 @@ export class AuthService implements OnModuleInit {
   /* ---------- Init ---------- */
 
   async onModuleInit() {
-    // Load JWT keys from environment variables
-    const jwkStr = process.env.JWT_PUBLIC_JWK;
+    // Load JWT private key from environment variable
     const keyStr = process.env.JWT_PRIVATE_KEY;
 
-    if (!jwkStr || jwkStr === "undefined") {
-      throw new Error("JWT_PUBLIC_JWK environment variable is not set or is invalid");
-    }
     if (!keyStr || keyStr === "undefined") {
       throw new Error("JWT_PRIVATE_KEY environment variable is not set or is invalid");
     }
 
     // Remove surrounding quotes if present
-    const cleanedJwk = jwkStr.trim().replace(/^['"]|['"]$/g, "");
-    this.publicJwk = JSON.parse(cleanedJwk) as JWK;
     this.privateKey = keyStr.trim().replace(/^['"]|['"]$/g, "");
-
-    this.verifyAccess = await verifyToken(this.publicJwk);
   }
 
   /* ---------- Auth flows ---------- */

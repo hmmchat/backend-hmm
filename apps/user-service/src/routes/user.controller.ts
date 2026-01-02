@@ -272,5 +272,13 @@ export class UserController {
 
     return this.userService.getUsersNearby(lat, lng, radiusKm, limitNum);
   }
+
+  /* ---------- Metrics ---------- */
+
+  @Get("metrics/active-meetings")
+  async getActiveMeetingsCount() {
+    const count = await this.userService.getActiveMeetingsCount();
+    return { count };
+  }
 }
 

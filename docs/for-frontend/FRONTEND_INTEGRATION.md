@@ -8,6 +8,8 @@
 - Auth Service: `http://localhost:3001`
 - User Service: `http://localhost:3002`
 - Moderation Service: `http://localhost:3003` (called automatically by user-service)
+- Wallet Service: `http://localhost:3005`
+- Discovery Service: `http://localhost:3004`
 
 All endpoints accept `Content-Type: application/json` and return JSON responses.
 
@@ -1037,6 +1039,55 @@ All signup endpoints require:
 
 ---
 
+---
+
+## Wallet Service Endpoints
+
+### Get Coin Balance
+
+**Endpoint:** `GET http://localhost:3005/me/balance`
+
+**Headers:**
+```
+Authorization: Bearer {accessToken}
+```
+
+**Response:**
+```json
+{
+  "balance": 25500
+}
+```
+
+**Description:**
+- Returns the current coin balance for the authenticated user
+- Wallet is automatically created with 0 balance if it doesn't exist (lazy initialization)
+- Balance is always a non-negative integer
+
+**Example Usage:**
+```javascript
+// Fetch coin balance
+const response = await fetch('http://localhost:3005/me/balance', {
+  headers: {
+    'Authorization': `Bearer ${accessToken}`
+  }
+});
+const { balance } = await response.json();
+// Display balance in UI: balance = 25500
+```
+
+**Error Responses:**
+- `401 Unauthorized` - Missing or invalid token
+- `500 Internal Server Error` - Server configuration error
+
+---
+
+## Discovery Service Endpoints
+
+**Note:** Discovery service is currently being set up. Homepage aggregation endpoint will be available in future iterations.
+
+---
+
 ## Support
 
 **Setup:** See `FRONTEND_SETUP.md` for local backend setup
@@ -1049,3 +1100,4 @@ All signup endpoints require:
 - Brand logos: `logoUrl` field is available but may be `null` until production CDN is set up
 - Photo moderation happens automatically - frontend just needs to handle error messages
 - Gender can only be changed once from `PREFER_NOT_TO_SAY` to any other value
+- **Services are independently deployable** - Frontend calls each service directly (auth-service, user-service, wallet-service, etc.)

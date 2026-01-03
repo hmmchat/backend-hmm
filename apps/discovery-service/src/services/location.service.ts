@@ -5,9 +5,7 @@ import { JWK } from "jose";
 
 interface CityWithUserCount {
   city: string;
-  userCount: number;
-  onlineCount?: number;
-  chattingCount?: number;
+  availableCount: number;
 }
 
 interface GeocodingResult {

@@ -676,11 +676,12 @@ export class UserService implements OnModuleInit {
   }
 
   /**
-   * Get cities with maximum users
-   * Returns cities sorted by user count (descending)
+   * Get cities with maximum available users
+   * Returns cities sorted by available user count (descending)
+   * Counts users with any available status: AVAILABLE, IN_SQUAD_AVAILABLE, IN_BROADCAST_AVAILABLE
    */
-  async getCitiesWithMaxUsers(limit: number = 20): Promise<Array<{ city: string; userCount: number; onlineCount?: number; chattingCount?: number }>> {
-    // Query to get cities with user counts
+  async getCitiesWithMaxUsers(limit: number = 20): Promise<Array<{ city: string; availableCount: number }>> {
+    // Query to get cities with available user counts (all available statuses)
     const cities = await this.prisma.$queryRaw<Array<{ city: string; count: bigint }>>`
       SELECT 
         "preferredCity" as city,
@@ -689,53 +690,17 @@ export class UserService implements OnModuleInit {
       WHERE "preferredCity" IS NOT NULL
         AND "preferredCity" != ''
         AND "profileCompleted" = true
+        AND status IN ('AVAILABLE', 'IN_SQUAD_AVAILABLE', 'IN_BROADCAST_AVAILABLE')
       GROUP BY "preferredCity"
       ORDER BY count DESC
       LIMIT ${limit}
     `;
 
-    // Get online/chatting counts for each city
-    const citiesWithCounts = await Promise.all(
-      cities.map(async (row) => {
-        const city = row.city;
-        const userCount = Number(row.count);
-
-        // Count online users (AVAILABLE, IN_SQUAD_AVAILABLE, IN_BROADCAST_AVAILABLE)
-        const onlineCount = await this.prisma.user.count({
-          where: {
-            preferredCity: city,
-            status: {
-              in: [
-                UserStatus.AVAILABLE,
-                UserStatus.IN_SQUAD_AVAILABLE,
-                UserStatus.IN_BROADCAST_AVAILABLE
-              ]
-            },
-            profileCompleted: true
-          } as any // Workspace Prisma client type resolution issue
-        });
-
-        // Count chatting users (IN_SQUAD, IN_BROADCAST)
-        const chattingCount = await this.prisma.user.count({
-          where: {
-            preferredCity: city,
-            status: {
-              in: [UserStatus.IN_SQUAD, UserStatus.IN_BROADCAST]
-            },
-            profileCompleted: true
-          } as any // Workspace Prisma client type resolution issue
-        });
-
-        return {
-          city,
-          userCount,
-          onlineCount,
-          chattingCount
-        };
-      })
-    );
-
-    return citiesWithCounts;
+    // Map to response format
+    return cities.map((row) => ({
+      city: row.city,
+      availableCount: Number(row.count)
+    }));
   }
 
   /**

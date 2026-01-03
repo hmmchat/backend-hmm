@@ -20,7 +20,7 @@ export class WalletService {
         data: {
           id: userId,
           balance: 0
-        }
+        } as any // Type assertion for Prisma client type resolution
       });
     }
 
@@ -43,15 +43,22 @@ export class WalletService {
       });
 
       if (!wallet) {
-        wallet = await this.prisma.wallet.create({
+        await this.prisma.wallet.create({
           data: {
             id: userId,
             balance: 0
-          },
-          include: {
-            transactions: true
-          }
+          } as any // Type assertion for Prisma client type resolution
         });
+        // Fetch with transactions after creation
+        wallet = await this.prisma.wallet.findUnique({
+          where: { id: userId },
+          include: {
+            transactions: {
+              orderBy: { createdAt: "desc" },
+              take: 50
+            }
+          }
+        }) as any;
       }
       return wallet;
     } else {
@@ -64,7 +71,7 @@ export class WalletService {
           data: {
             id: userId,
             balance: 0
-          }
+          } as any // Type assertion for Prisma client type resolution
         });
       }
       return wallet;
@@ -96,7 +103,7 @@ export class WalletService {
         data: {
           id: userId,
           balance: 0
-        }
+        } as any // Type assertion for Prisma client type resolution
       });
     }
 
@@ -121,6 +128,57 @@ export class WalletService {
         amount: -amount, // Negative for debit
         type: "DEBIT",
         description: `Gender filter: ${screens} screens`
+      }
+    });
+
+    return {
+      newBalance: updatedWallet.balance,
+      transactionId: transaction.id
+    };
+  }
+
+  /**
+   * Add coins to wallet (test method, bypasses auth)
+   */
+  async addCoinsForUser(
+    userId: string,
+    amount: number,
+    description?: string
+  ): Promise<{ newBalance: number; transactionId: string }> {
+    if (amount <= 0) {
+      throw new Error("Amount must be positive");
+    }
+
+    // Get or create wallet
+    let wallet = await this.prisma.wallet.findUnique({
+      where: { id: userId }
+    });
+
+    if (!wallet) {
+      wallet = await this.prisma.wallet.create({
+        data: {
+          id: userId,
+          balance: 0
+        } as any // Type assertion for Prisma client type resolution
+      });
+    }
+
+    // Add coins and create transaction
+    const updatedWallet = await this.prisma.wallet.update({
+      where: { id: userId },
+      data: {
+        balance: {
+          increment: amount
+        }
+      }
+    });
+
+    const transaction = await this.prisma.transaction.create({
+      data: {
+        walletId: wallet.id,
+        amount: amount, // Positive for credit
+        type: "CREDIT",
+        description: description || `Test credit: ${amount} coins`
       }
     });
 

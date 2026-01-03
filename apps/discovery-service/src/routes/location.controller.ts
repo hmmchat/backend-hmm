@@ -96,5 +96,33 @@ export class LocationController {
     const dto = UpdatePreferredCitySchema.parse(body);
     return this.locationService.updatePreferredCity(token, dto.city);
   }
+
+  /* ---------- Test Endpoints (No Auth Required) ---------- */
+
+  /**
+   * Test endpoint: Get preferred city (bypasses auth)
+   * GET /location/test/preference?userId=xxx
+   */
+  @Get("test/preference")
+  async getPreferredCityTest(@Query("userId") userId: string) {
+    if (!userId) {
+      throw new HttpException("userId is required", HttpStatus.BAD_REQUEST);
+    }
+    return this.locationService.getPreferredCityForUser(userId);
+  }
+
+  /**
+   * Test endpoint: Update preferred city (bypasses auth)
+   * PATCH /location/test/preference
+   */
+  @Patch("test/preference")
+  async updatePreferredCityTest(@Body() body: any) {
+    const { userId, city } = body;
+    if (!userId) {
+      throw new HttpException("userId is required", HttpStatus.BAD_REQUEST);
+    }
+    const dto = UpdatePreferredCitySchema.parse({ city });
+    return this.locationService.updatePreferredCityForUser(userId, dto.city);
+  }
 }
 

@@ -23,3 +23,18 @@ model GenderFilterPreference {
   @@index([userId])
   @@map("gender_filter_preferences")
 }
+
+// Track rainchecked users per session
+// Rainchecked users are hidden until next session (new sessionId) or city change
+model RaincheckSession {
+  id                String   @id @default(cuid())
+  userId            String   // User who rainchecked
+  sessionId         String   // Frontend-generated session ID
+  raincheckedUserId String   // User who was rainchecked
+  city              String?  // City context (null for "anywhere")
+  createdAt         DateTime  @default(now())
+
+  @@index([userId, sessionId])
+  @@index([userId, city, sessionId])
+  @@map("raincheck_sessions")
+}

@@ -13,6 +13,26 @@ interface UserProfileResponse {
   [key: string]: any;
 }
 
+interface DiscoveryUser {
+  id: string;
+  username: string | null;
+  dateOfBirth: Date | null;
+  gender: "MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY" | null;
+  displayPictureUrl: string | null;
+  preferredCity: string | null;
+  intent: string | null;
+  status: string;
+  photos: Array<{ id: string; url: string; order: number }>;
+  musicPreference: { id: string; name: string; artist: string; albumArtUrl: string | null } | null;
+  brandPreferences: Array<{ brand: { id: string; name: string; logoUrl: string | null } }>;
+  interests: Array<{ interest: { id: string; name: string } }>;
+  values: Array<{ value: { id: string; name: string } }>;
+}
+
+interface DiscoveryUsersResponse {
+  users: DiscoveryUser[];
+}
+
 @Injectable()
 export class UserClientService implements OnModuleInit {
   private readonly userServiceUrl: string;
@@ -76,14 +96,20 @@ export class UserClientService implements OnModuleInit {
   async getUserProfile(token: string): Promise<UserProfileResponse> {
     // Extract user ID from token
     const userId = await this.getUserIdFromToken(token);
-    
+    return this.getUserProfileById(userId);
+  }
+
+  /**
+   * Get user profile by user ID (test method, bypasses auth)
+   * @param userId User ID
+   */
+  async getUserProfileById(userId: string): Promise<UserProfileResponse> {
     try {
-      // Use /users/{id} endpoint instead of /me as it's more reliable
+      // Use /users/{id} endpoint without auth token (test mode)
       const response = await fetch(`${this.userServiceUrl}/users/${userId}?fields=gender`, {
         method: "GET",
         headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
+          "Content-Type": "application/json"
         }
       });
 
@@ -99,9 +125,191 @@ export class UserClientService implements OnModuleInit {
       }
       return result;
     } catch (error) {
-      console.error("Failed to get user profile from user-service:", error);
+      console.error("Failed to get user profile by ID from user-service:", error);
+      throw new HttpException(
+        "Unable to fetch user profile by ID. Please try again later.",
+        HttpStatus.SERVICE_UNAVAILABLE
+      );
+    }
+  }
+
+  /**
+   * Get users for discovery matching
+   * @param token JWT access token (for authentication, not used in query)
+   * @param filters Discovery filters
+   */
+  async getUsersForDiscovery(
+    token: string,
+    filters: {
+      city?: string | null;
+      statuses: ("AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE")[];
+      genders?: ("MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY")[];
+      excludeUserIds?: string[];
+      limit?: number;
+    }
+  ): Promise<DiscoveryUser[]> {
+    try {
+      const response = await fetch(`${this.userServiceUrl}/users/discovery`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify(filters)
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`User service error: ${error}`);
+      }
+
+      const result = await response.json() as DiscoveryUsersResponse;
+      return result.users || [];
+    } catch (error) {
+      console.error("Failed to get users for discovery from user-service:", error);
+      throw new HttpException(
+        "Unable to fetch users for discovery. Please try again later.",
+        HttpStatus.SERVICE_UNAVAILABLE
+      );
+    }
+  }
+
+  /**
+   * Get user full profile with all preferences for matching
+   * @param token JWT access token
+   */
+  async getUserFullProfile(token: string): Promise<UserProfileResponse> {
+    const userId = await this.getUserIdFromToken(token);
+    
+    try {
+      const response = await fetch(
+        `${this.userServiceUrl}/users/${userId}?fields=username,dateOfBirth,gender,displayPictureUrl,preferredCity,intent,status,photos,musicPreference,brandPreferences,interests,values`,
+        {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`
+          }
+        }
+      );
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`User service error: ${error}`);
+      }
+
+      const result = await response.json() as { user: UserProfileResponse } | UserProfileResponse;
+      if ('user' in result) {
+        return result.user;
+      }
+      return result;
+    } catch (error) {
+      console.error("Failed to get user full profile from user-service:", error);
       throw new HttpException(
         "Unable to fetch user profile. Please try again later.",
+        HttpStatus.SERVICE_UNAVAILABLE
+      );
+    }
+  }
+
+  /**
+   * Get user full profile by ID (test mode - bypasses auth)
+   */
+  async getUserFullProfileById(userId: string): Promise<UserProfileResponse> {
+    try {
+      const response = await fetch(
+        `${this.userServiceUrl}/users/${userId}?fields=username,dateOfBirth,gender,displayPictureUrl,preferredCity,intent,status,photos,musicPreference,brandPreferences,interests,values`,
+        {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`User service error: ${error}`);
+      }
+
+      const result = await response.json() as { user: UserProfileResponse } | UserProfileResponse;
+      if ('user' in result) {
+        return result.user;
+      }
+      return result;
+    } catch (error) {
+      console.error("Failed to get user full profile from user-service:", error);
+      throw new HttpException(
+        "Unable to fetch user profile. Please try again later.",
+        HttpStatus.SERVICE_UNAVAILABLE
+      );
+    }
+  }
+
+  /**
+   * Get preferred city by user ID (test mode - bypasses auth)
+   */
+  async getPreferredCityById(userId: string): Promise<string | null> {
+    try {
+      const response = await fetch(
+        `${this.userServiceUrl}/users/${userId}?fields=preferredCity`,
+        {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`User service error: ${error}`);
+      }
+
+      const result = await response.json() as { user: { preferredCity: string | null } };
+      return result.user.preferredCity || null;
+    } catch (error) {
+      console.error("Failed to get preferred city:", error);
+      throw new HttpException(
+        "Unable to fetch preferred city. Please try again later.",
+        HttpStatus.SERVICE_UNAVAILABLE
+      );
+    }
+  }
+
+  /**
+   * Get users for discovery by user ID (test mode - bypasses auth)
+   */
+  async getUsersForDiscoveryById(
+    _userId: string,
+    filters: {
+      city?: string | null;
+      statuses: ("AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE")[];
+      genders?: ("MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY")[];
+      excludeUserIds?: string[];
+      limit?: number;
+    }
+  ): Promise<DiscoveryUser[]> {
+    try {
+      const response = await fetch(`${this.userServiceUrl}/users/discovery`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(filters)
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`User service error: ${error}`);
+      }
+
+      const result = await response.json() as DiscoveryUsersResponse;
+      return result.users || [];
+    } catch (error) {
+      console.error("Failed to get users for discovery from user-service:", error);
+      throw new HttpException(
+        "Unable to fetch users for discovery. Please try again later.",
         HttpStatus.SERVICE_UNAVAILABLE
       );
     }

@@ -11,6 +11,7 @@
     "prisma:push": "prisma db push --accept-data-loss",
     "prisma:deploy": "prisma migrate deploy",
     "seed": "tsx prisma/seed.ts",
+    "seed:test-users": "tsx prisma/seed-test-users.ts",
     "postinstall": "node scripts/postinstall-prisma.js"
   },
   "dependencies": {

@@ -1705,6 +1705,79 @@ Content-Type: application/json
 
 ---
 
+## ⚠️ Test Endpoints (DO NOT USE IN PRODUCTION)
+
+**IMPORTANT:** The following endpoints are **FOR TESTING ONLY** and should **NEVER** be used by the frontend application. These endpoints bypass authentication and are only available for backend testing purposes.
+
+### Discovery Service Test Endpoints
+
+**⚠️ DO NOT USE THESE ENDPOINTS IN FRONTEND CODE**
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/discovery/test/card` | GET | Get discovery card (bypasses auth) |
+| `/discovery/test/raincheck` | POST | Raincheck a user (bypasses auth) |
+| `/discovery/test/reset-session` | POST | Reset session (bypasses auth) |
+| `/gender-filters/test` | GET | Get gender filters (bypasses auth) |
+| `/gender-filters/test/apply` | POST | Apply gender filter (bypasses auth) |
+| `/location/test/preference` | GET | Get preferred city (bypasses auth) |
+| `/location/test/preference` | PATCH | Update preferred city (bypasses auth) |
+
+**Why these exist:** These endpoints are used by automated test scripts to verify backend functionality without requiring authentication tokens. They accept `userId` as a query parameter or in the request body instead of requiring JWT tokens.
+
+**Frontend should use:** The authenticated endpoints documented above (e.g., `/discovery/card`, `/gender-filters`, `/location/preference`).
+
+---
+
+### User Service Test Endpoints
+
+**⚠️ DO NOT USE THESE ENDPOINTS IN FRONTEND CODE**
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/users/test/:userId` | GET | Get user profile (bypasses auth) |
+| `/users/test/:userId/profile-completion` | GET | Get profile completion (bypasses auth) |
+| `/users/test/:userId/profile` | PATCH | Update profile (bypasses auth) |
+| `/users/test/:userId/photos` | GET | Get photos (bypasses auth) |
+| `/users/test/:userId/photos` | POST | Add photo (bypasses auth) |
+| `/users/test/:userId/photos/:photoId` | DELETE | Delete photo (bypasses auth) |
+| `/users/test/:userId/music-preference` | PATCH | Update music preference (bypasses auth) |
+| `/users/test/:userId/brand-preferences` | PATCH | Update brand preferences (bypasses auth) |
+| `/users/test/:userId/interests` | PATCH | Update interests (bypasses auth) |
+| `/users/test/:userId/values` | PATCH | Update values (bypasses auth) |
+| `/users/test/:userId/location` | PATCH | Update location (bypasses auth) |
+| `/users/test/:userId/preferred-city` | PATCH | Update preferred city (bypasses auth) |
+| `/users/test/:userId/status` | PATCH | Update status (bypasses auth) |
+
+**Why these exist:** These endpoints are used by automated test scripts to verify backend functionality without requiring authentication tokens. They accept `userId` directly instead of extracting it from JWT tokens.
+
+**Frontend should use:** The authenticated endpoints documented above (e.g., `/me`, `/me/profile`, `/me/photos`, etc.).
+
+---
+
+### Wallet Service Test Endpoints
+
+**⚠️ DO NOT USE THESE ENDPOINTS IN FRONTEND CODE**
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/test/balance` | GET | Get balance (bypasses auth, requires `?userId=xxx`) |
+| `/test/transactions/gender-filter` | POST | Deduct coins (bypasses auth, requires `userId` in body) |
+| `/test/wallet` | GET | Get wallet with transactions (bypasses auth, requires `?userId=xxx`) |
+| `/test/wallet/add-coins` | POST | Add coins (bypasses auth, requires `userId` in body) |
+
+**Why these exist:** These endpoints are used by automated test scripts to verify wallet functionality without requiring authentication tokens. They accept `userId` as a query parameter or in the request body instead of requiring JWT tokens.
+
+**Frontend should use:** The authenticated endpoints documented above (e.g., `/me/balance`).
+
+---
+
+### Moderation Service
+
+**Note:** Moderation service does not have test endpoints because it's already a public service (no authentication required). The `/moderation/check-image` endpoint is public and can be called directly, though in practice it's typically called by user-service automatically.
+
+---
+
 ## Support
 
 **Setup:** See `FRONTEND_SETUP.md` for local backend setup
@@ -1727,3 +1800,4 @@ Content-Type: application/json
   - Single city only (users can set one preferred city at a time)
   - City search and "locate me" use OpenStreetMap Nominatim API (public, no API key required)
   - Popular cities list shows cities sorted by user count (from users who have set preferred city)
+- **⚠️ Test Endpoints:** Do NOT use any endpoints under `/test/` or `/users/test/` or `/discovery/test/` in production frontend code. These are for backend testing only and bypass authentication.

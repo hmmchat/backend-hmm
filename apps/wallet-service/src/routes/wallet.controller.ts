@@ -5,7 +5,8 @@ import {
   Body,
   Headers,
   HttpException,
-  HttpStatus
+  HttpStatus,
+  Query
 } from "@nestjs/common";
 import { WalletService } from "../services/wallet.service.js";
 import { z } from "zod";
@@ -87,6 +88,80 @@ export class WalletController {
         HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
+  }
+
+  /* ---------- Test Endpoints (No Auth Required) ---------- */
+
+  /**
+   * Test endpoint: Get balance (bypasses auth)
+   * GET /test/balance?userId=xxx
+   */
+  @Get("test/balance")
+  async getBalanceTest(@Query("userId") userId: string) {
+    if (!userId) {
+      throw new HttpException("userId is required", HttpStatus.BAD_REQUEST);
+    }
+    return this.walletService.getBalance(userId);
+  }
+
+  /**
+   * Test endpoint: Deduct coins for gender filter (bypasses auth)
+   * POST /test/transactions/gender-filter
+   * Body: { userId: string, amount: number, screens: number }
+   */
+  @Post("test/transactions/gender-filter")
+  async deductCoinsForGenderFilterTest(@Body() body: any) {
+    const { userId, amount, screens } = body;
+    if (!userId) {
+      throw new HttpException("userId is required", HttpStatus.BAD_REQUEST);
+    }
+    const dto = GenderFilterTransactionSchema.parse({ amount, screens });
+
+    try {
+      return await this.walletService.deductCoinsForGenderFilter(
+        userId,
+        dto.amount,
+        dto.screens
+      );
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("Insufficient balance")) {
+        throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
+      }
+      throw new HttpException(
+        "Failed to process transaction",
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  /**
+   * Test endpoint: Get wallet with transactions (bypasses auth)
+   * GET /test/wallet?userId=xxx&includeTransactions=true
+   */
+  @Get("test/wallet")
+  async getWalletTest(@Query("userId") userId: string, @Query("includeTransactions") includeTransactions?: string) {
+    if (!userId) {
+      throw new HttpException("userId is required", HttpStatus.BAD_REQUEST);
+    }
+    const include = includeTransactions === "true" || includeTransactions === "1";
+    return this.walletService.getWallet(userId, include);
+  }
+
+  /**
+   * Test endpoint: Add coins to wallet (for testing)
+   * POST /test/wallet/add-coins
+   * Body: { userId: string, amount: number, description?: string }
+   */
+  @Post("test/wallet/add-coins")
+  async addCoinsTest(@Body() body: any) {
+    const { userId, amount, description } = body;
+    if (!userId || !amount) {
+      throw new HttpException("userId and amount are required", HttpStatus.BAD_REQUEST);
+    }
+    if (amount <= 0) {
+      throw new HttpException("Amount must be positive", HttpStatus.BAD_REQUEST);
+    }
+    return this.walletService.addCoinsForUser(userId, amount, description);
   }
 }
 

@@ -4,6 +4,7 @@ import {
   Post,
   Body,
   Headers,
+  Query,
   HttpException,
   HttpStatus
 } from "@nestjs/common";
@@ -67,6 +68,34 @@ export class GenderFilterController {
 
     const dto = ApplyGenderFilterSchema.parse(body);
     return this.genderFilterService.applyGenderFilter(token, dto.genders);
+  }
+
+  /* ---------- Test Endpoints (No Auth Required) ---------- */
+
+  /**
+   * Test endpoint: Get gender filters (bypasses auth)
+   * GET /gender-filters/test?userId=xxx
+   */
+  @Get("gender-filters/test")
+  async getGenderFiltersTest(@Query("userId") userId: string) {
+    if (!userId) {
+      throw new HttpException("userId is required", HttpStatus.BAD_REQUEST);
+    }
+    return this.genderFilterService.getGenderFiltersForUser(userId);
+  }
+
+  /**
+   * Test endpoint: Apply gender filter (bypasses auth, bypasses wallet)
+   * POST /gender-filters/test/apply
+   */
+  @Post("gender-filters/test/apply")
+  async applyGenderFilterTest(@Body() body: any) {
+    const { userId, genders } = body;
+    if (!userId || !genders || !Array.isArray(genders)) {
+      throw new HttpException("userId and genders array are required", HttpStatus.BAD_REQUEST);
+    }
+    const dto = ApplyGenderFilterSchema.parse({ genders });
+    return this.genderFilterService.applyGenderFilterForUser(userId, dto.genders);
   }
 }
 

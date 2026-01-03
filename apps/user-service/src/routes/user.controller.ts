@@ -25,6 +25,7 @@ import {
   UpdateStatusSchema,
   CreateMusicPreferenceSchema
 } from "../dtos/profile.dto.js";
+import { UserStatus } from "@prisma/client";
 
 @Controller()
 export class UserController {
@@ -297,6 +298,176 @@ export class UserController {
   async getActiveMeetingsCount() {
     const count = await this.userService.getActiveMeetingsCount();
     return { count };
+  }
+
+  /* ---------- Discovery ---------- */
+
+  @Post("users/discovery")
+  async getUsersForDiscovery(@Body() body: any) {
+    const { city, statuses, genders, excludeUserIds, limit } = body;
+
+    if (!Array.isArray(statuses) || statuses.length === 0) {
+      throw new HttpException("statuses array is required", HttpStatus.BAD_REQUEST);
+    }
+
+    // Convert string statuses to UserStatus enum
+    const validStatuses = [
+      "AVAILABLE",
+      "IN_SQUAD_AVAILABLE",
+      "IN_BROADCAST_AVAILABLE"
+    ];
+    const invalidStatuses = statuses.filter((s: string) => !validStatuses.includes(s));
+    if (invalidStatuses.length > 0) {
+      throw new HttpException(
+        `Invalid statuses: ${invalidStatuses.join(", ")}. Valid statuses: ${validStatuses.join(", ")}`,
+        HttpStatus.BAD_REQUEST
+      );
+    }
+
+    const limitNum = limit ? parseInt(String(limit), 10) : 100;
+    if (isNaN(limitNum) || limitNum < 1 || limitNum > 500) {
+      throw new HttpException("Limit must be between 1 and 500", HttpStatus.BAD_REQUEST);
+    }
+
+    return this.userService.getUsersForDiscovery({
+      city: city !== undefined ? city : null,
+      statuses: statuses as UserStatus[],
+      genders,
+      excludeUserIds,
+      limit: limitNum
+    });
+  }
+
+  /* ---------- Test Endpoints (No Auth Required) ---------- */
+
+  /**
+   * Test endpoint: Get profile (bypasses auth)
+   * GET /users/test/:userId?fields=xxx
+   */
+  @Get("users/test/:userId")
+  async getProfileTest(@Param("userId") userId: string, @Query("fields") fields?: string) {
+    const fieldArray = fields ? fields.split(",").map(f => f.trim()).filter(Boolean) : undefined;
+    return this.userService.getProfile(userId, fieldArray);
+  }
+
+  /**
+   * Test endpoint: Get profile completion (bypasses auth)
+   * GET /users/test/:userId/profile-completion
+   */
+  @Get("users/test/:userId/profile-completion")
+  async getProfileCompletionTest(@Param("userId") userId: string) {
+    return this.userService.getProfileCompletion(userId);
+  }
+
+  /**
+   * Test endpoint: Update profile (bypasses auth)
+   * PATCH /users/test/:userId/profile
+   */
+  @Patch("users/test/:userId/profile")
+  async updateProfileTest(@Param("userId") userId: string, @Body() body: any) {
+    const dto = UpdateProfileSchema.parse(body);
+    return this.userService.updateProfileForUser(userId, dto);
+  }
+
+  /**
+   * Test endpoint: Get photos (bypasses auth)
+   * GET /users/test/:userId/photos
+   */
+  @Get("users/test/:userId/photos")
+  async getPhotosTest(@Param("userId") userId: string) {
+    return this.userService.getPhotos(userId);
+  }
+
+  /**
+   * Test endpoint: Add photo (bypasses auth)
+   * POST /users/test/:userId/photos
+   */
+  @Post("users/test/:userId/photos")
+  async addPhotoTest(@Param("userId") userId: string, @Body() body: any) {
+    const dto = CreatePhotoSchema.parse(body);
+    return this.userService.addPhotoForUser(userId, dto);
+  }
+
+  /**
+   * Test endpoint: Delete photo (bypasses auth)
+   * DELETE /users/test/:userId/photos/:photoId
+   */
+  @Delete("users/test/:userId/photos/:photoId")
+  async deletePhotoTest(@Param("userId") userId: string, @Param("photoId") photoId: string) {
+    return this.userService.deletePhotoForUser(userId, photoId);
+  }
+
+  /**
+   * Test endpoint: Update music preference (bypasses auth)
+   * PATCH /users/test/:userId/music-preference
+   */
+  @Patch("users/test/:userId/music-preference")
+  async updateMusicPreferenceTest(@Param("userId") userId: string, @Body() body: any) {
+    const { musicPreferenceId } = body;
+    if (!musicPreferenceId || typeof musicPreferenceId !== "string") {
+      throw new HttpException("musicPreferenceId is required", HttpStatus.BAD_REQUEST);
+    }
+    return this.userService.updateMusicPreferenceForUser(userId, musicPreferenceId);
+  }
+
+  /**
+   * Test endpoint: Update brand preferences (bypasses auth)
+   * PATCH /users/test/:userId/brand-preferences
+   */
+  @Patch("users/test/:userId/brand-preferences")
+  async updateBrandPreferencesTest(@Param("userId") userId: string, @Body() body: any) {
+    const dto = UpdateBrandPreferencesSchema.parse(body);
+    return this.userService.updateBrandPreferencesForUser(userId, dto);
+  }
+
+  /**
+   * Test endpoint: Update interests (bypasses auth)
+   * PATCH /users/test/:userId/interests
+   */
+  @Patch("users/test/:userId/interests")
+  async updateInterestsTest(@Param("userId") userId: string, @Body() body: any) {
+    const dto = UpdateInterestsSchema.parse(body);
+    return this.userService.updateInterestsForUser(userId, dto);
+  }
+
+  /**
+   * Test endpoint: Update values (bypasses auth)
+   * PATCH /users/test/:userId/values
+   */
+  @Patch("users/test/:userId/values")
+  async updateValuesTest(@Param("userId") userId: string, @Body() body: any) {
+    const dto = UpdateValuesSchema.parse(body);
+    return this.userService.updateValuesForUser(userId, dto);
+  }
+
+  /**
+   * Test endpoint: Update location (bypasses auth)
+   * PATCH /users/test/:userId/location
+   */
+  @Patch("users/test/:userId/location")
+  async updateLocationTest(@Param("userId") userId: string, @Body() body: any) {
+    const dto = UpdateLocationSchema.parse(body);
+    return this.userService.updateLocationForUser(userId, dto);
+  }
+
+  /**
+   * Test endpoint: Update preferred city (bypasses auth)
+   * PATCH /users/test/:userId/preferred-city
+   */
+  @Patch("users/test/:userId/preferred-city")
+  async updatePreferredCityTest(@Param("userId") userId: string, @Body() body: any) {
+    const dto = UpdatePreferredCitySchema.parse(body);
+    return this.userService.updatePreferredCityForUser(userId, dto);
+  }
+
+  /**
+   * Test endpoint: Update status (bypasses auth)
+   * PATCH /users/test/:userId/status
+   */
+  @Patch("users/test/:userId/status")
+  async updateStatusTest(@Param("userId") userId: string, @Body() body: any) {
+    const dto = UpdateStatusSchema.parse(body);
+    return this.userService.updateStatusForUser(userId, dto);
   }
 }
 

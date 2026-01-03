@@ -723,5 +723,391 @@ export class UserService implements OnModuleInit {
     });
     return count;
   }
+
+  /**
+   * Get users for discovery matching
+   * Filters by city, status, gender, and excludes specific user IDs
+   */
+  async getUsersForDiscovery(filters: {
+    city?: string | null; // null means anywhere
+    statuses: UserStatus[];
+    genders?: ("MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY")[];
+    excludeUserIds?: string[];
+    limit?: number;
+  }) {
+    const where: any = {
+      profileCompleted: true,
+      status: {
+        in: filters.statuses
+      } as any
+    };
+
+    // City filter
+    if (filters.city !== undefined) {
+      if (filters.city === null) {
+        // Anywhere - no city filter
+      } else {
+        where.preferredCity = filters.city;
+      }
+    }
+
+    // Gender filter
+    if (filters.genders && filters.genders.length > 0) {
+      where.gender = {
+        in: filters.genders
+      };
+    }
+
+    // Exclude user IDs
+    if (filters.excludeUserIds && filters.excludeUserIds.length > 0) {
+      where.id = {
+        notIn: filters.excludeUserIds
+      };
+    }
+
+    const users = await this.prisma.user.findMany({
+      where,
+      include: {
+        photos: { orderBy: { order: "asc" } },
+        musicPreference: true,
+        brandPreferences: {
+          include: { brand: true },
+          orderBy: { order: "asc" }
+        },
+        interests: {
+          include: { interest: true },
+          orderBy: { order: "asc" }
+        },
+        values: {
+          include: { value: true },
+          orderBy: { order: "asc" }
+        }
+      },
+      take: filters.limit || 100
+    });
+
+    return { users };
+  }
+
+  /* ---------- Test Methods (No Auth Required) ---------- */
+
+  /**
+   * Update profile for user by ID (test endpoint, bypasses auth)
+   */
+  async updateProfileForUser(userId: string, data: UpdateProfileDto) {
+    const existingUser = await this.prisma.user.findUnique({
+      where: { id: userId }
+    });
+
+    if (!existingUser) {
+      throw new HttpException("User profile not found", HttpStatus.NOT_FOUND);
+    }
+
+    // Gender change validation: Can only change once from PREFER_NOT_TO_SAY to any other
+    if (data.gender) {
+      if (existingUser.gender === "PREFER_NOT_TO_SAY" && !existingUser.genderChanged) {
+        // Allow change from PREFER_NOT_TO_SAY to any other
+      } else if (existingUser.gender !== "PREFER_NOT_TO_SAY") {
+        throw new HttpException(
+          "Gender cannot be changed. It can only be changed once from 'prefer not to say' to another value.",
+          HttpStatus.BAD_REQUEST
+        );
+      } else if (existingUser.genderChanged) {
+        throw new HttpException(
+          "Gender has already been changed once and cannot be changed again",
+          HttpStatus.BAD_REQUEST
+        );
+      }
+    }
+
+    // Update user
+    const updateData: any = {};
+    if (data.username) updateData.username = data.username;
+    if (data.gender) {
+      updateData.gender = data.gender as Gender;
+      updateData.genderChanged = true;
+    }
+    if (data.intent !== undefined) updateData.intent = data.intent;
+    if (data.musicPreferenceId !== undefined) updateData.musicPreferenceId = data.musicPreferenceId;
+    if (data.videoEnabled !== undefined) updateData.videoEnabled = data.videoEnabled;
+
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      data: updateData,
+      include: {
+        photos: { orderBy: { order: "asc" } },
+        musicPreference: true,
+        brandPreferences: {
+          include: { brand: true },
+          orderBy: { order: "asc" }
+        },
+        interests: {
+          include: { interest: true },
+          orderBy: { order: "asc" }
+        },
+        values: {
+          include: { value: true },
+          orderBy: { order: "asc" }
+        }
+      }
+    });
+
+    // Calculate profile completion percentage
+    const completion = await this.profileCompletion.calculateCompletion(userId);
+
+    return { user, profileCompletion: completion };
+  }
+
+  /**
+   * Add photo for user by ID (test endpoint, bypasses auth)
+   */
+  async addPhotoForUser(userId: string, data: CreatePhotoDto) {
+    // Check current photo count
+    const photoCount = await this.prisma.userPhoto.count({
+      where: { userId }
+    });
+
+    if (photoCount >= 4) {
+      throw new HttpException("Maximum 4 photos allowed", HttpStatus.BAD_REQUEST);
+    }
+
+    // Validate photo URL for NSFW content
+    await this.moderationClient.checkImage(data.url);
+
+    // Check if order is already taken
+    const existingPhoto = await this.prisma.userPhoto.findFirst({
+      where: { userId, order: data.order }
+    });
+
+    if (existingPhoto) {
+      throw new HttpException(`Photo with order ${data.order} already exists`, HttpStatus.CONFLICT);
+    }
+
+    const photo = await this.prisma.userPhoto.create({
+      data: {
+        userId,
+        url: data.url,
+        order: data.order
+      }
+    });
+
+    return { photo };
+  }
+
+  /**
+   * Delete photo for user by ID (test endpoint, bypasses auth)
+   */
+  async deletePhotoForUser(userId: string, photoId: string) {
+    const photo = await this.prisma.userPhoto.findFirst({
+      where: { id: photoId, userId }
+    });
+
+    if (!photo) {
+      throw new HttpException("Photo not found", HttpStatus.NOT_FOUND);
+    }
+
+    await this.prisma.userPhoto.delete({
+      where: { id: photoId }
+    });
+
+    return { ok: true };
+  }
+
+  /**
+   * Update music preference for user by ID (test endpoint, bypasses auth)
+   */
+  async updateMusicPreferenceForUser(userId: string, musicPreferenceId: string) {
+    // Verify song exists
+    const song = await this.prisma.song.findUnique({
+      where: { id: musicPreferenceId }
+    });
+
+    if (!song) {
+      throw new HttpException("Music preference not found", HttpStatus.NOT_FOUND);
+    }
+
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      data: { musicPreferenceId },
+      include: { musicPreference: true }
+    });
+
+    return { user };
+  }
+
+  /**
+   * Update brand preferences for user by ID (test endpoint, bypasses auth)
+   */
+  async updateBrandPreferencesForUser(userId: string, data: UpdateBrandPreferencesDto) {
+    if (data.brandIds.length > 5) {
+      throw new HttpException("Maximum 5 brands allowed", HttpStatus.BAD_REQUEST);
+    }
+
+    // Verify all brands exist
+    const brands = await this.prisma.brand.findMany({
+      where: { id: { in: data.brandIds } }
+    });
+
+    if (brands.length !== data.brandIds.length) {
+      throw new HttpException("One or more brands not found", HttpStatus.NOT_FOUND);
+    }
+
+    // Delete existing preferences
+    await this.prisma.userBrand.deleteMany({
+      where: { userId }
+    });
+
+    // Create new preferences
+    await this.prisma.userBrand.createMany({
+      data: data.brandIds.map((brandId, index) => ({
+        userId,
+        brandId,
+        order: index
+      }))
+    });
+
+    const preferences = await this.prisma.userBrand.findMany({
+      where: { userId },
+      include: { brand: true },
+      orderBy: { order: "asc" }
+    });
+
+    return { preferences };
+  }
+
+  /**
+   * Update interests for user by ID (test endpoint, bypasses auth)
+   */
+  async updateInterestsForUser(userId: string, data: UpdateInterestsDto) {
+    if (data.interestIds.length > 4) {
+      throw new HttpException("Maximum 4 interests allowed", HttpStatus.BAD_REQUEST);
+    }
+
+    // Verify all interests exist
+    const interests = await this.prisma.interest.findMany({
+      where: { id: { in: data.interestIds } }
+    });
+
+    if (interests.length !== data.interestIds.length) {
+      throw new HttpException("One or more interests not found", HttpStatus.NOT_FOUND);
+    }
+
+    // Delete existing preferences
+    await this.prisma.userInterest.deleteMany({
+      where: { userId }
+    });
+
+    // Create new preferences
+    await this.prisma.userInterest.createMany({
+      data: data.interestIds.map((interestId, index) => ({
+        userId,
+        interestId,
+        order: index
+      }))
+    });
+
+    const userInterests = await this.prisma.userInterest.findMany({
+      where: { userId },
+      include: { interest: true },
+      orderBy: { order: "asc" }
+    });
+
+    return { interests: userInterests };
+  }
+
+  /**
+   * Update values for user by ID (test endpoint, bypasses auth)
+   */
+  async updateValuesForUser(userId: string, data: UpdateValuesDto) {
+    if (data.valueIds.length > 4) {
+      throw new HttpException("Maximum 4 values allowed", HttpStatus.BAD_REQUEST);
+    }
+
+    // Verify all values exist
+    const values = await this.prisma.value.findMany({
+      where: { id: { in: data.valueIds } }
+    });
+
+    if (values.length !== data.valueIds.length) {
+      throw new HttpException("One or more values not found", HttpStatus.NOT_FOUND);
+    }
+
+    // Delete existing preferences
+    await this.prisma.userValue.deleteMany({
+      where: { userId }
+    });
+
+    // Create new preferences
+    await this.prisma.userValue.createMany({
+      data: data.valueIds.map((valueId, index) => ({
+        userId,
+        valueId,
+        order: index
+      }))
+    });
+
+    const userValues = await this.prisma.userValue.findMany({
+      where: { userId },
+      include: { value: true },
+      orderBy: { order: "asc" }
+    });
+
+    return { values: userValues };
+  }
+
+  /**
+   * Update location for user by ID (test endpoint, bypasses auth)
+   */
+  async updateLocationForUser(userId: string, data: UpdateLocationDto) {
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      // @ts-ignore - Workspace Prisma client type resolution issue
+      data: {
+        latitude: data.latitude,
+        longitude: data.longitude,
+        locationUpdatedAt: new Date()
+      }
+    });
+
+    return { user };
+  }
+
+  /**
+   * Update preferred city for user by ID (test endpoint, bypasses auth)
+   */
+  async updatePreferredCityForUser(userId: string, data: UpdatePreferredCityDto) {
+    // Check if user exists
+    const existingUser = await this.prisma.user.findUnique({
+      where: { id: userId }
+    });
+
+    if (!existingUser) {
+      throw new HttpException("User profile not found", HttpStatus.NOT_FOUND);
+    }
+
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        preferredCity: data.city
+      } as any
+    });
+
+    return { city: (user as any).preferredCity || null };
+  }
+
+  /**
+   * Update status for user by ID (test endpoint, bypasses auth)
+   */
+  async updateStatusForUser(userId: string, data: UpdateStatusDto) {
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      // @ts-ignore - Workspace Prisma client type resolution issue
+      data: {
+        status: data.status as UserStatus
+      }
+    });
+
+    return { user };
+  }
 }
 

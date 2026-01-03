@@ -624,17 +624,17 @@ You can display this with the album art, song name, and artist name in your UI.
 **Note:** Preferred cities are managed through the Discovery Service. See "Location Feature" section under Discovery Service endpoints.
 
 **Summary:**
-- **Get preferred cities:** `GET http://localhost:3004/location/preference` (requires auth)
-- **Update preferred cities:** `PATCH http://localhost:3004/location/preference` (requires auth)
+- **Get preferred city:** `GET http://localhost:3004/location/preference` (requires auth)
+- **Update preferred city:** `PATCH http://localhost:3004/location/preference` (requires auth)
 - **Get popular cities:** `GET http://localhost:3004/location/cities` (public)
 - **Search cities:** `GET http://localhost:3004/location/search?q=mumbai` (public)
 - **Locate me:** `POST http://localhost:3004/location/locate-me` (public)
 
 **Business Logic:**
-- Empty preferred cities array = user can connect with anyone from anywhere (default)
-- Non-empty array = user prefers to connect with people from these cities
-- Maximum 10 cities allowed
-- Cities are stored as strings (exact match for filtering)
+- `null` preferred city = user can connect with anyone from anywhere (default)
+- Non-null city = user prefers to connect with people from this city
+- Single city only (not multiple cities)
+- City is stored as string (exact match for filtering)
 
 ---
 
@@ -998,8 +998,8 @@ All signup endpoints require:
 | `/location/cities` | GET | No | Get cities with maximum users |
 | `/location/search` | GET | No | Search for cities |
 | `/location/locate-me` | POST | No | Get city from GPS coordinates |
-| `/location/preference` | GET | Yes | Get user's preferred cities |
-| `/location/preference` | PATCH | Yes | Update user's preferred cities |
+| `/location/preference` | GET | Yes | Get user's preferred city |
+| `/location/preference` | PATCH | Yes | Update user's preferred city |
 | `/gender-filters` | GET | Yes | Get available gender filters |
 | `/gender-filters/apply` | POST | Yes | Purchase and activate gender filter |
 
@@ -1033,7 +1033,7 @@ All signup endpoints require:
 | `/me/interests` | PATCH | Yes | Update interests (max 4) |
 | `/me/values` | PATCH | Yes | Update values (max 4) |
 | `/me/location` | PATCH | Yes | Update location (lat/lng) |
-| `/me/preferred-cities` | PATCH | Yes | Update preferred cities (internal use) |
+| `/me/preferred-city` | PATCH | Yes | Update preferred city (internal use) |
 | `/metrics/cities` | GET | No | Get cities with max users (internal use) |
 | `/me/status` | PATCH | Yes | Update user status |
 | `/users/batch` | POST | No | Get multiple users by IDs |
@@ -1092,7 +1092,7 @@ The location feature allows users to:
 - View cities with the most users
 - Search for cities
 - Get their current city from GPS coordinates
-- Set preferred cities for location-based matching
+- Set preferred city for location-based matching
 
 #### 1.1 Get Cities with Maximum Users
 
@@ -1101,7 +1101,7 @@ The location feature allows users to:
 **Query Parameters:**
 - `limit` (optional): Number of cities to return (1-100, default: 20)
 
-**Description:** Returns a list of cities sorted by the number of users who have set that city as preferred. Useful for showing popular cities on the homepage.
+**Description:** Returns a list of cities sorted by the number of users who have set that city as their preferred city. Useful for showing popular cities on the homepage.
 
 **Response:**
 ```json
@@ -1225,7 +1225,7 @@ navigator.geolocation.getCurrentPosition(async (position) => {
 
 ---
 
-#### 1.4 Get Preferred Cities
+#### 1.4 Get Preferred City
 
 **Endpoint:** `GET http://localhost:3004/location/preference`
 
@@ -1234,44 +1234,44 @@ navigator.geolocation.getCurrentPosition(async (position) => {
 Authorization: Bearer {accessToken}
 ```
 
-**Description:** Returns the user's currently preferred cities. Empty array means user can connect with anyone from anywhere (default state).
+**Description:** Returns the user's currently preferred city. `null` means user can connect with anyone from anywhere (default state).
 
 **Response:**
 ```json
 {
-  "cities": ["Mumbai", "Delhi", "Bangalore"]
+  "city": "Mumbai"
 }
 ```
 
-**Response (no preferred cities - default):**
+**Response (no preferred city - default):**
 ```json
 {
-  "cities": []
+  "city": null
 }
 ```
 
 **Example Usage:**
 ```javascript
-// Get user's preferred cities
+// Get user's preferred city
 const response = await fetch('http://localhost:3004/location/preference', {
   headers: {
     'Authorization': `Bearer ${accessToken}`
   }
 });
-const { cities } = await response.json();
+const { city } = await response.json();
 
-if (cities.length === 0) {
+if (!city) {
   // User can connect with anyone from anywhere
   console.log('No location preference set');
 } else {
-  // User prefers these cities
-  console.log(`Preferred cities: ${cities.join(', ')}`);
+  // User prefers this city
+  console.log(`Preferred city: ${city}`);
 }
 ```
 
 ---
 
-#### 1.5 Update Preferred Cities
+#### 1.5 Update Preferred City
 
 **Endpoint:** `PATCH http://localhost:3004/location/preference`
 
@@ -1284,34 +1284,33 @@ Content-Type: application/json
 **Request:**
 ```json
 {
-  "cities": ["Mumbai", "Delhi", "Pune"]
+  "city": "Mumbai"
 }
 ```
 
 **Request (clear preference - allow anyone from anywhere):**
 ```json
 {
-  "cities": []
+  "city": null
 }
 ```
 
-**Description:** Updates the user's preferred cities. Users can set up to 10 cities. Empty array clears the preference (user can connect with anyone from anywhere).
+**Description:** Updates the user's preferred city. Users can set one city. `null` clears the preference (user can connect with anyone from anywhere).
 
 **Response:**
 ```json
 {
-  "cities": ["Mumbai", "Delhi", "Pune"]
+  "city": "Mumbai"
 }
 ```
 
 **Validation Rules:**
-- Maximum 10 cities
-- Each city name must be at least 1 character
-- Empty array is allowed (clears preference)
+- City name must be at least 1 character and max 100 characters
+- `null` is allowed (clears preference)
 
 **Example Usage:**
 ```javascript
-// Set preferred cities
+// Set preferred city
 const response = await fetch('http://localhost:3004/location/preference', {
   method: 'PATCH',
   headers: {
@@ -1319,10 +1318,10 @@ const response = await fetch('http://localhost:3004/location/preference', {
     'Content-Type': 'application/json'
   },
   body: JSON.stringify({
-    cities: ['Mumbai', 'Delhi', 'Bangalore']
+    city: 'Mumbai'
   })
 });
-const { cities } = await response.json();
+const { city } = await response.json();
 
 // Clear preference (allow anyone from anywhere)
 const clearResponse = await fetch('http://localhost:3004/location/preference', {
@@ -1332,16 +1331,16 @@ const clearResponse = await fetch('http://localhost:3004/location/preference', {
     'Content-Type': 'application/json'
   },
   body: JSON.stringify({
-    cities: []
+    city: null
   })
 });
 ```
 
 **Business Rules:**
-- **Empty array (`[]`):** User can connect with anyone from anywhere (default state)
-- **Non-empty array:** User prefers to connect with people from these cities
-- **Maximum 10 cities:** Prevents excessive selections
-- **City names:** Stored as strings (exact match required for filtering)
+- **`null`:** User can connect with anyone from anywhere (default state)
+- **Non-null city:** User prefers to connect with people from this city
+- **Single city only:** Users can only set one preferred city at a time
+- **City name:** Stored as string (exact match required for filtering)
 
 **Complete Location Flow:**
 1. User clicks "Location" button on homepage
@@ -1350,7 +1349,7 @@ const clearResponse = await fetch('http://localhost:3004/location/preference', {
    - **Search for cities:** `GET /location/search?q=mumbai`
    - **Use "Locate Me":** Get GPS → `POST /location/locate-me` with coordinates
    - **Select from popular cities:** Display results from step 2
-4. User selects cities and saves: `PATCH /location/preference` with selected cities
+4. User selects a city and saves: `PATCH /location/preference` with selected city
 5. User's preference is stored and used for matching
 
 ---
@@ -1723,8 +1722,8 @@ Content-Type: application/json
 - **Wallet:** Wallet is automatically created with 0 balance when first accessed (lazy initialization)
 - **Live Meetings:** Count includes users with statuses: `AVAILABLE`, `IN_SQUAD`, `IN_SQUAD_AVAILABLE`, `IN_BROADCAST`, `IN_BROADCAST_AVAILABLE`
 - **Location Feature:**
-  - Empty preferred cities array = user can connect with anyone from anywhere (default state)
-  - Non-empty preferred cities = user prefers to connect with people from those cities
-  - Maximum 10 cities allowed per user
+  - `null` preferred city = user can connect with anyone from anywhere (default state)
+  - Non-null preferred city = user prefers to connect with people from that city
+  - Single city only (users can set one preferred city at a time)
   - City search and "locate me" use OpenStreetMap Nominatim API (public, no API key required)
-  - Popular cities list shows cities sorted by user count (from users who have set preferred cities)
+  - Popular cities list shows cities sorted by user count (from users who have set preferred city)

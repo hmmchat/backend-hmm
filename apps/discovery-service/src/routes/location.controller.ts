@@ -12,7 +12,7 @@ import {
 } from "@nestjs/common";
 import { LocationService } from "../services/location.service.js";
 import {
-  UpdatePreferredCitiesSchema,
+  UpdatePreferredCitySchema,
   LocateMeSchema,
   SearchCitiesSchema
 } from "../dtos/location.dto.js";
@@ -71,30 +71,30 @@ export class LocationController {
   }
 
   /**
-   * Get user's preferred cities
+   * Get user's preferred city
    * GET /location/preference
    */
   @Get("preference")
-  async getPreferredCities(@Headers("authorization") authz?: string) {
+  async getPreferredCity(@Headers("authorization") authz?: string) {
     const token = this.getTokenFromHeader(authz);
     if (!token) {
       throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
     }
-    return this.locationService.getPreferredCities(token);
+    return this.locationService.getPreferredCity(token);
   }
 
   /**
-   * Update user's preferred cities
+   * Update user's preferred city
    * PATCH /location/preference
    */
   @Patch("preference")
-  async updatePreferredCities(@Headers("authorization") authz: string, @Body() body: any) {
+  async updatePreferredCity(@Headers("authorization") authz: string, @Body() body: any) {
     const token = this.getTokenFromHeader(authz);
     if (!token) {
       throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
     }
-    const dto = UpdatePreferredCitiesSchema.parse(body);
-    return this.locationService.updatePreferredCities(token, dto.cities);
+    const dto = UpdatePreferredCitySchema.parse(body);
+    return this.locationService.updatePreferredCity(token, dto.city);
   }
 }
 

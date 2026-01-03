@@ -5,33 +5,9 @@ const prisma = new PrismaClient();
 async function main() {
   console.log("🌱 Starting discovery-service seed...");
 
-  // Seed Gender Filter Configuration
-  console.log("⚙️  Seeding gender filter configuration...");
-  
-  const configs = [
-    {
-      key: "gender_filter_coins_per_screen",
-      value: "200",
-      description: "Number of coins required per gender filter purchase"
-    },
-    {
-      key: "gender_filter_screens_per_purchase",
-      value: "10",
-      description: "Number of screens/matches included per gender filter purchase"
-    }
-  ];
-
-  for (const config of configs) {
-    await prisma.genderFilterConfig.upsert({
-      where: { key: config.key },
-      update: {
-        value: config.value,
-        description: config.description
-      },
-      create: config
-    });
-  }
-  console.log(`✅ Seeded ${configs.length} gender filter configurations`);
+  // Note: Gender filter configuration is now managed via environment variables:
+  // - GENDER_FILTER_COINS_PER_SCREEN (default: 200)
+  // - GENDER_FILTER_SCREENS_PER_PURCHASE (default: 10)
 
   // Seed test gender filter preferences (for testing)
   console.log("👥 Seeding test gender filter preferences...");

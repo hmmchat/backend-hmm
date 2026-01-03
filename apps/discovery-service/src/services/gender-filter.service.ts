@@ -1,4 +1,5 @@
 import { Injectable, HttpException, HttpStatus } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { UserClientService } from "./user-client.service.js";
 import { WalletClientService } from "./wallet-client.service.js";
@@ -32,32 +33,21 @@ export class GenderFilterService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly userClient: UserClientService,
-    private readonly walletClient: WalletClientService
+    private readonly walletClient: WalletClientService,
+    private readonly configService: ConfigService
   ) {}
 
   /**
-   * Get gender filter configuration
+   * Get gender filter configuration from environment variables
    */
-  private async getConfig(): Promise<{ coinsPerScreen: number; screensPerPurchase: number }> {
-    try {
-      const coinsConfig = await this.prisma.genderFilterConfig.findUnique({
-        where: { key: "gender_filter_coins_per_screen" }
-      });
-      const screensConfig = await this.prisma.genderFilterConfig.findUnique({
-        where: { key: "gender_filter_screens_per_purchase" }
-      });
+  private getConfig(): { coinsPerScreen: number; screensPerPurchase: number } {
+    const coinsPerScreen = this.configService.get<number>("GENDER_FILTER_COINS_PER_SCREEN", this.defaultCoinsPerScreen);
+    const screensPerPurchase = this.configService.get<number>("GENDER_FILTER_SCREENS_PER_PURCHASE", this.defaultScreensPerPurchase);
 
-      return {
-        coinsPerScreen: coinsConfig ? parseInt(coinsConfig.value, 10) : this.defaultCoinsPerScreen,
-        screensPerPurchase: screensConfig ? parseInt(screensConfig.value, 10) : this.defaultScreensPerPurchase
-      };
-    } catch (error) {
-      // If config doesn't exist, use defaults
-      return {
-        coinsPerScreen: this.defaultCoinsPerScreen,
-        screensPerPurchase: this.defaultScreensPerPurchase
-      };
-    }
+    return {
+      coinsPerScreen: typeof coinsPerScreen === "number" ? coinsPerScreen : parseInt(String(coinsPerScreen), 10) || this.defaultCoinsPerScreen,
+      screensPerPurchase: typeof screensPerPurchase === "number" ? screensPerPurchase : parseInt(String(screensPerPurchase), 10) || this.defaultScreensPerPurchase
+    };
   }
 
   /**

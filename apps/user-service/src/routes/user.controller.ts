@@ -21,7 +21,7 @@ import {
   UpdateInterestsSchema,
   UpdateValuesSchema,
   UpdateLocationSchema,
-  UpdatePreferredCitiesSchema,
+  UpdatePreferredCitySchema,
   UpdateStatusSchema,
   CreateMusicPreferenceSchema
 } from "../dtos/profile.dto.js";
@@ -234,12 +234,12 @@ export class UserController {
     return this.userService.updateLocation(token, dto);
   }
 
-  @Patch("me/preferred-cities")
-  async updatePreferredCities(@Headers("authorization") authz: string, @Body() body: any) {
+  @Patch("me/preferred-city")
+  async updatePreferredCity(@Headers("authorization") authz: string, @Body() body: any) {
     const token = this.getTokenFromHeader(authz);
     if (!token) throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
-    const dto = UpdatePreferredCitiesSchema.parse(body);
-    return this.userService.updatePreferredCities(token, dto);
+    const dto = UpdatePreferredCitySchema.parse(body);
+    return this.userService.updatePreferredCity(token, dto);
   }
 
   /* ---------- Status ---------- */

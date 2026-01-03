@@ -23,15 +23,3 @@ model GenderFilterPreference {
   @@index([userId])
   @@map("gender_filter_preferences")
 }
-
-// Configuration for gender filter pricing
-model GenderFilterConfig {
-  id          String   @id @default(cuid())
-  key         String   @unique // e.g., "gender_filter_coins_per_screen"
-  value       String // JSON string for complex values, or simple string/number
-  description String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@map("gender_filter_configs")
-}

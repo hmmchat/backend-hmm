@@ -302,22 +302,22 @@ fi
 echo ""
 
 # ==========================================
-# PHASE 4: PREFERRED CITIES (AUTHENTICATED)
+# PHASE 4: PREFERRED CITY (AUTHENTICATED)
 # ==========================================
 
 if [ -z "$ACCESS_TOKEN" ]; then
     echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${YELLOW}PHASE 4: PREFERRED CITIES (SKIPPED - NO TOKEN)${NC}"
+    echo -e "${YELLOW}PHASE 4: PREFERRED CITY (SKIPPED - NO TOKEN)${NC}"
     echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${YELLOW}⚠️  Skipping authenticated tests. Add a token to .test-tokens to test these.${NC}"
     echo ""
 else
     echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${YELLOW}PHASE 4: PREFERRED CITIES (AUTHENTICATED)${NC}"
+    echo -e "${YELLOW}PHASE 4: PREFERRED CITY (AUTHENTICATED)${NC}"
     echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
 
-    echo -e "${CYAN}Test 4.1: GET /location/preference (get current preferred cities)${NC}"
+    echo -e "${CYAN}Test 4.1: GET /location/preference (get current preferred city)${NC}"
     RESPONSE=$(curl -s -w "\n%{http_code}" -X GET "$DISCOVERY_SERVICE_URL/location/preference" \
       -H "Authorization: Bearer $ACCESS_TOKEN")
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
@@ -327,11 +327,11 @@ else
         echo -e "${GREEN}✅ Status: $HTTP_CODE${NC}"
         echo "Response: $BODY" | jq '.' 2>/dev/null || echo "Response: $BODY"
         
-        CITIES=$(echo "$BODY" | jq -r '.cities[]?' 2>/dev/null || echo "")
-        if [ -n "$CITIES" ]; then
-            echo -e "${GREEN}✅ Current preferred cities retrieved${NC}"
+        CITY=$(echo "$BODY" | jq -r '.city // empty' 2>/dev/null || echo "")
+        if [ -n "$CITY" ] && [ "$CITY" != "null" ]; then
+            echo -e "${GREEN}✅ Current preferred city retrieved: $CITY${NC}"
         else
-            echo -e "${CYAN}ℹ️  No preferred cities set (empty array is default)${NC}"
+            echo -e "${CYAN}ℹ️  No preferred city set (null is default)${NC}"
         fi
     else
         echo -e "${RED}❌ Status: $HTTP_CODE${NC}"
@@ -339,11 +339,11 @@ else
     fi
     echo ""
 
-    echo -e "${CYAN}Test 4.2: PATCH /location/preference (set preferred cities)${NC}"
+    echo -e "${CYAN}Test 4.2: PATCH /location/preference (set preferred city)${NC}"
     RESPONSE=$(curl -s -w "\n%{http_code}" -X PATCH "$DISCOVERY_SERVICE_URL/location/preference" \
       -H "Authorization: Bearer $ACCESS_TOKEN" \
       -H "Content-Type: application/json" \
-      -d '{"cities": ["Mumbai", "Delhi", "Pune"]}')
+      -d '{"city": "Mumbai"}')
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
     BODY=$(echo "$RESPONSE" | sed '$d')
 
@@ -351,11 +351,11 @@ else
         echo -e "${GREEN}✅ Status: $HTTP_CODE${NC}"
         echo "Response: $BODY" | jq '.' 2>/dev/null || echo "Response: $BODY"
         
-        UPDATED_CITIES=$(echo "$BODY" | jq -r '.cities[]?' 2>/dev/null || echo "")
-        if [ -n "$UPDATED_CITIES" ]; then
-            echo -e "${GREEN}✅ Preferred cities updated successfully${NC}"
+        UPDATED_CITY=$(echo "$BODY" | jq -r '.city // empty' 2>/dev/null || echo "")
+        if [ -n "$UPDATED_CITY" ] && [ "$UPDATED_CITY" != "null" ]; then
+            echo -e "${GREEN}✅ Preferred city updated successfully: $UPDATED_CITY${NC}"
         else
-            echo -e "${YELLOW}⚠️  Cities may not have been updated${NC}"
+            echo -e "${YELLOW}⚠️  City may not have been updated${NC}"
         fi
     else
         echo -e "${RED}❌ Status: $HTTP_CODE${NC}"
@@ -371,13 +371,13 @@ else
 
     if [ "$HTTP_CODE" = "200" ]; then
         echo -e "${GREEN}✅ Status: $HTTP_CODE${NC}"
-        CITY_COUNT=$(echo "$BODY" | jq '.cities | length' 2>/dev/null || echo "0")
-        echo "Preferred cities count: $CITY_COUNT"
+        CITY=$(echo "$BODY" | jq -r '.city' 2>/dev/null || echo "null")
+        echo "Preferred city: $CITY"
         
-        if [ "$CITY_COUNT" -eq 3 ]; then
-            echo -e "${GREEN}✅ Preferred cities correctly stored${NC}"
+        if [ "$CITY" = "Mumbai" ]; then
+            echo -e "${GREEN}✅ Preferred city correctly stored: Mumbai${NC}"
         else
-            echo -e "${YELLOW}⚠️  Expected 3 cities, got $CITY_COUNT${NC}"
+            echo -e "${YELLOW}⚠️  Expected Mumbai, got: $CITY${NC}"
         fi
     else
         echo -e "${RED}❌ Status: $HTTP_CODE${NC}"
@@ -385,21 +385,21 @@ else
     fi
     echo ""
 
-    echo -e "${CYAN}Test 4.4: PATCH /location/preference (clear cities - empty array)${NC}"
+    echo -e "${CYAN}Test 4.4: PATCH /location/preference (clear city - set to null)${NC}"
     RESPONSE=$(curl -s -w "\n%{http_code}" -X PATCH "$DISCOVERY_SERVICE_URL/location/preference" \
       -H "Authorization: Bearer $ACCESS_TOKEN" \
       -H "Content-Type: application/json" \
-      -d '{"cities": []}')
+      -d '{"city": null}')
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
     BODY=$(echo "$RESPONSE" | sed '$d')
 
     if [ "$HTTP_CODE" = "200" ]; then
         echo -e "${GREEN}✅ Status: $HTTP_CODE${NC}"
-        CITY_COUNT=$(echo "$BODY" | jq '.cities | length' 2>/dev/null || echo "0")
-        if [ "$CITY_COUNT" -eq 0 ]; then
-            echo -e "${GREEN}✅ Preferred cities cleared (user can now connect with anyone)${NC}"
+        CITY=$(echo "$BODY" | jq -r '.city' 2>/dev/null || echo "null")
+        if [ "$CITY" = "null" ] || [ -z "$CITY" ]; then
+            echo -e "${GREEN}✅ Preferred city cleared (user can now connect with anyone)${NC}"
         else
-            echo -e "${YELLOW}⚠️  Cities not cleared${NC}"
+            echo -e "${YELLOW}⚠️  City not cleared${NC}"
         fi
     else
         echo -e "${RED}❌ Status: $HTTP_CODE${NC}"
@@ -471,30 +471,30 @@ else
         SEARCH_COUNT=$(echo "$SEARCH_RESPONSE" | jq '. | length' 2>/dev/null || echo "0")
         echo -e "  ${GREEN}✅ Found $SEARCH_COUNT cities matching '$LOCATED_CITY'${NC}"
         
-        # Step 3: Set preferred cities
-        echo "  Step 3: Setting preferred cities..."
+        # Step 3: Set preferred city
+        echo "  Step 3: Setting preferred city..."
         UPDATE_RESPONSE=$(curl -s -X PATCH "$DISCOVERY_SERVICE_URL/location/preference" \
           -H "Authorization: Bearer $ACCESS_TOKEN" \
           -H "Content-Type: application/json" \
-          -d "{\"cities\": [\"$LOCATED_CITY\", \"Delhi\", \"Pune\"]}")
-        UPDATE_CITIES=$(echo "$UPDATE_RESPONSE" | jq -r '.cities[]?' 2>/dev/null || echo "")
+          -d "{\"city\": \"$LOCATED_CITY\"}")
+        UPDATE_CITY=$(echo "$UPDATE_RESPONSE" | jq -r '.city // empty' 2>/dev/null || echo "")
         
-        if [ -n "$UPDATE_CITIES" ]; then
-            echo -e "  ${GREEN}✅ Preferred cities set${NC}"
+        if [ -n "$UPDATE_CITY" ] && [ "$UPDATE_CITY" != "null" ]; then
+            echo -e "  ${GREEN}✅ Preferred city set${NC}"
             
             # Step 4: Verify
-            echo "  Step 4: Verifying preferred cities..."
+            echo "  Step 4: Verifying preferred city..."
             VERIFY_RESPONSE=$(curl -s -X GET "$DISCOVERY_SERVICE_URL/location/preference" \
               -H "Authorization: Bearer $ACCESS_TOKEN")
-            VERIFY_COUNT=$(echo "$VERIFY_RESPONSE" | jq '.cities | length' 2>/dev/null || echo "0")
+            VERIFY_CITY=$(echo "$VERIFY_RESPONSE" | jq -r '.city // empty' 2>/dev/null || echo "")
             
-            if [ "$VERIFY_COUNT" -eq 3 ]; then
+            if [ "$VERIFY_CITY" = "$LOCATED_CITY" ]; then
                 echo -e "  ${GREEN}✅ Integration test passed!${NC}"
             else
-                echo -e "  ${YELLOW}⚠️  Verification failed (expected 3, got $VERIFY_COUNT)${NC}"
+                echo -e "  ${YELLOW}⚠️  Verification failed (expected $LOCATED_CITY, got $VERIFY_CITY)${NC}"
             fi
         else
-            echo -e "  ${RED}❌ Failed to set preferred cities${NC}"
+            echo -e "  ${RED}❌ Failed to set preferred city${NC}"
         fi
     else
         echo -e "  ${RED}❌ Failed to locate city${NC}"

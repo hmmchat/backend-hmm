@@ -11,7 +11,6 @@ generator client {
 
 model Wallet {
   id        String   @id // Links to auth-service User.id (must match auth-service user id)
-  userId    String   @unique
   balance   Int      @default(0) // Coin balance (non-negative)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

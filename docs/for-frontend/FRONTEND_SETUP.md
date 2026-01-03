@@ -199,6 +199,10 @@ WALLET_SERVICE_URL=http://localhost:3005
 
 # Geocoding API (OpenStreetMap Nominatim - defaults to public instance if not set)
 GEOCODING_API_URL=https://nominatim.openstreetmap.org
+
+# Gender Filter Configuration (optional - defaults shown)
+GENDER_FILTER_COINS_PER_SCREEN=200
+GENDER_FILTER_SCREENS_PER_PURCHASE=10
 ```
 
 ### 3.5 Wallet Service

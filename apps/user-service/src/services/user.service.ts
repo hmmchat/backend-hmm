@@ -13,7 +13,7 @@ import {
   UpdateInterestsDto,
   UpdateValuesDto,
   UpdateLocationDto,
-  UpdatePreferredCitiesDto,
+  UpdatePreferredCityDto,
   UpdateStatusDto,
   CreateMusicPreferenceDto
 } from "../dtos/profile.dto.js";
@@ -207,7 +207,7 @@ export class UserService implements OnModuleInit {
       createdAt: "createdAt",
       updatedAt: "updatedAt",
       locationUpdatedAt: "locationUpdatedAt",
-      preferredCities: "preferredCities",
+      preferredCity: "preferredCity",
       // Relation fields
       photos: "photos",
       musicPreference: "musicPreference",
@@ -571,17 +571,26 @@ export class UserService implements OnModuleInit {
     return { user };
   }
 
-  async updatePreferredCities(accessToken: string, data: UpdatePreferredCitiesDto) {
+  async updatePreferredCity(accessToken: string, data: UpdatePreferredCityDto) {
     const userId = await this.verifyAccessToken(accessToken);
+
+    // Check if user exists, if not throw appropriate error
+    const existingUser = await this.prisma.user.findUnique({
+      where: { id: userId }
+    });
+
+    if (!existingUser) {
+      throw new HttpException("User profile not found", HttpStatus.NOT_FOUND);
+    }
 
     const user = await this.prisma.user.update({
       where: { id: userId },
       data: {
-        preferredCities: data.cities
+        preferredCity: data.city
       } as any // Type assertion needed due to workspace Prisma client resolution
     });
 
-    return { cities: (user as any).preferredCities || [] };
+    return { city: (user as any).preferredCity || null };
   }
 
   /* ---------- Status ---------- */
@@ -674,12 +683,13 @@ export class UserService implements OnModuleInit {
     // Query to get cities with user counts
     const cities = await this.prisma.$queryRaw<Array<{ city: string; count: bigint }>>`
       SELECT 
-        unnest("preferredCities") as city,
+        "preferredCity" as city,
         COUNT(*)::int as count
       FROM users
-      WHERE array_length("preferredCities", 1) > 0
+      WHERE "preferredCity" IS NOT NULL
+        AND "preferredCity" != ''
         AND "profileCompleted" = true
-      GROUP BY city
+      GROUP BY "preferredCity"
       ORDER BY count DESC
       LIMIT ${limit}
     `;
@@ -693,7 +703,7 @@ export class UserService implements OnModuleInit {
         // Count online users (AVAILABLE, IN_SQUAD_AVAILABLE, IN_BROADCAST_AVAILABLE)
         const onlineCount = await this.prisma.user.count({
           where: {
-            preferredCities: { has: city },
+            preferredCity: city,
             status: {
               in: [
                 UserStatus.AVAILABLE,
@@ -708,7 +718,7 @@ export class UserService implements OnModuleInit {
         // Count chatting users (IN_SQUAD, IN_BROADCAST)
         const chattingCount = await this.prisma.user.count({
           where: {
-            preferredCities: { has: city },
+            preferredCity: city,
             status: {
               in: [UserStatus.IN_SQUAD, UserStatus.IN_BROADCAST]
             },

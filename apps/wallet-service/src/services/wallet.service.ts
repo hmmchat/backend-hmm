@@ -11,7 +11,7 @@ export class WalletService {
    */
   async getBalance(userId: string): Promise<{ balance: number }> {
     let wallet = await this.prisma.wallet.findUnique({
-      where: { userId }
+      where: { id: userId }
     });
 
     // Lazy initialization: create wallet if it doesn't exist
@@ -19,7 +19,6 @@ export class WalletService {
       wallet = await this.prisma.wallet.create({
         data: {
           id: userId,
-          userId,
           balance: 0
         }
       });
@@ -34,7 +33,7 @@ export class WalletService {
   async getWallet(userId: string, includeTransactions = false) {
     if (includeTransactions) {
       let wallet = await this.prisma.wallet.findUnique({
-        where: { userId },
+        where: { id: userId },
         include: {
           transactions: {
             orderBy: { createdAt: "desc" },
@@ -47,7 +46,6 @@ export class WalletService {
         wallet = await this.prisma.wallet.create({
           data: {
             id: userId,
-            userId,
             balance: 0
           },
           include: {
@@ -58,14 +56,13 @@ export class WalletService {
       return wallet;
     } else {
       let wallet = await this.prisma.wallet.findUnique({
-        where: { userId }
+        where: { id: userId }
       });
 
       if (!wallet) {
         wallet = await this.prisma.wallet.create({
           data: {
             id: userId,
-            userId,
             balance: 0
           }
         });
@@ -91,14 +88,13 @@ export class WalletService {
 
     // Get or create wallet
     let wallet = await this.prisma.wallet.findUnique({
-      where: { userId }
+      where: { id: userId }
     });
 
     if (!wallet) {
       wallet = await this.prisma.wallet.create({
         data: {
           id: userId,
-          userId,
           balance: 0
         }
       });
@@ -111,7 +107,7 @@ export class WalletService {
 
     // Deduct coins and create transaction
     const updatedWallet = await this.prisma.wallet.update({
-      where: { userId },
+      where: { id: userId },
       data: {
         balance: {
           decrement: amount

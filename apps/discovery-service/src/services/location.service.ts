@@ -190,20 +190,20 @@ export class LocationService implements OnModuleInit {
   }
 
   /**
-   * Update user's preferred cities
+   * Update user's preferred city
    */
-  async updatePreferredCities(token: string, cities: string[]): Promise<{ cities: string[] }> {
+  async updatePreferredCity(token: string, city: string | null): Promise<{ city: string | null }> {
     await this.getUserIdFromToken(token); // Verify token is valid
 
     try {
-      // Call user-service to update preferred cities
-      const response = await fetch(`${this.userServiceUrl}/me/preferred-cities`, {
+      // Call user-service to update preferred city
+      const response = await fetch(`${this.userServiceUrl}/me/preferred-city`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${token}`
         },
-        body: JSON.stringify({ cities })
+        body: JSON.stringify({ city })
       });
 
       if (!response.ok) {
@@ -211,26 +211,26 @@ export class LocationService implements OnModuleInit {
         throw new Error(`User service error: ${error}`);
       }
 
-      const result = await response.json() as { cities: string[] };
+      const result = await response.json() as { city: string | null };
       return result;
     } catch (error) {
-      console.error("Failed to update preferred cities:", error);
+      console.error("Failed to update preferred city:", error);
       throw new HttpException(
-        "Unable to update preferred cities. Please try again later.",
+        "Unable to update preferred city. Please try again later.",
         HttpStatus.SERVICE_UNAVAILABLE
       );
     }
   }
 
   /**
-   * Get user's current preferred cities
+   * Get user's current preferred city
    */
-  async getPreferredCities(token: string): Promise<{ cities: string[] }> {
+  async getPreferredCity(token: string): Promise<{ city: string | null }> {
     const userId = await this.getUserIdFromToken(token);
 
     try {
-      // Call user-service to get preferred cities
-      const response = await fetch(`${this.userServiceUrl}/users/${userId}?fields=preferredCities`, {
+      // Call user-service to get preferred city
+      const response = await fetch(`${this.userServiceUrl}/users/${userId}?fields=preferredCity`, {
         method: "GET",
         headers: {
           "Content-Type": "application/json",
@@ -243,12 +243,12 @@ export class LocationService implements OnModuleInit {
         throw new Error(`User service error: ${error}`);
       }
 
-      const result = await response.json() as { user: { preferredCities: string[] } };
-      return { cities: result.user.preferredCities || [] };
+      const result = await response.json() as { user: { preferredCity: string | null } };
+      return { city: result.user.preferredCity || null };
     } catch (error) {
-      console.error("Failed to get preferred cities:", error);
+      console.error("Failed to get preferred city:", error);
       throw new HttpException(
-        "Unable to fetch preferred cities. Please try again later.",
+        "Unable to fetch preferred city. Please try again later.",
         HttpStatus.SERVICE_UNAVAILABLE
       );
     }

@@ -6,7 +6,7 @@
 - **Location:** `apps/discovery-service/prisma/schema.prisma`
 - **Models:**
   - `GenderFilterPreference`: Stores user's gender filter preferences and remaining screens
-  - `GenderFilterConfig`: Stores configurable pricing (coins per screen, screens per purchase)
+  - ~~`GenderFilterConfig`~~: Removed - pricing now configured via environment variables
 - **Migration:** `prisma/migrations/20260102000000_init_gender_filter/`
 
 ### 2. Services Created
@@ -68,21 +68,27 @@
 ### 6. Seed Data
 
 #### Seed Script: `prisma/seed.ts`
-- Seeds gender filter configuration (200 coins, 10 screens)
 - Seeds test preferences for testing
+- Note: Configuration is now via environment variables, not database
 
 ## Business Rules Implemented
 
 1. **PREFER_NOT_TO_SAY users**: Filter is disabled with reason message
 2. **MALE/FEMALE users**: Can only see and filter by MALE and FEMALE (2 options)
 3. **NON_BINARY users**: Can see and filter by all 3 options (MALE, FEMALE, NON_BINARY)
-4. **Pricing**: Configurable via `gender_filter_configs` table (default: 200 coins, 10 screens)
+4. **Pricing**: Configurable via environment variables (default: 200 coins, 10 screens)
 
 ## Configuration
 
-Pricing is configurable via database:
-- `gender_filter_coins_per_screen`: Cost in coins (default: 200)
-- `gender_filter_screens_per_purchase`: Number of screens per purchase (default: 10)
+Pricing is configurable via environment variables:
+- `GENDER_FILTER_COINS_PER_SCREEN`: Cost in coins (default: 200)
+- `GENDER_FILTER_SCREENS_PER_PURCHASE`: Number of screens per purchase (default: 10)
+
+Add these to your `.env` file in `apps/discovery-service/`:
+```bash
+GENDER_FILTER_COINS_PER_SCREEN=200
+GENDER_FILTER_SCREENS_PER_PURCHASE=10
+```
 
 ## Next Steps to Run
 

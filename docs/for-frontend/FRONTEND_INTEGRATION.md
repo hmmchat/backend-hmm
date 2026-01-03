@@ -1108,31 +1108,31 @@ The location feature allows users to:
 [
   {
     "city": "Mumbai",
-    "userCount": 1250,
-    "onlineCount": 450,
-    "chattingCount": 120
+    "availableCount": 450
   },
   {
     "city": "Delhi",
-    "userCount": 980,
-    "onlineCount": 320,
-    "chattingCount": 95
+    "availableCount": 320
   },
   {
     "city": "Bangalore",
-    "userCount": 750,
-    "onlineCount": 280,
-    "chattingCount": 80
+    "availableCount": 280
   }
 ]
 ```
+
+**Note:** `availableCount` includes users with any available status:
+- `AVAILABLE` - User is available for matching
+- `IN_SQUAD_AVAILABLE` - User is in a squad but available
+- `IN_BROADCAST_AVAILABLE` - User is in a broadcast but available
 
 **Example Usage:**
 ```javascript
 // Get top 10 cities
 const response = await fetch('http://localhost:3004/location/cities?limit=10');
 const cities = await response.json();
-// Display cities in UI with user counts
+// cities is an array of { city, availableCount }
+// Display cities in UI with available user counts
 ```
 
 **Note:** This endpoint is public (no authentication required).

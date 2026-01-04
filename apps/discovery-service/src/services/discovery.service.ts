@@ -4,22 +4,9 @@ import { UserClientService } from "./user-client.service.js";
 import { GenderFilterService } from "./gender-filter.service.js";
 import { LocationService } from "./location.service.js";
 
-interface DiscoveryUser {
-  id: string;
-  username: string | null;
-  dateOfBirth: Date | null;
-  gender: "MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY" | null;
-  displayPictureUrl: string | null;
-  preferredCity: string | null;
-  intent: string | null;
-  status: string;
-  photos: Array<{ id: string; url: string; order: number }>;
-  musicPreference: { id: string; name: string; artist: string; albumArtUrl: string | null } | null;
-  brandPreferences: Array<{ brand: { id: string; name: string; logoUrl: string | null } }>;
-  interests: Array<{ interest: { id: string; name: string; genre: string | null } }>;
-  values: Array<{ value: { id: string; name: string } }>;
-  videoEnabled: boolean;
-}
+// DiscoveryUser interface is imported from user-client.service.ts
+// Import it to avoid duplication
+import type { DiscoveryUser } from "./user-client.service.js";
 
 interface UserProfile {
   id: string;

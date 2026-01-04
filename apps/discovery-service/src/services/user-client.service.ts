@@ -13,7 +13,7 @@ interface UserProfileResponse {
   [key: string]: any;
 }
 
-interface DiscoveryUser {
+export interface DiscoveryUser {
   id: string;
   username: string | null;
   dateOfBirth: Date | null;
@@ -27,6 +27,7 @@ interface DiscoveryUser {
   brandPreferences: Array<{ brand: { id: string; name: string; logoUrl: string | null } }>;
   interests: Array<{ interest: { id: string; name: string; genre: string | null } }>;
   values: Array<{ value: { id: string; name: string } }>;
+  videoEnabled: boolean;
 }
 
 interface DiscoveryUsersResponse {

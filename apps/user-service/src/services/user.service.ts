@@ -540,7 +540,15 @@ export class UserService implements OnModuleInit {
   }
 
   async getInterests() {
+    // Only return sub-genres (name) to users, not genre
+    // Genre is used internally for matching but not shown to users
     const interests = await this.prisma.interest.findMany({
+      select: {
+        id: true,
+        name: true, // Sub-genre (what users see)
+        createdAt: true
+        // genre is intentionally excluded - only used for matching
+      },
       orderBy: { name: "asc" }
     });
     return { interests };

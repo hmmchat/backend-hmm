@@ -16,17 +16,22 @@ interface DiscoveryUser {
   photos: Array<{ id: string; url: string; order: number }>;
   musicPreference: { id: string; name: string; artist: string; albumArtUrl: string | null } | null;
   brandPreferences: Array<{ brand: { id: string; name: string; logoUrl: string | null } }>;
-  interests: Array<{ interest: { id: string; name: string } }>;
+  interests: Array<{ interest: { id: string; name: string; genre: string | null } }>;
   values: Array<{ value: { id: string; name: string } }>;
+  videoEnabled: boolean;
 }
 
 interface UserProfile {
   id: string;
   preferredCity: string | null;
   brandPreferences?: Array<{ brand: { id: string; name: string } }>;
-  interests?: Array<{ interest: { id: string; name: string } }>;
+  interests?: Array<{ interest: { id: string; name: string; genre: string | null } }>;
   values?: Array<{ value: { id: string; name: string } }>;
   musicPreference?: { id: string } | null;
+  videoEnabled?: boolean;
+  latitude?: number | null;
+  longitude?: number | null;
+  actualCity?: string | null; // City derived from latitude/longitude (for "anywhere" mode)
   [key: string]: any;
 }
 
@@ -92,6 +97,21 @@ export class DiscoveryService {
     const cityResponse = await this.locationService.getPreferredCity(token);
     const preferredCity = cityResponse.city;
     
+    // Get viewer's actual city from location if in "anywhere" mode
+    let actualCity: string | null = null;
+    if (preferredCity === null && (userProfileResponse as any).latitude && (userProfileResponse as any).longitude) {
+      try {
+        const locationResult = await this.locationService.locateMe(
+          (userProfileResponse as any).latitude,
+          (userProfileResponse as any).longitude
+        );
+        actualCity = locationResult.city;
+      } catch (error) {
+        // If geocoding fails, actualCity remains null (no same city bonus)
+        console.warn("Failed to get actual city from location:", error);
+      }
+    }
+    
     // Convert to UserProfile interface
     const currentUser: UserProfile = {
       id: userProfileResponse.id,
@@ -99,7 +119,9 @@ export class DiscoveryService {
       brandPreferences: (userProfileResponse as any).brandPreferences,
       interests: (userProfileResponse as any).interests,
       values: (userProfileResponse as any).values,
-      musicPreference: (userProfileResponse as any).musicPreference
+      musicPreference: (userProfileResponse as any).musicPreference,
+      videoEnabled: (userProfileResponse as any).videoEnabled,
+      actualCity: actualCity
     };
 
     // Get gender filter preference
@@ -338,17 +360,56 @@ export class DiscoveryService {
     const commonBrands = [...userBrandIds].filter((id) => targetBrandIds.has(id));
     score += commonBrands.length * 10;
 
-    // Interests (equal weight)
-    const userInterestIds = new Set(
-      (user.interests || []).map((i) => i.interest.id)
-    );
-    const targetInterestIds = new Set(
-      targetUser.interests.map((i) => i.interest.id)
-    );
-    const commonInterests = [...userInterestIds].filter((id) => targetInterestIds.has(id));
-    score += commonInterests.length * 10;
+    // Interests: sub-genre match = 15pts, genre match (different sub-genre) = 10pts
+    const userInterests = (user.interests || []).map((i) => ({
+      id: i.interest.id,
+      name: i.interest.name,
+      genre: i.interest.genre
+    }));
+    const targetInterests = targetUser.interests.map((i) => ({
+      id: i.interest.id,
+      name: i.interest.name,
+      genre: i.interest.genre
+    }));
 
-    // Values (equal weight)
+    // Track which interests have been matched to avoid double counting
+    const matchedUserInterestIds = new Set<string>();
+    const matchedTargetInterestIds = new Set<string>();
+
+    // First pass: Check for exact sub-genre matches (15 points each)
+    for (const userInterest of userInterests) {
+      for (const targetInterest of targetInterests) {
+        if (userInterest.id === targetInterest.id) {
+          // Exact match (same sub-genre)
+          if (!matchedUserInterestIds.has(userInterest.id) && !matchedTargetInterestIds.has(targetInterest.id)) {
+            score += 15;
+            matchedUserInterestIds.add(userInterest.id);
+            matchedTargetInterestIds.add(targetInterest.id);
+          }
+        }
+      }
+    }
+
+    // Second pass: Check for genre matches (different sub-genres, same genre) = 10 points each
+    for (const userInterest of userInterests) {
+      if (matchedUserInterestIds.has(userInterest.id)) continue; // Already matched
+      
+      for (const targetInterest of targetInterests) {
+        if (matchedTargetInterestIds.has(targetInterest.id)) continue; // Already matched
+        
+        // Same genre but different sub-genre
+        if (userInterest.genre && targetInterest.genre && 
+            userInterest.genre === targetInterest.genre && 
+            userInterest.id !== targetInterest.id) {
+          score += 10;
+          matchedUserInterestIds.add(userInterest.id);
+          matchedTargetInterestIds.add(targetInterest.id);
+          break; // Only match once per user interest
+        }
+      }
+    }
+
+    // Values: 20 points per match
     const userValueIds = new Set(
       (user.values || []).map((v) => v.value.id)
     );
@@ -356,15 +417,37 @@ export class DiscoveryService {
       targetUser.values.map((v) => v.value.id)
     );
     const commonValues = [...userValueIds].filter((id) => targetValueIds.has(id));
-    score += commonValues.length * 10;
+    score += commonValues.length * 20;
 
-    // Music preference (equal weight)
+    // Music preference: 30 points
     if (
       user.musicPreference?.id &&
       targetUser.musicPreference?.id &&
       user.musicPreference.id === targetUser.musicPreference.id
     ) {
-      score += 10;
+      score += 30;
+    }
+
+    // Same city: 50 points (only when viewer's preferredCity is null - "anywhere" mode)
+    // When viewer has a city preference, all candidates are already from that city (filtered),
+    // so this scoring would be redundant. Only applies when viewer is in "anywhere" mode.
+    if (user.preferredCity === null && user.actualCity && targetUser.preferredCity) {
+      // Viewer is in "anywhere" mode, compare viewer's actual city (from location) 
+      // with target user's preferredCity
+      if (user.actualCity.toLowerCase() === targetUser.preferredCity.toLowerCase()) {
+        score += 50;
+      }
+    }
+    // Note: When user.preferredCity is not null, all candidates are already filtered to that city,
+    // so same city scoring is redundant (all would get +50, making it meaningless for ranking)
+
+    // Video preference: 100 points (if both have same preference)
+    if (
+      user.videoEnabled !== undefined &&
+      targetUser.videoEnabled !== undefined &&
+      user.videoEnabled === targetUser.videoEnabled
+    ) {
+      score += 100;
     }
 
     return score;
@@ -685,6 +768,21 @@ export class DiscoveryService {
     // Get user's preferred city directly
     const preferredCity = await this.userClient.getPreferredCityById(userId);
     
+    // Get viewer's actual city from location if in "anywhere" mode
+    let actualCity: string | null = null;
+    if (preferredCity === null && (userProfileResponse as any).latitude && (userProfileResponse as any).longitude) {
+      try {
+        const locationResult = await this.locationService.locateMe(
+          (userProfileResponse as any).latitude,
+          (userProfileResponse as any).longitude
+        );
+        actualCity = locationResult.city;
+      } catch (error) {
+        // If geocoding fails, actualCity remains null (no same city bonus)
+        console.warn("Failed to get actual city from location:", error);
+      }
+    }
+    
     // Convert to UserProfile interface
     const currentUser: UserProfile = {
       id: userProfileResponse.id,
@@ -692,7 +790,9 @@ export class DiscoveryService {
       brandPreferences: (userProfileResponse as any).brandPreferences,
       interests: (userProfileResponse as any).interests,
       values: (userProfileResponse as any).values,
-      musicPreference: (userProfileResponse as any).musicPreference
+      musicPreference: (userProfileResponse as any).musicPreference,
+      videoEnabled: (userProfileResponse as any).videoEnabled,
+      actualCity: actualCity
     };
 
     // Get gender filter preference

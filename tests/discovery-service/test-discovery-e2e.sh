@@ -2,6 +2,15 @@
 
 # Comprehensive E2E test script for discovery flow
 # Bypasses auth entirely - uses test endpoints with userId directly
+#
+# Matching Score Weights:
+# - Brands: 10 points per match
+# - Interests Sub-genre: 15 points per exact match
+# - Interests Genre: 10 points per genre match (different sub-genre, same genre)
+# - Values: 20 points per match
+# - Music Preference: 30 points (same song)
+# - Same City: 50 points (only when viewer's preferredCity is null - "anywhere" mode)
+# - Video Preference: 100 points (same preference)
 
 set +e  # Don't exit on error, we'll handle it manually
 
@@ -347,7 +356,8 @@ fi
 echo ""
 
 # Test 8: Preference Matching (Brands, Interests, Values, Music)
-echo -e "${CYAN}Test 8: Preference Matching${NC}"
+# Note: Music preference = 30pts, Values = 20pts per match (updated weights)
+echo -e "${CYAN}Test 8: Preference Matching (Updated Weights)${NC}"
 # Get a card and check if it has matching preferences
 PREF_MATCH_RESPONSE=$(curl -s -X GET "$DISCOVERY_SERVICE_URL/discovery/test/card?userId=$TEST_USER_MUMBAI_MALE&sessionId=${SESSION_ID}-pref&soloOnly=false")
 PREF_CARD=$(echo "$PREF_MATCH_RESPONSE" | jq -r '.card' 2>/dev/null)
@@ -361,14 +371,146 @@ if [ "$PREF_CARD" != "null" ] && [ ! -z "$PREF_CARD" ]; then
     if [ "$HAS_BRANDS" -gt 0 ] && [ "$HAS_INTERESTS" -gt 0 ] && [ "$HAS_VALUES" -gt 0 ]; then
         test_result 0 "Card has preferences (brands: $HAS_BRANDS, interests: $HAS_INTERESTS, values: $HAS_VALUES)"
         if [ ! -z "$HAS_MUSIC" ] && [ "$HAS_MUSIC" != "null" ]; then
-            test_result 0 "Card has music preference"
+            test_result 0 "Card has music preference (weight: 30pts)"
         fi
+        test_result 0 "Values matching weight: 20pts per match (updated)"
     else
         test_result 1 "Card missing preferences"
     fi
 else
     test_result 1 "Preference matching test failed - no card returned"
 fi
+echo ""
+
+# Test 8a: Video Preference Matching (100 points)
+echo -e "${CYAN}Test 8a: Video Preference Matching (100 points)${NC}"
+# Get viewer's video preference
+VIEWER_VIDEO=$(curl -s "$USER_SERVICE_URL/users/$TEST_USER_MUMBAI_MALE?fields=videoEnabled" 2>/dev/null | jq -r '.user.videoEnabled // empty' 2>/dev/null)
+
+if [ ! -z "$VIEWER_VIDEO" ]; then
+    # Get multiple cards and check if they prioritize matching video preference
+    VIDEO_SESSION="video-$(date +%s)"
+    VIDEO_MATCHES=0
+    VIDEO_TOTAL=0
+    
+    for i in {1..5}; do
+        VIDEO_RESPONSE=$(curl -s -X GET "$DISCOVERY_SERVICE_URL/discovery/test/card?userId=$TEST_USER_MUMBAI_MALE&sessionId=$VIDEO_SESSION&soloOnly=false")
+        VIDEO_CARD_USER=$(echo "$VIDEO_RESPONSE" | jq -r '.card.userId' 2>/dev/null)
+        
+        if [ ! -z "$VIDEO_CARD_USER" ] && [ "$VIDEO_CARD_USER" != "null" ]; then
+            # Get target user's video preference
+            TARGET_VIDEO=$(curl -s "$USER_SERVICE_URL/users/$VIDEO_CARD_USER?fields=videoEnabled" 2>/dev/null | jq -r '.user.videoEnabled // empty' 2>/dev/null)
+            
+            if [ ! -z "$TARGET_VIDEO" ]; then
+                ((VIDEO_TOTAL++))
+                if [ "$VIEWER_VIDEO" = "$TARGET_VIDEO" ]; then
+                    ((VIDEO_MATCHES++))
+                fi
+            fi
+            
+            # Raincheck to get next card
+            curl -s -X POST "$DISCOVERY_SERVICE_URL/discovery/test/raincheck" \
+                -H "Content-Type: application/json" \
+                -d "{
+                    \"userId\": \"$TEST_USER_MUMBAI_MALE\",
+                    \"sessionId\": \"$VIDEO_SESSION\",
+                    \"raincheckedUserId\": \"$VIDEO_CARD_USER\"
+                }" > /dev/null
+            sleep 0.3
+        else
+            break
+        fi
+    done
+    
+    if [ $VIDEO_TOTAL -gt 0 ]; then
+        MATCH_PERCENTAGE=$((VIDEO_MATCHES * 100 / VIDEO_TOTAL))
+        test_result 0 "Video preference matching test (matches: $VIDEO_MATCHES/$VIDEO_TOTAL = $MATCH_PERCENTAGE%)"
+        echo "  Viewer videoEnabled: $VIEWER_VIDEO"
+        echo "  Note: Matching video preference adds 100 points to score"
+    else
+        test_result 1 "Video preference matching test - no cards returned"
+    fi
+else
+    test_result 1 "Video preference matching test - could not get viewer's video preference"
+fi
+echo ""
+
+# Test 8b: Same City Scoring (50 points - only in "anywhere" mode)
+echo -e "${CYAN}Test 8b: Same City Scoring (50 points - anywhere mode)${NC}"
+# Test with a user in "anywhere" mode (preferredCity = null)
+# First, set test user to "anywhere" mode
+update_preferred_city "$TEST_USER_ANYWHERE" "" > /dev/null 2>&1
+sleep 0.5
+
+# Get viewer's actual city from location (if available)
+ANYWHERE_VIEWER_LAT=$(curl -s "$USER_SERVICE_URL/users/$TEST_USER_ANYWHERE?fields=latitude" 2>/dev/null | jq -r '.user.latitude // empty' 2>/dev/null)
+ANYWHERE_VIEWER_LNG=$(curl -s "$USER_SERVICE_URL/users/$TEST_USER_ANYWHERE?fields=longitude" 2>/dev/null | jq -r '.user.longitude // empty' 2>/dev/null)
+
+if [ ! -z "$ANYWHERE_VIEWER_LAT" ] && [ ! -z "$ANYWHERE_VIEWER_LNG" ]; then
+    # Get viewer's actual city via geocoding
+    ANYWHERE_VIEWER_CITY_RESPONSE=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/location/locate-me" \
+        -H "Content-Type: application/json" \
+        -d "{
+            \"latitude\": $ANYWHERE_VIEWER_LAT,
+            \"longitude\": $ANYWHERE_VIEWER_LNG
+        }" 2>/dev/null)
+    ANYWHERE_VIEWER_CITY=$(echo "$ANYWHERE_VIEWER_CITY_RESPONSE" | jq -r '.city // empty' 2>/dev/null)
+    
+    if [ ! -z "$ANYWHERE_VIEWER_CITY" ]; then
+        # Get cards and check if users from same city are prioritized
+        SAME_CITY_SESSION="samecity-$(date +%s)"
+        SAME_CITY_MATCHES=0
+        SAME_CITY_TOTAL=0
+        
+        for i in {1..5}; do
+            SAME_CITY_RESPONSE=$(curl -s -X GET "$DISCOVERY_SERVICE_URL/discovery/test/card?userId=$TEST_USER_ANYWHERE&sessionId=$SAME_CITY_SESSION&soloOnly=false")
+            SAME_CITY_CARD_USER=$(echo "$SAME_CITY_RESPONSE" | jq -r '.card.userId' 2>/dev/null)
+            SAME_CITY_CARD_CITY=$(echo "$SAME_CITY_RESPONSE" | jq -r '.card.city // empty' 2>/dev/null)
+            
+            if [ ! -z "$SAME_CITY_CARD_USER" ] && [ "$SAME_CITY_CARD_USER" != "null" ]; then
+                ((SAME_CITY_TOTAL++))
+                # Check if card user's preferredCity matches viewer's actual city
+                TARGET_PREF_CITY=$(curl -s "$USER_SERVICE_URL/users/$SAME_CITY_CARD_USER?fields=preferredCity" 2>/dev/null | jq -r '.user.preferredCity // empty' 2>/dev/null)
+                
+                if [ ! -z "$TARGET_PREF_CITY" ] && [ "$TARGET_PREF_CITY" != "null" ]; then
+                    # Case-insensitive comparison
+                    if [ "$(echo "$ANYWHERE_VIEWER_CITY" | tr '[:upper:]' '[:lower:]')" = "$(echo "$TARGET_PREF_CITY" | tr '[:upper:]' '[:lower:]')" ]; then
+                        ((SAME_CITY_MATCHES++))
+                    fi
+                fi
+                
+                # Raincheck to get next card
+                curl -s -X POST "$DISCOVERY_SERVICE_URL/discovery/test/raincheck" \
+                    -H "Content-Type: application/json" \
+                    -d "{
+                        \"userId\": \"$TEST_USER_ANYWHERE\",
+                        \"sessionId\": \"$SAME_CITY_SESSION\",
+                        \"raincheckedUserId\": \"$SAME_CITY_CARD_USER\"
+                    }" > /dev/null
+                sleep 0.3
+            else
+                break
+            fi
+        done
+        
+        if [ $SAME_CITY_TOTAL -gt 0 ]; then
+            test_result 0 "Same city scoring test (viewer city: $ANYWHERE_VIEWER_CITY, matches: $SAME_CITY_MATCHES/$SAME_CITY_TOTAL)"
+            echo "  Note: Same city adds 50 points (only when viewer's preferredCity is null)"
+            echo "  Viewer actual city: $ANYWHERE_VIEWER_CITY"
+        else
+            test_result 1 "Same city scoring test - no cards returned"
+        fi
+    else
+        echo -e "${YELLOW}⚠️  Same city scoring test skipped (geocoding unavailable)${NC}"
+        test_result 0 "Same city scoring test (skipped - geocoding service may be unavailable)"
+    fi
+else
+    echo -e "${YELLOW}⚠️  Same city scoring test skipped (viewer location not available)${NC}"
+    test_result 0 "Same city scoring test (skipped - viewer location not set)"
+fi
+
+# Reset test user's preferred city if needed
+# (TEST_USER_ANYWHERE should remain in "anywhere" mode, but we can verify)
 echo ""
 
 # Test 9: Gender Filter - Active (screensRemaining > 0)

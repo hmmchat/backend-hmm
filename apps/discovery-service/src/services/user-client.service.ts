@@ -25,7 +25,7 @@ interface DiscoveryUser {
   photos: Array<{ id: string; url: string; order: number }>;
   musicPreference: { id: string; name: string; artist: string; albumArtUrl: string | null } | null;
   brandPreferences: Array<{ brand: { id: string; name: string; logoUrl: string | null } }>;
-  interests: Array<{ interest: { id: string; name: string } }>;
+  interests: Array<{ interest: { id: string; name: string; genre: string | null } }>;
   values: Array<{ value: { id: string; name: string } }>;
 }
 
@@ -183,7 +183,7 @@ export class UserClientService implements OnModuleInit {
     
     try {
       const response = await fetch(
-        `${this.userServiceUrl}/users/${userId}?fields=username,dateOfBirth,gender,displayPictureUrl,preferredCity,intent,status,photos,musicPreference,brandPreferences,interests,values`,
+        `${this.userServiceUrl}/users/${userId}?fields=username,dateOfBirth,gender,displayPictureUrl,preferredCity,intent,status,photos,musicPreference,brandPreferences,interests,values,videoEnabled,latitude,longitude`,
         {
           method: "GET",
           headers: {
@@ -218,7 +218,7 @@ export class UserClientService implements OnModuleInit {
   async getUserFullProfileById(userId: string): Promise<UserProfileResponse> {
     try {
       const response = await fetch(
-        `${this.userServiceUrl}/users/${userId}?fields=username,dateOfBirth,gender,displayPictureUrl,preferredCity,intent,status,photos,musicPreference,brandPreferences,interests,values`,
+        `${this.userServiceUrl}/users/${userId}?fields=username,dateOfBirth,gender,displayPictureUrl,preferredCity,intent,status,photos,musicPreference,brandPreferences,interests,values,videoEnabled,latitude,longitude`,
         {
           method: "GET",
           headers: {

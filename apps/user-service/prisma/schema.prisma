@@ -143,13 +143,16 @@ model UserBrand {
 }
 
 // Interests (max 4 from provided list)
+// name = sub-genre (what users see/choose), genre = umbrella category
 model Interest {
   id        String   @id @default(cuid())
-  name      String   @unique // Interest name
+  name      String   @unique // Sub-genre name (e.g., "cricket", "hockey", "sitcoms", "romcoms")
+  genre     String?  // Genre/umbrella category (e.g., "sports", "sports", "web series", "web series") - nullable for backward compatibility
   createdAt DateTime @default(now())
   
   userPreferences UserInterest[]
   
+  @@index([genre])
   @@map("interests")
 }
 

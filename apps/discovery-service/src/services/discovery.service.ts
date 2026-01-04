@@ -52,10 +52,19 @@ interface Card {
   status: "AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE";
 }
 
+interface LocationCard {
+  type: "LOCATION";
+  city: string | null; // null means "Anywhere"
+  country?: string;
+  state?: string;
+  availableCount: number;
+}
+
 interface CardResponse {
-  card: Card | null;
+  card: Card | LocationCard | null;
   exhausted: boolean;
   suggestedCities?: Array<{ city: string; country?: string; availableCount: number }>;
+  isLocationCard?: boolean; // Flag to indicate if this is a location card
 }
 
 @Injectable()
@@ -144,35 +153,94 @@ export class DiscoveryService {
           [] // don't exclude rainchecked for this check
         );
 
-        // If no users of this gender exist anywhere, show city options
-        // User can switch cities and continue seeing filtered gender until screensRemaining = 0
-        if (usersInOtherCities.length === 0) {
-          const suggestedCities = await this.locationService.getCitiesWithMaxUsers(10);
+        // If users exist in other cities, use them (unlimited scroll)
+        if (usersInOtherCities.length > 0) {
+          const selectedUser = this.selectBestMatch(usersInOtherCities, currentUser);
+          const card = await this.buildCard(selectedUser, preferredCity);
+          
+          if (hasActiveGenderFilter) {
+            await this.genderFilterService.decrementScreen(userId);
+          }
+
           return {
-            card: null,
-            exhausted: true,
-            suggestedCities: suggestedCities.map((c) => ({
-              city: c.city,
-              availableCount: c.availableCount
-            }))
+            card,
+            exhausted: false
+          };
+        }
+        
+        // If no users of this gender exist anywhere, check without gender filter
+        const usersWithoutGenderFilter = await this.findMatchingUsers(
+          token,
+          userId,
+          null, // anywhere
+          statuses,
+          undefined, // no gender filter
+          soloOnly,
+          [] // don't exclude rainchecked
+        );
+
+        if (usersWithoutGenderFilter.length > 0) {
+          const selectedUser = this.selectBestMatch(usersWithoutGenderFilter, currentUser);
+          const card = await this.buildCard(selectedUser, preferredCity);
+          
+          return {
+            card,
+            exhausted: false
           };
         }
       }
 
-      // If user has a city preference, suggest top cities or anywhere
+      // If user has a city preference and it's exhausted, show location cards
       if (preferredCity) {
-        const suggestedCities = await this.locationService.getCitiesWithMaxUsers(10);
-        return {
-          card: null,
-          exhausted: true,
-          suggestedCities: suggestedCities.map((c) => ({
-            city: c.city,
-            availableCount: c.availableCount
-          }))
-        };
+        // Get location cards already shown
+        const locationCardsShown = await this.getLocationCardsShown(userId, sessionId);
+        
+        // Get available location cards
+        const locationCards = await this.getLocationCards(locationCardsShown);
+        
+        // If there are location cards available, return one
+        if (locationCards.length > 0) {
+          const selectedLocationCard = locationCards[0];
+          
+          // Mark as shown
+          await this.markLocationCardShown(userId, sessionId, selectedLocationCard.city);
+          
+          return {
+            card: selectedLocationCard,
+            exhausted: false,
+            isLocationCard: true
+          };
+        }
+        
+        // All location cards exhausted - reset session and show user cards again
+        await this.resetSession(userId, sessionId, preferredCity);
+        
+        // Try to get users again (now with reset session)
+        const usersAfterReset = await this.findMatchingUsers(
+          token,
+          userId,
+          preferredCity,
+          statuses,
+          genders,
+          soloOnly,
+          [] // Session reset, so no rainchecked users
+        );
+        
+        if (usersAfterReset.length > 0) {
+          const selectedUser = this.selectBestMatch(usersAfterReset, currentUser);
+          const card = await this.buildCard(selectedUser, preferredCity);
+          
+          if (hasActiveGenderFilter) {
+            await this.genderFilterService.decrementScreen(userId);
+          }
+
+          return {
+            card,
+            exhausted: false
+          };
+        }
       } else {
-        // If anywhere and exhausted, show rainchecked again (without session reset)
-        // Only apply gender filter if still active (screensRemaining > 0)
+        // If anywhere and exhausted, show rainchecked again (unlimited scroll)
         const allUsers = await this.findMatchingUsers(
           token,
           userId,
@@ -180,11 +248,12 @@ export class DiscoveryService {
           statuses,
           genders, // only applies if hasActiveGenderFilter is true
           soloOnly,
-          [] // Don't exclude rainchecked
+          [] // Don't exclude rainchecked - this allows cycling through same users
         );
 
         if (allUsers.length === 0) {
-          // Truly exhausted - suggest cities
+          // Only truly exhausted if there are 0 users in entire database
+          // This should be extremely rare
           const suggestedCities = await this.locationService.getCitiesWithMaxUsers(10);
           return {
             card: null,
@@ -196,7 +265,7 @@ export class DiscoveryService {
           };
         }
 
-        // Return a rainchecked user
+        // Return a rainchecked user (unlimited scroll - cycles through same users)
         const selectedUser = this.selectBestMatch(allUsers, currentUser);
         const card = await this.buildCard(selectedUser, preferredCity);
         
@@ -421,7 +490,12 @@ export class DiscoveryService {
       where: {
         userId,
         sessionId,
-        city: city || null
+        city: city || null,
+        raincheckedUserId: {
+          not: {
+            startsWith: "LOCATION:"
+          }
+        }
       },
       select: {
         raincheckedUserId: true
@@ -429,6 +503,100 @@ export class DiscoveryService {
     });
 
     return rainchecks.map((r: { raincheckedUserId: string }) => r.raincheckedUserId);
+  }
+
+  /**
+   * Get location cards shown for this session
+   */
+  private async getLocationCardsShown(
+    userId: string,
+    sessionId: string
+  ): Promise<string[]> {
+    // Use a special marker in raincheck session to track location cards
+    // We'll use a special prefix like "LOCATION:" for city names
+    const locationRainchecks = await (this.prisma as any).raincheckSession.findMany({
+      where: {
+        userId,
+        sessionId,
+        raincheckedUserId: {
+          startsWith: "LOCATION:"
+        }
+      },
+      select: {
+        raincheckedUserId: true
+      }
+    });
+
+    return locationRainchecks.map((r: { raincheckedUserId: string }) => 
+      r.raincheckedUserId.replace("LOCATION:", "")
+    );
+  }
+
+  /**
+   * Mark location card as shown
+   */
+  private async markLocationCardShown(
+    userId: string,
+    sessionId: string,
+    city: string | null
+  ): Promise<void> {
+    const locationId = `LOCATION:${city || "ANYWHERE"}`;
+    
+    const existing = await (this.prisma as any).raincheckSession.findFirst({
+      where: {
+        userId,
+        sessionId,
+        raincheckedUserId: locationId
+      }
+    });
+
+    if (!existing) {
+      await (this.prisma as any).raincheckSession.create({
+        data: {
+          userId,
+          sessionId,
+          raincheckedUserId: locationId,
+          city: null // Location cards don't have a city context
+        }
+      });
+    }
+  }
+
+  /**
+   * Get random location cards (8-10 cities + "anywhere")
+   */
+  private async getLocationCards(
+    excludeCities: string[] = []
+  ): Promise<LocationCard[]> {
+    // Get top cities (more than needed for randomization)
+    const allCities = await this.locationService.getCitiesWithMaxUsers(50);
+    
+    // Filter out excluded cities
+    const availableCities = allCities.filter(
+      c => !excludeCities.includes(c.city)
+    );
+    
+    // Randomly select 8-10 cities
+    const count = Math.min(8 + Math.floor(Math.random() * 3), availableCities.length); // 8-10 cities
+    const shuffled = [...availableCities].sort(() => Math.random() - 0.5);
+    const selectedCities = shuffled.slice(0, count);
+    
+    // Add "Anywhere" option
+    const locationCards: LocationCard[] = [
+      ...selectedCities.map(c => ({
+        type: "LOCATION" as const,
+        city: c.city,
+        availableCount: c.availableCount
+      })),
+      {
+        type: "LOCATION" as const,
+        city: null, // "Anywhere"
+        availableCount: 0 // Will be calculated if needed
+      }
+    ];
+    
+    // Shuffle again to randomize "Anywhere" position
+    return locationCards.sort(() => Math.random() - 0.5);
   }
 
   /**
@@ -471,6 +639,21 @@ export class DiscoveryService {
         userId,
         sessionId,
         city: city || null
+      }
+    });
+  }
+
+  /**
+   * Clear location cards for a session
+   */
+  async clearLocationCards(userId: string, sessionId: string): Promise<void> {
+    await (this.prisma as any).raincheckSession.deleteMany({
+      where: {
+        userId,
+        sessionId,
+        raincheckedUserId: {
+          startsWith: "LOCATION:"
+        }
       }
     });
   }
@@ -559,44 +742,104 @@ export class DiscoveryService {
           [] // don't exclude rainchecked for this check
         );
 
-        // If no users of this gender exist anywhere, show city options
-        if (usersInOtherCities.length === 0) {
-          const suggestedCities = await this.locationService.getCitiesWithMaxUsers(10);
+        // If users exist in other cities, use them (unlimited scroll)
+        if (usersInOtherCities.length > 0) {
+          const selectedUser = this.selectBestMatch(usersInOtherCities, currentUser);
+          const card = await this.buildCard(selectedUser, preferredCity);
+          
+          if (hasActiveGenderFilter) {
+            await this.genderFilterService.decrementScreen(userId);
+          }
+
           return {
-            card: null,
-            exhausted: true,
-            suggestedCities: suggestedCities.map((c) => ({
-              city: c.city,
-              availableCount: c.availableCount
-            }))
+            card,
+            exhausted: false
+          };
+        }
+        
+        // If no users of this gender exist anywhere, check without gender filter
+        const usersWithoutGenderFilter = await this.findMatchingUsersForUser(
+          userId,
+          null, // anywhere
+          statuses,
+          undefined, // no gender filter
+          soloOnly,
+          [] // don't exclude rainchecked
+        );
+
+        if (usersWithoutGenderFilter.length > 0) {
+          const selectedUser = this.selectBestMatch(usersWithoutGenderFilter, currentUser);
+          const card = await this.buildCard(selectedUser, preferredCity);
+          
+          return {
+            card,
+            exhausted: false
           };
         }
       }
 
-      // If user has a city preference, suggest top cities or anywhere
+      // If user has a city preference and it's exhausted, show location cards
       if (preferredCity) {
-        const suggestedCities = await this.locationService.getCitiesWithMaxUsers(10);
-        return {
-          card: null,
-          exhausted: true,
-          suggestedCities: suggestedCities.map((c) => ({
-            city: c.city,
-            availableCount: c.availableCount
-          }))
-        };
+        // Get location cards already shown
+        const locationCardsShown = await this.getLocationCardsShown(userId, sessionId);
+        
+        // Get available location cards
+        const locationCards = await this.getLocationCards(locationCardsShown);
+        
+        // If there are location cards available, return one
+        if (locationCards.length > 0) {
+          const selectedLocationCard = locationCards[0];
+          
+          // Mark as shown
+          await this.markLocationCardShown(userId, sessionId, selectedLocationCard.city);
+          
+          return {
+            card: selectedLocationCard,
+            exhausted: false,
+            isLocationCard: true
+          };
+        }
+        
+        // All location cards exhausted - reset session and show user cards again
+        await this.resetSession(userId, sessionId, preferredCity);
+        
+        // Try to get users again (now with reset session)
+        const usersAfterReset = await this.findMatchingUsersForUser(
+          userId,
+          preferredCity,
+          statuses,
+          genders,
+          soloOnly,
+          [] // Session reset, so no rainchecked users
+        );
+        
+        if (usersAfterReset.length > 0) {
+          const selectedUser = this.selectBestMatch(usersAfterReset, currentUser);
+          const card = await this.buildCard(selectedUser, preferredCity);
+          
+          if (hasActiveGenderFilter) {
+            await this.genderFilterService.decrementScreen(userId);
+          }
+
+          return {
+            card,
+            exhausted: false
+          };
+        }
       } else {
-        // If anywhere and exhausted, show rainchecked again (without session reset)
+        // If anywhere and exhausted, show rainchecked again (unlimited scroll)
         const allUsers = await this.findMatchingUsersForUser(
           userId,
           null,
           statuses,
           genders,
           soloOnly,
-          [] // Don't exclude rainchecked
+          [] // Don't exclude rainchecked - this allows cycling through same users
         );
 
         if (allUsers.length === 0) {
-          // Truly exhausted - suggest cities
+          // Only truly exhausted if there are 0 users in entire database
+          // This should be extremely rare
           const suggestedCities = await this.locationService.getCitiesWithMaxUsers(10);
           return {
             card: null,
@@ -608,7 +851,7 @@ export class DiscoveryService {
           };
         }
 
-        // Return a rainchecked user
+        // Return a rainchecked user (unlimited scroll - cycles through same users)
         const selectedUser = this.selectBestMatch(allUsers, currentUser);
         const card = await this.buildCard(selectedUser, preferredCity);
         

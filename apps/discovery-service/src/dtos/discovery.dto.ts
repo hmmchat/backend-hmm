@@ -15,8 +15,14 @@ export const ResetSessionRequestSchema = z.object({
   sessionId: z.string().min(1, "Session ID is required")
 });
 
+export const SelectLocationRequestSchema = z.object({
+  sessionId: z.string().min(1, "Session ID is required"),
+  city: z.string().nullable() // null means "Anywhere"
+});
+
 // Type exports
 export type GetCardQuery = z.infer<typeof GetCardQuerySchema>;
 export type RaincheckRequest = z.infer<typeof RaincheckRequestSchema>;
 export type ResetSessionRequest = z.infer<typeof ResetSessionRequestSchema>;
+export type SelectLocationRequest = z.infer<typeof SelectLocationRequestSchema>;
 

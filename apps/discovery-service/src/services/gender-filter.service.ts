@@ -86,9 +86,20 @@ export class GenderFilterService {
     }
 
     // Get current preference if exists
-    const currentPreference = await (this.prisma as any).genderFilterPreference.findUnique({
-      where: { userId: userId }
-    });
+    let currentPreference = null;
+    try {
+      currentPreference = await (this.prisma as any).genderFilterPreference.findUnique({
+        where: { userId: userId }
+      });
+    } catch (error: any) {
+      // If table doesn't exist, return null (no preference)
+      if (error?.code === 'P2021' || error?.message?.includes('does not exist')) {
+        console.warn("Gender filter table not found, returning no preference");
+        currentPreference = null;
+      } else {
+        throw error;
+      }
+    }
 
     // Rule 2: If user is MALE or FEMALE, they can only see 2 filters (MALE, FEMALE)
     // Rule 3: If user is NON_BINARY, they see all 3 filters
@@ -300,17 +311,26 @@ export class GenderFilterService {
    * Decrement screens remaining when user views a screen
    */
   async decrementScreen(userId: string): Promise<void> {
-    const preference = await (this.prisma as any).genderFilterPreference.findUnique({
-      where: { userId }
-    });
-
-    if (preference && preference.screensRemaining > 0) {
-      await (this.prisma as any).genderFilterPreference.update({
-        where: { userId },
-        data: {
-          screensRemaining: preference.screensRemaining - 1
-        }
+    try {
+      const preference = await (this.prisma as any).genderFilterPreference.findUnique({
+        where: { userId }
       });
+
+      if (preference && preference.screensRemaining > 0) {
+        await (this.prisma as any).genderFilterPreference.update({
+          where: { userId },
+          data: {
+            screensRemaining: preference.screensRemaining - 1
+          }
+        });
+      }
+    } catch (error: any) {
+      // If table doesn't exist, skip decrement
+      if (error?.code === 'P2021' || error?.message?.includes('does not exist')) {
+        console.warn("Gender filter table not found, skipping screen decrement");
+        return;
+      }
+      throw error;
     }
   }
 
@@ -318,9 +338,15 @@ export class GenderFilterService {
    * Get current gender filter preference for a user
    */
   async getCurrentPreference(userId: string) {
-    return (this.prisma as any).genderFilterPreference.findUnique({
-      where: { userId }
-    });
+    try {
+      return await (this.prisma as any).genderFilterPreference.findUnique({
+        where: { userId }
+      });
+    } catch (error) {
+      // If Prisma client is not initialized or model doesn't exist, return null
+      console.warn("Error getting gender filter preference:", error);
+      return null;
+    }
   }
 
   /* ---------- Test Methods (No Auth Required) ---------- */
@@ -360,9 +386,20 @@ export class GenderFilterService {
     }
 
     // Get current preference if exists
-    const currentPreference = await (this.prisma as any).genderFilterPreference.findUnique({
-      where: { userId: userId }
-    });
+    let currentPreference = null;
+    try {
+      currentPreference = await (this.prisma as any).genderFilterPreference.findUnique({
+        where: { userId: userId }
+      });
+    } catch (error: any) {
+      // If table doesn't exist, return null (no preference)
+      if (error?.code === 'P2021' || error?.message?.includes('does not exist')) {
+        console.warn("Gender filter table not found, returning no preference");
+        currentPreference = null;
+      } else {
+        throw error;
+      }
+    }
 
     // Build available filters based on user gender
     let availableFilters: GenderFilterOption[] = [];

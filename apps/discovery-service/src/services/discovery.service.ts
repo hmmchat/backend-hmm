@@ -556,23 +556,33 @@ export class DiscoveryService {
     sessionId: string,
     city: string | null
   ): Promise<string[]> {
-    const rainchecks = await (this.prisma as any).raincheckSession.findMany({
-      where: {
-        userId,
-        sessionId,
-        city: city || null,
-        raincheckedUserId: {
-          not: {
-            startsWith: "LOCATION:"
+    try {
+      const rainchecks = await (this.prisma as any).raincheckSession.findMany({
+        where: {
+          userId,
+          sessionId,
+          city: city || null,
+          raincheckedUserId: {
+            not: {
+              startsWith: "LOCATION:"
+            }
           }
-        }
-      },
+        },
       select: {
         raincheckedUserId: true
       }
     });
 
     return rainchecks.map((r: { raincheckedUserId: string }) => r.raincheckedUserId);
+    } catch (error: any) {
+      // If table doesn't exist or other Prisma error, return empty array
+      if (error?.code === 'P2021' || error?.message?.includes('does not exist')) {
+        console.warn("Raincheck table not found, returning empty array:", error.message);
+        return [];
+      }
+      console.error("Error fetching rainchecked users:", error);
+      return [];
+    }
   }
 
   /**
@@ -678,25 +688,34 @@ export class DiscoveryService {
     raincheckedUserId: string,
     city: string | null
   ): Promise<void> {
-    // Check if already rainchecked in this session
-    const existing = await (this.prisma as any).raincheckSession.findFirst({
-      where: {
-        userId,
-        sessionId,
-        raincheckedUserId,
-        city: city || null
-      }
-    });
-
-    if (!existing) {
-      await (this.prisma as any).raincheckSession.create({
-        data: {
+    try {
+      // Check if already rainchecked in this session
+      const existing = await (this.prisma as any).raincheckSession.findFirst({
+        where: {
           userId,
           sessionId,
           raincheckedUserId,
           city: city || null
         }
       });
+
+      if (!existing) {
+        await (this.prisma as any).raincheckSession.create({
+          data: {
+            userId,
+            sessionId,
+            raincheckedUserId,
+            city: city || null
+          }
+        });
+      }
+    } catch (error: any) {
+      // If table doesn't exist, log warning but don't fail
+      if (error?.code === 'P2021' || error?.message?.includes('does not exist')) {
+        console.warn("Raincheck table not found, skipping raincheck:", error.message);
+        return;
+      }
+      throw error;
     }
   }
 
@@ -704,13 +723,22 @@ export class DiscoveryService {
    * Reset rainchecked users for a session (when city changes)
    */
   async resetSession(userId: string, sessionId: string, city: string | null): Promise<void> {
-    await (this.prisma as any).raincheckSession.deleteMany({
-      where: {
-        userId,
-        sessionId,
-        city: city || null
+    try {
+      await (this.prisma as any).raincheckSession.deleteMany({
+        where: {
+          userId,
+          sessionId,
+          city: city || null
+        }
+      });
+    } catch (error: any) {
+      // If table doesn't exist, log warning but don't fail
+      if (error?.code === 'P2021' || error?.message?.includes('does not exist')) {
+        console.warn("Raincheck table not found, skipping reset:", error.message);
+        return;
       }
-    });
+      throw error;
+    }
   }
 
   /**

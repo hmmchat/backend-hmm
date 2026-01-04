@@ -349,6 +349,30 @@ async function main() {
   console.log("🌱 Starting test user seed...");
   console.log(`📝 Creating ${testUsers.length} test users...\n`);
 
+  // Clean up orphaned data in junction tables to prevent unique constraint violations
+  // This happens when database is reset but junction table data remains
+  console.log(`🧹 Cleaning up orphaned data in junction tables...`);
+  try {
+    // Delete orphaned records (where user doesn't exist)
+    const orphanedInterests = await prisma.userInterest.findMany({
+      where: {
+        user: null
+      }
+    });
+    if (orphanedInterests.length > 0) {
+      await prisma.userInterest.deleteMany({
+        where: {
+          userId: {
+            notIn: (await prisma.user.findMany({ select: { id: true } })).map(u => u.id)
+          }
+        }
+      });
+      console.log(`   Cleaned ${orphanedInterests.length} orphaned user interests`);
+    }
+  } catch (e) {
+    // Ignore if cleanup fails
+  }
+
   // Get all brands, interests, values, and songs
   const brands = await prisma.brand.findMany();
   const interests = await prisma.interest.findMany();
@@ -487,8 +511,12 @@ async function main() {
       console.log(`✅ Created ${userData.username} (${userData.gender}, ${userData.city || 'Anywhere'}, ${userData.status})`);
       created++;
 
-    } catch (error) {
-      console.error(`❌ Failed to create ${userData.id}:`, error);
+    } catch (error: any) {
+      console.error(`❌ Failed to create ${userData.id}:`, error?.code || error?.message || error);
+      if (error?.code) {
+        console.error(`   Error code: ${error.code}`);
+        console.error(`   Error message: ${error.message}`);
+      }
     }
   }
 

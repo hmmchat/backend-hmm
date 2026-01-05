@@ -735,6 +735,7 @@ export class UserService implements OnModuleInit {
   /**
    * Get users for discovery matching
    * Filters by city, status, gender, and excludes specific user IDs
+   * Excludes MATCHED users from the pool (they're already matched)
    */
   async getUsersForDiscovery(filters: {
     city?: string | null; // null means anywhere
@@ -746,15 +747,19 @@ export class UserService implements OnModuleInit {
     const where: any = {
       profileCompleted: true,
       status: {
-        in: filters.statuses
+        in: filters.statuses.filter(s => s !== "MATCHED") // Exclude MATCHED users from discovery pool
       } as any
     };
 
     // City filter
     if (filters.city !== undefined) {
       if (filters.city === null) {
-        // Anywhere - no city filter
+        // Anywhere - only match with other "anywhere" users (bidirectional)
+        // Users with preferredCity = null should only see other users with preferredCity = null
+        where.preferredCity = null;
       } else {
+        // Specific city - only match with users in that city (bidirectional)
+        // Users with preferredCity = "Mumbai" should only see other users with preferredCity = "Mumbai"
         where.preferredCity = filters.city;
       }
     }

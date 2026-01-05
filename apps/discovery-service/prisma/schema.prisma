@@ -76,3 +76,35 @@ model RaincheckSession {
   @@index([userId, city, sessionId])
   @@map("raincheck_sessions")
 }
+
+// Track active matches between users
+// When users are matched, both see each other's cards
+model ActiveMatch {
+  id        String   @id @default(cuid())
+  user1Id   String   // First user in the match
+  user2Id   String   // Second user in the match
+  score     Float    // Mutual compatibility score
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([user1Id, user2Id])
+  @@index([user1Id])
+  @@index([user2Id])
+  @@map("active_matches")
+}
+
+// Track match acceptances for two-phase proceed
+// Each user accepts separately, both must accept to proceed to IN_SQUAD
+model MatchAcceptance {
+  id        String   @id @default(cuid())
+  user1Id   String   // First user in the match
+  user2Id   String   // Second user in the match
+  acceptedBy String  // User who accepted (user1Id or user2Id)
+  createdAt DateTime @default(now())
+  expiresAt DateTime // When the match expires if not both accepted
+
+  @@unique([user1Id, user2Id, acceptedBy])
+  @@index([user1Id, user2Id])
+  @@index([expiresAt])
+  @@map("match_acceptances")
+}

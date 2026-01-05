@@ -20,9 +20,14 @@ export const SelectLocationRequestSchema = z.object({
   city: z.string().nullable() // null means "Anywhere"
 });
 
+export const ProceedRequestSchema = z.object({
+  matchedUserId: z.string().min(1, "Matched user ID is required")
+});
+
 // Type exports
 export type GetCardQuery = z.infer<typeof GetCardQuerySchema>;
 export type RaincheckRequest = z.infer<typeof RaincheckRequestSchema>;
 export type ResetSessionRequest = z.infer<typeof ResetSessionRequestSchema>;
 export type SelectLocationRequest = z.infer<typeof SelectLocationRequestSchema>;
+export type ProceedRequest = z.infer<typeof ProceedRequestSchema>;
 

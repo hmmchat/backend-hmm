@@ -1,8 +1,9 @@
-import { Injectable, HttpException, HttpStatus } from "@nestjs/common";
+import { Injectable, HttpException, HttpStatus, OnModuleInit } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { UserClientService } from "./user-client.service.js";
 import { GenderFilterService } from "./gender-filter.service.js";
 import { LocationService } from "./location.service.js";
+import { MatchingService } from "./matching.service.js";
 
 // DiscoveryUser interface is imported from user-client.service.ts
 // Import it to avoid duplication
@@ -60,12 +61,13 @@ interface CardResponse {
 }
 
 @Injectable()
-export class DiscoveryService {
+export class DiscoveryService implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly userClient: UserClientService,
     private readonly genderFilterService: GenderFilterService,
-    private readonly locationService: LocationService
+    private readonly locationService: LocationService,
+    private readonly matchingService: MatchingService
   ) {}
 
   /**
@@ -111,19 +113,31 @@ export class DiscoveryService {
       actualCity: actualCity
     };
 
+    // Check if user is already matched
+    const existingMatch = await this.matchingService.getMatchForUser(userId);
+    if (existingMatch) {
+      // User is already matched, return their match's card
+      const matchedUserId = existingMatch.user1Id === userId ? existingMatch.user2Id : existingMatch.user1Id;
+      const matchedUser = await this.userClient.getUserFullProfileById(matchedUserId);
+      const card = await this.buildCard(this.convertToDiscoveryUser(matchedUser), preferredCity);
+      
+      // Decrement gender filter if active
+      const genderFilter = await this.genderFilterService.getCurrentPreference(userId);
+      const hasActiveGenderFilter = genderFilter && genderFilter.screensRemaining > 0;
+      if (hasActiveGenderFilter) {
+        await this.genderFilterService.decrementScreen(userId);
+      }
+
+      return {
+        card,
+        exhausted: false
+      };
+    }
+
+    // User is not matched, find a match using mutual matching
     // Get gender filter preference
     const genderFilter = await this.genderFilterService.getCurrentPreference(userId);
-    // Apply gender filter ONLY when screensRemaining > 0 (user paid for it)
-    // When screensRemaining = 0, filter is exhausted, show all genders
     const hasActiveGenderFilter = genderFilter && genderFilter.screensRemaining > 0;
-
-    // Determine statuses to filter
-    const statuses: ("AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE")[] = soloOnly
-      ? ["AVAILABLE"]
-      : ["AVAILABLE", "IN_SQUAD_AVAILABLE", "IN_BROADCAST_AVAILABLE"];
-
-    // Get rainchecked user IDs for this session and city
-    const raincheckedUserIds = await this.getRaincheckedUserIds(userId, sessionId, preferredCity);
 
     // Determine gender filter - ONLY apply when screensRemaining > 0
     let genders: ("MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY")[] | undefined;
@@ -136,19 +150,39 @@ export class DiscoveryService {
       }
     }
 
-    // Find matching users
-    const matchingUsers = await this.findMatchingUsers(
-      token,
+    // Get rainchecked user IDs for this session and city
+    const raincheckedUserIds = await this.getRaincheckedUserIds(userId, sessionId, preferredCity);
+
+    // Find match using mutual matching algorithm
+    const matchedUser = await this.matchingService.findMatchForUser(
       userId,
+      currentUser,
       preferredCity,
-      statuses,
       genders,
-      soloOnly,
       raincheckedUserIds
     );
 
+    if (matchedUser) {
+      const card = await this.buildCard(matchedUser, preferredCity);
+      
+      if (hasActiveGenderFilter) {
+        await this.genderFilterService.decrementScreen(userId);
+      }
+
+      return {
+        card,
+        exhausted: false
+      };
+    }
+
+    // No match found, check fallback options
+    // Determine statuses to filter
+    const statuses: ("AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE")[] = soloOnly
+      ? ["AVAILABLE"]
+      : ["AVAILABLE", "IN_SQUAD_AVAILABLE", "IN_BROADCAST_AVAILABLE"];
+    
     // If no matches found, check if we should show fallback
-    if (matchingUsers.length === 0) {
+    if (true) {
       // If gender filter is active (screensRemaining > 0), check other cities with same gender
       if (hasActiveGenderFilter && genders && genders.length > 0) {
         // Try to find users of the same gender in other cities (anywhere)
@@ -290,18 +324,10 @@ export class DiscoveryService {
       }
     }
 
-    // Select best match based on preference scoring
-    const selectedUser = this.selectBestMatch(matchingUsers, currentUser);
-    const card = await this.buildCard(selectedUser, preferredCity);
-
-    // Decrement gender filter screens only if still active
-    if (hasActiveGenderFilter) {
-      await this.genderFilterService.decrementScreen(userId);
-    }
-
+    // No matches found at all - return exhausted
     return {
-      card,
-      exhausted: false
+      card: null,
+      exhausted: true
     };
   }
 
@@ -329,6 +355,54 @@ export class DiscoveryService {
     });
 
     return users;
+  }
+
+  /**
+   * Convert UserProfileResponse to DiscoveryUser format
+   */
+  private convertToDiscoveryUser(profile: any): DiscoveryUser {
+    return {
+      id: profile.id,
+      username: profile.username || null,
+      dateOfBirth: profile.dateOfBirth || null,
+      gender: profile.gender || null,
+      displayPictureUrl: profile.displayPictureUrl || null,
+      preferredCity: profile.preferredCity || null,
+      intent: profile.intent || null,
+      status: profile.status || "AVAILABLE",
+      photos: (profile.photos || []).map((p: any) => ({
+        id: p.id,
+        url: p.url,
+        order: p.order
+      })),
+      musicPreference: profile.musicPreference ? {
+        id: profile.musicPreference.id,
+        name: profile.musicPreference.name,
+        artist: profile.musicPreference.artist,
+        albumArtUrl: profile.musicPreference.albumArtUrl || null
+      } : null,
+      brandPreferences: (profile.brandPreferences || []).map((bp: any) => ({
+        brand: {
+          id: bp.brand.id,
+          name: bp.brand.name,
+          logoUrl: bp.brand.logoUrl || null
+        }
+      })),
+      interests: (profile.interests || []).map((i: any) => ({
+        interest: {
+          id: i.interest.id,
+          name: i.interest.name,
+          genre: i.interest.genre || null
+        }
+      })),
+      values: (profile.values || []).map((v: any) => ({
+        value: {
+          id: v.value.id,
+          name: v.value.name
+        }
+      })),
+      videoEnabled: profile.videoEnabled !== undefined ? profile.videoEnabled : true
+    };
   }
 
   /**
@@ -681,6 +755,7 @@ export class DiscoveryService {
 
   /**
    * Mark user as rainchecked
+   * When a user rainchecks, both users are rematched with new partners
    */
   async markRaincheck(
     userId: string,
@@ -689,8 +764,58 @@ export class DiscoveryService {
     city: string | null
   ): Promise<void> {
     try {
-      // Check if already rainchecked in this session
-      const existing = await (this.prisma as any).raincheckSession.findFirst({
+      // Check if users are matched
+      const match = await this.matchingService.getMatchForUser(userId);
+      if (match && (match.user1Id === raincheckedUserId || match.user2Id === raincheckedUserId)) {
+        // Users are matched, break the match
+        await this.matchingService.removeMatch(userId, raincheckedUserId);
+        
+        // Determine appropriate status for both users
+        // Get current status to determine what to revert to
+        await this.userClient.getUserFullProfileById(userId);
+        await this.userClient.getUserFullProfileById(raincheckedUserId);
+        
+        // Revert status based on previous status
+        // If they were MATCHED, they should go back to AVAILABLE, IN_SQUAD_AVAILABLE, or IN_BROADCAST_AVAILABLE
+        // For now, default to AVAILABLE - this can be enhanced to track previous status
+        // Update both statuses sequentially to ensure they complete before rematching
+        try {
+          console.log(`[DEBUG] About to update status for users ${userId} and ${raincheckedUserId} to AVAILABLE after raincheck`);
+          await this.matchingService.updateUserStatus(userId, "AVAILABLE");
+          await this.matchingService.updateUserStatus(raincheckedUserId, "AVAILABLE");
+          console.log(`[DEBUG] Status updates completed for users ${userId} and ${raincheckedUserId}`);
+          // Small delay to ensure status updates are committed
+          await new Promise(resolve => setTimeout(resolve, 100));
+        } catch (error) {
+          console.error("[ERROR] Failed to update user statuses after raincheck:", error);
+          // Continue anyway - the match is broken even if status update fails
+        }
+      } else {
+        // Users are not matched, but still update status to AVAILABLE if they're MATCHED
+        // This handles edge cases where match was broken but status wasn't updated
+        try {
+          const user1Status = await (this.prisma as any).$queryRawUnsafe(
+            `SELECT status FROM users WHERE id = $1`,
+            userId
+          );
+          const user2Status = await (this.prisma as any).$queryRawUnsafe(
+            `SELECT status FROM users WHERE id = $1`,
+            raincheckedUserId
+          );
+          
+          if (user1Status && user1Status.length > 0 && user1Status[0].status === 'MATCHED') {
+            await this.matchingService.updateUserStatus(userId, "AVAILABLE");
+          }
+          if (user2Status && user2Status.length > 0 && user2Status[0].status === 'MATCHED') {
+            await this.matchingService.updateUserStatus(raincheckedUserId, "AVAILABLE");
+          }
+        } catch (error) {
+          console.warn("Failed to check/update statuses for non-matched users:", error);
+        }
+      }
+
+      // Mark as rainchecked in session (bidirectionally - both users should exclude each other)
+      const existing1 = await (this.prisma as any).raincheckSession.findFirst({
         where: {
           userId,
           sessionId,
@@ -699,7 +824,7 @@ export class DiscoveryService {
         }
       });
 
-      if (!existing) {
+      if (!existing1) {
         await (this.prisma as any).raincheckSession.create({
           data: {
             userId,
@@ -709,6 +834,78 @@ export class DiscoveryService {
           }
         });
       }
+
+      // Also record the reverse raincheck (User B should also exclude User A)
+      const existing2 = await (this.prisma as any).raincheckSession.findFirst({
+        where: {
+          userId: raincheckedUserId,
+          sessionId,
+          raincheckedUserId: userId,
+          city: city || null
+        }
+      });
+
+      if (!existing2) {
+        await (this.prisma as any).raincheckSession.create({
+          data: {
+            userId: raincheckedUserId,
+            sessionId,
+            raincheckedUserId: userId,
+            city: city || null
+          }
+        });
+      }
+
+      // Trigger rematching for both users
+      // Get user profiles for rematching
+      const user1Profile = await this.userClient.getUserFullProfileById(userId);
+      const user2Profile = await this.userClient.getUserFullProfileById(raincheckedUserId);
+      
+      const user1ProfileData: UserProfile = {
+        id: user1Profile.id,
+        preferredCity: user1Profile.preferredCity,
+        brandPreferences: user1Profile.brandPreferences,
+        interests: user1Profile.interests,
+        values: user1Profile.values,
+        musicPreference: user1Profile.musicPreference,
+        videoEnabled: user1Profile.videoEnabled,
+        actualCity: null
+      };
+
+      const user2ProfileData: UserProfile = {
+        id: user2Profile.id,
+        preferredCity: user2Profile.preferredCity,
+        brandPreferences: user2Profile.brandPreferences,
+        interests: user2Profile.interests,
+        values: user2Profile.values,
+        musicPreference: user2Profile.musicPreference,
+        videoEnabled: user2Profile.videoEnabled,
+        actualCity: null
+      };
+
+      // Get rainchecked users for both
+      const rainchecked1 = await this.getRaincheckedUserIds(userId, sessionId, user1Profile.preferredCity);
+      const rainchecked2 = await this.getRaincheckedUserIds(raincheckedUserId, sessionId, user2Profile.preferredCity);
+      
+      console.log(`[DEBUG] Rematching after raincheck - User ${userId} rainchecked list:`, rainchecked1);
+      console.log(`[DEBUG] Rematching after raincheck - User ${raincheckedUserId} rainchecked list:`, rainchecked2);
+
+      // Rematch both users (async, don't wait)
+      this.matchingService.findMatchForUser(
+        userId,
+        user1ProfileData,
+        user1Profile.preferredCity,
+        undefined,
+        rainchecked1
+      ).catch(err => console.error("Failed to rematch user 1:", err));
+
+      this.matchingService.findMatchForUser(
+        raincheckedUserId,
+        user2ProfileData,
+        user2Profile.preferredCity,
+        undefined,
+        rainchecked2
+      ).catch(err => console.error("Failed to rematch user 2:", err));
     } catch (error: any) {
       // If table doesn't exist, log warning but don't fail
       if (error?.code === 'P2021' || error?.message?.includes('does not exist')) {
@@ -724,20 +921,48 @@ export class DiscoveryService {
    */
   async resetSession(userId: string, sessionId: string, city: string | null): Promise<void> {
     try {
-      await (this.prisma as any).raincheckSession.deleteMany({
-        where: {
+      // Use raw SQL for reliability
+      if (city !== null) {
+        await (this.prisma as any).$executeRawUnsafe(
+          `DELETE FROM raincheck_sessions WHERE "userId" = $1 AND "sessionId" = $2 AND city = $3`,
           userId,
           sessionId,
-          city: city || null
-        }
-      });
-    } catch (error: any) {
-      // If table doesn't exist, log warning but don't fail
-      if (error?.code === 'P2021' || error?.message?.includes('does not exist')) {
-        console.warn("Raincheck table not found, skipping reset:", error.message);
-        return;
+          city
+        );
+      } else {
+        await (this.prisma as any).$executeRawUnsafe(
+          `DELETE FROM raincheck_sessions WHERE "userId" = $1 AND "sessionId" = $2`,
+          userId,
+          sessionId
+        );
       }
-      throw error;
+    } catch (error: any) {
+      // Fallback to Prisma method
+      try {
+        if (city !== null) {
+          await (this.prisma as any).raincheckSession.deleteMany({
+            where: {
+              userId,
+              sessionId,
+              city: city
+            }
+          });
+        } else {
+          await (this.prisma as any).raincheckSession.deleteMany({
+            where: {
+              userId,
+              sessionId
+            }
+          });
+        }
+      } catch (prismaError: any) {
+        // If table doesn't exist, log warning but don't fail
+        if (prismaError?.code === 'P2021' || prismaError?.message?.includes('does not exist')) {
+          console.warn("Raincheck table not found, skipping reset:", prismaError.message);
+          return;
+        }
+        throw prismaError;
+      }
     }
   }
 
@@ -767,6 +992,52 @@ export class DiscoveryService {
       city: c.city,
       availableCount: c.availableCount
     }));
+  }
+
+  /**
+   * Proceed with matched user (both users proceed to IN_SQUAD)
+   * Removes the match and updates both users' status to IN_SQUAD
+   */
+  async proceedWithMatch(userId: string, matchedUserId: string): Promise<void> {
+    // Verify that users are actually matched
+    const match = await this.matchingService.getMatchForUser(userId);
+    if (!match || (match.user1Id !== matchedUserId && match.user2Id !== matchedUserId)) {
+      throw new HttpException("Users are not matched", HttpStatus.BAD_REQUEST);
+    }
+
+    // Get match timeout from environment (default 5 seconds)
+    const matchTimeoutSeconds = parseInt(process.env.MATCH_TIMEOUT_SECONDS || "5", 10);
+
+    // Record this user's acceptance
+    await this.matchingService.recordMatchAcceptance(
+      match.user1Id,
+      match.user2Id,
+      userId,
+      matchTimeoutSeconds
+    );
+
+    // Check if both users have accepted
+    const bothAccepted = await this.matchingService.checkBothAccepted(
+      match.user1Id,
+      match.user2Id
+    );
+
+    if (bothAccepted) {
+      // Both users have accepted - proceed to IN_SQUAD
+      await this.matchingService.removeMatch(match.user1Id, match.user2Id);
+      await this.matchingService.removeMatchAcceptances(match.user1Id, match.user2Id);
+      
+      // Update both users' status to IN_SQUAD
+      await this.matchingService.updateUserStatus(match.user1Id, "IN_SQUAD");
+      await this.matchingService.updateUserStatus(match.user2Id, "IN_SQUAD");
+      
+      console.log(`[INFO] Both users accepted match - ${match.user1Id} and ${match.user2Id} moved to IN_SQUAD`);
+    } else {
+      // Only one user has accepted - wait for the other user
+      console.log(`[INFO] User ${userId} accepted match, waiting for ${matchedUserId} to accept`);
+      // The match will expire if the other user doesn't accept within the timeout
+      // Cleanup will be handled by the cleanupExpiredMatches function
+    }
   }
 
   /**
@@ -810,17 +1081,31 @@ export class DiscoveryService {
       actualCity: actualCity
     };
 
+    // Check if user is already matched
+    const existingMatch = await this.matchingService.getMatchForUser(userId);
+    if (existingMatch) {
+      // User is already matched, return their match's card
+      const matchedUserId = existingMatch.user1Id === userId ? existingMatch.user2Id : existingMatch.user1Id;
+      const matchedUser = await this.userClient.getUserFullProfileById(matchedUserId);
+      const card = await this.buildCard(this.convertToDiscoveryUser(matchedUser), preferredCity);
+      
+      // Decrement gender filter if active
+      const genderFilter = await this.genderFilterService.getCurrentPreference(userId);
+      const hasActiveGenderFilter = genderFilter && genderFilter.screensRemaining > 0;
+      if (hasActiveGenderFilter) {
+        await this.genderFilterService.decrementScreen(userId);
+      }
+
+      return {
+        card,
+        exhausted: false
+      };
+    }
+
+    // User is not matched, find a match using mutual matching
     // Get gender filter preference
     const genderFilter = await this.genderFilterService.getCurrentPreference(userId);
     const hasActiveGenderFilter = genderFilter && genderFilter.screensRemaining > 0;
-
-    // Determine statuses to filter
-    const statuses: ("AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE")[] = soloOnly
-      ? ["AVAILABLE"]
-      : ["AVAILABLE", "IN_SQUAD_AVAILABLE", "IN_BROADCAST_AVAILABLE"];
-
-    // Get rainchecked user IDs for this session and city
-    const raincheckedUserIds = await this.getRaincheckedUserIds(userId, sessionId, preferredCity);
 
     // Determine gender filter - ONLY apply when screensRemaining > 0
     let genders: ("MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY")[] | undefined;
@@ -832,6 +1117,37 @@ export class DiscoveryService {
         genders = gendersJson as ("MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY")[];
       }
     }
+
+    // Get rainchecked user IDs for this session and city
+    const raincheckedUserIds = await this.getRaincheckedUserIds(userId, sessionId, preferredCity);
+
+    // Find match using mutual matching algorithm
+    const matchedUser = await this.matchingService.findMatchForUser(
+      userId,
+      currentUser,
+      preferredCity,
+      genders,
+      raincheckedUserIds
+    );
+
+    if (matchedUser) {
+      const card = await this.buildCard(matchedUser, preferredCity);
+      
+      if (hasActiveGenderFilter) {
+        await this.genderFilterService.decrementScreen(userId);
+      }
+
+      return {
+        card,
+        exhausted: false
+      };
+    }
+
+    // No match found, use fallback logic (keep existing fallback for now)
+    // Determine statuses to filter
+    const statuses: ("AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE")[] = soloOnly
+      ? ["AVAILABLE"]
+      : ["AVAILABLE", "IN_SQUAD_AVAILABLE", "IN_BROADCAST_AVAILABLE"];
 
     // Find matching users (using a fake token - won't be validated in test mode)
     const matchingUsers = await this.findMatchingUsersForUser(
@@ -982,18 +1298,10 @@ export class DiscoveryService {
       }
     }
 
-    // Select best match based on preference scoring
-    const selectedUser = this.selectBestMatch(matchingUsers, currentUser);
-    const card = await this.buildCard(selectedUser, preferredCity);
-
-    // Decrement gender filter screens only if still active
-    if (hasActiveGenderFilter) {
-      await this.genderFilterService.decrementScreen(userId);
-    }
-
+    // No matches found at all - return exhausted
     return {
-      card,
-      exhausted: false
+      card: null,
+      exhausted: true
     };
   }
 
@@ -1025,6 +1333,21 @@ export class DiscoveryService {
     );
 
     return users;
+  }
+
+  /**
+   * Initialize cleanup interval for expired matches
+   * Runs every 1 second to check for expired matches
+   */
+  async onModuleInit() {
+    // Clean up expired matches every 1 second
+    setInterval(async () => {
+      try {
+        await this.matchingService.cleanupExpiredMatches();
+      } catch (error) {
+        console.error("[ERROR] Failed to cleanup expired matches:", error);
+      }
+    }, 1000); // Check every 1 second
   }
 }
 

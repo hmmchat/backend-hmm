@@ -14,7 +14,8 @@ import {
   GetCardQuerySchema,
   RaincheckRequestSchema,
   ResetSessionRequestSchema,
-  SelectLocationRequestSchema
+  SelectLocationRequestSchema,
+  ProceedRequestSchema
 } from "../dtos/discovery.dto.js";
 
 @Controller("discovery")
@@ -101,6 +102,42 @@ export class DiscoveryController {
     return {
       success: true,
       nextCard: nextCard.card
+    };
+  }
+
+  /**
+   * Proceed with matched user (both users proceed to IN_SQUAD)
+   * POST /discovery/proceed
+   */
+  @Post("proceed")
+  async proceed(
+    @Headers("authorization") authz: string,
+    @Body() body: any
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+
+    const dto = ProceedRequestSchema.parse(body);
+
+    // Get user ID from token
+    const { verifyToken } = await import("@hmm/common");
+    const jwkStr = process.env.JWT_PUBLIC_JWK;
+    if (!jwkStr || jwkStr === "undefined") {
+      throw new HttpException("Server configuration error", HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+    const cleanedJwk = jwkStr.trim().replace(/^['"]|['"]$/g, "");
+    const publicJwk = JSON.parse(cleanedJwk);
+    const verifyAccess = await verifyToken(publicJwk);
+    const payload = await verifyAccess(token);
+    const userId = payload.sub;
+
+    // Proceed with match
+    await this.discoveryService.proceedWithMatch(userId, dto.matchedUserId);
+
+    return {
+      success: true
     };
   }
 
@@ -307,6 +344,26 @@ export class DiscoveryController {
       success: true,
       nextCard: nextCard.card,
       isLocationCard: false
+    };
+  }
+
+  /**
+   * Test endpoint: Proceed (bypasses auth)
+   * POST /discovery/test/proceed
+   */
+  @Post("test/proceed")
+  async proceedTest(@Body() body: any) {
+    const { userId, matchedUserId } = body;
+
+    if (!userId || !matchedUserId) {
+      throw new HttpException("userId and matchedUserId are required", HttpStatus.BAD_REQUEST);
+    }
+
+    // Proceed with match
+    await this.discoveryService.proceedWithMatch(userId, matchedUserId);
+
+    return {
+      success: true
     };
   }
 }

@@ -11,7 +11,9 @@ import { WalletClientService } from "../services/wallet-client.service.js";
 import { GenderFilterService } from "../services/gender-filter.service.js";
 import { LocationService } from "../services/location.service.js";
 import { DiscoveryService } from "../services/discovery.service.js";
+import { MatchingService } from "../services/matching.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
+import { CacheService } from "../services/cache.service.js";
 
 @Module({
   imports: [ConfigModule.forRoot()],
@@ -29,7 +31,9 @@ import { PrismaService } from "../prisma/prisma.service.js";
     GenderFilterService,
     LocationService,
     DiscoveryService,
-    PrismaService
+    MatchingService,
+    PrismaService,
+    CacheService
   ]
 })
 export class AppModule {}

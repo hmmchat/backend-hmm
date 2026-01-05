@@ -48,6 +48,7 @@ enum Gender {
 enum UserStatus {
   AVAILABLE
   OFFLINE
+  MATCHED
   IN_SQUAD
   IN_SQUAD_AVAILABLE
   IN_BROADCAST

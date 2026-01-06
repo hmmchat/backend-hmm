@@ -6,13 +6,17 @@ This folder contains all documentation needed for frontend team to integrate wit
 
 1. **`FRONTEND_SETUP.md`** ⭐⭐⭐ - **START HERE!** Setup guide for all backend services
 2. **`FRONTEND_INTEGRATION.md`** - Complete API documentation for all services
-3. **`DEPLOYMENT_GUIDE.md`** - Deployment options and workflows (optional)
+3. **`STREAMING_SERVICE_FRONTEND.md`** 🎥 - Streaming service integration guide (video calls)
+4. **`STREAMING_VIDEO_CALL_EXPLAINED.md`** 📹 - How video calls work (simple explanation)
+5. **`DEPLOYMENT_GUIDE.md`** - Deployment options and workflows (optional)
 
 ## 🚀 Quick Start
 
 1. **Read `FRONTEND_SETUP.md`** - Set up all backend services locally
 2. **Read `FRONTEND_INTEGRATION.md`** - Complete API reference and integration examples
-3. Start building! 🎉
+3. **Read `STREAMING_VIDEO_CALL_EXPLAINED.md`** - Understand how video calls work (simple explanation)
+4. **Read `STREAMING_SERVICE_FRONTEND.md`** - Integrate video calling functionality
+5. Start building! 🎉
 
 ## 📁 File Structure
 
@@ -21,6 +25,8 @@ docs/for-frontend/
 ├── README.md (this file)
 ├── FRONTEND_SETUP.md ⭐ - Setup guide (START HERE)
 ├── FRONTEND_INTEGRATION.md - Complete API documentation
+├── STREAMING_SERVICE_FRONTEND.md - Streaming service integration guide
+├── STREAMING_VIDEO_CALL_EXPLAINED.md - How video calls work (simple explanation)
 └── DEPLOYMENT_GUIDE.md - Deployment options (optional)
 ```
 
@@ -28,6 +34,7 @@ docs/for-frontend/
 
 - Setup issues? See `FRONTEND_SETUP.md` troubleshooting section
 - API questions? See `FRONTEND_INTEGRATION.md`
+- Video calls? See `STREAMING_SERVICE_FRONTEND.md` and `STREAMING_VIDEO_CALL_EXPLAINED.md`
 - Deployment questions? See `DEPLOYMENT_GUIDE.md`
 - Contact backend team for support
 

@@ -1,0 +1,65 @@
+import { Injectable, HttpException, HttpStatus } from "@nestjs/common";
+import fetch from "node-fetch";
+
+interface DeductCoinsResponse {
+  success: boolean;
+  newBalance: number;
+  transactionId: string;
+}
+
+@Injectable()
+export class WalletClientService {
+  private readonly walletServiceUrl: string;
+
+  constructor() {
+    this.walletServiceUrl = process.env.WALLET_SERVICE_URL || "http://localhost:3005";
+  }
+
+  /**
+   * Deduct coins from user's wallet
+   */
+  async deductCoins(
+    token: string,
+    amount: number,
+    options: { description?: string } = {}
+  ): Promise<{ newBalance: number; transactionId: string }> {
+    try {
+      const response = await fetch(`${this.walletServiceUrl}/me/transactions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          amount: -amount, // Negative for debit
+          type: "DEBIT",
+          description: options.description || "Gift sent"
+        })
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        if (response.status === 400) {
+          throw new HttpException(errorText, HttpStatus.BAD_REQUEST);
+        }
+        throw new Error(`Wallet service error: ${errorText}`);
+      }
+
+      const result = await response.json() as DeductCoinsResponse;
+      return {
+        newBalance: result.newBalance,
+        transactionId: result.transactionId
+      };
+    } catch (error) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      console.error("Failed to deduct coins from wallet-service:", error);
+      throw new HttpException(
+        "Unable to process payment. Please try again later.",
+        HttpStatus.SERVICE_UNAVAILABLE
+      );
+    }
+  }
+}
+

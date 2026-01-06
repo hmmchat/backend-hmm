@@ -1,0 +1,30 @@
+#!/usr/bin/env node
+// Postinstall script to create @prisma/client package.json for proper module resolution
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const prismaClientDir = path.join(__dirname, '../node_modules/@prisma/client');
+const prismaGeneratedDir = path.join(__dirname, '../node_modules/.prisma/client');
+
+// Create @prisma/client directory if it doesn't exist
+if (!fs.existsSync(prismaClientDir)) {
+  fs.mkdirSync(prismaClientDir, { recursive: true });
+}
+
+// Create package.json that points to the generated client
+const packageJson = {
+  name: '@prisma/client',
+  main: '../../.prisma/client/index.js',
+  types: '../../.prisma/client/index.d.ts'
+};
+
+fs.writeFileSync(
+  path.join(prismaClientDir, 'package.json'),
+  JSON.stringify(packageJson, null, 2)
+);
+
+console.log('✅ Created @prisma/client package.json for streaming-service');

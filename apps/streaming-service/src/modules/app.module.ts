@@ -1,0 +1,39 @@
+import { Module } from "@nestjs/common";
+import { ConfigModule } from "@nestjs/config";
+import { StreamingController } from "../controllers/streaming.controller.js";
+import { DareController } from "../controllers/dare.controller.js";
+import { GiftController } from "../controllers/gift.controller.js";
+import { StreamingGateway } from "../gateways/streaming.gateway.js";
+import { MediasoupService } from "../services/mediasoup.service.js";
+import { RoomService } from "../services/room.service.js";
+import { CallService } from "../services/call.service.js";
+import { BroadcastService } from "../services/broadcast.service.js";
+import { ChatService } from "../services/chat.service.js";
+import { DareService } from "../services/dare.service.js";
+import { GiftService } from "../services/gift.service.js";
+import { WalletClientService } from "../services/wallet-client.service.js";
+import { DiscoveryClientService } from "../services/discovery-client.service.js";
+import { PrismaService } from "../prisma/prisma.service.js";
+
+@Module({
+  imports: [ConfigModule.forRoot()],
+  controllers: [
+    StreamingController,
+    DareController,
+    GiftController
+  ],
+  providers: [
+    PrismaService,
+    MediasoupService,
+    RoomService,
+    CallService,
+    BroadcastService,
+    ChatService,
+    DareService,
+    GiftService,
+    WalletClientService,
+    DiscoveryClientService,
+    StreamingGateway
+  ]
+})
+export class AppModule {}

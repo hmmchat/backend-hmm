@@ -1,8 +1,139 @@
-// Prisma schema for streaming-service (add models when needed).
-// datasource db {
-//   provider = "postgresql"
-//   url      = env("DATABASE_URL")
-// }
-// generator client {
-//   provider = "prisma-client-js"
-// }
+// Prisma schema for streaming-service
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+enum CallStatus {
+  IN_SQUAD
+  IN_BROADCAST
+  ENDED
+}
+
+enum ParticipantRole {
+  HOST
+  PARTICIPANT
+}
+
+model CallSession {
+  id            String      @id @default(cuid())
+  roomId        String      @unique
+  status        CallStatus  @default(IN_SQUAD)
+  isBroadcasting Boolean    @default(false)
+  maxParticipants Int       @default(4)
+  createdAt     DateTime    @default(now())
+  startedAt     DateTime?
+  endedAt       DateTime?
+  
+  participants  CallParticipant[]
+  viewers       CallViewer[]
+  events        CallEvent[]
+  dares         CallDare[]
+  gifts         CallGift[]
+  messages      CallMessage[]
+  
+  @@map("call_sessions")
+  @@index([roomId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model CallParticipant {
+  id            String      @id @default(cuid())
+  sessionId     String
+  userId        String
+  role          ParticipantRole @default(PARTICIPANT)
+  joinedAt      DateTime    @default(now())
+  leftAt        DateTime?
+  status        String      @default("active") // active, left
+  
+  session       CallSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  
+  @@unique([sessionId, userId])
+  @@map("call_participants")
+  @@index([sessionId])
+  @@index([userId])
+}
+
+model CallViewer {
+  id            String      @id @default(cuid())
+  sessionId     String
+  userId        String
+  joinedAt      DateTime    @default(now())
+  leftAt        DateTime?
+  
+  session       CallSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  
+  @@unique([sessionId, userId])
+  @@map("call_viewers")
+  @@index([sessionId])
+  @@index([userId])
+}
+
+model CallEvent {
+  id            String      @id @default(cuid())
+  sessionId     String
+  eventType     String      // participant_joined, participant_left, broadcast_started, broadcast_ended, call_ended
+  userId        String?
+  metadata      String?     // JSON string for additional event data
+  createdAt     DateTime    @default(now())
+  
+  session       CallSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  
+  @@map("call_events")
+  @@index([sessionId])
+  @@index([createdAt])
+}
+
+model CallDare {
+  id            String      @id @default(cuid())
+  sessionId     String
+  dareId        String      // Reference to dare list item
+  selectedBy    String      // userId who selected the dare
+  performedBy   String?     // userId who performed the dare
+  status        String      @default("selected") // selected, performed, skipped
+  createdAt     DateTime    @default(now())
+  performedAt   DateTime?
+  
+  session       CallSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  
+  @@map("call_dares")
+  @@index([sessionId])
+  @@index([selectedBy])
+}
+
+model CallGift {
+  id            String      @id @default(cuid())
+  sessionId     String
+  fromUserId    String
+  toUserId      String
+  amount        Int         // Coin amount
+  transactionId String?     // Reference to wallet transaction
+  createdAt     DateTime    @default(now())
+  
+  session       CallSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  
+  @@map("call_gifts")
+  @@index([sessionId])
+  @@index([fromUserId])
+  @@index([toUserId])
+}
+
+model CallMessage {
+  id            String      @id @default(cuid())
+  sessionId     String
+  userId        String
+  message       String
+  createdAt     DateTime    @default(now())
+  
+  session       CallSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  
+  @@map("call_messages")
+  @@index([sessionId])
+  @@index([createdAt])
+}

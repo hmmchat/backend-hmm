@@ -1,0 +1,64 @@
+import { Controller, Get, Post, Param, Body, Headers } from "@nestjs/common";
+import { GiftService } from "../services/gift.service.js";
+import { z } from "zod";
+
+const sendGiftSchema = z.object({
+  toUserId: z.string(),
+  amount: z.number().positive(),
+  fromUserId: z.string().optional() // Optional in test mode
+});
+
+@Controller("streaming/rooms/:roomId/gifts")
+export class GiftController {
+  private readonly testMode: boolean;
+
+  constructor(private giftService: GiftService) {
+    this.testMode = process.env.TEST_MODE === "true" || process.env.NODE_ENV === "test";
+  }
+
+  /**
+   * Send a gift
+   * POST /streaming/rooms/:roomId/gifts
+   */
+  @Post()
+  async sendGift(
+    @Param("roomId") roomId: string,
+    @Headers("authorization") authHeader: string | undefined,
+    @Body() body: unknown
+  ) {
+    const parsed = sendGiftSchema.parse(body);
+    const { toUserId, amount, fromUserId } = parsed;
+    
+    // In test mode, allow fromUserId in body, otherwise extract from token
+    let finalFromUserId = fromUserId;
+    let token = authHeader?.replace("Bearer ", "") || "";
+
+    if (this.testMode) {
+      // Test mode: use fromUserId from body or default
+      finalFromUserId = fromUserId || "test-user-1";
+      token = "test-token"; // Dummy token for test mode
+    } else {
+      // Production: extract from token (would need proper JWT parsing)
+      if (!fromUserId) {
+        throw new Error("fromUserId is required or provide valid JWT token");
+      }
+      finalFromUserId = fromUserId;
+    }
+
+    if (!finalFromUserId) {
+      throw new Error("fromUserId is required");
+    }
+
+    return await this.giftService.sendGift(roomId, finalFromUserId, toUserId, amount, token);
+  }
+
+  /**
+   * Get gifts for a room
+   * GET /streaming/rooms/:roomId/gifts
+   */
+  @Get()
+  async getRoomGifts(@Param("roomId") roomId: string) {
+    return await this.giftService.getRoomGifts(roomId);
+  }
+}
+

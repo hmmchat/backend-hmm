@@ -1,0 +1,1015 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Streaming Service Interactive Test</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #fff;
+            padding: 20px;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #fff;
+            margin-bottom: 10px;
+            text-align: center;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        .subtitle {
+            text-align: center;
+            color: rgba(255,255,255,0.9);
+            margin-bottom: 30px;
+        }
+        .section {
+            background: rgba(255, 255, 255, 0.95);
+            color: #333;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .section h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 1.3em;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 8px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #555;
+            font-weight: 500;
+        }
+        input, textarea, select {
+            width: 100%;
+            padding: 10px;
+            background: #fff;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            color: #333;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+        input:focus, textarea:focus, select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-right: 10px;
+            margin-top: 5px;
+            font-weight: 600;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+        button:active {
+            transform: translateY(0);
+        }
+        button.danger {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        }
+        button.success {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .log {
+            background: #1a1a1a;
+            border: 2px solid #444;
+            padding: 15px;
+            height: 400px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            margin-top: 10px;
+            border-radius: 6px;
+            color: #fff;
+        }
+        .log-entry {
+            margin-bottom: 8px;
+            padding: 8px;
+            border-left: 4px solid #444;
+            padding-left: 12px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 4px;
+        }
+        .log-entry.success { border-color: #4CAF50; }
+        .log-entry.error { border-color: #f44336; }
+        .log-entry.info { border-color: #2196F3; }
+        .log-entry.received { border-color: #FF9800; }
+        .log-entry.warning { border-color: #FFC107; }
+        .status {
+            display: inline-block;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-left: 10px;
+        }
+        .status.connected { background: #4CAF50; color: white; }
+        .status.disconnected { background: #f44336; color: white; }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+        .card {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            border: 2px solid #e0e0e0;
+        }
+        .card h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 1.1em;
+        }
+        .card-item {
+            padding: 8px;
+            margin: 5px 0;
+            background: white;
+            border-radius: 4px;
+            border-left: 3px solid #667eea;
+        }
+        .two-columns {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        .quick-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        .test-case {
+            background: #e3f2fd;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 8px;
+            border-left: 4px solid #2196F3;
+        }
+        .test-case h4 {
+            color: #1976D2;
+            margin-bottom: 8px;
+        }
+        .test-case ol {
+            margin-left: 20px;
+            color: #555;
+        }
+        .test-case li {
+            margin: 5px 0;
+        }
+        @media (max-width: 768px) {
+            .two-columns { grid-template-columns: 1fr; }
+            .grid { grid-template-columns: 1fr; }
+        }
+        .timestamp {
+            color: #888;
+            font-size: 10px;
+        }
+        .badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-left: 8px;
+        }
+        .badge.room { background: #667eea; color: white; }
+        .badge.user { background: #4CAF50; color: white; }
+        .badge.viewer { background: #FF9800; color: white; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📺 Streaming Service Interactive Test</h1>
+        <p class="subtitle">Real-time testing tool for streaming service (TEST_MODE - No Auth Required)</p>
+        
+        <!-- Connection Section -->
+        <div class="section">
+            <h2>🔌 Connection Settings</h2>
+            <div class="two-columns">
+                <div class="form-group">
+                    <label>Streaming Service URL:</label>
+                    <input type="text" id="apiUrl" value="http://localhost:3005" placeholder="http://localhost:3005">
+                </div>
+                <div class="form-group">
+                    <label>WebSocket URL:</label>
+                    <input type="text" id="wsUrl" value="ws://localhost:3005/streaming/ws" placeholder="ws://localhost:3005/streaming/ws">
+                </div>
+            </div>
+            <button onclick="testConnection()">Test Connection</button>
+            <span id="connectionStatus" class="status disconnected">Disconnected</span>
+        </div>
+
+        <!-- Quick Test Actions -->
+        <div class="section">
+            <h2>⚡ Quick Test Actions</h2>
+            <div class="quick-actions">
+                <button class="success" onclick="quickTest1()">Test 1: Basic Room Flow</button>
+                <button class="success" onclick="quickTest2()">Test 2: Chat Messages</button>
+                <button class="success" onclick="quickTest3()">Test 3: Broadcasting</button>
+                <button class="danger" onclick="clearLog()">Clear Log</button>
+            </div>
+        </div>
+
+        <!-- Room Management -->
+        <div class="section">
+            <h2>🏠 Room Management</h2>
+            <div class="two-columns">
+                <div>
+                    <div class="form-group">
+                        <label>User IDs (comma-separated, 2-4 users):</label>
+                        <input type="text" id="userIds" placeholder="user1, user2" value="user1, user2">
+                    </div>
+                    <button onclick="createRoom()">Create Room</button>
+                </div>
+                <div>
+                    <div class="form-group">
+                        <label>Room ID:</label>
+                        <input type="text" id="roomId" placeholder="Enter room ID">
+                    </div>
+                    <button onclick="getRoomInfo()">Get Room Info</button>
+                    <button onclick="getChatHistory()">Get Chat History</button>
+                    <button onclick="getDares()">Get Dares</button>
+                </div>
+            </div>
+            <div id="roomsList" class="grid"></div>
+        </div>
+
+        <!-- User Connection -->
+        <div class="section">
+            <h2>👤 User Connection (WebSocket)</h2>
+            <div class="two-columns">
+                <div>
+                    <div class="form-group">
+                        <label>User ID:</label>
+                        <input type="text" id="userId" placeholder="user1" value="user1">
+                    </div>
+                    <button onclick="connectUser()">Connect User</button>
+                    <button class="danger" onclick="disconnectUser()">Disconnect</button>
+                    <span id="userStatus"></span>
+                </div>
+                <div>
+                    <div class="form-group">
+                        <label>Room ID to Join:</label>
+                        <input type="text" id="joinRoomId" placeholder="Enter room ID">
+                    </div>
+                    <button onclick="joinRoom()">Join Room</button>
+                    <button onclick="leaveRoom()">Leave Room</button>
+                    <button onclick="startBroadcast()">Start Broadcast</button>
+                    <button onclick="joinAsViewer()">Join as Viewer</button>
+                </div>
+            </div>
+            <div class="form-group" style="margin-top: 10px;">
+                <label>Get Room Info for User:</label>
+                <input type="text" id="getUserRoomUserId" placeholder="user1" value="user1" style="width: 200px; display: inline-block; margin-right: 10px;">
+                <button onclick="getUserRoomInfo()">Get User's Room</button>
+            </div>
+            <div id="usersList" class="grid"></div>
+        </div>
+
+        <!-- Chat -->
+        <div class="section">
+            <h2>💬 Chat Messages</h2>
+            <div class="form-group">
+                <label>Message:</label>
+                <textarea id="chatMessage" rows="2" placeholder="Type your message here..."></textarea>
+            </div>
+            <button onclick="sendChatMessage()">Send Chat Message</button>
+        </div>
+
+        <!-- Test Cases Guide -->
+        <div class="section">
+            <h2>📋 Test Cases & Instructions</h2>
+            
+            <div class="test-case">
+                <h4>Test Case 1: Basic Room Creation & Join Flow</h4>
+                <ol>
+                    <li>Enter user IDs: <code>user1, user2</code> in "Room Management"</li>
+                    <li>Click "Create Room" - Note the Room ID from log</li>
+                    <li>Enter user ID: <code>user1</code> and click "Connect User"</li>
+                    <li>Enter the Room ID and click "Join Room"</li>
+                    <li>Repeat steps 3-4 for <code>user2</code></li>
+                    <li>Expected: Both users should receive "room-joined" messages</li>
+                </ol>
+            </div>
+
+            <div class="test-case">
+                <h4>Test Case 2: Chat Functionality</h4>
+                <ol>
+                    <li>Complete Test Case 1 first (room created, 2 users joined)</li>
+                    <li>Select user: <code>user1</code> and connect/join room</li>
+                    <li>Type a message and click "Send Chat Message"</li>
+                    <li>Click "Get Chat History" to verify message was saved</li>
+                    <li>Connect <code>user2</code> - they should see the message in log</li>
+                    <li>Expected: Messages appear in chat history and are broadcasted</li>
+                </ol>
+            </div>
+
+            <div class="test-case">
+                <h4>Test Case 3: Broadcasting Flow</h4>
+                <ol>
+                    <li>Create room with <code>user1, user2</code></li>
+                    <li>Connect and join both users as participants</li>
+                    <li>With <code>user1</code>, click "Start Broadcast"</li>
+                    <li>Connect a new user: <code>viewer1</code></li>
+                    <li>With <code>viewer1</code>, click "Join as Viewer"</li>
+                    <li>Click "Get Room Info" - should show broadcasting status</li>
+                    <li>Expected: Viewers can join, room status is IN_BROADCAST</li>
+                </ol>
+            </div>
+
+            <div class="test-case">
+                <h4>Test Case 4: Dares Feature</h4>
+                <ol>
+                    <li>Create room and have at least 1 user joined</li>
+                    <li>Click "Get Dares" - should return list of 10 dares</li>
+                    <li>Note a dare ID from the list</li>
+                    <li>Use REST API or implement: POST /streaming/rooms/{roomId}/dares/select</li>
+                    <li>Expected: Dare list is returned, dares can be selected</li>
+                </ol>
+            </div>
+
+            <div class="test-case">
+                <h4>Test Case 5: Multiple Users & Concurrent Operations</h4>
+                <ol>
+                    <li>Create room with <code>user1, user2, user3, user4</code> (max 4)</li>
+                    <li>Connect all 4 users</li>
+                    <li>All users join the room</li>
+                    <li>Each user sends a chat message</li>
+                    <li>Verify all messages appear in chat history</li>
+                    <li>Expected: All operations succeed, no race conditions</li>
+                </ol>
+            </div>
+
+            <div class="test-case">
+                <h4>Test Case 6: Error Handling</h4>
+                <ol>
+                    <li>Try creating room with 1 user - should fail (need 2-4)</li>
+                    <li>Try creating room with 5 users - should fail (max 4)</li>
+                    <li>Try joining non-existent room - should get error</li>
+                    <li>Try sending chat without joining - should get error</li>
+                    <li>Try joining as viewer when room not broadcasting - should fail</li>
+                    <li>Expected: All errors are handled gracefully</li>
+                </ol>
+            </div>
+        </div>
+
+        <!-- Activity Log -->
+        <div class="section">
+            <h2>📝 Activity Log</h2>
+            <div id="log" class="log"></div>
+        </div>
+    </div>
+
+    <script>
+        // Global state
+        let connections = {}; // userId -> WebSocket
+        let rooms = {}; // roomId -> {roomId, sessionId, users: []}
+        let currentUserId = null;
+
+        const API_URL = () => document.getElementById('apiUrl').value;
+        const WS_URL = () => document.getElementById('wsUrl').value;
+
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            const timestamp = new Date().toLocaleTimeString();
+            entry.innerHTML = `<span class="timestamp">[${timestamp}]</span> ${message}`;
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+            log('Log cleared', 'info');
+        }
+
+        async function testConnection() {
+            const apiUrl = API_URL();
+            log(`🔄 Testing connection to ${apiUrl}...`, 'info');
+            
+            // Check if opened via file:// protocol (CORS issue)
+            if (window.location.protocol === 'file:') {
+                log('⚠️ Warning: File opened via file:// protocol. CORS may block requests.', 'warning');
+                log('💡 Solution: Use a local server or open via http://localhost', 'info');
+                log('   Quick server: python3 -m http.server 8000 (then open http://localhost:8000/interactive-test.html)', 'info');
+            }
+            
+            try {
+                // Create timeout manually for better browser compatibility
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 5000);
+                
+                // Try a simple GET request first (faster check)
+                let testResponse;
+                try {
+                    log(`📡 Fetching: ${apiUrl}/streaming/rooms/test-${Date.now()}`, 'info');
+                    testResponse = await fetch(`${apiUrl}/streaming/rooms/test-${Date.now()}`, {
+                        method: 'GET',
+                        signal: controller.signal,
+                        mode: 'cors', // Explicitly request CORS
+                        headers: {
+                            'Accept': 'application/json'
+                        }
+                    }).catch(async (fetchError) => {
+                        // If fetch fails, log more details
+                        log(`🔍 Fetch error caught: ${fetchError.name} - ${fetchError.message}`, 'warning');
+                        throw fetchError;
+                    });
+                    clearTimeout(timeoutId);
+                    
+                    log(`📥 Response received: HTTP ${testResponse.status}`, 'info');
+                } catch (fetchError) {
+                    clearTimeout(timeoutId);
+                    if (fetchError.name === 'AbortError') {
+                        throw new Error('Connection timeout - service not responding after 5 seconds');
+                    }
+                    // More detailed error information
+                    const errorMsg = fetchError.message || 'Unknown error';
+                    if (errorMsg.includes('Failed to fetch') || errorMsg.includes('NetworkError')) {
+                        throw new Error(`Network error: Cannot connect to ${apiUrl}. Check if service is running and CORS is enabled.`);
+                    }
+                    // Re-throw with more context for logging
+                    throw fetchError;
+                }
+
+                // Any response (even 404) means service is up
+                if (testResponse.status === 404 || testResponse.ok || testResponse.status === 200) {
+                    log('✅ Connection successful! Service is running.', 'success');
+                    document.getElementById('connectionStatus').textContent = 'Connected';
+                    document.getElementById('connectionStatus').className = 'status connected';
+                    return;
+                }
+                
+                // Try POST to /streaming/rooms as backup test
+                const postController = new AbortController();
+                const postTimeoutId = setTimeout(() => postController.abort(), 5000);
+                
+                try {
+                    const response = await fetch(`${apiUrl}/streaming/rooms`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ userIds: ['test-connection-1', 'test-connection-2'] }),
+                        signal: postController.signal,
+                        mode: 'cors'
+                    });
+                    clearTimeout(postTimeoutId);
+                    
+                    if (response.status === 200 || response.status === 201 || response.status === 400) {
+                        log('✅ Connection successful! Service is running.', 'success');
+                        document.getElementById('connectionStatus').textContent = 'Connected';
+                        document.getElementById('connectionStatus').className = 'status connected';
+                        return;
+                    } else {
+                        throw new Error(`HTTP ${response.status}`);
+                    }
+                } catch (postError) {
+                    clearTimeout(postTimeoutId);
+                    throw postError;
+                }
+            } catch (error) {
+                let errorMsg = error.message || String(error);
+                let errorName = error.name || 'Unknown';
+                let errorStack = error.stack || '';
+                
+                // Log full error details for debugging
+                log(`🔍 Debug: Error name: ${errorName}`, 'info');
+                log(`🔍 Debug: Error message: ${errorMsg}`, 'info');
+                
+                let helpfulMsg = errorMsg;
+                
+                if (errorMsg.includes('Failed to fetch') || errorMsg.includes('NetworkError') || errorName === 'TypeError') {
+                    helpfulMsg = 'Cannot connect to service. Possible causes:';
+                    log(`❌ ${helpfulMsg}`, 'error');
+                    log(`   • Service not running? Check: lsof -i :3005`, 'info');
+                    log(`   • CORS blocked? Check browser console (F12 → Console tab) for red CORS errors`, 'info');
+                    log(`   • Wrong URL? Currently trying: ${apiUrl}`, 'info');
+                    log(`   • Full error: ${errorName} - ${errorMsg}`, 'info');
+                    log(`   • Open browser console (F12) and check for detailed errors`, 'info');
+                    
+                    // Also log to browser console
+                    console.error('Connection test failed:', {
+                        errorName: errorName,
+                        errorMessage: errorMsg,
+                        apiUrl: apiUrl,
+                        fullError: error
+                    });
+                } else if (errorMsg.includes('CORS') || errorMsg.includes('cross-origin')) {
+                    helpfulMsg = 'CORS Error: Browser blocked the request';
+                    log(`❌ ${helpfulMsg}`, 'error');
+                    log(`💡 Solution: Use a local web server instead of opening file:// directly`, 'info');
+                    log(`   Quick fix: python3 -m http.server 8000`, 'info');
+                    log(`   Then open: http://localhost:8000/tests/streaming-service/interactive-test.html`, 'info');
+                } else if (errorMsg.includes('timeout')) {
+                    helpfulMsg = 'Connection timeout - service not responding';
+                    log(`❌ ${helpfulMsg}`, 'error');
+                } else {
+                    log(`❌ Connection failed: ${errorMsg}`, 'error');
+                }
+                
+                log(`📍 Trying to reach: ${apiUrl}`, 'info');
+                
+                // Only show startup instructions if it's not a CORS issue
+                if (!errorMsg.includes('CORS') && !errorMsg.includes('cross-origin')) {
+                    log('💡 To start the service:', 'info');
+                    log('   1. Open a terminal', 'info');
+                    log('   2. Run: cd apps/streaming-service', 'info');
+                    log('   3. Run: TEST_MODE=true npm run start:dev', 'info');
+                    log('   4. Wait for "Application is running on: http://localhost:3005"', 'info');
+                    log('   5. Click "Test Connection" again', 'info');
+                }
+                
+                document.getElementById('connectionStatus').textContent = 'Disconnected';
+                document.getElementById('connectionStatus').className = 'status disconnected';
+            }
+        }
+
+        async function createRoom() {
+            const userIdsInput = document.getElementById('userIds').value;
+            const userIds = userIdsInput.split(',').map(id => id.trim()).filter(Boolean);
+            
+            if (userIds.length < 2 || userIds.length > 4) {
+                log('❌ Room must have 2-4 users', 'error');
+                return;
+            }
+
+            log(`🔄 Creating room with users: ${userIds.join(', ')}`, 'info');
+            
+            try {
+                const response = await fetch(`${API_URL()}/streaming/rooms`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userIds })
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    const { roomId, sessionId } = data;
+                    rooms[roomId] = { roomId, sessionId, users: userIds };
+                    log(`✅ Room created! Room ID: <strong>${roomId}</strong>`, 'success');
+                    document.getElementById('roomId').value = roomId;
+                    document.getElementById('joinRoomId').value = roomId;
+                    updateRoomsList();
+                } else {
+                    log(`❌ Failed to create room: ${JSON.stringify(data)}`, 'error');
+                }
+            } catch (error) {
+                log(`❌ Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function getRoomInfo() {
+            const roomId = document.getElementById('roomId').value;
+            if (!roomId) {
+                log('❌ Please enter a room ID', 'error');
+                return;
+            }
+
+            log(`🔄 Getting room info for: ${roomId}`, 'info');
+            
+            try {
+                const response = await fetch(`${API_URL()}/streaming/rooms/${roomId}`);
+                const data = await response.json();
+                
+                if (response.ok && data.exists) {
+                    log(`✅ Room Info: <pre>${JSON.stringify(data, null, 2)}</pre>`, 'success');
+                } else {
+                    log(`❌ Room not found or error: ${JSON.stringify(data)}`, 'error');
+                }
+            } catch (error) {
+                log(`❌ Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function getChatHistory() {
+            const roomId = document.getElementById('roomId').value;
+            if (!roomId) {
+                log('❌ Please enter a room ID', 'error');
+                return;
+            }
+
+            log(`🔄 Getting chat history for: ${roomId}`, 'info');
+            
+            try {
+                const response = await fetch(`${API_URL()}/streaming/rooms/${roomId}/chat`);
+                const data = await response.json();
+                
+                if (response.ok) {
+                    if (Array.isArray(data) && data.length > 0) {
+                        log(`✅ Chat History (${data.length} messages):`, 'success');
+                        data.forEach((msg, i) => {
+                            log(`  ${i + 1}. [${msg.userId}]: ${msg.message}`, 'info');
+                        });
+                    } else {
+                        log('ℹ️ No messages yet', 'warning');
+                    }
+                } else {
+                    log(`❌ Failed to get chat: ${JSON.stringify(data)}`, 'error');
+                }
+            } catch (error) {
+                log(`❌ Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function getDares() {
+            const roomId = document.getElementById('roomId').value;
+            if (!roomId) {
+                log('❌ Please enter a room ID', 'error');
+                return;
+            }
+
+            log(`🔄 Getting dares for: ${roomId}`, 'info');
+            
+            try {
+                const response = await fetch(`${API_URL()}/streaming/rooms/${roomId}/dares`);
+                const data = await response.json();
+                
+                if (response.ok && data.dares) {
+                    log(`✅ Available Dares (${data.dares.length}):`, 'success');
+                    data.dares.forEach((dare, i) => {
+                        log(`  ${i + 1}. [${dare.id}] ${dare.text}`, 'info');
+                    });
+                } else {
+                    log(`❌ Failed to get dares: ${JSON.stringify(data)}`, 'error');
+                }
+            } catch (error) {
+                log(`❌ Error: ${error.message}`, 'error');
+            }
+        }
+
+        function connectUser() {
+            const userId = document.getElementById('userId').value.trim();
+            if (!userId) {
+                log('❌ Please enter a user ID', 'error');
+                return;
+            }
+
+            if (connections[userId] && connections[userId].readyState === WebSocket.OPEN) {
+                log(`⚠️ User ${userId} is already connected`, 'warning');
+                currentUserId = userId;
+                updateUserStatus();
+                return;
+            }
+
+            log(`🔄 Connecting user: ${userId}...`, 'info');
+            currentUserId = userId;
+
+            const ws = new WebSocket(`${WS_URL()}?userId=${userId}`);
+
+            ws.onopen = () => {
+                connections[userId] = ws;
+                log(`✅ Connected as user: <strong>${userId}</strong>`, 'success');
+                updateUserStatus();
+                updateUsersList();
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const message = JSON.parse(event.data);
+                    log(`📨 [${userId}] Received: <pre>${JSON.stringify(message, null, 2)}</pre>`, 'received');
+                } catch (error) {
+                    log(`📨 [${userId}] Received: ${event.data}`, 'received');
+                }
+            };
+
+            ws.onerror = (error) => {
+                log(`❌ WebSocket error for ${userId}: ${error.message || 'Connection error'}`, 'error');
+            };
+
+            ws.onclose = () => {
+                log(`🔌 WebSocket closed for ${userId}`, 'warning');
+                if (connections[userId]) {
+                    delete connections[userId];
+                }
+                updateUserStatus();
+                updateUsersList();
+            };
+        }
+
+        function disconnectUser() {
+            const userId = document.getElementById('userId').value.trim();
+            if (connections[userId]) {
+                connections[userId].close();
+                delete connections[userId];
+                log(`✅ Disconnected ${userId}`, 'success');
+                if (currentUserId === userId) {
+                    currentUserId = null;
+                }
+                updateUserStatus();
+                updateUsersList();
+            } else {
+                log(`⚠️ User ${userId} is not connected`, 'warning');
+            }
+        }
+
+        function joinRoom() {
+            const userId = document.getElementById('userId').value.trim();
+            const roomId = document.getElementById('joinRoomId').value.trim();
+
+            if (!userId || !roomId) {
+                log('❌ Please enter both user ID and room ID', 'error');
+                return;
+            }
+
+            if (!connections[userId] || connections[userId].readyState !== WebSocket.OPEN) {
+                log(`❌ User ${userId} is not connected. Connect first!`, 'error');
+                return;
+            }
+
+            log(`🔄 User ${userId} joining room: ${roomId}`, 'info');
+            sendWebSocketMessage(userId, {
+                type: 'join-room',
+                data: { roomId }
+            });
+        }
+
+        function startBroadcast() {
+            const userId = document.getElementById('userId').value.trim();
+            const roomId = document.getElementById('joinRoomId').value.trim();
+
+            if (!userId || !roomId) {
+                log('❌ Please enter both user ID and room ID', 'error');
+                return;
+            }
+
+            if (!connections[userId] || connections[userId].readyState !== WebSocket.OPEN) {
+                log(`❌ User ${userId} is not connected. Connect first!`, 'error');
+                return;
+            }
+
+            log(`🔄 User ${userId} starting broadcast for room: ${roomId}`, 'info');
+            sendWebSocketMessage(userId, {
+                type: 'start-broadcast',
+                data: { roomId }
+            });
+        }
+
+        function joinAsViewer() {
+            const userId = document.getElementById('userId').value.trim();
+            const roomId = document.getElementById('joinRoomId').value.trim();
+
+            if (!userId || !roomId) {
+                log('❌ Please enter both user ID and room ID', 'error');
+                return;
+            }
+
+            if (!connections[userId] || connections[userId].readyState !== WebSocket.OPEN) {
+                log(`❌ User ${userId} is not connected. Connect first!`, 'error');
+                return;
+            }
+
+            log(`🔄 User ${userId} joining as viewer: ${roomId}`, 'info');
+            sendWebSocketMessage(userId, {
+                type: 'join-as-viewer',
+                data: { roomId }
+            });
+        }
+
+        function leaveRoom() {
+            const userId = document.getElementById('userId').value.trim();
+            const roomId = document.getElementById('joinRoomId').value.trim();
+
+            if (!userId || !roomId) {
+                log('❌ Please enter both user ID and room ID', 'error');
+                return;
+            }
+
+            if (!connections[userId] || connections[userId].readyState !== WebSocket.OPEN) {
+                log(`❌ User ${userId} is not connected. Connect first!`, 'error');
+                return;
+            }
+
+            log(`🔄 User ${userId} leaving room: ${roomId}`, 'info');
+            sendWebSocketMessage(userId, {
+                type: 'leave-room',
+                data: { roomId }
+            });
+            
+            // Clear the room ID input for convenience
+            document.getElementById('joinRoomId').value = '';
+        }
+
+        async function getUserRoomInfo() {
+            const userId = document.getElementById('getUserRoomUserId').value.trim();
+
+            if (!userId) {
+                log('❌ Please enter a user ID', 'error');
+                return;
+            }
+
+            try {
+                log(`🔄 Fetching room info for user: ${userId}...`, 'info');
+                const response = await fetch(`${API_URL()}/streaming/users/${userId}/room`);
+                const data = await response.json();
+                
+                if (response.ok) {
+                    if (data.exists) {
+                        log(`✅ User ${userId}'s Room Info:`, 'success');
+                        log(`   Role: ${data.role}`, 'info');
+                        log(`   Room ID: ${data.roomId}`, 'info');
+                        log(`   Status: ${data.status}`, 'info');
+                        log(`   Broadcasting: ${data.isBroadcasting}`, 'info');
+                        log(`   Participants: ${data.participantCount}`, 'info');
+                        log(`   Viewers: ${data.viewerCount}`, 'info');
+                        log(`<pre>${JSON.stringify(data, null, 2)}</pre>`, 'success');
+                    } else {
+                        log(`ℹ️ User ${userId} is not in any active room`, 'info');
+                    }
+                } else {
+                    log(`❌ Error: ${data.message || 'Failed to get user room info'}`, 'error');
+                }
+            } catch (error) {
+                log(`❌ Error: ${error.message}`, 'error');
+            }
+        }
+
+        function sendChatMessage() {
+            const userId = document.getElementById('userId').value.trim();
+            const roomId = document.getElementById('joinRoomId').value.trim();
+            const message = document.getElementById('chatMessage').value.trim();
+
+            if (!userId || !roomId || !message) {
+                log('❌ Please enter user ID, room ID, and message', 'error');
+                return;
+            }
+
+            if (!connections[userId] || connections[userId].readyState !== WebSocket.OPEN) {
+                log(`❌ User ${userId} is not connected. Connect first!`, 'error');
+                return;
+            }
+
+            log(`🔄 Sending chat message from ${userId}...`, 'info');
+            sendWebSocketMessage(userId, {
+                type: 'chat-message',
+                data: { roomId, message }
+            });
+            
+            document.getElementById('chatMessage').value = '';
+        }
+
+        function sendWebSocketMessage(userId, message) {
+            if (connections[userId] && connections[userId].readyState === WebSocket.OPEN) {
+                connections[userId].send(JSON.stringify(message));
+                log(`✅ Sent: <pre>${JSON.stringify(message, null, 2)}</pre>`, 'success');
+            } else {
+                log(`❌ User ${userId} is not connected`, 'error');
+            }
+        }
+
+        function updateRoomsList() {
+            const container = document.getElementById('roomsList');
+            container.innerHTML = '';
+            
+            Object.values(rooms).forEach(room => {
+                const card = document.createElement('div');
+                card.className = 'card';
+                card.innerHTML = `
+                    <h3>Room: ${room.roomId.substring(0, 8)}...</h3>
+                    <div class="card-item">
+                        <strong>Users:</strong> ${room.users.join(', ')}
+                    </div>
+                    <div class="card-item">
+                        <strong>Session ID:</strong> ${room.sessionId}
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        function updateUsersList() {
+            const container = document.getElementById('usersList');
+            container.innerHTML = '';
+            
+            Object.keys(connections).forEach(userId => {
+                const ws = connections[userId];
+                const isConnected = ws && ws.readyState === WebSocket.OPEN;
+                const card = document.createElement('div');
+                card.className = 'card';
+                card.innerHTML = `
+                    <h3>User: ${userId}</h3>
+                    <div class="card-item">
+                        Status: <span class="status ${isConnected ? 'connected' : 'disconnected'}">
+                            ${isConnected ? 'Connected' : 'Disconnected'}
+                        </span>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        function updateUserStatus() {
+            const userId = document.getElementById('userId').value.trim();
+            const statusDiv = document.getElementById('userStatus');
+            
+            if (userId && connections[userId]) {
+                const isConnected = connections[userId].readyState === WebSocket.OPEN;
+                statusDiv.innerHTML = `<span class="status ${isConnected ? 'connected' : 'disconnected'}">${isConnected ? 'Connected' : 'Disconnected'}</span>`;
+            } else {
+                statusDiv.innerHTML = '';
+            }
+        }
+
+        // Quick test functions
+        async function quickTest1() {
+            log('🚀 Starting Quick Test 1: Basic Room Flow', 'info');
+            
+            // Create room
+            document.getElementById('userIds').value = 'test-user-1, test-user-2';
+            await createRoom();
+            
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            // Connect user 1
+            document.getElementById('userId').value = 'test-user-1';
+            connectUser();
+            
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            // Join room
+            joinRoom();
+            
+            log('✅ Quick Test 1 complete. Connect user2 and join room manually to complete the flow.', 'success');
+        }
+
+        async function quickTest2() {
+            log('🚀 Starting Quick Test 2: Chat Messages', 'info');
+            
+            const roomId = document.getElementById('roomId').value;
+            const userId = document.getElementById('userId').value;
+            
+            if (!roomId || !userId) {
+                log('❌ Please create a room and connect a user first', 'error');
+                return;
+            }
+            
+            document.getElementById('chatMessage').value = 'Hello from quick test!';
+            sendChatMessage();
+            
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            getChatHistory();
+        }
+
+        async function quickTest3() {
+            log('🚀 Starting Quick Test 3: Broadcasting', 'info');
+            
+            const roomId = document.getElementById('joinRoomId').value;
+            const userId = document.getElementById('userId').value;
+            
+            if (!roomId || !userId) {
+                log('❌ Please create a room and connect a user first', 'error');
+                return;
+            }
+            
+            startBroadcast();
+            
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            getRoomInfo();
+        }
+
+        // Update status periodically
+        setInterval(updateUserStatus, 1000);
+        
+        // Test connection on load
+        window.addEventListener('load', () => {
+            log('🎉 Streaming Service Test Tool Loaded', 'success');
+            log('ℹ️ Make sure streaming-service is running with TEST_MODE=true', 'info');
+            log('💡 Start service: cd apps/streaming-service && TEST_MODE=true npm run start:dev', 'info');
+            // Don't auto-test on load - let user test manually
+            // testConnection();
+        });
+    </script>
+</body>
+</html>
+

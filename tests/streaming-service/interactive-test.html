@@ -248,6 +248,13 @@
                         <label>User IDs (comma-separated, 2-4 users):</label>
                         <input type="text" id="userIds" placeholder="user1, user2" value="user1, user2">
                     </div>
+                    <div class="form-group">
+                        <label>Call Type:</label>
+                        <select id="callType" style="width: 100%; padding: 8px;">
+                            <option value="matched">Matched Call (2 users = both HOSTS)</option>
+                            <option value="squad">Squad Call (all users = HOSTS)</option>
+                        </select>
+                    </div>
                     <button onclick="createRoom()">Create Room</button>
                 </div>
                 <div>
@@ -283,14 +290,26 @@
                     </div>
                     <button onclick="joinRoom()">Join Room</button>
                     <button onclick="leaveRoom()">Leave Room</button>
-                    <button onclick="startBroadcast()">Start Broadcast</button>
+                    <button onclick="startBroadcast()">Start Broadcast (HOST only)</button>
+                    <button onclick="stopBroadcast()">Stop Broadcast (HOST only)</button>
                     <button onclick="joinAsViewer()">Join as Viewer</button>
                 </div>
             </div>
             <div class="form-group" style="margin-top: 10px;">
-                <label>Get Room Info for User:</label>
-                <input type="text" id="getUserRoomUserId" placeholder="user1" value="user1" style="width: 200px; display: inline-block; margin-right: 10px;">
-                <button onclick="getUserRoomInfo()">Get User's Room</button>
+                <label>Kick User (HOST only):</label>
+                <input type="text" id="kickTargetUserId" placeholder="user3" value="" style="width: 200px; display: inline-block; margin-right: 10px;">
+                <button class="danger" onclick="kickUser()">Kick User</button>
+                <span style="font-size: 12px; color: #666;">Only HOSTs can kick PARTICIPANTs</span>
+            </div>
+            <div class="form-group" style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #ddd;">
+                <label><strong>🔍 Get User's Room Info:</strong></label>
+                <div style="margin-top: 8px;">
+                    <input type="text" id="getUserRoomUserId" placeholder="user1" value="user1" style="width: 250px; padding: 8px; display: inline-block; margin-right: 10px;">
+                    <button onclick="getUserRoomInfo()" style="padding: 8px 16px;">Get User's Room</button>
+                </div>
+                <p style="font-size: 12px; color: #666; margin-top: 8px; margin-bottom: 0;">
+                    Returns: Room ID, Status, User Role (HOST/PARTICIPANT/VIEWER), Broadcasting status, Participant/Viewer counts
+                </p>
             </div>
             <div id="usersList" class="grid"></div>
         </div>
@@ -305,81 +324,23 @@
             <button onclick="sendChatMessage()">Send Chat Message</button>
         </div>
 
-        <!-- Test Cases Guide -->
+        <!-- Playground Info -->
         <div class="section">
-            <h2>📋 Test Cases & Instructions</h2>
-            
-            <div class="test-case">
-                <h4>Test Case 1: Basic Room Creation & Join Flow</h4>
-                <ol>
-                    <li>Enter user IDs: <code>user1, user2</code> in "Room Management"</li>
-                    <li>Click "Create Room" - Note the Room ID from log</li>
-                    <li>Enter user ID: <code>user1</code> and click "Connect User"</li>
-                    <li>Enter the Room ID and click "Join Room"</li>
-                    <li>Repeat steps 3-4 for <code>user2</code></li>
-                    <li>Expected: Both users should receive "room-joined" messages</li>
-                </ol>
-            </div>
-
-            <div class="test-case">
-                <h4>Test Case 2: Chat Functionality</h4>
-                <ol>
-                    <li>Complete Test Case 1 first (room created, 2 users joined)</li>
-                    <li>Select user: <code>user1</code> and connect/join room</li>
-                    <li>Type a message and click "Send Chat Message"</li>
-                    <li>Click "Get Chat History" to verify message was saved</li>
-                    <li>Connect <code>user2</code> - they should see the message in log</li>
-                    <li>Expected: Messages appear in chat history and are broadcasted</li>
-                </ol>
-            </div>
-
-            <div class="test-case">
-                <h4>Test Case 3: Broadcasting Flow</h4>
-                <ol>
-                    <li>Create room with <code>user1, user2</code></li>
-                    <li>Connect and join both users as participants</li>
-                    <li>With <code>user1</code>, click "Start Broadcast"</li>
-                    <li>Connect a new user: <code>viewer1</code></li>
-                    <li>With <code>viewer1</code>, click "Join as Viewer"</li>
-                    <li>Click "Get Room Info" - should show broadcasting status</li>
-                    <li>Expected: Viewers can join, room status is IN_BROADCAST</li>
-                </ol>
-            </div>
-
-            <div class="test-case">
-                <h4>Test Case 4: Dares Feature</h4>
-                <ol>
-                    <li>Create room and have at least 1 user joined</li>
-                    <li>Click "Get Dares" - should return list of 10 dares</li>
-                    <li>Note a dare ID from the list</li>
-                    <li>Use REST API or implement: POST /streaming/rooms/{roomId}/dares/select</li>
-                    <li>Expected: Dare list is returned, dares can be selected</li>
-                </ol>
-            </div>
-
-            <div class="test-case">
-                <h4>Test Case 5: Multiple Users & Concurrent Operations</h4>
-                <ol>
-                    <li>Create room with <code>user1, user2, user3, user4</code> (max 4)</li>
-                    <li>Connect all 4 users</li>
-                    <li>All users join the room</li>
-                    <li>Each user sends a chat message</li>
-                    <li>Verify all messages appear in chat history</li>
-                    <li>Expected: All operations succeed, no race conditions</li>
-                </ol>
-            </div>
-
-            <div class="test-case">
-                <h4>Test Case 6: Error Handling</h4>
-                <ol>
-                    <li>Try creating room with 1 user - should fail (need 2-4)</li>
-                    <li>Try creating room with 5 users - should fail (max 4)</li>
-                    <li>Try joining non-existent room - should get error</li>
-                    <li>Try sending chat without joining - should get error</li>
-                    <li>Try joining as viewer when room not broadcasting - should fail</li>
-                    <li>Expected: All errors are handled gracefully</li>
-                </ol>
-            </div>
+            <h2>🎮 Interactive Playground</h2>
+            <p style="color: #666; margin-bottom: 20px;">
+                This is a playground for testing the streaming service. All features are available above:
+            </p>
+            <ul style="color: #666; line-height: 1.8;">
+                <li><strong>Room Management:</strong> Create rooms (matched/squad calls), join, leave</li>
+                <li><strong>Host Features:</strong> Kick participants, start/stop broadcasting (HOSTs only)</li>
+                <li><strong>Chat:</strong> Send messages, view chat history</li>
+                <li><strong>Broadcasting:</strong> Start/stop broadcast, join as viewer</li>
+                <li><strong>Dares:</strong> Get dare list, select dares</li>
+                <li><strong>Room Info:</strong> View room details including HOST/PARTICIPANT roles</li>
+            </ul>
+            <p style="color: #666; margin-top: 20px; font-style: italic;">
+                💡 Tip: Create a matched call (2 users = both HOSTS) or squad call (all users = HOSTS), then explore!
+            </p>
         </div>
 
         <!-- Activity Log -->
@@ -556,19 +517,25 @@
         async function createRoom() {
             const userIdsInput = document.getElementById('userIds').value;
             const userIds = userIdsInput.split(',').map(id => id.trim()).filter(Boolean);
+            const callType = document.getElementById('callType').value;
             
             if (userIds.length < 2 || userIds.length > 4) {
                 log('❌ Room must have 2-4 users', 'error');
                 return;
             }
 
-            log(`🔄 Creating room with users: ${userIds.join(', ')}`, 'info');
+            if (callType === 'matched' && userIds.length !== 2) {
+                log('❌ Matched calls must have exactly 2 users', 'error');
+                return;
+            }
+
+            log(`🔄 Creating ${callType} room with users: ${userIds.join(', ')}`, 'info');
             
             try {
                 const response = await fetch(`${API_URL()}/streaming/rooms`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ userIds })
+                    body: JSON.stringify({ userIds, callType })
                 });
 
                 const data = await response.json();
@@ -602,7 +569,27 @@
                 const data = await response.json();
                 
                 if (response.ok && data.exists) {
-                    log(`✅ Room Info: <pre>${JSON.stringify(data, null, 2)}</pre>`, 'success');
+                    // Format room info with role indicators
+                    const hosts = data.participants.filter(p => p.role === 'HOST').map(p => p.userId);
+                    const participants_only = data.participants.filter(p => p.role === 'PARTICIPANT').map(p => p.userId);
+                    
+                    let infoSummary = `✅ Room Info:\n`;
+                    infoSummary += `  Room ID: ${data.roomId}\n`;
+                    infoSummary += `  Status: ${data.status}\n`;
+                    infoSummary += `  Broadcasting: ${data.isBroadcasting ? 'YES' : 'NO'}\n`;
+                    infoSummary += `  Total Participants: ${data.participantCount}\n`;
+                    if (hosts.length > 0) {
+                        infoSummary += `  👑 HOSTS (${hosts.length}): ${hosts.join(', ')}\n`;
+                    }
+                    if (participants_only.length > 0) {
+                        infoSummary += `  👤 PARTICIPANTs (${participants_only.length}): ${participants_only.join(', ')}\n`;
+                    }
+                    if (data.viewerCount > 0) {
+                        infoSummary += `  👁️ Viewers: ${data.viewerCount}\n`;
+                    }
+                    
+                    log(infoSummary, 'success');
+                    log(`📋 Full Details: <pre>${JSON.stringify(data, null, 2)}</pre>`, 'info');
                 } else {
                     log(`❌ Room not found or error: ${JSON.stringify(data)}`, 'error');
                 }
@@ -767,9 +754,30 @@
                 return;
             }
 
-            log(`🔄 User ${userId} starting broadcast for room: ${roomId}`, 'info');
+            log(`🔄 User ${userId} (HOST) starting broadcast for room: ${roomId}`, 'info');
             sendWebSocketMessage(userId, {
                 type: 'start-broadcast',
+                data: { roomId }
+            });
+        }
+
+        function stopBroadcast() {
+            const userId = document.getElementById('userId').value.trim();
+            const roomId = document.getElementById('joinRoomId').value.trim();
+
+            if (!userId || !roomId) {
+                log('❌ Please enter both user ID and room ID', 'error');
+                return;
+            }
+
+            if (!connections[userId] || connections[userId].readyState !== WebSocket.OPEN) {
+                log(`❌ User ${userId} is not connected. Connect first!`, 'error');
+                return;
+            }
+
+            log(`🔄 User ${userId} (HOST) stopping broadcast for room: ${roomId}`, 'info');
+            sendWebSocketMessage(userId, {
+                type: 'stop-broadcast',
                 data: { roomId }
             });
         }
@@ -819,6 +827,28 @@
             document.getElementById('joinRoomId').value = '';
         }
 
+        function kickUser() {
+            const userId = document.getElementById('userId').value.trim();
+            const roomId = document.getElementById('joinRoomId').value.trim();
+            const targetUserId = document.getElementById('kickTargetUserId').value.trim();
+
+            if (!userId || !roomId || !targetUserId) {
+                log('❌ Please enter user ID, room ID, and target user ID to kick', 'error');
+                return;
+            }
+
+            if (!connections[userId] || connections[userId].readyState !== WebSocket.OPEN) {
+                log(`❌ User ${userId} is not connected. Connect first!`, 'error');
+                return;
+            }
+
+            log(`🔄 User ${userId} (HOST) kicking ${targetUserId} from room: ${roomId}`, 'info');
+            sendWebSocketMessage(userId, {
+                type: 'kick-user',
+                data: { roomId, targetUserId }
+            });
+        }
+
         async function getUserRoomInfo() {
             const userId = document.getElementById('getUserRoomUserId').value.trim();
 
@@ -834,14 +864,34 @@
                 
                 if (response.ok) {
                     if (data.exists) {
-                        log(`✅ User ${userId}'s Room Info:`, 'success');
-                        log(`   Role: ${data.role}`, 'info');
-                        log(`   Room ID: ${data.roomId}`, 'info');
-                        log(`   Status: ${data.status}`, 'info');
-                        log(`   Broadcasting: ${data.isBroadcasting}`, 'info');
-                        log(`   Participants: ${data.participantCount}`, 'info');
-                        log(`   Viewers: ${data.viewerCount}`, 'info');
-                        log(`<pre>${JSON.stringify(data, null, 2)}</pre>`, 'success');
+                        // Format user's role display
+                        const roleIcon = data.userRole === 'HOST' ? '👑' : (data.userRole === 'VIEWER' ? '👁️' : '👤');
+                        const roleText = data.userRole || (data.role === 'viewer' ? 'VIEWER' : 'PARTICIPANT');
+                        
+                        let infoSummary = `✅ User ${userId}'s Room Info:\n`;
+                        infoSummary += `   ${roleIcon} User Role: ${roleText}\n`;
+                        infoSummary += `   📋 Room ID: ${data.roomId}\n`;
+                        infoSummary += `   📊 Status: ${data.status}\n`;
+                        infoSummary += `   📺 Broadcasting: ${data.isBroadcasting ? 'YES' : 'NO'}\n`;
+                        infoSummary += `   👥 Total Participants: ${data.participantCount}\n`;
+                        if (data.viewerCount > 0) {
+                            infoSummary += `   👁️ Total Viewers: ${data.viewerCount}\n`;
+                        }
+                        
+                        // Show user's specific role if they're a participant
+                        if (data.role === 'participant' && data.userRole) {
+                            const hosts = data.participants.filter(p => p.role === 'HOST').map(p => p.userId);
+                            const participants_only = data.participants.filter(p => p.role === 'PARTICIPANT').map(p => p.userId);
+                            if (hosts.length > 0) {
+                                infoSummary += `   👑 HOSTS (${hosts.length}): ${hosts.join(', ')}\n`;
+                            }
+                            if (participants_only.length > 0) {
+                                infoSummary += `   👤 PARTICIPANTs (${participants_only.length}): ${participants_only.join(', ')}\n`;
+                            }
+                        }
+                        
+                        log(infoSummary, 'success');
+                        log(`📋 Full Details: <pre>${JSON.stringify(data, null, 2)}</pre>`, 'info');
                     } else {
                         log(`ℹ️ User ${userId} is not in any active room`, 'info');
                     }

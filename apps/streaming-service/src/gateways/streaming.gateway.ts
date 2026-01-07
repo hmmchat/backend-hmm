@@ -191,6 +191,10 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
           await this.handleLeaveRoom(connectionId, userId, data);
           break;
 
+        case "kick-user":
+          await this.handleKickUser(connectionId, userId, data, ws);
+          break;
+
         // Call signaling (for participants)
         case "create-transport":
           await this.handleCreateTransport(connectionId, userId, data, ws);
@@ -211,6 +215,10 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
         // Broadcasting
         case "start-broadcast":
           await this.handleStartBroadcast(connectionId, userId, data, ws);
+          break;
+
+        case "stop-broadcast":
+          await this.handleStopBroadcast(connectionId, userId, data, ws);
           break;
 
         case "join-as-viewer":
@@ -340,6 +348,60 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
           this.logger.error(`[LeaveRoom] Failed to remove user ${userId} from room ${roomId} as participant or viewer: ${viewerError.message}`);
         }
       }
+    }
+  }
+
+  /**
+   * Handle kick user (HOST only)
+   */
+  private async handleKickUser(
+    _connectionId: string,
+    userId: string,
+    data: any,
+    ws: any
+  ) {
+    const { roomId, targetUserId } = data;
+    if (!roomId || !targetUserId) {
+      this.sendError(ws, "roomId and targetUserId are required");
+      return;
+    }
+
+    try {
+      await this.roomService.kickUser(roomId, userId, targetUserId);
+      
+      // Notify the kicked user (if they're connected)
+      for (const [, conn] of this.connections.entries()) {
+        if (conn.userId === targetUserId) {
+          this.send(conn.ws, {
+            type: "user-kicked",
+            data: {
+              roomId,
+              kickedBy: userId
+            }
+          });
+          break;
+        }
+      }
+
+      // Notify all participants about the kick
+      await this.broadcastToRoom(roomId, {
+        type: "participant-kicked",
+        data: {
+          roomId,
+          kickedUserId: targetUserId,
+          kickedBy: userId
+        }
+      }, userId); // Exclude the kicker from broadcast
+
+      this.send(ws, {
+        type: "user-kicked-success",
+        data: {
+          roomId,
+          targetUserId
+        }
+      });
+    } catch (error: any) {
+      this.sendError(ws, error.message || "Failed to kick user");
     }
   }
 
@@ -510,6 +572,42 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       });
     } catch (error: any) {
       this.sendError(ws, error.message || "Failed to start broadcast");
+    }
+  }
+
+  /**
+   * Handle stop broadcast (HOST only)
+   */
+  private async handleStopBroadcast(
+    _connectionId: string,
+    userId: string,
+    data: any,
+    ws: any
+  ) {
+    const { roomId } = data;
+    if (!roomId) {
+      this.sendError(ws, "roomId is required");
+      return;
+    }
+
+    try {
+      await this.broadcastService.stopBroadcast(roomId, userId);
+      
+      // Send confirmation back to client
+      this.send(ws, {
+        type: "broadcast-stopped",
+        data: {
+          roomId
+        }
+      });
+      
+      // Notify all participants
+      await this.broadcastToRoom(roomId, {
+        type: "broadcast-stopped",
+        data: { roomId, stoppedBy: userId }
+      });
+    } catch (error: any) {
+      this.sendError(ws, error.message || "Failed to stop broadcast");
     }
   }
 

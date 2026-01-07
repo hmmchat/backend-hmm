@@ -805,11 +805,11 @@ echo ""
 
 # Test 9: Add 3rd Participant
 echo -e "${CYAN}Test 9: Add 3rd Participant${NC}"
-# First, create a new room for this test
+# First, create a new room for this test with unique users
 ROOM_3_RESPONSE=$(curl -s -X POST "$STREAMING_SERVICE_URL/streaming/rooms" \
     -H "Content-Type: application/json" \
     -d "{
-        \"userIds\": [\"$TEST_USER_1\", \"$TEST_USER_2\"]
+        \"userIds\": [\"test-3rd-1-$TIMESTAMP\", \"test-3rd-2-$TIMESTAMP\"]
     }")
 
 ROOM_3_ID=$(echo "$ROOM_3_RESPONSE" | jq -r '.roomId // empty' 2>/dev/null)
@@ -829,7 +829,8 @@ echo -e "${CYAN}Test 10: Add 4th Participant${NC}"
 ROOM_4_RESPONSE=$(curl -s -X POST "$STREAMING_SERVICE_URL/streaming/rooms" \
     -H "Content-Type: application/json" \
     -d "{
-        \"userIds\": [\"$TEST_USER_1\", \"$TEST_USER_2\", \"$TEST_USER_3\", \"$TEST_USER_4\"]
+        \"userIds\": [\"test-4th-1-$TIMESTAMP\", \"test-4th-2-$TIMESTAMP\", \"test-4th-3-$TIMESTAMP\", \"test-4th-4-$TIMESTAMP\"],
+        \"callType\": \"squad\"
     }")
 
 ROOM_4_ID=$(echo "$ROOM_4_RESPONSE" | jq -r '.roomId // empty' 2>/dev/null)
@@ -1313,11 +1314,12 @@ echo ""
 
 # Test 34: Room Full - Try to Add 5th Participant
 echo -e "${CYAN}Test 34: Room Full - Try to Add 5th Participant${NC}"
-# Create room with 4 participants
+# Create room with 4 participants (using unique users)
 ROOM_FULL_RESPONSE=$(curl -s -X POST "$STREAMING_SERVICE_URL/streaming/rooms" \
     -H "Content-Type: application/json" \
     -d "{
-        \"userIds\": [\"$TEST_USER_1\", \"$TEST_USER_2\", \"$TEST_USER_3\", \"$TEST_USER_4\"]
+        \"userIds\": [\"test-full-1-$TIMESTAMP\", \"test-full-2-$TIMESTAMP\", \"test-full-3-$TIMESTAMP\", \"test-full-4-$TIMESTAMP\"],
+        \"callType\": \"squad\"
     }")
 
 ROOM_FULL_ID=$(echo "$ROOM_FULL_RESPONSE" | jq -r '.roomId // empty' 2>/dev/null)
@@ -1541,6 +1543,333 @@ echo -e "${CYAN}Test 42: Broadcast Start Updates User Statuses${NC}"
 # This would require checking user-service for status updates
 test_result 0 "Broadcast start successful (user status updates would be verified via user-service)"
 echo "  Note: Full integration test requires user-service running"
+echo ""
+
+# ========== HOST & KICK USER TESTS ==========
+
+# Test 43: Matched Call - Both Users are Hosts
+echo -e "${CYAN}Test 43: Matched Call - Both Users are Hosts${NC}"
+MATCHED_ROOM_RESPONSE=$(curl -s -X POST "$STREAMING_SERVICE_URL/streaming/rooms" \
+    -H "Content-Type: application/json" \
+    -d "{
+        \"userIds\": [\"test-host-1-$TIMESTAMP\", \"test-host-2-$TIMESTAMP\"],
+        \"callType\": \"matched\"
+    }")
+
+MATCHED_ROOM_ID=$(echo "$MATCHED_ROOM_RESPONSE" | jq -r '.roomId // empty' 2>/dev/null)
+if [ ! -z "$MATCHED_ROOM_ID" ] && [ "$MATCHED_ROOM_ID" != "null" ]; then
+    # Check that both users are HOSTS
+    MATCHED_ROOM_INFO=$(curl -s "$STREAMING_SERVICE_URL/streaming/rooms/$MATCHED_ROOM_ID")
+    HOST_COUNT=$(echo "$MATCHED_ROOM_INFO" | jq -r '[.participants[] | select(.role == "HOST")] | length' 2>/dev/null)
+    if [ "$HOST_COUNT" = "2" ]; then
+        test_result 0 "Matched call: Both users are HOSTS (hostCount: $HOST_COUNT)"
+    else
+        test_result 1 "Matched call should have 2 HOSTS, got $HOST_COUNT"
+    fi
+else
+    test_result 1 "Failed to create matched call room"
+fi
+echo ""
+
+# Test 44: Squad Call - All Users are Hosts
+echo -e "${CYAN}Test 44: Squad Call - All Users are Hosts${NC}"
+SQUAD_ROOM_RESPONSE=$(curl -s -X POST "$STREAMING_SERVICE_URL/streaming/rooms" \
+    -H "Content-Type: application/json" \
+    -d "{
+        \"userIds\": [\"test-squad-1-$TIMESTAMP\", \"test-squad-2-$TIMESTAMP\", \"test-squad-3-$TIMESTAMP\"],
+        \"callType\": \"squad\"
+    }")
+
+SQUAD_ROOM_ID=$(echo "$SQUAD_ROOM_RESPONSE" | jq -r '.roomId // empty' 2>/dev/null)
+if [ ! -z "$SQUAD_ROOM_ID" ] && [ "$SQUAD_ROOM_ID" != "null" ]; then
+    # Check that all users are HOSTS
+    SQUAD_ROOM_INFO=$(curl -s "$STREAMING_SERVICE_URL/streaming/rooms/$SQUAD_ROOM_ID")
+    TOTAL_PARTICIPANTS=$(echo "$SQUAD_ROOM_INFO" | jq -r '.participantCount // 0' 2>/dev/null)
+    HOST_COUNT=$(echo "$SQUAD_ROOM_INFO" | jq -r '[.participants[] | select(.role == "HOST")] | length' 2>/dev/null)
+    if [ "$HOST_COUNT" = "$TOTAL_PARTICIPANTS" ] && [ "$TOTAL_PARTICIPANTS" = "3" ]; then
+        test_result 0 "Squad call: All users are HOSTS (hostCount: $HOST_COUNT, total: $TOTAL_PARTICIPANTS)"
+    else
+        test_result 1 "Squad call should have all HOSTS, got $HOST_COUNT/$TOTAL_PARTICIPANTS"
+    fi
+else
+    test_result 1 "Failed to create squad call room"
+fi
+echo ""
+
+# Test 45: Host Can Kick Participant
+echo -e "${CYAN}Test 45: Host Can Kick Participant${NC}"
+# Create room with 2 hosts and add a participant
+KICK_ROOM_RESPONSE=$(curl -s -X POST "$STREAMING_SERVICE_URL/streaming/rooms" \
+    -H "Content-Type: application/json" \
+    -d "{
+        \"userIds\": [\"test-kick-host-1-$TIMESTAMP\", \"test-kick-host-2-$TIMESTAMP\"],
+        \"callType\": \"matched\"
+    }")
+
+KICK_ROOM_ID=$(echo "$KICK_ROOM_RESPONSE" | jq -r '.roomId // empty' 2>/dev/null)
+if [ ! -z "$KICK_ROOM_ID" ] && [ "$KICK_ROOM_ID" != "null" ]; then
+    # Add a participant
+    KICK_PARTICIPANT_ID="test-kick-participant-$TIMESTAMP"
+    KICK_JOIN_MSG=$(jq -n --arg roomId "$KICK_ROOM_ID" '{type: "join-room", data: {roomId: $roomId}}')
+    KICK_JOIN_RESPONSE=$(websocket_send "$KICK_PARTICIPANT_ID" "$KICK_JOIN_MSG" 5)
+    sleep 1
+    
+    # Host 1 tries to kick participant
+    KICK_MSG=$(jq -n \
+        --arg roomId "$KICK_ROOM_ID" \
+        --arg targetUserId "$KICK_PARTICIPANT_ID" \
+        '{type: "kick-user", data: {roomId: $roomId, targetUserId: $targetUserId}}')
+    
+    KICK_RESPONSE=$(websocket_send "test-kick-host-1-$TIMESTAMP" "$KICK_MSG" 5)
+    KICK_SUCCESS=$(echo "$KICK_RESPONSE" | jq -r '.type // empty' 2>/dev/null)
+    
+    if [ "$KICK_SUCCESS" = "user-kicked-success" ]; then
+        # Verify participant is removed
+        sleep 1
+        KICK_ROOM_INFO=$(curl -s "$STREAMING_SERVICE_URL/streaming/rooms/$KICK_ROOM_ID")
+        PARTICIPANT_IN_ROOM=$(echo "$KICK_ROOM_INFO" | jq -r "[.participants[] | select(.userId == \"$KICK_PARTICIPANT_ID\")] | length" 2>/dev/null)
+        if [ "$PARTICIPANT_IN_ROOM" = "0" ]; then
+            test_result 0 "Host successfully kicked participant"
+        else
+            test_result 1 "Participant still in room after kick"
+        fi
+    else
+        test_result 1 "Host kick failed or rejected"
+        echo "  Response: $KICK_RESPONSE"
+    fi
+else
+    test_result 1 "Failed to create room for kick test"
+fi
+echo ""
+
+# Test 46: Host Cannot Kick Host
+echo -e "${CYAN}Test 46: Host Cannot Kick Host${NC}"
+# Use the matched room from Test 43
+if [ ! -z "$MATCHED_ROOM_ID" ] && [ "$MATCHED_ROOM_ID" != "null" ]; then
+    # Host 1 tries to kick Host 2
+    HOST_KICK_MSG=$(jq -n \
+        --arg roomId "$MATCHED_ROOM_ID" \
+        --arg targetUserId "test-host-2-$TIMESTAMP" \
+        '{type: "kick-user", data: {roomId: $roomId, targetUserId: $targetUserId}}')
+    
+    HOST_KICK_RESPONSE=$(websocket_send "test-host-1-$TIMESTAMP" "$HOST_KICK_MSG" 5)
+    ERROR_TYPE=$(echo "$HOST_KICK_RESPONSE" | jq -r '.type // empty' 2>/dev/null)
+    ERROR_MSG=$(echo "$HOST_KICK_RESPONSE" | jq -r '.data.error // empty' 2>/dev/null)
+    
+    if [ "$ERROR_TYPE" = "error" ] && echo "$ERROR_MSG" | grep -q "cannot kick" > /dev/null; then
+        test_result 0 "Host cannot kick another host (correctly rejected)"
+    else
+        test_result 1 "Host kick of another host should be rejected"
+        echo "  Response: $HOST_KICK_RESPONSE"
+    fi
+else
+    test_result 1 "Matched room not available for test"
+fi
+echo ""
+
+# Test 47: Participant Cannot Kick
+echo -e "${CYAN}Test 47: Participant Cannot Kick${NC}"
+# Create room and add participant, then try to kick
+PARTICIPANT_KICK_ROOM_RESPONSE=$(curl -s -X POST "$STREAMING_SERVICE_URL/streaming/rooms" \
+    -H "Content-Type: application/json" \
+    -d "{
+        \"userIds\": [\"test-part-kick-host-1-$TIMESTAMP\", \"test-part-kick-host-2-$TIMESTAMP\"],
+        \"callType\": \"matched\"
+    }")
+
+PARTICIPANT_KICK_ROOM_ID=$(echo "$PARTICIPANT_KICK_ROOM_RESPONSE" | jq -r '.roomId // empty' 2>/dev/null)
+PARTICIPANT_USER_ID="test-part-kick-participant-$TIMESTAMP"
+
+if [ ! -z "$PARTICIPANT_KICK_ROOM_ID" ] && [ "$PARTICIPANT_KICK_ROOM_ID" != "null" ]; then
+    # Join as participant
+    PART_JOIN_MSG=$(jq -n --arg roomId "$PARTICIPANT_KICK_ROOM_ID" '{type: "join-room", data: {roomId: $roomId}}')
+    websocket_send "$PARTICIPANT_USER_ID" "$PART_JOIN_MSG" 5 > /dev/null
+    sleep 1
+    
+    # Participant tries to kick host
+    PART_KICK_MSG=$(jq -n \
+        --arg roomId "$PARTICIPANT_KICK_ROOM_ID" \
+        --arg targetUserId "test-part-kick-host-1-$TIMESTAMP" \
+        '{type: "kick-user", data: {roomId: $roomId, targetUserId: $targetUserId}}')
+    
+    PART_KICK_RESPONSE=$(websocket_send "$PARTICIPANT_USER_ID" "$PART_KICK_MSG" 5)
+    ERROR_TYPE=$(echo "$PART_KICK_RESPONSE" | jq -r '.type // empty' 2>/dev/null)
+    
+    if [ "$ERROR_TYPE" = "error" ]; then
+        test_result 0 "Participant cannot kick (correctly rejected)"
+    else
+        test_result 1 "Participant kick should be rejected"
+        echo "  Response: $PART_KICK_RESPONSE"
+    fi
+else
+    test_result 1 "Failed to create room for participant kick test"
+fi
+echo ""
+
+# Test 48: Only Hosts Can Start Broadcast
+echo -e "${CYAN}Test 48: Only Hosts Can Start Broadcast${NC}"
+# Create room with hosts and participant
+BROADCAST_ROOM_RESPONSE=$(curl -s -X POST "$STREAMING_SERVICE_URL/streaming/rooms" \
+    -H "Content-Type: application/json" \
+    -d "{
+        \"userIds\": [\"test-broadcast-host-1-$TIMESTAMP\", \"test-broadcast-host-2-$TIMESTAMP\"],
+        \"callType\": \"matched\"
+    }")
+
+BROADCAST_ROOM_ID=$(echo "$BROADCAST_ROOM_RESPONSE" | jq -r '.roomId // empty' 2>/dev/null)
+BROADCAST_PARTICIPANT_ID="test-broadcast-participant-$TIMESTAMP"
+
+if [ ! -z "$BROADCAST_ROOM_ID" ] && [ "$BROADCAST_ROOM_ID" != "null" ]; then
+    # Host starts broadcast (should succeed)
+    HOST_BROADCAST_MSG=$(jq -n --arg roomId "$BROADCAST_ROOM_ID" '{type: "start-broadcast", data: {roomId: $roomId}}')
+    HOST_BROADCAST_RESPONSE=$(websocket_send "test-broadcast-host-1-$TIMESTAMP" "$HOST_BROADCAST_MSG" 5)
+    HOST_BROADCAST_SUCCESS=$(echo "$HOST_BROADCAST_RESPONSE" | jq -r '.type // empty' 2>/dev/null)
+    
+    # Wait a bit, then stop broadcast for next test
+    sleep 1
+    STOP_BROADCAST_MSG=$(jq -n --arg roomId "$BROADCAST_ROOM_ID" '{type: "stop-broadcast", data: {roomId: $roomId}}')
+    websocket_send "test-broadcast-host-1-$TIMESTAMP" "$STOP_BROADCAST_MSG" 5 > /dev/null
+    sleep 1
+    
+    # Add participant and try to start broadcast (should fail)
+    PART_JOIN_MSG=$(jq -n --arg roomId "$BROADCAST_ROOM_ID" '{type: "join-room", data: {roomId: $roomId}}')
+    websocket_send "$BROADCAST_PARTICIPANT_ID" "$PART_JOIN_MSG" 5 > /dev/null
+    sleep 1
+    
+    PART_BROADCAST_MSG=$(jq -n --arg roomId "$BROADCAST_ROOM_ID" '{type: "start-broadcast", data: {roomId: $roomId}}')
+    PART_BROADCAST_RESPONSE=$(websocket_send "$BROADCAST_PARTICIPANT_ID" "$PART_BROADCAST_MSG" 5)
+    PART_BROADCAST_ERROR=$(echo "$PART_BROADCAST_RESPONSE" | jq -r '.type // empty' 2>/dev/null)
+    
+    if [ "$HOST_BROADCAST_SUCCESS" = "broadcast-started" ] && [ "$PART_BROADCAST_ERROR" = "error" ]; then
+        test_result 0 "Only hosts can start broadcast"
+    else
+        test_result 1 "Broadcast permissions not enforced correctly"
+        echo "  Host response: $HOST_BROADCAST_RESPONSE"
+        echo "  Participant response: $PART_BROADCAST_RESPONSE"
+    fi
+else
+    test_result 1 "Failed to create room for broadcast test"
+fi
+echo ""
+
+# Test 49: Only Hosts Can Stop Broadcast
+echo -e "${CYAN}Test 49: Only Hosts Can Stop Broadcast${NC}"
+# Create room and start broadcast
+STOP_BROADCAST_ROOM_RESPONSE=$(curl -s -X POST "$STREAMING_SERVICE_URL/streaming/rooms" \
+    -H "Content-Type: application/json" \
+    -d "{
+        \"userIds\": [\"test-stop-host-1-$TIMESTAMP\", \"test-stop-host-2-$TIMESTAMP\"],
+        \"callType\": \"matched\"
+    }")
+
+STOP_BROADCAST_ROOM_ID=$(echo "$STOP_BROADCAST_ROOM_RESPONSE" | jq -r '.roomId // empty' 2>/dev/null)
+STOP_BROADCAST_PARTICIPANT_ID="test-stop-participant-$TIMESTAMP"
+
+if [ ! -z "$STOP_BROADCAST_ROOM_ID" ] && [ "$STOP_BROADCAST_ROOM_ID" != "null" ]; then
+    # Start broadcast
+    START_MSG=$(jq -n --arg roomId "$STOP_BROADCAST_ROOM_ID" '{type: "start-broadcast", data: {roomId: $roomId}}')
+    websocket_send "test-stop-host-1-$TIMESTAMP" "$START_MSG" 5 > /dev/null
+    sleep 1
+    
+    # Add participant
+    PART_JOIN_MSG=$(jq -n --arg roomId "$STOP_BROADCAST_ROOM_ID" '{type: "join-room", data: {roomId: $roomId}}')
+    websocket_send "$STOP_BROADCAST_PARTICIPANT_ID" "$PART_JOIN_MSG" 5 > /dev/null
+    sleep 1
+    
+    # Participant tries to stop broadcast (should fail)
+    PART_STOP_MSG=$(jq -n --arg roomId "$STOP_BROADCAST_ROOM_ID" '{type: "stop-broadcast", data: {roomId: $roomId}}')
+    PART_STOP_RESPONSE=$(websocket_send "$STOP_BROADCAST_PARTICIPANT_ID" "$PART_STOP_MSG" 5)
+    PART_STOP_ERROR=$(echo "$PART_STOP_RESPONSE" | jq -r '.type // empty' 2>/dev/null)
+    
+    # Host stops broadcast (should succeed)
+    HOST_STOP_MSG=$(jq -n --arg roomId "$STOP_BROADCAST_ROOM_ID" '{type: "stop-broadcast", data: {roomId: $roomId}}')
+    HOST_STOP_RESPONSE=$(websocket_send "test-stop-host-1-$TIMESTAMP" "$HOST_STOP_MSG" 5)
+    HOST_STOP_SUCCESS=$(echo "$HOST_STOP_RESPONSE" | jq -r '.type // empty' 2>/dev/null)
+    
+    if [ "$PART_STOP_ERROR" = "error" ] && [ "$HOST_STOP_SUCCESS" = "broadcast-stopped" ]; then
+        test_result 0 "Only hosts can stop broadcast"
+    else
+        test_result 1 "Broadcast stop permissions not enforced correctly"
+        echo "  Participant response: $PART_STOP_RESPONSE"
+        echo "  Host response: $HOST_STOP_RESPONSE"
+    fi
+else
+    test_result 1 "Failed to create room for stop broadcast test"
+fi
+echo ""
+
+# Test 50: Room Continues When Hosts Leave (2+ Participants Remain)
+echo -e "${CYAN}Test 50: Room Continues When Hosts Leave (2+ Participants Remain)${NC}"
+CONTINUE_ROOM_RESPONSE=$(curl -s -X POST "$STREAMING_SERVICE_URL/streaming/rooms" \
+    -H "Content-Type: application/json" \
+    -d "{
+        \"userIds\": [\"test-continue-host-1-$TIMESTAMP\", \"test-continue-host-2-$TIMESTAMP\"],
+        \"callType\": \"matched\"
+    }")
+
+CONTINUE_ROOM_ID=$(echo "$CONTINUE_ROOM_RESPONSE" | jq -r '.roomId // empty' 2>/dev/null)
+CONTINUE_PARTICIPANT_1_ID="test-continue-participant-1-$TIMESTAMP"
+CONTINUE_PARTICIPANT_2_ID="test-continue-participant-2-$TIMESTAMP"
+
+if [ ! -z "$CONTINUE_ROOM_ID" ] && [ "$CONTINUE_ROOM_ID" != "null" ]; then
+    # Connect hosts first (they need to be connected before leaving)
+    HOST1_JOIN_MSG=$(jq -n --arg roomId "$CONTINUE_ROOM_ID" '{type: "join-room", data: {roomId: $roomId}}')
+    websocket_send "test-continue-host-1-$TIMESTAMP" "$HOST1_JOIN_MSG" 5 > /dev/null
+    sleep 1
+    
+    HOST2_JOIN_MSG=$(jq -n --arg roomId "$CONTINUE_ROOM_ID" '{type: "join-room", data: {roomId: $roomId}}')
+    websocket_send "test-continue-host-2-$TIMESTAMP" "$HOST2_JOIN_MSG" 5 > /dev/null
+    sleep 1
+    
+    # Add 2 participants (so 2+ remain after hosts leave)
+    PART1_JOIN_MSG=$(jq -n --arg roomId "$CONTINUE_ROOM_ID" '{type: "join-room", data: {roomId: $roomId}}')
+    PART1_JOIN_RESPONSE=$(websocket_send "$CONTINUE_PARTICIPANT_1_ID" "$PART1_JOIN_MSG" 5)
+    PART1_JOINED=$(echo "$PART1_JOIN_RESPONSE" | jq -r '.type // empty' 2>/dev/null)
+    sleep 1
+    
+    PART2_JOIN_MSG=$(jq -n --arg roomId "$CONTINUE_ROOM_ID" '{type: "join-room", data: {roomId: $roomId}}')
+    PART2_JOIN_RESPONSE=$(websocket_send "$CONTINUE_PARTICIPANT_2_ID" "$PART2_JOIN_MSG" 5)
+    PART2_JOINED=$(echo "$PART2_JOIN_RESPONSE" | jq -r '.type // empty' 2>/dev/null)
+    sleep 2
+    
+    if [ "$PART1_JOINED" = "room-joined" ] && [ "$PART2_JOINED" = "room-joined" ]; then
+        # Verify both participants are in room before hosts leave
+        PRE_LEAVE_INFO=$(curl -s "$STREAMING_SERVICE_URL/streaming/rooms/$CONTINUE_ROOM_ID")
+        PRE_PARTICIPANT_COUNT=$(echo "$PRE_LEAVE_INFO" | jq -r '.participantCount // 0' 2>/dev/null)
+        PRE_STATUS=$(echo "$PRE_LEAVE_INFO" | jq -r '.status // empty' 2>/dev/null)
+        
+        if [ "$PRE_PARTICIPANT_COUNT" = "4" ]; then
+            # Host 1 leaves (3 remain: host 2 + 2 participants)
+            HOST_LEAVE_MSG=$(jq -n --arg roomId "$CONTINUE_ROOM_ID" '{type: "leave-room", data: {roomId: $roomId}}')
+            websocket_send "test-continue-host-1-$TIMESTAMP" "$HOST_LEAVE_MSG" 5 > /dev/null
+            sleep 2
+            
+            # Host 2 leaves (2 remain: 2 participants - room should continue)
+            websocket_send "test-continue-host-2-$TIMESTAMP" "$HOST_LEAVE_MSG" 5 > /dev/null
+            sleep 2
+            
+            # Check room still exists with 2 participants
+            CONTINUE_ROOM_INFO=$(curl -s "$STREAMING_SERVICE_URL/streaming/rooms/$CONTINUE_ROOM_ID")
+            ROOM_STATUS=$(echo "$CONTINUE_ROOM_INFO" | jq -r '.status // empty' 2>/dev/null)
+            PARTICIPANT_COUNT=$(echo "$CONTINUE_ROOM_INFO" | jq -r '.participantCount // 0' 2>/dev/null)
+            
+            if [ "$ROOM_STATUS" = "IN_SQUAD" ] && [ "$PARTICIPANT_COUNT" = "2" ]; then
+                test_result 0 "Room continues when all hosts leave (2+ participants remain)"
+            else
+                test_result 1 "Room should continue when hosts leave if 2+ participants remain"
+                echo "  Status: $ROOM_STATUS, Participants: $PARTICIPANT_COUNT (expected: 2, status: IN_SQUAD)"
+            fi
+        else
+            echo "  Error: Room should have 4 participants before hosts leave, got $PRE_PARTICIPANT_COUNT (status: $PRE_STATUS)"
+            test_result 1 "Participants not added properly (count: $PRE_PARTICIPANT_COUNT)"
+        fi
+    else
+        echo "  Error: Participant join failed. P1: $PART1_JOINED, P2: $PART2_JOINED"
+        test_result 1 "Participants failed to join room"
+    fi
+else
+    test_result 1 "Failed to create room for continue test"
+fi
 echo ""
 
 # Summary

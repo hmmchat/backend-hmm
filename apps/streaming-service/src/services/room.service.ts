@@ -43,11 +43,26 @@ export class RoomService {
   /**
    * Create a new room when 2 users enter IN_SQUAD
    */
-  async createRoom(userIds: string[]): Promise<{ roomId: string; sessionId: string }> {
+  async createRoom(
+    userIds: string[],
+    callType: "matched" | "squad" = "matched"
+  ): Promise<{ roomId: string; sessionId: string }> {
     // Validate input first
     if (userIds.length < 2 || userIds.length > this.maxParticipants) {
       throw new BadRequestException(
         `Room must have between 2 and ${this.maxParticipants} participants`
+      );
+    }
+
+    // Validate callType-specific rules
+    if (callType === "matched" && userIds.length !== 2) {
+      throw new BadRequestException(
+        "Matched calls must have exactly 2 participants"
+      );
+    }
+    if (callType === "squad" && userIds.length < 2) {
+      throw new BadRequestException(
+        "Squad calls must have at least 2 participants"
       );
     }
 
@@ -151,6 +166,27 @@ export class RoomService {
       // Generate room ID
       const roomId = uuidv4();
 
+      // Determine roles based on callType
+      // - matched: First 2 users are HOSTS
+      // - squad: All users are HOSTS
+      const participantRoles = userIds.map((userId, index) => {
+        if (callType === "matched") {
+          // Matched call: First 2 users are HOSTS
+          return {
+            userId,
+            role: (index < 2 ? "HOST" : "PARTICIPANT") as "HOST" | "PARTICIPANT",
+            status: "active"
+          };
+        } else {
+          // Squad call: All users are HOSTS
+          return {
+            userId,
+            role: "HOST" as "HOST" | "PARTICIPANT",
+            status: "active"
+          };
+        }
+      });
+
       // Create database session
       const session = await this.prisma.callSession.create({
         data: {
@@ -160,16 +196,12 @@ export class RoomService {
           maxParticipants: this.maxParticipants,
           startedAt: new Date(),
           participants: {
-            create: userIds.map((userId, index) => ({
-              userId,
-              role: index === 0 ? "HOST" : "PARTICIPANT",
-              status: "active"
-            }))
+            create: participantRoles
           },
           events: {
             create: {
               eventType: "room_created",
-              metadata: JSON.stringify({ userIds })
+              metadata: JSON.stringify({ userIds, callType })
             }
           }
         }
@@ -185,7 +217,10 @@ export class RoomService {
 
       this.rooms.set(roomId, roomState);
 
-      this.logger.log(`Room created: ${roomId} with ${userIds.length} participants`);
+      const hostCount = participantRoles.filter(p => p.role === "HOST").length;
+      this.logger.log(
+        `Room created: ${roomId} with ${userIds.length} participants (${hostCount} hosts, callType: ${callType})`
+      );
 
       // Notify discovery-service that users entered IN_SQUAD
       this.discoveryClient.notifyRoomCreated(roomId, userIds).catch((err) => {
@@ -646,9 +681,54 @@ export class RoomService {
   }
 
   /**
-   * Enable broadcasting mode
+   * Kick a participant from the room (HOST only)
    */
-  async enableBroadcasting(roomId: string): Promise<void> {
+  async kickUser(roomId: string, kickerUserId: string, targetUserId: string): Promise<void> {
+    // Validate that kicker can kick the target
+    const canKick = await this.canKickUser(roomId, kickerUserId, targetUserId);
+    if (!canKick) {
+      throw new BadRequestException(
+        `User ${kickerUserId} cannot kick ${targetUserId}. Only HOSTs can kick PARTICIPANTs.`
+      );
+    }
+
+    // Log the kick event
+    const session = await this.prisma.callSession.findUnique({
+      where: { roomId }
+    });
+
+    if (session) {
+      await this.prisma.callEvent.create({
+        data: {
+          sessionId: session.id,
+          eventType: "participant_kicked",
+          userId: kickerUserId,
+          metadata: JSON.stringify({ 
+            kickedUserId: targetUserId,
+            kickedBy: kickerUserId
+          })
+        }
+      });
+    }
+
+    // Remove the participant (this handles all cleanup)
+    await this.removeParticipant(roomId, targetUserId);
+
+    this.logger.log(`User ${targetUserId} was kicked from room ${roomId} by HOST ${kickerUserId}`);
+  }
+
+  /**
+   * Enable broadcasting mode (HOST only)
+   */
+  async enableBroadcasting(roomId: string, userId: string): Promise<void> {
+    // Validate user is a HOST
+    const isUserHost = await this.isHost(roomId, userId);
+    if (!isUserHost) {
+      throw new BadRequestException(
+        `User ${userId} is not a HOST. Only HOSTs can enable broadcasting.`
+      );
+    }
+
     // Ensure room is in memory (will reload if needed)
     const roomExists = await this.roomExists(roomId);
     if (!roomExists) {
@@ -707,7 +787,109 @@ export class RoomService {
       this.logger.error(`Failed to update user statuses: ${err.message}`);
     });
 
-    this.logger.log(`Broadcasting enabled for room ${roomId}`);
+    this.logger.log(`Broadcasting enabled for room ${roomId} by HOST ${userId}`);
+  }
+
+  /**
+   * Disable broadcasting mode (HOST only) - Returns to IN_SQUAD
+   */
+  async disableBroadcasting(roomId: string, userId: string): Promise<void> {
+    // Validate user is a HOST
+    const isUserHost = await this.isHost(roomId, userId);
+    if (!isUserHost) {
+      throw new BadRequestException(
+        `User ${userId} is not a HOST. Only HOSTs can disable broadcasting.`
+      );
+    }
+
+    // Ensure room is in memory (will reload if needed)
+    const roomExists = await this.roomExists(roomId);
+    if (!roomExists) {
+      throw new NotFoundException(`Room ${roomId} not found`);
+    }
+    
+    const room = this.getRoom(roomId);
+    const session = await this.prisma.callSession.findUnique({
+      where: { roomId }
+    });
+
+    if (!session) {
+      throw new NotFoundException(`Session for room ${roomId} not found`);
+    }
+
+    // Check if already not broadcasting
+    if (!session.isBroadcasting) {
+      // Already not broadcasting, update in-memory state if needed
+      room.isBroadcasting = false;
+      return; // No need to do anything else
+    }
+
+    // Update in-memory state
+    room.isBroadcasting = false;
+
+    // Get all active participants before updating
+    const participants = await this.prisma.callParticipant.findMany({
+      where: { 
+        sessionId: session.id,
+        status: "active",
+        leftAt: null
+      },
+      select: { userId: true }
+    });
+    const participantUserIds = participants.map((p) => p.userId);
+
+    // Update database
+    await this.prisma.callSession.update({
+      where: { id: session.id },
+      data: {
+        status: "IN_SQUAD",
+        isBroadcasting: false
+      }
+    });
+
+    // Log event
+    await this.prisma.callEvent.create({
+      data: {
+        sessionId: session.id,
+        eventType: "broadcast_stopped",
+        userId,
+        metadata: JSON.stringify({ roomId, stoppedBy: userId })
+      }
+    });
+
+    // BUSINESS RULE: When broadcast stops, participant status changes back to IN_SQUAD
+    // Update user statuses from IN_BROADCAST → IN_SQUAD
+    this.discoveryClient.updateUserStatuses(participantUserIds, "IN_SQUAD").catch((err) => {
+      this.logger.error(`Failed to update user statuses: ${err.message}`);
+    });
+
+    // Remove all viewers when broadcast stops
+    await this.prisma.callViewer.updateMany({
+      where: {
+        sessionId: session.id,
+        leftAt: null
+      },
+      data: {
+        leftAt: new Date()
+      }
+    });
+
+    // Update viewer statuses to OFFLINE
+    const viewers = await this.prisma.callViewer.findMany({
+      where: {
+        sessionId: session.id,
+        leftAt: { not: null }
+      },
+      select: { userId: true }
+    });
+    const viewerUserIds = viewers.map(v => v.userId);
+    if (viewerUserIds.length > 0) {
+      this.discoveryClient.updateUserStatuses(viewerUserIds, "OFFLINE").catch((err) => {
+        this.logger.error(`Failed to update viewer statuses: ${err.message}`);
+      });
+    }
+
+    this.logger.log(`Broadcasting disabled for room ${roomId} by HOST ${userId} - returning to IN_SQUAD`);
   }
 
   /**
@@ -883,14 +1065,27 @@ export class RoomService {
       this.rooms.delete(roomId);
     }
 
-    // Update database
+    // Update database - stop broadcasting if active (room ending stops broadcast)
     await this.prisma.callSession.update({
       where: { id: session.id },
       data: {
         status: "ENDED",
+        isBroadcasting: false, // Stop broadcasting when room ends
         endedAt: new Date()
       }
     });
+
+    // Log broadcast stop if it was active
+    if (session.isBroadcasting) {
+      this.logger.log(`Broadcasting stopped automatically due to room ending: ${roomId}`);
+      await this.prisma.callEvent.create({
+        data: {
+          sessionId: session.id,
+          eventType: "broadcast_stopped",
+          metadata: JSON.stringify({ roomId, reason: "room_ended" })
+        }
+      });
+    }
 
     await this.prisma.callEvent.create({
       data: {
@@ -984,6 +1179,67 @@ export class RoomService {
     });
 
     return !!(session?.participants && session.participants.length > 0);
+  }
+
+  /**
+   * Check if user is a HOST in the room (checks database)
+   */
+  async isHost(roomId: string, userId: string): Promise<boolean> {
+    const session = await this.prisma.callSession.findUnique({
+      where: { roomId },
+      include: {
+        participants: {
+          where: {
+            userId,
+            role: "HOST",
+            status: "active"
+          }
+        }
+      }
+    });
+
+    return !!(session?.participants && session.participants.length > 0);
+  }
+
+  /**
+   * Check if user can kick another user (must be a HOST)
+   */
+  async canKickUser(roomId: string, kickerUserId: string, targetUserId: string): Promise<boolean> {
+    // Kicker must be a HOST
+    const isKickerHost = await this.isHost(roomId, kickerUserId);
+    if (!isKickerHost) {
+      return false;
+    }
+
+    // Cannot kick yourself
+    if (kickerUserId === targetUserId) {
+      return false;
+    }
+
+    // Target must be a participant (not a host)
+    const session = await this.prisma.callSession.findUnique({
+      where: { roomId },
+      include: {
+        participants: {
+          where: {
+            userId: targetUserId,
+            status: "active"
+          }
+        }
+      }
+    });
+
+    if (!session?.participants || session.participants.length === 0) {
+      return false; // Target is not a participant
+    }
+
+    const targetParticipant = session.participants[0];
+    // Hosts cannot kick other hosts
+    if (targetParticipant.role === "HOST") {
+      return false;
+    }
+
+    return true;
   }
 
   /**

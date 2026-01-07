@@ -28,8 +28,6 @@ export class BroadcastService {
       throw new NotFoundException(`Room ${roomId} not found`);
     }
     
-    const room = this.roomService.getRoom(roomId);
-    
     // Verify user is a participant (check database - source of truth)
     const isParticipant = await this.roomService.isParticipant(roomId, userId);
     if (!isParticipant) {
@@ -50,21 +48,40 @@ export class BroadcastService {
       throw new BadRequestException("Room is already broadcasting");
     }
 
-    // Enable broadcasting in room
-    await this.roomService.enableBroadcasting(roomId);
+    // Enable broadcasting in room (HOST validation happens inside)
+    await this.roomService.enableBroadcasting(roomId, userId);
 
-    // Update user statuses to IN_BROADCAST via discovery-service
-    const session = await this.prisma.callSession.findUnique({
-      where: { roomId },
-      include: { participants: true }
-    });
+    this.logger.log(`Broadcasting started for room ${roomId} by HOST ${userId}`);
+  }
 
-    if (session) {
-      const userIds = session.participants.map(p => p.userId);
-      await this.discoveryClient.updateUserStatuses(userIds, "IN_BROADCAST");
+  /**
+   * Stop broadcasting and return to IN_SQUAD (HOST only)
+   */
+  async stopBroadcast(roomId: string, userId: string): Promise<void> {
+    // Ensure room exists and is in memory
+    const roomExists = await this.roomService.roomExists(roomId);
+    if (!roomExists) {
+      throw new NotFoundException(`Room ${roomId} not found`);
     }
 
-    this.logger.log(`Broadcasting started for room ${roomId}`);
+    // Check broadcasting status
+    const session = await this.prisma.callSession.findUnique({
+      where: { roomId },
+      select: { id: true, isBroadcasting: true }
+    });
+
+    if (!session) {
+      throw new NotFoundException(`Session for room ${roomId} not found`);
+    }
+
+    if (!session.isBroadcasting) {
+      throw new BadRequestException("Room is not broadcasting");
+    }
+
+    // Disable broadcasting (HOST validation happens inside)
+    await this.roomService.disableBroadcasting(roomId, userId);
+
+    this.logger.log(`Broadcasting stopped for room ${roomId} by HOST ${userId}`);
   }
 
   /**
@@ -76,8 +93,6 @@ export class BroadcastService {
     if (!roomExists) {
       throw new NotFoundException(`Room ${roomId} not found`);
     }
-    
-    const room = this.roomService.getRoom(roomId);
 
     // Check broadcasting status from database (source of truth)
     const session = await this.prisma.callSession.findUnique({

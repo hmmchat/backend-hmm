@@ -5,7 +5,8 @@ import { z } from "zod";
 
 // Simple auth guard (you can enhance this later)
 const createRoomSchema = z.object({
-  userIds: z.array(z.string()).min(2).max(4)
+  userIds: z.array(z.string()).min(2).max(4),
+  callType: z.enum(["matched", "squad"]).optional().default("matched")
 });
 
 @Controller("streaming")
@@ -22,8 +23,8 @@ export class StreamingController {
   @Post("rooms")
   async createRoom(@Body() body: unknown) {
     try {
-      const { userIds } = createRoomSchema.parse(body);
-      return await this.roomService.createRoom(userIds);
+      const { userIds, callType } = createRoomSchema.parse(body);
+      return await this.roomService.createRoom(userIds, callType);
     } catch (error: any) {
       // Re-throw BadRequestException to let the filter handle it
       if (error instanceof BadRequestException) {
@@ -75,9 +76,19 @@ export class StreamingController {
     if (participantRoom) {
       try {
         const roomDetails = await this.roomService.getRoomDetails(participantRoom.roomId);
+        
+        if (!roomDetails) {
+          return { exists: false };
+        }
+        
+        // Find the user's specific role (HOST or PARTICIPANT)
+        const userParticipant = roomDetails.participants.find(p => p.userId === userId);
+        const userRole = userParticipant?.role || 'PARTICIPANT';
+        
         return {
           exists: true,
           role: 'participant',
+          userRole: userRole, // 'HOST' or 'PARTICIPANT'
           ...roomDetails
         };
       } catch (error: any) {
@@ -91,9 +102,15 @@ export class StreamingController {
     if (viewerRoom) {
       try {
         const roomDetails = await this.roomService.getRoomDetails(viewerRoom.roomId);
+        
+        if (!roomDetails) {
+          return { exists: false };
+        }
+        
         return {
           exists: true,
           role: 'viewer',
+          userRole: 'VIEWER',
           ...roomDetails
         };
       } catch (error: any) {

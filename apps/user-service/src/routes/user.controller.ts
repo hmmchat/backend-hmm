@@ -300,6 +300,12 @@ export class UserController {
     return { count };
   }
 
+  @Get("metrics/anywhere-count")
+  async getAnywhereUsersCount() {
+    const count = await this.userService.getAnywhereUsersCount();
+    return { count };
+  }
+
   /* ---------- Discovery ---------- */
 
   @Post("users/discovery")

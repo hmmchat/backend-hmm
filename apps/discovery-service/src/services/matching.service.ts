@@ -242,6 +242,7 @@ export class MatchingService {
       let matches: Array<{ user1Id: string; user2Id: string }> = [];
       
       if ((this.prisma as any).activeMatch) {
+        // Use Prisma client - get all matches (no expiration check)
         matches = await (this.prisma as any).activeMatch.findMany({
           select: {
             user1Id: true,
@@ -249,7 +250,7 @@ export class MatchingService {
           }
         });
       } else {
-        // Fallback to raw SQL
+        // Fallback to raw SQL - get all matches (no expiration check)
         matches = await (this.prisma as any).$queryRawUnsafe(
           `SELECT "user1Id", "user2Id" FROM active_matches`
         );
@@ -266,11 +267,11 @@ export class MatchingService {
       if (error?.code === 'P2021' || error?.message?.includes('does not exist')) {
         return new Set<string>();
       }
-      // Try raw SQL fallback
-      try {
-        const matches = await (this.prisma as any).$queryRawUnsafe(
-          `SELECT "user1Id", "user2Id" FROM active_matches`
-        );
+        // Try raw SQL fallback - get all matches (no expiration check)
+        try {
+          const matches = await (this.prisma as any).$queryRawUnsafe(
+            `SELECT "user1Id", "user2Id" FROM active_matches`
+          );
         const matchedIds = new Set<string>();
         for (const match of matches) {
           matchedIds.add(match.user1Id);
@@ -360,7 +361,7 @@ export class MatchingService {
     for (const pair of scoredPairs) {
       // Check if user is still available (may have been matched by another request)
       if (!currentMatched.has(pair.user.id)) {
-        // Create match
+        // Create match (no expiration - persists until raincheck)
         await this.createMatch(userId, pair.user.id, pair.score);
         // Update both users' status to MATCHED (parallelized for performance)
         await Promise.all([
@@ -466,6 +467,7 @@ export class MatchingService {
   async getMatchForUser(userId: string): Promise<{ user1Id: string; user2Id: string; score: number } | null> {
     try {
       if ((this.prisma as any).activeMatch) {
+        // Use Prisma client - get match (no expiration check)
         const match = await (this.prisma as any).activeMatch.findFirst({
           where: {
             OR: [
@@ -476,10 +478,11 @@ export class MatchingService {
         });
         return match;
       } else {
-        // Fallback to raw SQL
+        // Fallback to raw SQL - get match (no expiration check)
         const matches = await (this.prisma as any).$queryRawUnsafe(
           `SELECT "user1Id", "user2Id", score FROM active_matches 
-           WHERE "user1Id" = $1 OR "user2Id" = $1 LIMIT 1`,
+           WHERE "user1Id" = $1 OR "user2Id" = $1
+           LIMIT 1`,
           userId
         );
         return matches && matches.length > 0 ? matches[0] : null;
@@ -488,11 +491,12 @@ export class MatchingService {
       if (error?.code === 'P2021' || error?.message?.includes('does not exist')) {
         return null;
       }
-      // Try raw SQL fallback
+      // Try raw SQL fallback - get match (no expiration check)
       try {
         const matches = await (this.prisma as any).$queryRawUnsafe(
           `SELECT "user1Id", "user2Id", score FROM active_matches 
-           WHERE "user1Id" = $1 OR "user2Id" = $1 LIMIT 1`,
+           WHERE "user1Id" = $1 OR "user2Id" = $1
+           LIMIT 1`,
           userId
         );
         return matches && matches.length > 0 ? matches[0] : null;
@@ -505,6 +509,7 @@ export class MatchingService {
 
   /**
    * Create a match between two users
+   * Matches do NOT expire - they persist until someone rainchecks
    */
   async createMatch(user1Id: string, user2Id: string, score: number): Promise<void> {
     try {
@@ -512,30 +517,63 @@ export class MatchingService {
       const [id1, id2] = [user1Id, user2Id].sort();
       
       // Use raw SQL directly for reliability
+      // Note: expiresAt is optional - if column exists, we can set it to a far future date or leave NULL
       const escapedId1 = id1.replace(/'/g, "''");
       const escapedId2 = id2.replace(/'/g, "''");
-      await (this.prisma as any).$executeRawUnsafe(
-        `INSERT INTO active_matches (id, "user1Id", "user2Id", score) 
-         VALUES (gen_random_uuid()::text, '${escapedId1}', '${escapedId2}', ${score})
-         ON CONFLICT ("user1Id", "user2Id") DO NOTHING`
-      );
+      
+      // Try with expiresAt first (if column exists)
+      try {
+        await (this.prisma as any).$executeRawUnsafe(
+          `INSERT INTO active_matches (id, "user1Id", "user2Id", score, "expiresAt", "createdAt", "updatedAt") 
+           VALUES (gen_random_uuid()::text, '${escapedId1}', '${escapedId2}', ${score}, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+           ON CONFLICT ("user1Id", "user2Id") DO NOTHING`
+        );
+      } catch (expiresAtError: any) {
+        // If expiresAt column doesn't exist, create match without it
+        if (expiresAtError?.message?.includes('expiresAt') || expiresAtError?.code === '42703') {
+          await (this.prisma as any).$executeRawUnsafe(
+            `INSERT INTO active_matches (id, "user1Id", "user2Id", score, "createdAt", "updatedAt") 
+             VALUES (gen_random_uuid()::text, '${escapedId1}', '${escapedId2}', ${score}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+             ON CONFLICT ("user1Id", "user2Id") DO NOTHING`
+          );
+        } else {
+          throw expiresAtError;
+        }
+      }
       
       // Invalidate matched user IDs cache
       await this.cacheService.del("matched:user:ids");
+      console.log(`[DEBUG] Created match between ${id1} and ${id2} (no expiration - persists until raincheck)`);
     } catch (error: any) {
       // If template literal fails, try unsafe with proper escaping
       try {
         const [id1, id2] = [user1Id, user2Id].sort();
         const escapedId1 = id1.replace(/'/g, "''");
         const escapedId2 = id2.replace(/'/g, "''");
-        await (this.prisma as any).$executeRawUnsafe(
-          `INSERT INTO active_matches (id, "user1Id", "user2Id", score) 
-           VALUES (gen_random_uuid()::text, '${escapedId1}', '${escapedId2}', ${score})
-           ON CONFLICT ("user1Id", "user2Id") DO NOTHING`
-        );
+        
+        // Try with expiresAt as NULL (if column exists)
+        try {
+          await (this.prisma as any).$executeRawUnsafe(
+            `INSERT INTO active_matches (id, "user1Id", "user2Id", score, "expiresAt", "createdAt", "updatedAt") 
+             VALUES (gen_random_uuid()::text, '${escapedId1}', '${escapedId2}', ${score}, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+             ON CONFLICT ("user1Id", "user2Id") DO NOTHING`
+          );
+        } catch (expiresAtError: any) {
+          // If expiresAt column doesn't exist, create match without it
+          if (expiresAtError?.message?.includes('expiresAt') || expiresAtError?.code === '42703') {
+            await (this.prisma as any).$executeRawUnsafe(
+              `INSERT INTO active_matches (id, "user1Id", "user2Id", score, "createdAt", "updatedAt") 
+               VALUES (gen_random_uuid()::text, '${escapedId1}', '${escapedId2}', ${score}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+               ON CONFLICT ("user1Id", "user2Id") DO NOTHING`
+            );
+          } else {
+            throw expiresAtError;
+          }
+        }
         
         // Invalidate matched user IDs cache
         await this.cacheService.del("matched:user:ids");
+        console.log(`[DEBUG] Created match between ${id1} and ${id2} (no expiration - persists until raincheck)`);
       } catch (unsafeError: any) {
         console.error(`Failed to create match between ${user1Id} and ${user2Id}:`, unsafeError?.message || unsafeError);
         // Don't throw - match creation failure shouldn't break the flow
@@ -767,13 +805,16 @@ export class MatchingService {
   }
 
   /**
-   * Clean up expired match acceptances and revert matches to AVAILABLE
+   * Clean up expired match acceptances (only - matches themselves don't expire)
    * Should be called periodically (e.g., via cron job or interval)
+   * Note: Active matches do NOT expire - they persist until someone rainchecks
    */
   async cleanupExpiredMatches(): Promise<void> {
     try {
-      // Get expired acceptances that don't have both users accepted
-      const expiredMatches = await (this.prisma as any).$queryRawUnsafe(
+      // Only clean up expired acceptances (matches themselves don't expire)
+      // When one user accepts, we wait 5 seconds for the other to accept
+      // If timeout expires, both users go back to AVAILABLE
+      const expiredAcceptances = await (this.prisma as any).$queryRawUnsafe(
         `SELECT DISTINCT "user1Id", "user2Id" 
          FROM match_acceptances 
          WHERE "expiresAt" <= CURRENT_TIMESTAMP
@@ -787,21 +828,21 @@ export class MatchingService {
          )`
       );
       
-      for (const match of expiredMatches || []) {
+      for (const match of expiredAcceptances || []) {
         const user1Id = match.user1Id;
         const user2Id = match.user2Id;
         
-        // Remove the match
+        // Remove the match (acceptance timeout expired - both go back to AVAILABLE)
         await this.removeMatch(user1Id, user2Id);
         
         // Remove acceptances
         await this.removeMatchAcceptances(user1Id, user2Id);
         
-        // Revert both users to AVAILABLE
+        // Revert both users to AVAILABLE (they can see new cards now)
         await this.updateUserStatus(user1Id, "AVAILABLE");
         await this.updateUserStatus(user2Id, "AVAILABLE");
         
-        console.log(`[INFO] Cleaned up expired match between ${user1Id} and ${user2Id}`);
+        console.log(`[INFO] Cleaned up expired match acceptance between ${user1Id} and ${user2Id} (acceptance timeout expired - both reset to AVAILABLE)`);
       }
     } catch (error: any) {
       console.error(`[ERROR] Failed to cleanup expired matches:`, error?.message || error);

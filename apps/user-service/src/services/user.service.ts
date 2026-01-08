@@ -712,6 +712,21 @@ export class UserService implements OnModuleInit {
   }
 
   /**
+   * Get count of users with preferredCity = null (users who selected "Anywhere")
+   * These are users who can see and be seen by other "Anywhere" users
+   */
+  async getAnywhereUsersCount(): Promise<number> {
+    const result = await this.prisma.$queryRaw<Array<{ count: bigint }>>`
+      SELECT COUNT(*)::int as count
+      FROM users
+      WHERE "preferredCity" IS NULL
+        AND "profileCompleted" = true
+        AND status IN ('AVAILABLE', 'IN_SQUAD_AVAILABLE', 'IN_BROADCAST_AVAILABLE')
+    `;
+    return Number(result[0]?.count || 0);
+  }
+
+  /**
    * Get count of users available + in calls, squad and broadcast
    * Counts users with statuses: AVAILABLE, IN_SQUAD, IN_SQUAD_AVAILABLE, IN_BROADCAST, IN_BROADCAST_AVAILABLE
    */

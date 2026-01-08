@@ -27,13 +27,13 @@ model Wallet {
 }
 
 model Transaction {
-  id        String   @id @default(cuid())
-  walletId  String
-  wallet    Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
-  amount    Int      // Positive for credits, negative for debits
-  type      TransactionType
+  id          String          @id @default(cuid())
+  walletId    String
+  wallet      Wallet          @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  amount      Int // Positive for credits, negative for debits
+  type        TransactionType
   description String?
-  createdAt DateTime @default(now())
+  createdAt   DateTime        @default(now())
 
   @@index([walletId])
   @@index([createdAt])
@@ -41,10 +41,10 @@ model Transaction {
 }
 
 enum TransactionType {
-  CREDIT      // Coins added (e.g., purchase, reward, bonus)
-  DEBIT       // Coins spent (e.g., premium features, gifts)
-  REFUND      // Refund for a previous transaction
-  ADJUSTMENT  // Manual adjustment by admin
+  CREDIT // Coins added (e.g., purchase, reward, bonus)
+  DEBIT // Coins spent (e.g., premium features, gifts)
+  REFUND // Refund for a previous transaction
+  ADJUSTMENT // Manual adjustment by admin
 }
 
 // Gender filter preference for users
@@ -66,11 +66,11 @@ model GenderFilterPreference {
 // Rainchecked users are hidden until next session (new sessionId) or city change
 model RaincheckSession {
   id                String   @id @default(cuid())
-  userId            String   // User who rainchecked
-  sessionId         String   // Frontend-generated session ID
-  raincheckedUserId String   // User who was rainchecked
-  city              String?  // City context (null for "anywhere")
-  createdAt         DateTime  @default(now())
+  userId            String // User who rainchecked
+  sessionId         String // Frontend-generated session ID
+  raincheckedUserId String // User who was rainchecked
+  city              String? // City context (null for "anywhere")
+  createdAt         DateTime @default(now())
 
   @@index([userId, sessionId])
   @@index([userId, city, sessionId])
@@ -79,29 +79,32 @@ model RaincheckSession {
 
 // Track active matches between users
 // When users are matched, both see each other's cards
+// Matches do NOT expire - they persist until someone rainchecks
 model ActiveMatch {
-  id        String   @id @default(cuid())
-  user1Id   String   // First user in the match
-  user2Id   String   // Second user in the match
-  score     Float    // Mutual compatibility score
+  id        String    @id @default(cuid())
+  user1Id   String // First user in the match
+  user2Id   String // Second user in the match
+  score     Float // Mutual compatibility score
+  expiresAt DateTime? // Optional - not used (matches don't expire until raincheck)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([user1Id, user2Id])
   @@index([user1Id])
   @@index([user2Id])
+  @@index([expiresAt])
   @@map("active_matches")
 }
 
 // Track match acceptances for two-phase proceed
 // Each user accepts separately, both must accept to proceed to IN_SQUAD
 model MatchAcceptance {
-  id        String   @id @default(cuid())
-  user1Id   String   // First user in the match
-  user2Id   String   // Second user in the match
-  acceptedBy String  // User who accepted (user1Id or user2Id)
-  createdAt DateTime @default(now())
-  expiresAt DateTime // When the match expires if not both accepted
+  id         String   @id @default(cuid())
+  user1Id    String // First user in the match
+  user2Id    String // Second user in the match
+  acceptedBy String // User who accepted (user1Id or user2Id)
+  createdAt  DateTime @default(now())
+  expiresAt  DateTime // When the match expires if not both accepted
 
   @@unique([user1Id, user2Id, acceptedBy])
   @@index([user1Id, user2Id])

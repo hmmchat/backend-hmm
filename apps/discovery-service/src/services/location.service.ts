@@ -90,6 +90,46 @@ export class LocationService implements OnModuleInit {
   }
 
   /**
+   * Get count for "Anywhere" option:
+   * - Users with preferredCity = null (didn't select a city)
+   * - PLUS all available users from all cities (because "Anywhere" sees everyone)
+   * So it's essentially: count of users with preferredCity=null + sum of all city counts
+   */
+  async getAnywhereUsersCount(): Promise<number> {
+    try {
+      // Get count of users with preferredCity = null (who selected "Anywhere")
+      const nullCityResponse = await fetch(`${this.userServiceUrl}/metrics/anywhere-count`, {
+        method: "GET",
+        headers: { "Content-Type": "application/json" }
+      });
+
+      let nullCityCount = 0;
+      if (nullCityResponse.ok) {
+        const result = await nullCityResponse.json() as { count: number };
+        nullCityCount = result.count || 0;
+      }
+
+      // Get all cities with their counts (sum them up)
+      const allCities = await this.getCitiesWithMaxUsers(100);
+      const totalCityUsers = allCities.reduce((sum, city) => sum + city.availableCount, 0);
+
+      // "Anywhere" = users with null city + all users from all cities
+      // But we need to avoid double counting: users with null city are already counted separately
+      // So: nullCityCount + totalCityUsers gives us the total
+      return nullCityCount + totalCityUsers;
+    } catch (error) {
+      console.error("Failed to get anywhere users count:", error);
+      // Fallback: just return sum of all city counts
+      try {
+        const allCities = await this.getCitiesWithMaxUsers(100);
+        return allCities.reduce((sum, city) => sum + city.availableCount, 0);
+      } catch (fallbackError) {
+        return 0;
+      }
+    }
+  }
+
+  /**
    * Search for cities by name
    * Uses OpenStreetMap Nominatim API for city search
    */

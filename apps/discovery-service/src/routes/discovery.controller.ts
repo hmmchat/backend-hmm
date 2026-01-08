@@ -306,12 +306,11 @@ export class DiscoveryController {
       throw new HttpException("userId and sessionId are required", HttpStatus.BAD_REQUEST);
     }
 
-    // Get user's preferred city directly from user service
-    const cityResponse = await this.locationService.getPreferredCityForUser(userId);
-    const city = cityResponse.city;
-
-    // Reset session
-    await this.discoveryService.resetSession(userId, sessionId, city);
+    // Reset session for ALL cities (pass null to clear all rainchecked users)
+    await this.discoveryService.resetSession(userId, sessionId, null);
+    
+    // Also clear location cards
+    await this.discoveryService.clearLocationCards(userId, sessionId);
 
     return { success: true };
   }

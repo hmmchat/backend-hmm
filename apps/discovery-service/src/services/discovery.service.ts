@@ -723,7 +723,17 @@ export class DiscoveryService implements OnModuleInit {
     excludeCities: string[] = []
   ): Promise<LocationCard[]> {
     // Get top cities (more than needed for randomization)
-    const allCities = await this.locationService.getCitiesWithMaxUsers(50);
+    const allCities = await this.locationService.getCitiesWithMaxUsers(100);
+    
+    // Calculate "Anywhere" count:
+    // - Users with preferredCity = null (didn't select a city)
+    // - PLUS all available users from all cities (because "Anywhere" sees everyone)
+    const nullCityUsersCount = await this.locationService.getAnywhereUsersCount();
+    const totalCityUsers = allCities.reduce((sum, city) => sum + city.availableCount, 0);
+    // "Anywhere" = users with null city + all users from all cities
+    // Note: Users with null city are NOT included in city counts (city query filters WHERE preferredCity IS NOT NULL)
+    // So we need to add them separately
+    const anywhereCount = nullCityUsersCount + totalCityUsers;
     
     // Filter out excluded cities
     const availableCities = allCities.filter(
@@ -735,7 +745,7 @@ export class DiscoveryService implements OnModuleInit {
     const shuffled = [...availableCities].sort(() => Math.random() - 0.5);
     const selectedCities = shuffled.slice(0, count);
     
-    // Add "Anywhere" option
+    // Add "Anywhere" option with calculated total
     const locationCards: LocationCard[] = [
       ...selectedCities.map(c => ({
         type: "LOCATION" as const,
@@ -745,7 +755,7 @@ export class DiscoveryService implements OnModuleInit {
       {
         type: "LOCATION" as const,
         city: null, // "Anywhere"
-        availableCount: 0 // Will be calculated if needed
+        availableCount: anywhereCount // Users with null city + all users from all cities
       }
     ];
     
@@ -764,55 +774,38 @@ export class DiscoveryService implements OnModuleInit {
     city: string | null
   ): Promise<void> {
     try {
-      // Check if users are matched
+      // Check if users are matched with each other
       const match = await this.matchingService.getMatchForUser(userId);
       if (match && (match.user1Id === raincheckedUserId || match.user2Id === raincheckedUserId)) {
-        // Users are matched, break the match
+        // Users are matched with each other, break the match
         await this.matchingService.removeMatch(userId, raincheckedUserId);
-        
-        // Determine appropriate status for both users
-        // Get current status to determine what to revert to
-        await this.userClient.getUserFullProfileById(userId);
-        await this.userClient.getUserFullProfileById(raincheckedUserId);
-        
-        // Revert status based on previous status
-        // If they were MATCHED, they should go back to AVAILABLE, IN_SQUAD_AVAILABLE, or IN_BROADCAST_AVAILABLE
-        // For now, default to AVAILABLE - this can be enhanced to track previous status
-        // Update both statuses sequentially to ensure they complete before rematching
-        try {
-          console.log(`[DEBUG] About to update status for users ${userId} and ${raincheckedUserId} to AVAILABLE after raincheck`);
-          await this.matchingService.updateUserStatus(userId, "AVAILABLE");
-          await this.matchingService.updateUserStatus(raincheckedUserId, "AVAILABLE");
-          console.log(`[DEBUG] Status updates completed for users ${userId} and ${raincheckedUserId}`);
-          // Small delay to ensure status updates are committed
-          await new Promise(resolve => setTimeout(resolve, 100));
-        } catch (error) {
-          console.error("[ERROR] Failed to update user statuses after raincheck:", error);
-          // Continue anyway - the match is broken even if status update fails
-        }
-      } else {
-        // Users are not matched, but still update status to AVAILABLE if they're MATCHED
-        // This handles edge cases where match was broken but status wasn't updated
-        try {
-          const user1Status = await (this.prisma as any).$queryRawUnsafe(
-            `SELECT status FROM users WHERE id = $1`,
-            userId
-          );
-          const user2Status = await (this.prisma as any).$queryRawUnsafe(
-            `SELECT status FROM users WHERE id = $1`,
-            raincheckedUserId
-          );
-          
-          if (user1Status && user1Status.length > 0 && user1Status[0].status === 'MATCHED') {
-            await this.matchingService.updateUserStatus(userId, "AVAILABLE");
-          }
-          if (user2Status && user2Status.length > 0 && user2Status[0].status === 'MATCHED') {
-            await this.matchingService.updateUserStatus(raincheckedUserId, "AVAILABLE");
-          }
-        } catch (error) {
-          console.warn("Failed to check/update statuses for non-matched users:", error);
-        }
       }
+
+      // When one user rainchecks, BOTH users should reset to AVAILABLE
+      // This allows both to see new cards and get new matches
+      try {
+        // Reset rainchecked user to AVAILABLE
+        const raincheckedUserProfile = await this.userClient.getUserFullProfileById(raincheckedUserId);
+        if (raincheckedUserProfile.status === 'MATCHED') {
+          console.log(`[DEBUG] Resetting rainchecked user ${raincheckedUserId} status from MATCHED to AVAILABLE (due to raincheck)`);
+          await this.matchingService.updateUserStatus(raincheckedUserId, "AVAILABLE");
+          console.log(`[DEBUG] Status reset completed for rainchecked user ${raincheckedUserId}`);
+        }
+        
+        // Also reset current user to AVAILABLE (they rainchecked, so they want to see new cards)
+        const currentUserProfile = await this.userClient.getUserFullProfileById(userId);
+        if (currentUserProfile.status === 'MATCHED') {
+          console.log(`[DEBUG] Resetting current user ${userId} status from MATCHED to AVAILABLE (they rainchecked)`);
+          await this.matchingService.updateUserStatus(userId, "AVAILABLE");
+          console.log(`[DEBUG] Status reset completed for current user ${userId}`);
+        }
+      } catch (error) {
+        console.error(`[ERROR] Failed to check/reset user statuses after raincheck:`, error);
+        // Continue anyway - raincheck should still be recorded
+      }
+
+      // Small delay to ensure status updates are committed
+      await new Promise(resolve => setTimeout(resolve, 100));
 
       // Mark as rainchecked in session (bidirectionally - both users should exclude each other)
       const existing1 = await (this.prisma as any).raincheckSession.findFirst({
@@ -1005,15 +998,16 @@ export class DiscoveryService implements OnModuleInit {
       throw new HttpException("Users are not matched", HttpStatus.BAD_REQUEST);
     }
 
-    // Get match timeout from environment (default 5 seconds)
-    const matchTimeoutSeconds = parseInt(process.env.MATCH_TIMEOUT_SECONDS || "5", 10);
+    // Get acceptance timeout from environment (default 5 seconds)
+    // This is the timeout after one user accepts - wait 5 seconds for the other to accept
+    const acceptanceTimeoutSeconds = parseInt(process.env.MATCH_ACCEPTANCE_TIMEOUT_SECONDS || "5", 10);
 
-    // Record this user's acceptance
+    // Record this user's acceptance with acceptance timeout (5 seconds)
     await this.matchingService.recordMatchAcceptance(
       match.user1Id,
       match.user2Id,
       userId,
-      matchTimeoutSeconds
+      acceptanceTimeoutSeconds
     );
 
     // Check if both users have accepted
@@ -1122,6 +1116,8 @@ export class DiscoveryService implements OnModuleInit {
     const raincheckedUserIds = await this.getRaincheckedUserIds(userId, sessionId, preferredCity);
 
     // Find match using mutual matching algorithm
+    // When user A sees user B's card, they are automatically matched
+    // Both users' status becomes MATCHED and they're removed from available pool
     const matchedUser = await this.matchingService.findMatchForUser(
       userId,
       currentUser,
@@ -1143,7 +1139,7 @@ export class DiscoveryService implements OnModuleInit {
       };
     }
 
-    // No match found, use fallback logic (keep existing fallback for now)
+    // No mutual match found, use fallback logic
     // Determine statuses to filter
     const statuses: ("AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE")[] = soloOnly
       ? ["AVAILABLE"]
@@ -1158,6 +1154,21 @@ export class DiscoveryService implements OnModuleInit {
       soloOnly,
       raincheckedUserIds
     );
+
+    // If matches found, return the best match
+    if (matchingUsers.length > 0) {
+      const selectedUser = this.selectBestMatch(matchingUsers, currentUser);
+      const card = await this.buildCard(selectedUser, preferredCity);
+      
+      if (hasActiveGenderFilter) {
+        await this.genderFilterService.decrementScreen(userId);
+      }
+
+      return {
+        card,
+        exhausted: false
+      };
+    }
 
     // If no matches found, check if we should show fallback
     if (matchingUsers.length === 0) {
@@ -1336,18 +1347,25 @@ export class DiscoveryService implements OnModuleInit {
   }
 
   /**
-   * Initialize cleanup interval for expired matches
-   * Runs every 1 second to check for expired matches
+   * Initialize cleanup interval for expired acceptances
+   * Only cleans up expired acceptances (matches don't expire until raincheck)
+   * Runs periodically to check for expired acceptances (default: every 2 seconds)
    */
   async onModuleInit() {
-    // Clean up expired matches every 1 second
+    // Get cleanup interval from environment (default 2 seconds)
+    // Since acceptance timeout is 5 seconds, checking every 2 seconds is sufficient
+    const cleanupIntervalMs = parseInt(process.env.CLEANUP_INTERVAL_MS || "2000", 10);
+    
+    // Clean up expired acceptances periodically
     setInterval(async () => {
       try {
         await this.matchingService.cleanupExpiredMatches();
       } catch (error) {
         console.error("[ERROR] Failed to cleanup expired matches:", error);
       }
-    }, 1000); // Check every 1 second
+    }, cleanupIntervalMs);
+    
+    console.log(`[INFO] Cleanup interval initialized: checking expired acceptances every ${cleanupIntervalMs}ms`);
   }
 }
 

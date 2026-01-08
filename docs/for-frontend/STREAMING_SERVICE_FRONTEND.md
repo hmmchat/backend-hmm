@@ -15,7 +15,8 @@ The Streaming Service handles real-time video/audio calls and broadcasting using
 - **Video calls** with 2-4 participants (bidirectional)
 - **Broadcasting** where participants stream to viewers
 - **Real-time chat** during calls
-- **Dares and Gifts** features
+- **Dares with Gifts** - assign and send dares with virtual gifts (rewards)
+- **Icebreakers** - random conversation starters for users in calls
 
 ---
 
@@ -211,13 +212,55 @@ Users must follow this status flow:
 {
   "dares": [
     {
-      "id": "dare-id",
-      "text": "Do a dance",
-      "difficulty": "easy"
+      "id": "dare-1",
+      "text": "Eat a chilli",
+      "category": "fun"
     },
     ...
   ]
 }
+```
+
+---
+
+### 6. Get Gift List
+**Endpoint:** `GET /streaming/rooms/:roomId/dares/gifts`
+
+**Response:**
+```json
+[
+  {
+    "id": "monkey",
+    "name": "Monkey",
+    "emoji": "🐵",
+    "diamonds": 50
+  },
+  ...
+]
+```
+
+---
+
+### 7. Get Dare History
+**Endpoint:** `GET /streaming/rooms/:roomId/dares/history`
+
+**Response:**
+```json
+[
+  {
+    "id": "dare-record-id",
+    "dareId": "dare-1",
+    "dareText": "Eat a chilli",
+    "selectedBy": "user1",
+    "assignedTo": "user2",
+    "status": "sent",
+    "giftId": "monkey",
+    "giftDiamonds": 50,
+    "createdAt": "2026-01-08T...",
+    ...
+  },
+  ...
+]
 ```
 
 ---
@@ -432,6 +475,109 @@ Users must follow this status flow:
 
 ---
 
+### 10. View Dare (Real-time Sync)
+**Message Type:** `dare-view`
+
+**When to send:** User scrolls through dares - broadcasts to all participants so everyone sees the same dare
+
+**Payload:**
+```json
+{
+  "type": "dare-view",
+  "data": {
+    "roomId": "uuid",
+    "dareId": "dare-1"
+  }
+}
+```
+
+**Server Response:** `dare-viewed` confirmation
+
+**Note:** All participants receive `dare-viewing` event to sync UI
+
+---
+
+### 11. Assign Dare
+**Message Type:** `dare-assign`
+
+**When to send:** User selects a participant to assign the dare to (required for 3+ users, optional for 2 users)
+
+**Payload:**
+```json
+{
+  "type": "dare-assign",
+  "data": {
+    "roomId": "uuid",
+    "dareId": "dare-1",
+    "assignedToUserId": "user2"
+  }
+}
+```
+
+**Server Response:** `dare-assigned-success` confirmation
+
+**Note:** 
+- Cannot assign to yourself
+- Must assign to a participant in the room
+- For 2-user calls, assignment is optional (auto-assigns when sending)
+
+---
+
+### 12. Send Dare with Gift
+**Message Type:** `dare-send`
+
+**When to send:** User sends a dare with a selected gift (transfers 100% payment immediately)
+
+**Payload:**
+```json
+{
+  "type": "dare-send",
+  "data": {
+    "roomId": "uuid",
+    "dareId": "dare-1",
+    "giftId": "monkey"
+  }
+}
+```
+
+**Server Response:** `dare-sent-success` with transaction details
+
+**Important Business Rules:**
+- **Only ONE active dare per room at a time** - If a dare is already active ("sent" status), sending another will fail
+- **All participants see the dare** - The `dare-sent` event is broadcast to everyone
+- **Auto-assignment for 2 users** - If there are exactly 2 participants and no assignment exists, it auto-assigns to the other user
+- **100% payment on send** - Full gift amount (in diamonds, converted to coins) is transferred immediately to the assigned user
+- **Payment requires sufficient balance** - User must have enough diamonds/coins for the selected gift
+
+**Note:** Gift diamonds are converted to coins at rate 1 diamond = 50 coins (configurable)
+
+---
+
+### 13. Get Icebreaker
+**Message Type:** `get-icebreaker`
+
+**When to send:** User wants a random conversation starter
+
+**Payload:**
+```json
+{
+  "type": "get-icebreaker",
+  "data": {
+    "roomId": "uuid"
+  }
+}
+```
+
+**Server Response:** `icebreaker` with random question
+
+**Note:**
+- Only sent to the requesting user (NOT broadcasted to others)
+- User must be a participant in the room
+- No rewards, no assignment - just a fun conversation starter
+- Examples: "What's your favorite movie of the year?", "What's your dream vacation destination?"
+
+---
+
 ## WebSocket Messages (Server → Client)
 
 ### 1. Room Joined
@@ -599,7 +745,99 @@ Users must follow this status flow:
 
 ---
 
-### 9. Error
+### 9. Dare Viewing (Sync)
+**Message Type:** `dare-viewing`
+
+**When received:** When another participant views a dare (for UI sync)
+
+**Payload:**
+```json
+{
+  "type": "dare-viewing",
+  "data": {
+    "roomId": "uuid",
+    "dareId": "dare-1",
+    "viewedBy": "user1"
+  }
+}
+```
+
+**Action Required:** Update UI to show the same dare being viewed
+
+---
+
+### 10. Dare Assigned
+**Message Type:** `dare-assigned`
+
+**When received:** When a dare is assigned to a participant
+
+**Payload:**
+```json
+{
+  "type": "dare-assigned",
+  "data": {
+    "roomId": "uuid",
+    "dareId": "dare-1",
+    "assignedBy": "user1",
+    "assignedTo": "user2"
+  }
+}
+```
+
+**Action Required:** Update UI to show dare assignment
+
+---
+
+### 11. Dare Sent
+**Message Type:** `dare-sent`
+
+**When received:** When a dare is sent with a gift (broadcasted to ALL participants)
+
+**Payload:**
+```json
+{
+  "type": "dare-sent",
+  "data": {
+    "roomId": "uuid",
+    "dareId": "dare-1",
+    "giftId": "monkey",
+    "sentBy": "user1",
+    "assignedTo": "user2",
+    "wasAutoAssigned": false
+  }
+}
+```
+
+**Action Required:** 
+- Display the dare and gift to ALL participants (not just the assigned user)
+- Show payment confirmation
+- Update UI to indicate there's now an active dare in the room
+
+**Important:** Only ONE dare can be active at a time. If a new dare is attempted while one is active, it will fail.
+
+---
+
+### 12. Icebreaker
+**Message Type:** `icebreaker`
+
+**When received:** After sending `get-icebreaker` message
+
+**Payload:**
+```json
+{
+  "type": "icebreaker",
+  "data": {
+    "roomId": "uuid",
+    "question": "What's your favorite movie of the year?"
+  }
+}
+```
+
+**Action Required:** Display the question to the user (only shown to them, not others)
+
+---
+
+### 13. Error
 **Message Type:** `error`
 
 **When received:** When any operation fails
@@ -653,6 +891,10 @@ Users must follow this status flow:
 - **Leave call:** Send `leave-room` message
 - **Send chat:** Send `chat-message` message
 - **Start broadcast:** Send `start-broadcast` message (participants only)
+- **Get icebreaker:** Send `get-icebreaker` message for conversation starters
+- **View dares:** Send `dare-view` to browse dares (syncs with all participants)
+- **Assign dare:** Send `dare-assign` to assign dare to a participant (3+ users)
+- **Send dare:** Send `dare-send` to send dare with gift (only one active dare at a time)
 
 ---
 
@@ -708,7 +950,25 @@ Frontend needs WebRTC library that supports:
 ### 5. Real-time Updates
 - Listen for `new-producer` events to know when participants join/start streaming
 - Listen for `chat-message` events for real-time chat
+- Listen for `dare-viewing` to sync dare browsing across participants
+- Listen for `dare-assigned` and `dare-sent` for dare flow updates
 - Poll room info periodically or listen for state change events
+
+### 6. Dare Feature Flow
+**Important Business Rules:**
+1. **Only ONE active dare per room** - When a dare is "sent", it becomes active. No other dare can be sent until the active one is completed/cancelled
+2. **All participants see active dares** - When a dare is sent, all participants/viewers receive the `dare-sent` event
+3. **Dare assignment:**
+   - For 2-user calls: Optional (auto-assigns when sending)
+   - For 3+ user calls: Required before sending
+4. **Payment flow:** 100% of gift diamonds (converted to coins) are transferred immediately upon sending
+5. **Viewing sync:** When a user scrolls through dares (`dare-view`), all participants see the same dare (via `dare-viewing` event)
+
+### 7. Icebreaker Feature
+- Simple feature: User clicks button → receives random conversation starter
+- **Not broadcasted** - Only the requesting user sees it
+- No rewards, no assignment, just fun questions to spark conversations
+- Available at any time during a call (doesn't interfere with dares)
 
 ---
 

@@ -1,65 +1,131 @@
-import { Injectable, HttpException, HttpStatus } from "@nestjs/common";
+import { Injectable, Logger, BadRequestException } from "@nestjs/common";
 import fetch from "node-fetch";
 
-interface DeductCoinsResponse {
-  success: boolean;
-  newBalance: number;
-  transactionId: string;
-}
+// Configurable conversion rates (can be set via environment variables)
+const DIAMOND_TO_COIN_RATE = parseInt(process.env.DIAMOND_TO_COIN_RATE || "50", 10); // 1 diamond = 50 coins (default)
+// const INR_TO_DIAMOND_RATE = parseFloat(process.env.INR_TO_DIAMOND_RATE || "2"); // 1 INR = 2 diamonds (for future cashout feature)
 
 @Injectable()
 export class WalletClientService {
+  private readonly logger = new Logger(WalletClientService.name);
   private readonly walletServiceUrl: string;
 
   constructor() {
-    this.walletServiceUrl = process.env.WALLET_SERVICE_URL || "http://localhost:3005";
+    this.walletServiceUrl = process.env.WALLET_SERVICE_URL || "http://localhost:3006";
   }
 
   /**
-   * Deduct coins from user's wallet
+   * Get diamond to coin conversion rate
    */
-  async deductCoins(
-    token: string,
-    amount: number,
-    options: { description?: string } = {}
-  ): Promise<{ newBalance: number; transactionId: string }> {
+  getDiamondToCoinRate(): number {
+    return DIAMOND_TO_COIN_RATE;
+  }
+
+  /**
+   * Convert diamonds to coins
+   */
+  diamondsToCoins(diamonds: number): number {
+    return diamonds * DIAMOND_TO_COIN_RATE;
+  }
+
+  /**
+   * Convert coins to diamonds
+   */
+  coinsToDiamonds(coins: number): number {
+    return Math.floor(coins / DIAMOND_TO_COIN_RATE);
+  }
+
+  /**
+   * Transfer coins between users (for dare payments)
+   * @param fromUserId User paying
+   * @param toUserId User receiving
+   * @param coins Amount in coins
+   * @param description Transaction description
+   */
+  async transferCoins(
+    fromUserId: string,
+    toUserId: string,
+    coins: number,
+    description: string
+  ): Promise<{ transactionId: string; newBalance: number }> {
     try {
-      const response = await fetch(`${this.walletServiceUrl}/me/transactions`, {
+      // First deduct from sender
+      const deductResponse = await fetch(`${this.walletServiceUrl}/test/transactions/dare-payment`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          amount: -amount, // Negative for debit
-          type: "DEBIT",
-          description: options.description || "Gift sent"
+          userId: fromUserId,
+          amount: coins,
+          description: description
         })
       });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        if (response.status === 400) {
-          throw new HttpException(errorText, HttpStatus.BAD_REQUEST);
-        }
-        throw new Error(`Wallet service error: ${errorText}`);
+      if (!deductResponse.ok) {
+        const errorData = await deductResponse.json().catch(() => ({ message: "Unknown error" })) as { message?: string };
+        throw new BadRequestException(
+          `Failed to deduct coins from ${fromUserId}: ${errorData.message || "Insufficient balance"}`
+        );
       }
 
-      const result = await response.json() as DeductCoinsResponse;
+      const deductResult = await deductResponse.json() as { transactionId: string; newBalance: number };
+
+      // Then credit to receiver
+      const creditResponse = await fetch(`${this.walletServiceUrl}/test/wallet/add-coins`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: toUserId,
+          amount: coins,
+          description: `Dare payment (credit): ${description}`
+        })
+      });
+
+      if (!creditResponse.ok) {
+        // Rollback: try to refund the deducted amount
+        await fetch(`${this.walletServiceUrl}/test/wallet/add-coins`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: fromUserId,
+            amount: coins,
+            description: `Dare payment rollback: ${description}`
+          })
+        }).catch(() => {
+          this.logger.error(`Failed to rollback payment from ${fromUserId} to ${toUserId}`);
+        });
+
+        throw new BadRequestException(`Failed to credit coins to ${toUserId}`);
+      }
+
+      this.logger.log(`Transferred ${coins} coins from ${fromUserId} to ${toUserId} for dare payment`);
+
       return {
-        newBalance: result.newBalance,
-        transactionId: result.transactionId
+        transactionId: deductResult.transactionId,
+        newBalance: deductResult.newBalance
       };
-    } catch (error) {
-      if (error instanceof HttpException) {
+    } catch (error: any) {
+      if (error instanceof BadRequestException) {
         throw error;
       }
-      console.error("Failed to deduct coins from wallet-service:", error);
-      throw new HttpException(
-        "Unable to process payment. Please try again later.",
-        HttpStatus.SERVICE_UNAVAILABLE
-      );
+      this.logger.error(`Error transferring coins: ${error.message}`);
+      throw new BadRequestException(`Failed to transfer coins: ${error.message}`);
+    }
+  }
+
+  /**
+   * Check user balance in coins
+   */
+  async getBalance(userId: string): Promise<number> {
+    try {
+      const response = await fetch(`${this.walletServiceUrl}/test/balance?userId=${userId}`);
+      if (!response.ok) {
+        throw new Error(`Failed to get balance for user ${userId}`);
+      }
+      const data = await response.json() as { balance: number };
+      return data.balance || 0;
+    } catch (error: any) {
+      this.logger.error(`Error getting balance for ${userId}: ${error.message}`);
+      throw new BadRequestException(`Failed to get balance: ${error.message}`);
     }
   }
 }
-

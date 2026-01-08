@@ -187,5 +187,64 @@ export class WalletService {
       transactionId: transaction.id
     };
   }
+
+  /**
+   * Deduct coins for dare payment (test method, bypasses auth)
+   * @param userId User ID
+   * @param amount Amount of coins to deduct
+   * @param description Transaction description
+   */
+  async deductCoinsForDarePayment(
+    userId: string,
+    amount: number,
+    description?: string
+  ): Promise<{ newBalance: number; transactionId: string }> {
+    if (amount <= 0) {
+      throw new Error("Amount must be positive");
+    }
+
+    // Get or create wallet
+    let wallet = await this.prisma.wallet.findUnique({
+      where: { id: userId }
+    });
+
+    if (!wallet) {
+      wallet = await this.prisma.wallet.create({
+        data: {
+          id: userId,
+          balance: 0
+        } as any
+      });
+    }
+
+    // Check balance
+    if (wallet.balance < amount) {
+      throw new Error(`Insufficient balance. Required: ${amount}, Available: ${wallet.balance}`);
+    }
+
+    // Deduct coins and create transaction
+    const updatedWallet = await this.prisma.wallet.update({
+      where: { id: userId },
+      data: {
+        balance: {
+          decrement: amount
+        }
+      }
+    });
+
+    const transaction = await this.prisma.transaction.create({
+      data: {
+        walletId: wallet.id,
+        amount: -amount, // Negative for debit
+        type: "DEBIT",
+        description: description || `Dare payment: ${amount} coins`
+      }
+    });
+
+    return {
+      newBalance: updatedWallet.balance,
+      transactionId: transaction.id
+    };
+  }
 }
 

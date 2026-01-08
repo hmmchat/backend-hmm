@@ -10,6 +10,8 @@ import { MediasoupService } from "../services/mediasoup.service.js";
 import { CallService } from "../services/call.service.js";
 import { BroadcastService } from "../services/broadcast.service.js";
 import { ChatService } from "../services/chat.service.js";
+import { DareService } from "../services/dare.service.js";
+import { IcebreakerService } from "../services/icebreaker.service.js";
 import { verifyToken, AccessPayload } from "@hmm/common";
 import { JWK } from "jose";
 
@@ -32,7 +34,9 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     private mediasoup: MediasoupService,
     private callService: CallService,
     private broadcastService: BroadcastService,
-    private chatService: ChatService
+    private chatService: ChatService,
+    private dareService: DareService,
+    private icebreakerService: IcebreakerService
   ) {
     this.testMode = process.env.TEST_MODE === "true" || process.env.NODE_ENV === "test";
   }
@@ -228,6 +232,24 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
         // Chat
         case "chat-message":
           await this.handleChatMessage(connectionId, userId, data, ws);
+          break;
+
+        // Dares
+        case "dare-view":
+          await this.handleDareView(connectionId, userId, data, ws);
+          break;
+
+        case "dare-assign":
+          await this.handleDareAssign(connectionId, userId, data, ws);
+          break;
+
+        case "dare-send":
+          await this.handleDareSend(connectionId, userId, data, ws);
+          break;
+
+        // Icebreakers
+        case "get-icebreaker":
+          await this.handleGetIcebreaker(connectionId, userId, data, ws);
           break;
 
         default:
@@ -695,6 +717,182 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
   /**
    * Handle chat message
    */
+  /**
+   * Handle dare view (real-time synchronization)
+   */
+  private async handleDareView(
+    _connectionId: string,
+    userId: string,
+    data: any,
+    ws: any
+  ) {
+    const { roomId, dareId } = data;
+    if (!roomId || !dareId) {
+      this.sendError(ws, "roomId and dareId are required");
+      return;
+    }
+
+    try {
+      await this.dareService.viewDare(roomId, userId, dareId);
+
+      // Broadcast to all participants in the room (real-time sync)
+      await this.broadcastToRoom(roomId, {
+        type: "dare-viewing",
+        data: {
+          roomId,
+          dareId,
+          viewedBy: userId
+        }
+      }, userId);
+
+      this.send(ws, {
+        type: "dare-viewed",
+        data: { roomId, dareId }
+      });
+    } catch (error: any) {
+      this.sendError(ws, error.message || "Failed to view dare");
+    }
+  }
+
+  /**
+   * Handle dare assign
+   */
+  private async handleDareAssign(
+    _connectionId: string,
+    userId: string,
+    data: any,
+    ws: any
+  ) {
+    const { roomId, dareId, assignedToUserId } = data;
+    if (!roomId || !dareId || !assignedToUserId) {
+      this.sendError(ws, "roomId, dareId, and assignedToUserId are required");
+      return;
+    }
+
+    try {
+      await this.dareService.assignDare(roomId, userId, assignedToUserId, dareId);
+
+      // Notify all participants
+      await this.broadcastToRoom(roomId, {
+        type: "dare-assigned",
+        data: {
+          roomId,
+          dareId,
+          assignedBy: userId,
+          assignedTo: assignedToUserId
+        }
+      }, userId);
+
+      this.send(ws, {
+        type: "dare-assigned-success",
+        data: { roomId, dareId, assignedTo: assignedToUserId }
+      });
+    } catch (error: any) {
+      this.sendError(ws, error.message || "Failed to assign dare");
+    }
+  }
+
+  /**
+   * Handle dare send with gift (50% payment)
+   */
+  private async handleDareSend(
+    _connectionId: string,
+    userId: string,
+    data: any,
+    ws: any
+  ) {
+    const { roomId, dareId, giftId } = data;
+    if (!roomId || !dareId || !giftId) {
+      this.sendError(ws, "roomId, dareId, and giftId are required");
+      return;
+    }
+
+    try {
+      const result = await this.dareService.sendDare(roomId, userId, dareId, giftId);
+
+      // If auto-assigned (2-user call), broadcast assignment event first
+      if (result.wasAutoAssigned && result.assignedTo) {
+        await this.broadcastToRoom(roomId, {
+          type: "dare-assigned",
+          data: {
+            roomId,
+            dareId,
+            assignedBy: userId,
+            assignedTo: result.assignedTo
+          }
+        }, userId);
+      }
+
+      // Broadcast to all participants
+      await this.broadcastToRoom(roomId, {
+        type: "dare-sent",
+        data: {
+          roomId,
+          dareId,
+          giftId,
+          sentBy: userId,
+          assignedTo: result.assignedTo
+        }
+      }, userId);
+
+      this.send(ws, {
+        type: "dare-sent-success",
+        data: {
+          roomId,
+          dareId,
+          giftId,
+          transactionId: result.transactionId,
+          newBalance: result.newBalance,
+          assignedTo: result.assignedTo,
+          wasAutoAssigned: result.wasAutoAssigned
+        }
+      });
+    } catch (error: any) {
+      this.sendError(ws, error.message || "Failed to send dare");
+    }
+  }
+
+  /**
+   * Handle get icebreaker (returns random icebreaker to the user)
+   */
+  private async handleGetIcebreaker(
+    _connectionId: string,
+    userId: string,
+    data: any,
+    ws: any
+  ) {
+    const { roomId } = data;
+    if (!roomId) {
+      this.sendError(ws, "roomId is required");
+      return;
+    }
+
+    try {
+      // Verify user is in the room
+      const isParticipant = await this.roomService.isParticipant(roomId, userId);
+      if (!isParticipant) {
+        this.sendError(ws, `User ${userId} is not a participant in room ${roomId}`);
+        return;
+      }
+
+      // Get random icebreaker
+      const icebreaker = this.icebreakerService.getRandomIcebreaker();
+
+      // Send only to the requesting user (not broadcasted)
+      this.send(ws, {
+        type: "icebreaker",
+        data: {
+          roomId,
+          question: icebreaker
+        }
+      });
+
+      this.logger.log(`User ${userId} requested icebreaker in room ${roomId}: ${icebreaker}`);
+    } catch (error: any) {
+      this.sendError(ws, error.message || "Failed to get icebreaker");
+    }
+  }
+
   private async handleChatMessage(
     _connectionId: string,
     userId: string,
@@ -748,7 +946,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
           message: chatMessage.message,
           createdAt: chatMessage.createdAt
         }
-      });
+      }, userId);
     } catch (error: any) {
       // Handle errors from chat service (e.g., room not found, validation errors)
       this.sendError(ws, error.message || "Failed to send chat message");

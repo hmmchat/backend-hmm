@@ -91,20 +91,32 @@ model CallEvent {
 }
 
 model CallDare {
-  id            String      @id @default(cuid())
-  sessionId     String
-  dareId        String      // Reference to dare list item
-  selectedBy    String      // userId who selected the dare
-  performedBy   String?     // userId who performed the dare
-  status        String      @default("selected") // selected, performed, skipped
-  createdAt     DateTime    @default(now())
-  performedAt   DateTime?
+  id                String      @id @default(cuid())
+  sessionId         String
+  dareId            String      // Reference to dare list item
+  selectedBy        String      // userId who selected/assigned the dare
+  assignedTo        String?     // userId who the dare is assigned to (null = viewing only)
+  giftId            String?     // Gift selected with the dare (monkey, pikachu, etc.)
+  giftDiamonds      Int?        // Number of diamonds for the selected gift
+  status            String      @default("viewing") // viewing, assigned, sent, done, confirmed, skipped
+  performedBy       String?     // userId who performed the dare
+  firstPaymentSent  Boolean     @default(false) // 50% payment sent when dare is sent
+  secondPaymentSent Boolean     @default(false) // 50% payment sent when dare is confirmed
+  firstTransactionId  String?   // Wallet transaction ID for first payment
+  secondTransactionId String?   // Wallet transaction ID for second payment
+  createdAt         DateTime    @default(now())
+  assignedAt        DateTime?   // When dare was assigned to user
+  sentAt            DateTime?   // When dare was sent with gift (payment made)
+  performedAt       DateTime?   // When dare was marked as done
+  confirmedAt       DateTime?   // When dare was confirmed complete (second payment)
   
-  session       CallSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  session           CallSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   
   @@map("call_dares")
   @@index([sessionId])
   @@index([selectedBy])
+  @@index([assignedTo])
+  @@index([status])
 }
 
 model CallGift {

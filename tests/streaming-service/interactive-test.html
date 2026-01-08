@@ -270,6 +270,46 @@
             <div id="roomsList" class="grid"></div>
         </div>
 
+        <!-- Wallet Management -->
+        <div class="section">
+            <h2>💰 Wallet & Balance Management</h2>
+            <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+                <p style="margin: 0; font-size: 13px; color: #666;">
+                    💡 <strong>Quick Setup for Testing:</strong> Add coins/diamonds to users before testing dare flows. 
+                    Check balance to see coins, diamonds, and redeemable INR amount.
+                </p>
+            </div>
+            <div class="two-columns">
+                <div>
+                    <div class="form-group">
+                        <label>User ID:</label>
+                        <input type="text" id="walletUserId" placeholder="user1" style="width: 150px; display: inline-block; margin-right: 10px;">
+                        <button onclick="checkBalance()">Check Balance</button>
+                    </div>
+                    <div id="balanceDisplay" style="margin-top: 10px; padding: 10px; background: white; border: 1px solid #ddd; border-radius: 5px; min-height: 80px;">
+                        <div style="color: #999; font-size: 12px;">Enter user ID and click "Check Balance"</div>
+                    </div>
+                </div>
+                <div>
+                    <div class="form-group">
+                        <label>Add Coins:</label>
+                        <input type="number" id="addCoinsAmount" placeholder="10000" min="0" style="width: 120px; display: inline-block; margin-right: 10px;">
+                    </div>
+                    <div class="form-group">
+                        <label>Add Diamonds:</label>
+                        <input type="number" id="addDiamondsAmount" placeholder="100" min="0" style="width: 120px; display: inline-block; margin-right: 10px;">
+                    </div>
+                    <button onclick="addCoinsOrDiamonds()" style="width: 100%;">Add Coins/Diamonds</button>
+                    <div style="margin-top: 10px; padding: 8px; background: #e7f3ff; border-radius: 5px; font-size: 11px;">
+                        <strong>Conversion Rate:</strong><br>
+                        1 Diamond = 50 Coins<br>
+                        1 INR = 2 Diamonds<br>
+                        <em>Diamonds convert to coins automatically</em>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- User Connection -->
         <div class="section">
             <h2>👤 User Connection (WebSocket)</h2>
@@ -324,6 +364,83 @@
             <button onclick="sendChatMessage()">Send Chat Message</button>
         </div>
 
+        <!-- Dares -->
+        <div class="section">
+            <h2>🎯 Dares with Gifts</h2>
+            <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                <h3 style="margin-top: 0; font-size: 14px;">💡 Quick Test Flow:</h3>
+                <ol style="margin: 10px 0; padding-left: 20px; font-size: 13px; line-height: 1.8;">
+                    <li>Create room with 2+ users (matched/squad call)</li>
+                    <li>Connect all users via WebSocket</li>
+                    <li>Have users join the room</li>
+                    <li><strong>View Dare:</strong> User1 views dare-1 (others see it sync)</li>
+                    <li><strong>Assign Dare:</strong> User1 assigns dare-1 to User2 (required for 3+ users, optional for 2 users)</li>
+                    <li><strong>Get Gifts:</strong> Load gift list</li>
+                    <li><strong>Send Dare:</strong> User1 sends dare-1 with gift (100% payment transferred immediately, auto-assigns for 2 users)</li>
+                </ol>
+            </div>
+            <div class="two-columns">
+                <div>
+                    <div class="form-group">
+                        <label>View Dare (Real-time Sync):</label>
+                        <input type="text" id="viewDareId" placeholder="dare-1" style="width: 150px; display: inline-block; margin-right: 10px;">
+                        <button onclick="viewDare()">View Dare</button>
+                        <button onclick="document.getElementById('viewDareId').value='dare-1'; viewDare()" style="background: #e0e0e0; padding: 5px 10px; font-size: 11px;">Quick: dare-1</button>
+                    </div>
+                    <div class="form-group">
+                        <label>Assign Dare:</label>
+                        <input type="text" id="assignDareId" placeholder="dare-1" style="width: 120px; display: inline-block; margin-right: 5px;">
+                        <input type="text" id="assignToUserId" placeholder="user2" style="width: 120px; display: inline-block; margin-right: 10px;">
+                        <button onclick="assignDare()">Assign Dare</button>
+                    </div>
+                    <div class="form-group">
+                        <label>Send Dare with Gift (100% payment):</label>
+                        <input type="text" id="sendDareId" placeholder="dare-1" style="width: 120px; display: inline-block; margin-right: 5px;">
+                        <select id="sendGiftId" style="width: 180px; display: inline-block; margin-right: 10px; padding: 8px;">
+                            <option value="">Select Gift</option>
+                        </select>
+                        <button onclick="sendDare()">Send Dare</button>
+                    </div>
+                    <button onclick="getDares()" style="margin-top: 5px; margin-right: 10px;">Get Dare List</button>
+                    <button onclick="getGifts()" style="margin-top: 5px;">Get Gift List</button>
+                    <button onclick="getDareHistory()" style="margin-top: 5px; margin-left: 10px;">Get Dare History</button>
+                </div>
+            </div>
+
+        <!-- Icebreakers -->
+        <div class="section">
+            <h2>💬 Icebreakers</h2>
+            <div style="background: #e8f4f8; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                <h3 style="margin-top: 0; font-size: 14px;">💡 How it works:</h3>
+                <ul style="margin: 10px 0; padding-left: 20px; font-size: 13px; line-height: 1.8;">
+                    <li>Click "Get Icebreaker" to receive a random conversation starter</li>
+                    <li>The icebreaker is shown only to you (not broadcasted to others)</li>
+                    <li>No rewards, no assignment - just a fun way to start conversations!</li>
+                </ul>
+            </div>
+            <div class="form-group">
+                <button onclick="getIcebreaker()" style="background: #17a2b8; padding: 12px 24px; font-size: 16px; font-weight: bold;">Get Icebreaker 💬</button>
+            </div>
+            <div id="icebreakerDisplay" style="margin-top: 15px; padding: 15px; background: #f8f9fa; border-radius: 8px; display: none;">
+                <h3 style="margin-top: 0; color: #17a2b8;">Your Icebreaker:</h3>
+                <p id="icebreakerText" style="font-size: 16px; font-style: italic; color: #495057;"></p>
+            </div>
+        </div>
+
+        <!-- Wallet & Balance Management -->
+        <div class="section">
+                <div>
+                    <div style="margin-top: 10px; padding: 10px; background: #f8d7da; border-radius: 5px;">
+                        <strong>🧪 Edge Cases:</strong>
+                        <div style="margin-top: 5px;">
+                            <button onclick="testAssignToSelf()" style="font-size: 11px; padding: 5px 8px; margin: 2px;">Assign to Self</button>
+                            <button onclick="testSendWithoutAssign()" style="font-size: 11px; padding: 5px 8px; margin: 2px;">Send w/o Assign</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Playground Info -->
         <div class="section">
             <h2>🎮 Interactive Playground</h2>
@@ -335,7 +452,8 @@
                 <li><strong>Host Features:</strong> Kick participants, start/stop broadcasting (HOSTs only)</li>
                 <li><strong>Chat:</strong> Send messages, view chat history</li>
                 <li><strong>Broadcasting:</strong> Start/stop broadcast, join as viewer</li>
-                <li><strong>Dares:</strong> Get dare list, select dares</li>
+                <li><strong>Dares:</strong> View dares (real-time sync), assign to users, send with gifts, 100% payment on send</li>
+                <li><strong>Icebreakers:</strong> Get random conversation starters (displayed only to you, no rewards)</li>
                 <li><strong>Room Info:</strong> View room details including HOST/PARTICIPANT roles</li>
             </ul>
             <p style="color: #666; margin-top: 20px; font-style: italic;">
@@ -358,6 +476,11 @@
 
         const API_URL = () => document.getElementById('apiUrl').value;
         const WS_URL = () => document.getElementById('wsUrl').value;
+        const WALLET_SERVICE_URL = () => {
+            const baseUrl = API_URL();
+            // Extract port and replace with wallet service port (3006)
+            return baseUrl.replace(':3005', ':3006').replace('localhost:3005', 'localhost:3006');
+        };
 
         function log(message, type = 'info') {
             const logDiv = document.getElementById('log');
@@ -644,7 +767,7 @@
                 if (response.ok && data.dares) {
                     log(`✅ Available Dares (${data.dares.length}):`, 'success');
                     data.dares.forEach((dare, i) => {
-                        log(`  ${i + 1}. [${dare.id}] ${dare.text}`, 'info');
+                        log(`  ${i + 1}. [${dare.id}] ${dare.text} (${dare.category})`, 'info');
                     });
                 } else {
                     log(`❌ Failed to get dares: ${JSON.stringify(data)}`, 'error');
@@ -652,6 +775,338 @@
             } catch (error) {
                 log(`❌ Error: ${error.message}`, 'error');
             }
+        }
+
+        async function getGifts() {
+            const roomId = document.getElementById('roomId').value;
+            if (!roomId) {
+                log('❌ Please enter a room ID', 'error');
+                return;
+            }
+
+            log(`🔄 Getting gifts...`, 'info');
+            
+            try {
+                const response = await fetch(`${API_URL()}/streaming/rooms/${roomId}/dares/gifts`);
+                const data = await response.json();
+                
+                if (response.ok && data.gifts) {
+                    log(`✅ Available Gifts:`, 'success');
+                    const giftSelect = document.getElementById('sendGiftId');
+                    giftSelect.innerHTML = '<option value="">Select Gift</option>';
+                    data.gifts.forEach((gift, i) => {
+                        log(`  ${i + 1}. ${gift.emoji} ${gift.name} - ${gift.diamonds} diamonds`, 'info');
+                        const option = document.createElement('option');
+                        option.value = gift.id;
+                        option.textContent = `${gift.emoji} ${gift.name} (${gift.diamonds} diamonds)`;
+                        giftSelect.appendChild(option);
+                    });
+                } else {
+                    log(`❌ Failed to get gifts: ${JSON.stringify(data)}`, 'error');
+                }
+            } catch (error) {
+                log(`❌ Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function viewDare() {
+            const roomId = document.getElementById('roomId').value;
+            const userId = document.getElementById('userId').value;
+            const dareId = document.getElementById('viewDareId').value;
+
+            if (!roomId || !userId || !dareId) {
+                log('❌ Please enter room ID, user ID, and dare ID', 'error');
+                return;
+            }
+
+            const ws = connections[userId];
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                log('❌ Please connect as user first', 'error');
+                return;
+            }
+
+            log(`🔄 Viewing dare ${dareId}...`, 'info');
+            
+            ws.send(JSON.stringify({
+                type: 'dare-view',
+                data: { roomId, dareId }
+            }));
+        }
+
+        async function assignDare() {
+            const roomId = document.getElementById('roomId').value;
+            const userId = document.getElementById('userId').value;
+            const dareId = document.getElementById('assignDareId').value;
+            const assignedToUserId = document.getElementById('assignToUserId').value;
+
+            if (!roomId || !userId || !dareId || !assignedToUserId) {
+                log('❌ Please enter room ID, user ID, dare ID, and assigned to user ID', 'error');
+                return;
+            }
+
+            const ws = connections[userId];
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                log('❌ Please connect as user first', 'error');
+                return;
+            }
+
+            log(`🔄 Assigning dare ${dareId} to ${assignedToUserId}...`, 'info');
+            
+            ws.send(JSON.stringify({
+                type: 'dare-assign',
+                data: { roomId, dareId, assignedToUserId }
+            }));
+        }
+
+        async function sendDare() {
+            const roomId = document.getElementById('roomId').value;
+            const userId = document.getElementById('userId').value;
+            const dareId = document.getElementById('sendDareId').value;
+            const giftId = document.getElementById('sendGiftId').value;
+
+            if (!roomId || !userId || !dareId || !giftId) {
+                log('❌ Please enter room ID, user ID, dare ID, and select a gift', 'error');
+                return;
+            }
+
+            const ws = connections[userId];
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                log('❌ Please connect as user first', 'error');
+                return;
+            }
+
+            log(`🔄 Sending dare ${dareId} with gift ${giftId}...`, 'info');
+            
+            ws.send(JSON.stringify({
+                type: 'dare-send',
+                data: { roomId, dareId, giftId }
+            }));
+        }
+
+
+        async function getDareHistory() {
+            const roomId = document.getElementById('roomId').value;
+            if (!roomId) {
+                log('❌ Please enter a room ID', 'error');
+                return;
+            }
+
+            log(`🔄 Getting dare history for: ${roomId}`, 'info');
+            
+            try {
+                const response = await fetch(`${API_URL()}/streaming/rooms/${roomId}/dares/history`);
+                const data = await response.json();
+                
+                if (response.ok && Array.isArray(data)) {
+                    log(`✅ Dare History (${data.length} dares):`, 'success');
+                    data.forEach((dare, i) => {
+                        const statusEmoji = {
+                            'viewing': '👁️',
+                            'assigned': '📋',
+                            'sent': '📤',
+                            'done': '✅',
+                            'confirmed': '🎉'
+                        }[dare.status] || '❓';
+                        log(`  ${i + 1}. ${statusEmoji} [${dare.dareId}] ${dare.dareText}`, 'info');
+                        log(`     Selected by: ${dare.selectedBy}, Assigned to: ${dare.assignedTo || 'N/A'}`, 'info');
+                        if (dare.giftId) {
+                            log(`     Gift: ${dare.giftId} (${dare.giftDiamonds} diamonds)`, 'info');
+                        }
+                        if (dare.status === 'sent') {
+                            log(`     Payment: ${dare.firstPaymentSent ? '100% transferred' : 'Pending'}`, 'info');
+                        }
+                    });
+                } else {
+                    log(`❌ Failed to get dare history: ${JSON.stringify(data)}`, 'error');
+                }
+            } catch (error) {
+                log(`❌ Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function getIcebreaker() {
+            const roomId = document.getElementById('roomId').value;
+            const userId = document.getElementById('userId').value;
+            
+            if (!roomId || !userId) {
+                log('❌ Please enter room ID and user ID', 'error');
+                return;
+            }
+
+            const ws = connections[userId];
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                log('❌ WebSocket not connected. Please connect first.', 'error');
+                return;
+            }
+
+            log(`💬 Requesting icebreaker for user ${userId} in room ${roomId}...`, 'info');
+            
+            ws.send(JSON.stringify({
+                type: 'get-icebreaker',
+                data: { roomId }
+            }));
+        }
+
+        async function checkBalance() {
+            const userId = document.getElementById('walletUserId').value || document.getElementById('userId').value;
+            if (!userId) {
+                log('❌ Please enter a user ID', 'error');
+                return;
+            }
+
+            try {
+                const walletServiceUrl = WALLET_SERVICE_URL();
+                const response = await fetch(`${walletServiceUrl}/test/balance?userId=${userId}`);
+                const data = await response.json();
+                
+                if (response.ok && data.balance !== undefined) {
+                    const DIAMOND_TO_COIN_RATE = 50; // 1 diamond = 50 coins
+                    const INR_TO_DIAMOND_RATE = 2; // 1 INR = 2 diamonds
+                    
+                    const coins = data.balance;
+                    const diamonds = Math.floor(coins / DIAMOND_TO_COIN_RATE);
+                    const inrRedeemable = (diamonds / INR_TO_DIAMOND_RATE).toFixed(2);
+                    
+                    document.getElementById('balanceDisplay').innerHTML = `
+                        <div style="line-height: 1.6;">
+                            <div><strong>💰 Coins:</strong> ${coins.toLocaleString()}</div>
+                            <div><strong>💎 Diamonds:</strong> ${diamonds.toLocaleString()} (approx)</div>
+                            <div><strong>💵 Redeemable (INR):</strong> ₹${inrRedeemable}</div>
+                            <div style="font-size: 10px; color: #666; margin-top: 5px;">
+                                Rate: 1 Diamond = ${DIAMOND_TO_COIN_RATE} Coins | 1 INR = ${INR_TO_DIAMOND_RATE} Diamonds
+                            </div>
+                        </div>
+                    `;
+                    log(`💰 ${userId} balance: ${coins.toLocaleString()} coins (~${diamonds} diamonds, ₹${inrRedeemable} redeemable)`, 'success');
+                } else {
+                    document.getElementById('balanceDisplay').innerHTML = `<div style="color: red;">Failed to get balance</div>`;
+                    log(`❌ Failed to get balance: ${JSON.stringify(data)}`, 'error');
+                }
+            } catch (error) {
+                document.getElementById('balanceDisplay').innerHTML = `<div style="color: red;">Error: ${error.message}</div>`;
+                log(`❌ Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function addCoinsOrDiamonds() {
+            const userId = document.getElementById('walletUserId').value || document.getElementById('userId').value;
+            const coinsAmount = parseInt(document.getElementById('addCoinsAmount').value) || 0;
+            const diamondsAmount = parseInt(document.getElementById('addDiamondsAmount').value) || 0;
+            
+            if (!userId) {
+                log('❌ Please enter a user ID', 'error');
+                return;
+            }
+            
+            if (coinsAmount <= 0 && diamondsAmount <= 0) {
+                log('❌ Please enter coins or diamonds amount', 'error');
+                return;
+            }
+
+            try {
+                const walletServiceUrl = WALLET_SERVICE_URL();
+                const DIAMOND_TO_COIN_RATE = 50; // 1 diamond = 50 coins
+                
+                // Convert diamonds to coins if provided
+                const totalCoins = coinsAmount + (diamondsAmount * DIAMOND_TO_COIN_RATE);
+                
+                log(`🔄 Adding ${totalCoins.toLocaleString()} coins (${coinsAmount > 0 ? coinsAmount + ' coins' : ''} ${diamondsAmount > 0 ? '+ ' + diamondsAmount + ' diamonds (' + (diamondsAmount * DIAMOND_TO_COIN_RATE) + ' coins)' : ''}) to ${userId}...`, 'info');
+                
+                const response = await fetch(`${walletServiceUrl}/test/wallet/add-coins`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        userId: userId,
+                        amount: totalCoins,
+                        description: `Test: Added ${coinsAmount > 0 ? coinsAmount + ' coins' : ''} ${diamondsAmount > 0 ? diamondsAmount + ' diamonds' : ''}`
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    log(`✅ Added ${totalCoins.toLocaleString()} coins to ${userId}. New balance: ${data.newBalance.toLocaleString()} coins`, 'success');
+                    // Refresh balance display
+                    await checkBalance();
+                } else {
+                    log(`❌ Failed to add coins: ${JSON.stringify(data)}`, 'error');
+                }
+            } catch (error) {
+                log(`❌ Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function testAssignToSelf() {
+            const roomId = document.getElementById('roomId').value;
+            const userId = document.getElementById('userId').value;
+            const dareId = document.getElementById('assignDareId').value || 'dare-1';
+
+            if (!roomId || !userId) {
+                log('❌ Please enter room ID and user ID', 'error');
+                return;
+            }
+
+            const ws = connections[userId];
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                log('❌ Please connect as user first', 'error');
+                return;
+            }
+
+            log(`🧪 Testing: Assign dare to self (should fail)...`, 'info');
+            
+            ws.send(JSON.stringify({
+                type: 'dare-assign',
+                data: { roomId, dareId, assignedToUserId: userId }
+            }));
+        }
+
+        async function testSendWithoutAssign() {
+            const roomId = document.getElementById('roomId').value;
+            const userId = document.getElementById('userId').value;
+            const dareId = document.getElementById('sendDareId').value || 'dare-1';
+            const giftId = document.getElementById('sendGiftId').value || 'monkey';
+
+            if (!roomId || !userId || !giftId) {
+                log('❌ Please enter room ID, user ID, and select a gift', 'error');
+                return;
+            }
+
+            const ws = connections[userId];
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                log('❌ Please connect as user first', 'error');
+                return;
+            }
+
+            log(`🧪 Testing: Send dare without assigning (should fail)...`, 'info');
+            
+            ws.send(JSON.stringify({
+                type: 'dare-send',
+                data: { roomId, dareId, giftId }
+            }));
+        }
+
+        async function testConfirmNotDone() {
+            const roomId = document.getElementById('roomId').value;
+            const userId = document.getElementById('userId').value;
+            const dareId = document.getElementById('confirmDareId').value || 'dare-1';
+
+            if (!roomId || !userId) {
+                log('❌ Please enter room ID and user ID', 'error');
+                return;
+            }
+
+            const ws = connections[userId];
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                log('❌ Please connect as user first', 'error');
+                return;
+            }
+
+            log(`🧪 Testing: Confirm dare that wasn't done (should fail)...`, 'info');
+            
+            ws.send(JSON.stringify({
+                type: 'dare-confirm',
+                data: { roomId, dareId }
+            }));
         }
 
         function connectUser() {
@@ -683,7 +1138,30 @@
             ws.onmessage = (event) => {
                 try {
                     const message = JSON.parse(event.data);
-                    log(`📨 [${userId}] Received: <pre>${JSON.stringify(message, null, 2)}</pre>`, 'received');
+                    
+                    // Handle dare-specific events with clearer messages
+                    if (message.type === 'dare-viewing') {
+                        log(`👁️ [${userId}] User ${message.data.viewedBy} is viewing dare: ${message.data.dareId}`, 'info');
+                    } else if (message.type === 'dare-assigned') {
+                        log(`🎯 [${userId}] Dare ${message.data.dareId} assigned by ${message.data.assignedBy} to ${message.data.assignedTo}`, 'info');
+                    } else if (message.type === 'dare-sent') {
+                        const autoAssignNote = message.data.assignedTo ? ` (auto-assigned to ${message.data.assignedTo})` : '';
+                        log(`📤 [${userId}] Dare ${message.data.dareId} sent with gift ${message.data.giftId} by ${message.data.sentBy}${autoAssignNote} (100% payment transferred)`, 'success');
+                    } else if (message.type === 'dare-viewed' || message.type === 'dare-assigned-success' || 
+                               message.type === 'dare-sent-success') {
+                        log(`✅ [${userId}] ${message.type}: <pre>${JSON.stringify(message.data, null, 2)}</pre>`, 'success');
+                    } else if (message.type === 'icebreaker') {
+                        // Display icebreaker in the dedicated display area
+                        const displayDiv = document.getElementById('icebreakerDisplay');
+                        const textP = document.getElementById('icebreakerText');
+                        if (displayDiv && textP) {
+                            textP.textContent = message.data.question;
+                            displayDiv.style.display = 'block';
+                        }
+                        log(`💬 [${userId}] Icebreaker: "${message.data.question}"`, 'info');
+                    } else {
+                        log(`📨 [${userId}] Received: <pre>${JSON.stringify(message, null, 2)}</pre>`, 'received');
+                    }
                 } catch (error) {
                     log(`📨 [${userId}] Received: ${event.data}`, 'received');
                 }

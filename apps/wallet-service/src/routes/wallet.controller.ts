@@ -163,5 +163,33 @@ export class WalletController {
     }
     return this.walletService.addCoinsForUser(userId, amount, description);
   }
+
+  /**
+   * Test endpoint: Deduct coins for dare payment (for testing)
+   * POST /test/transactions/dare-payment
+   * Body: { userId: string, amount: number, description?: string }
+   */
+  @Post("test/transactions/dare-payment")
+  async deductCoinsForDarePaymentTest(@Body() body: any) {
+    const { userId, amount, description } = body;
+    if (!userId || !amount) {
+      throw new HttpException("userId and amount are required", HttpStatus.BAD_REQUEST);
+    }
+    if (amount <= 0) {
+      throw new HttpException("Amount must be positive", HttpStatus.BAD_REQUEST);
+    }
+
+    try {
+      return await this.walletService.deductCoinsForDarePayment(userId, amount, description);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("Insufficient balance")) {
+        throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
+      }
+      throw new HttpException(
+        "Failed to process dare payment transaction",
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
 }
 

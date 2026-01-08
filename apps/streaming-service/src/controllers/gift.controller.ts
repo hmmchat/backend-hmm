@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Param, Body, Headers } from "@nestjs/common";
+import { Controller, Get, Post, Param, Body } from "@nestjs/common";
 import { GiftService } from "../services/gift.service.js";
 import { z } from "zod";
 
@@ -23,7 +23,6 @@ export class GiftController {
   @Post()
   async sendGift(
     @Param("roomId") roomId: string,
-    @Headers("authorization") authHeader: string | undefined,
     @Body() body: unknown
   ) {
     const parsed = sendGiftSchema.parse(body);
@@ -31,12 +30,10 @@ export class GiftController {
     
     // In test mode, allow fromUserId in body, otherwise extract from token
     let finalFromUserId = fromUserId;
-    let token = authHeader?.replace("Bearer ", "") || "";
 
     if (this.testMode) {
       // Test mode: use fromUserId from body or default
       finalFromUserId = fromUserId || "test-user-1";
-      token = "test-token"; // Dummy token for test mode
     } else {
       // Production: extract from token (would need proper JWT parsing)
       if (!fromUserId) {
@@ -49,7 +46,7 @@ export class GiftController {
       throw new Error("fromUserId is required");
     }
 
-    return await this.giftService.sendGift(roomId, finalFromUserId, toUserId, amount, token);
+    return await this.giftService.sendGift(roomId, finalFromUserId, toUserId, amount);
   }
 
   /**

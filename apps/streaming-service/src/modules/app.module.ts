@@ -11,6 +11,7 @@ import { BroadcastService } from "../services/broadcast.service.js";
 import { ChatService } from "../services/chat.service.js";
 import { DareService } from "../services/dare.service.js";
 import { GiftService } from "../services/gift.service.js";
+import { IcebreakerService } from "../services/icebreaker.service.js";
 import { WalletClientService } from "../services/wallet-client.service.js";
 import { DiscoveryClientService } from "../services/discovery-client.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
@@ -31,6 +32,7 @@ import { PrismaService } from "../prisma/prisma.service.js";
     ChatService,
     DareService,
     GiftService,
+    IcebreakerService,
     WalletClientService,
     DiscoveryClientService,
     StreamingGateway

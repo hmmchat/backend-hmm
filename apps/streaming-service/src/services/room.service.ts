@@ -1115,6 +1115,38 @@ export class RoomService {
     const participantUserIds = participants.map((p: any) => p.userId);
     const viewerUserIds = viewers.map((v: any) => v.userId);
 
+    // Cleanup pending dares: Mark sent/done dares as cancelled if not fully paid
+    // This prevents stuck dares where room ends but payment wasn't completed
+    const pendingDares = await this.prisma.callDare.findMany({
+      where: {
+        sessionId: session.id,
+        status: {
+          in: ["sent", "done"] // Dares that are sent but not fully confirmed
+        },
+        secondPaymentSent: false // Not fully paid
+      }
+    });
+
+    if (pendingDares.length > 0) {
+      this.logger.log(
+        `Room ${roomId} ending: ${pendingDares.length} pending dares found. ` +
+        `Marking as cancelled (full payment not completed).`
+      );
+      
+      await this.prisma.callDare.updateMany({
+        where: {
+          sessionId: session.id,
+          status: {
+            in: ["sent", "done"]
+          },
+          secondPaymentSent: false
+        },
+        data: {
+          status: "cancelled" // New status for room-ended-before-completion
+        }
+      });
+    }
+
     // Mark all active viewers as left (since room is ending)
     if (viewerUserIds.length > 0) {
       await this.prisma.callViewer.updateMany({

@@ -18,8 +18,7 @@ export class GiftService {
     roomId: string,
     fromUserId: string,
     toUserId: string,
-    amount: number,
-    token: string
+    amount: number
   ): Promise<{ transactionId: string; newBalance: number }> {
     if (amount <= 0) {
       throw new BadRequestException("Gift amount must be positive");
@@ -55,10 +54,13 @@ export class GiftService {
       throw new BadRequestException("Recipient is not in the room");
     }
 
-    // Deduct coins from sender via wallet-service
-    const result = await this.walletClient.deductCoins(token, amount, {
-      description: `Gift to user ${toUserId} in room ${roomId}`
-    });
+    // Transfer coins from sender to receiver via wallet-service
+    const result = await this.walletClient.transferCoins(
+      fromUserId,
+      toUserId,
+      amount,
+      `Gift to user ${toUserId} in room ${roomId}`
+    );
 
     // Create gift record
     await this.prisma.callGift.create({

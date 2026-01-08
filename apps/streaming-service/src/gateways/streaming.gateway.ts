@@ -12,6 +12,7 @@ import { BroadcastService } from "../services/broadcast.service.js";
 import { ChatService } from "../services/chat.service.js";
 import { DareService } from "../services/dare.service.js";
 import { IcebreakerService } from "../services/icebreaker.service.js";
+import { FriendClientService } from "../services/friend-client.service.js";
 import { verifyToken, AccessPayload } from "@hmm/common";
 import { JWK } from "jose";
 
@@ -36,7 +37,8 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     private broadcastService: BroadcastService,
     private chatService: ChatService,
     private dareService: DareService,
-    private icebreakerService: IcebreakerService
+    private icebreakerService: IcebreakerService,
+    private friendClient: FriendClientService
   ) {
     this.testMode = process.env.TEST_MODE === "true" || process.env.NODE_ENV === "test";
   }
@@ -250,6 +252,11 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
         // Icebreakers
         case "get-icebreaker":
           await this.handleGetIcebreaker(connectionId, userId, data, ws);
+          break;
+
+        // Friend requests (during call)
+        case "send-friend-request":
+          await this.handleSendFriendRequest(connectionId, userId, data, ws);
           break;
 
         default:
@@ -890,6 +897,90 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       this.logger.log(`User ${userId} requested icebreaker in room ${roomId}: ${icebreaker}`);
     } catch (error: any) {
       this.sendError(ws, error.message || "Failed to get icebreaker");
+    }
+  }
+
+  /**
+   * Handle send friend request (during call)
+   * User clicks "+" button on participant's video/audio placeholder
+   */
+  private async handleSendFriendRequest(
+    _connectionId: string,
+    userId: string,
+    data: any,
+    ws: any
+  ) {
+    const { roomId, toUserId } = data;
+    if (!roomId || !toUserId) {
+      this.sendError(ws, "roomId and toUserId are required");
+      return;
+    }
+
+    try {
+      // Verify user is in the room
+      const isParticipant = await this.roomService.isParticipant(roomId, userId);
+      if (!isParticipant) {
+        this.sendError(ws, `User ${userId} is not a participant in room ${roomId}`);
+        return;
+      }
+
+      // Verify target user is also in the room
+      const isTargetParticipant = await this.roomService.isParticipant(roomId, toUserId);
+      if (!isTargetParticipant) {
+        this.sendError(ws, `Target user ${toUserId} is not a participant in room ${roomId}`);
+        return;
+      }
+
+      // Send friend request via friend-service
+      const result = await this.friendClient.sendFriendRequestDuringCall(
+        userId,
+        toUserId,
+        roomId
+      );
+
+      // Send confirmation to requester only
+      this.send(ws, {
+        type: "friend-request-sent",
+        data: {
+          roomId,
+          toUserId,
+          requestId: result.requestId,
+          autoAccepted: result.autoAccepted
+        }
+      });
+
+      // If auto-accepted (mutual request), notify both users
+      if (result.autoAccepted) {
+        // Notify requester
+        this.send(ws, {
+          type: "friend-request-accepted",
+          data: {
+            roomId,
+            friendId: toUserId,
+            mutual: true
+          }
+        });
+
+        // Notify target user (if connected) - only for mutual requests
+        await this.broadcastToRoom(roomId, {
+          type: "friend-request-accepted",
+          data: {
+            roomId,
+            friendId: userId,
+            mutual: true
+          }
+        }, userId);
+      }
+      // NOTE: No notification sent to target user for pending requests
+      // User B will see the request in their "Pending Requests" tab when they check
+
+      this.logger.log(
+        `Friend request sent from ${userId} to ${toUserId} in room ${roomId} ` +
+        `(autoAccepted: ${result.autoAccepted})`
+      );
+    } catch (error: any) {
+      this.logger.error(`Error sending friend request: ${error.message}`);
+      this.sendError(ws, error.message || "Failed to send friend request");
     }
   }
 

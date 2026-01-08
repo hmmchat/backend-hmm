@@ -1,0 +1,67 @@
+// Prisma schema for friend-service
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+enum FriendRequestStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  CANCELLED
+  BLOCKED
+}
+
+model FriendRequest {
+  id            String   @id @default(cuid())
+  fromUserId    String
+  toUserId      String
+  status        FriendRequestStatus @default(PENDING)
+  message       String?  // Optional message with request
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  acceptedAt   DateTime?
+  rejectedAt   DateTime?
+  expiresAt    DateTime? // Auto-expire after 30 days
+  
+  @@unique([fromUserId, toUserId]) // Prevent duplicate requests
+  @@index([fromUserId, status])
+  @@index([toUserId, status])
+  @@index([createdAt])
+  @@index([expiresAt])
+  @@map("friend_requests")
+}
+
+model Friend {
+  id            String   @id @default(cuid())
+  userId1       String   // Smaller userId (for consistency)
+  userId2       String   // Larger userId
+  createdAt     DateTime @default(now())
+  
+  @@unique([userId1, userId2])
+  @@index([userId1])
+  @@index([userId2])
+  @@map("friends")
+}
+
+model FriendMessage {
+  id            String   @id @default(cuid())
+  fromUserId    String
+  toUserId      String
+  message       String
+  isRead        Boolean  @default(false)
+  readAt        DateTime?
+  transactionId String?  // Wallet transaction if sent to non-friend (10 coins)
+  createdAt     DateTime @default(now())
+  
+  @@index([fromUserId, toUserId, createdAt])
+  @@index([toUserId, isRead])
+  @@index([createdAt])
+  @@map("friend_messages")
+}
+

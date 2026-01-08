@@ -2,6 +2,7 @@ import { Injectable, Logger, NotFoundException, BadRequestException } from "@nes
 import { PrismaService } from "../prisma/prisma.service.js";
 import { MediasoupService } from "./mediasoup.service.js";
 import { DiscoveryClientService } from "./discovery-client.service.js";
+import { FriendClientService } from "./friend-client.service.js";
 import { types as MediasoupTypes } from "mediasoup";
 import { v4 as uuidv4 } from "uuid";
 
@@ -37,7 +38,8 @@ export class RoomService {
   constructor(
     private prisma: PrismaService,
     private mediasoup: MediasoupService,
-    private discoveryClient: DiscoveryClientService
+    private discoveryClient: DiscoveryClientService,
+    private friendClient: FriendClientService
   ) {}
 
   /**

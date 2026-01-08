@@ -8,8 +8,9 @@
 - Auth Service: `http://localhost:3001`
 - User Service: `http://localhost:3002`
 - Moderation Service: `http://localhost:3003` (called automatically by user-service)
-- Wallet Service: `http://localhost:3005`
+- Wallet Service: `http://localhost:3006`
 - Discovery Service: `http://localhost:3004`
+- Friend Service: `http://localhost:3007`
 
 All endpoints accept `Content-Type: application/json` and return JSON responses.
 
@@ -1003,7 +1004,7 @@ All signup endpoints require:
 | `/gender-filters` | GET | Yes | Get available gender filters |
 | `/gender-filters/apply` | POST | Yes | Purchase and activate gender filter |
 
-### Wallet Service (http://localhost:3005)
+### Wallet Service (http://localhost:3006)
 
 | Endpoint | Method | Auth | Purpose |
 |----------|--------|------|---------|
@@ -1046,6 +1047,25 @@ All signup endpoints require:
 | `/moderation/check-image` | POST | No | Check image (called by user-service, not directly) |
 
 **Note:** Frontend should not call moderation service directly. It's called automatically by user-service when photos are uploaded.
+
+### Friend Service (http://localhost:3007)
+
+| Endpoint | Method | Auth | Purpose |
+|----------|--------|------|---------|
+| `/me/friends/requests/pending` | GET | Yes | Get incoming friend requests |
+| `/me/friends/requests/sent` | GET | Yes | Get outgoing friend requests (paginated) |
+| `/me/friends/requests/:requestId/messages` | GET | Yes | Get messages for a request |
+| `/me/friends/requests/:requestId/accept` | POST | Yes | Accept friend request |
+| `/me/friends/requests/:requestId/reject` | POST | Yes | Reject friend request |
+| `/me/friends` | GET | Yes | Get friends list (paginated) |
+| `/me/friends/:friendId/unfriend` | POST | Yes | Unfriend a user |
+| `/me/friends/:friendId/block` | POST | Yes | Block a user |
+| `/me/friends/:friendId/messages` | POST | Yes | Send message to friend (free) |
+| `/me/friends/:friendId/messages` | GET | Yes | Get message history (paginated) |
+| `/me/friends/:friendId/messages/read` | POST | Yes | Mark messages as read |
+| `/me/friends/requests/:requestId/messages` | POST | Yes | Send message to non-friend (10 coins) |
+
+**Note:** Friend requests can ONLY be sent during video calls via "+" button (WebSocket integration via streaming-service). There is no public API endpoint for sending friend requests. See Friend Service section below for details.
 
 ---
 
@@ -1705,6 +1725,694 @@ Content-Type: application/json
 
 ---
 
+## Friend Service Endpoints
+
+**Base URL:** `http://localhost:3007`
+
+### Overview
+
+The Friend Service handles friend requests, friendships, and messaging between users.
+
+**Key Features:**
+- **In-Call Friend Requests ONLY**: Friend requests can ONLY be sent during video calls via "+" button on participant's video/audio placeholder
+- **No Notifications**: When a user sends a friend request, the target user receives NO notification. They will see the request in their "Pending Requests" tab
+- **Auto-Accept Mutual Requests**: When both users send requests to each other during a call, both requests are automatically accepted
+- **Messaging**:
+  - Free messaging between friends
+  - Paid messaging to non-friends (10 coins per message)
+  - Message persistence and history
+  - Read receipts
+- **Unlimited Friends**: No maximum friend limit
+- **Request Expiration**: Friend requests expire after 30 days
+
+### Authentication
+
+All endpoints require:
+```
+Authorization: Bearer {accessToken}
+```
+
+---
+
+### Friend Requests
+
+#### ⚠️ Important: How Friend Requests Work
+
+**Friend requests can ONLY be sent during video calls** via the "+" button on a participant's video/audio placeholder. There is NO public API endpoint for users to send friend requests directly.
+
+**Flow:**
+1. User A and User B are in a video call (streaming-service)
+2. User A clicks the "+" button on User B's video/audio placeholder
+3. Frontend sends WebSocket message to streaming-service: `send-friend-request`
+4. Streaming-service calls friend-service internal endpoint
+5. If User B also sent request to User A, both are auto-accepted
+6. Otherwise, User B will see the request in their "Pending Requests" tab (no notification)
+
+**WebSocket Integration (via Streaming Service):**
+
+During video calls, send friend requests via WebSocket:
+
+**Message Type:** `send-friend-request`
+```json
+{
+  "type": "send-friend-request",
+  "data": {
+    "roomId": "string",
+    "toUserId": "string"
+  }
+}
+```
+
+**Response:** `friend-request-sent`
+```json
+{
+  "type": "friend-request-sent",
+  "data": {
+    "roomId": "string",
+    "toUserId": "string",
+    "requestId": "string",
+    "autoAccepted": false
+  }
+}
+```
+
+**If Auto-Accepted (Mutual Request):** `friend-request-accepted`
+```json
+{
+  "type": "friend-request-accepted",
+  "data": {
+    "roomId": "string",
+    "friendId": "string",
+    "mutual": true
+  }
+}
+```
+
+**Note:** If the request is pending (not auto-accepted), the target user receives NO notification. They will see the request in their "Pending Requests" tab when they check.
+
+---
+
+#### 1. Get Pending Requests (Incoming)
+
+Get all incoming friend requests that are pending acceptance.
+
+**Endpoint:** `GET /me/friends/requests/pending`
+
+**Response:**
+```json
+{
+  "requests": [
+    {
+      "id": "string",
+      "fromUserId": "string",
+      "fromUser": {
+        "id": "string",
+        "username": "string",
+        "displayPictureUrl": "string | null"
+      },
+      "message": "string | null",
+      "createdAt": "2024-01-01T00:00:00Z",
+      "expiresAt": "2024-01-31T00:00:00Z"
+    }
+  ]
+}
+```
+
+**Example:**
+```javascript
+const response = await fetch('http://localhost:3007/me/friends/requests/pending', {
+  headers: {
+    'Authorization': `Bearer ${accessToken}`
+  }
+});
+const data = await response.json();
+// data.requests contains array of pending requests
+```
+
+---
+
+#### 2. Get Sent Requests (Outgoing)
+
+Get all friend requests you've sent that are still pending.
+
+**Endpoint:** `GET /me/friends/requests/sent`
+
+**Query Parameters:**
+- `limit` (optional): Number of requests to return (default: 50, max: 100)
+- `cursor` (optional): Pagination cursor from previous response
+
+**Response:**
+```json
+{
+  "requests": [
+    {
+      "id": "string",
+      "toUserId": "string",
+      "toUser": {
+        "id": "string",
+        "username": "string",
+        "displayPictureUrl": "string | null"
+      },
+      "message": "string | null",
+      "createdAt": "2024-01-01T00:00:00Z",
+      "expiresAt": "2024-01-31T00:00:00Z"
+    }
+  ],
+  "nextCursor": "string | null",
+  "hasMore": false
+}
+```
+
+**Example (with pagination):**
+```javascript
+const response = await fetch('http://localhost:3007/me/friends/requests/sent?limit=20&cursor=abc123', {
+  headers: {
+    'Authorization': `Bearer ${accessToken}`
+  }
+});
+const data = await response.json();
+// Use data.nextCursor for next page if data.hasMore is true
+```
+
+---
+
+#### 3. Get Messages for a Request
+
+Get all messages sent with a pending friend request (nudging messages).
+
+**Endpoint:** `GET /me/friends/requests/:requestId/messages`
+
+**Response:**
+```json
+{
+  "messages": [
+    {
+      "id": "string",
+      "fromUserId": "string",
+      "toUserId": "string",
+      "message": "string",
+      "isRead": false,
+      "readAt": "2024-01-01T00:00:00Z | null",
+      "transactionId": "string | null",
+      "createdAt": "2024-01-01T00:00:00Z"
+    }
+  ]
+}
+```
+
+**Example:**
+```javascript
+const response = await fetch(`http://localhost:3007/me/friends/requests/${requestId}/messages`, {
+  headers: {
+    'Authorization': `Bearer ${accessToken}`
+  }
+});
+const data = await response.json();
+```
+
+---
+
+#### 4. Accept Friend Request
+
+Accept a pending friend request.
+
+**Endpoint:** `POST /me/friends/requests/:requestId/accept`
+
+**Response:**
+```json
+{
+  "ok": true,
+  "friendship": {
+    "id": "string",
+    "friendId": "string",
+    "friend": {
+      "id": "string",
+      "username": "string",
+      "displayPictureUrl": "string | null"
+    },
+    "createdAt": "2024-01-01T00:00:00Z"
+  }
+}
+```
+
+**Example:**
+```javascript
+const response = await fetch(`http://localhost:3007/me/friends/requests/${requestId}/accept`, {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${accessToken}`,
+    'Content-Type': 'application/json'
+  }
+});
+const data = await response.json();
+```
+
+---
+
+#### 5. Reject Friend Request
+
+Reject a pending friend request.
+
+**Endpoint:** `POST /me/friends/requests/:requestId/reject`
+
+**Response:**
+```json
+{
+  "ok": true
+}
+```
+
+**Example:**
+```javascript
+const response = await fetch(`http://localhost:3007/me/friends/requests/${requestId}/reject`, {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${accessToken}`,
+    'Content-Type': 'application/json'
+  }
+});
+```
+
+---
+
+### Friends
+
+#### 6. Get Friends List
+
+Get all friends (accepted friendships).
+
+**Endpoint:** `GET /me/friends`
+
+**Query Parameters:**
+- `limit` (optional): Number of friends to return (default: 50, max: 100)
+- `cursor` (optional): Pagination cursor from previous response
+
+**Response:**
+```json
+{
+  "friends": [
+    {
+      "friendId": "string",
+      "friend": {
+        "id": "string",
+        "username": "string",
+        "displayPictureUrl": "string | null"
+      },
+      "createdAt": "2024-01-01T00:00:00Z"
+    }
+  ],
+  "nextCursor": "string | null",
+  "hasMore": false
+}
+```
+
+**Example (with pagination):**
+```javascript
+const response = await fetch('http://localhost:3007/me/friends?limit=50&cursor=abc123', {
+  headers: {
+    'Authorization': `Bearer ${accessToken}`
+  }
+});
+const data = await response.json();
+// Use data.nextCursor for next page if data.hasMore is true
+```
+
+---
+
+#### 7. Unfriend a User
+
+Remove a friendship (unfriend).
+
+**Endpoint:** `POST /me/friends/:friendId/unfriend`
+
+**Response:**
+```json
+{
+  "ok": true
+}
+```
+
+**Example:**
+```javascript
+const response = await fetch(`http://localhost:3007/me/friends/${friendId}/unfriend`, {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${accessToken}`,
+    'Content-Type': 'application/json'
+  }
+});
+```
+
+---
+
+#### 8. Block a User
+
+Block a user (prevents future friend requests and interactions).
+
+**Endpoint:** `POST /me/friends/:friendId/block`
+
+**Response:**
+```json
+{
+  "ok": true
+}
+```
+
+**Example:**
+```javascript
+const response = await fetch(`http://localhost:3007/me/friends/${friendId}/block`, {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${accessToken}`,
+    'Content-Type': 'application/json'
+  }
+});
+```
+
+---
+
+### Messaging
+
+#### 9. Send Message to Friend (Free)
+
+Send a message to an accepted friend. This is FREE - no coins deducted.
+
+**Endpoint:** `POST /me/friends/:friendId/messages`
+
+**Request:**
+```json
+{
+  "message": "Hello friend! How are you?"
+}
+```
+
+**Response:**
+```json
+{
+  "messageId": "string"
+}
+```
+
+**Example:**
+```javascript
+const response = await fetch(`http://localhost:3007/me/friends/${friendId}/messages`, {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${accessToken}`,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    message: "Hello friend! How are you?"
+  })
+});
+const data = await response.json();
+```
+
+**Note:** Message must be 1-1000 characters.
+
+---
+
+#### 10. Send Message to Non-Friend (10 Coins)
+
+Send a message to someone who sent you a friend request (nudge them to accept). This costs **10 coins** and will fail if you have insufficient balance.
+
+**Endpoint:** `POST /me/friends/requests/:requestId/messages`
+
+**Request:**
+```json
+{
+  "message": "Hey! Would love to connect with you."
+}
+```
+
+**Response:**
+```json
+{
+  "messageId": "string",
+  "newBalance": 90
+}
+```
+
+**Error Response (Insufficient Balance):**
+```json
+{
+  "statusCode": 400,
+  "message": "Insufficient coins to send message. Required: 10 coins"
+}
+```
+
+**Example:**
+```javascript
+const response = await fetch(`http://localhost:3007/me/friends/requests/${requestId}/messages`, {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${accessToken}`,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    message: "Hey! Would love to connect with you."
+  })
+});
+
+if (!response.ok) {
+  const error = await response.json();
+  if (error.message.includes('Insufficient coins')) {
+    // Show "Insufficient balance" message to user
+  }
+}
+
+const data = await response.json();
+// data.newBalance shows updated wallet balance
+```
+
+**Note:**
+- Message must be 1-1000 characters
+- Costs 10 coins (deducted automatically from wallet)
+- Can only send to users who have sent you a friend request
+- Each message costs 10 coins (no daily limits)
+
+---
+
+#### 11. Get Message History
+
+Get message history with a friend.
+
+**Endpoint:** `GET /me/friends/:friendId/messages`
+
+**Query Parameters:**
+- `limit` (optional): Number of messages to return (default: 50, max: 100)
+- `cursor` (optional): Pagination cursor from previous response
+
+**Response:**
+```json
+{
+  "messages": [
+    {
+      "id": "string",
+      "fromUserId": "string",
+      "toUserId": "string",
+      "message": "string",
+      "isRead": false,
+      "readAt": "2024-01-01T00:00:00Z | null",
+      "transactionId": "string | null",
+      "createdAt": "2024-01-01T00:00:00Z"
+    }
+  ],
+  "nextCursor": "string | null",
+  "hasMore": false
+}
+```
+
+**Note:** Messages are returned in reverse chronological order (newest first). Use `cursor` for pagination.
+
+**Example (with pagination):**
+```javascript
+const response = await fetch(`http://localhost:3007/me/friends/${friendId}/messages?limit=50&cursor=abc123`, {
+  headers: {
+    'Authorization': `Bearer ${accessToken}`
+  }
+});
+const data = await response.json();
+// Use data.nextCursor for older messages if data.hasMore is true
+```
+
+---
+
+#### 12. Mark Messages as Read
+
+Mark all unread messages from a friend as read.
+
+**Endpoint:** `POST /me/friends/:friendId/messages/read`
+
+**Response:**
+```json
+{
+  "ok": true,
+  "markedCount": 5
+}
+```
+
+**Example:**
+```javascript
+const response = await fetch(`http://localhost:3007/me/friends/${friendId}/messages/read`, {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${accessToken}`,
+    'Content-Type': 'application/json'
+  }
+});
+const data = await response.json();
+// data.markedCount shows how many messages were marked as read
+```
+
+---
+
+### Complete Friend Flow Example
+
+**Frontend Implementation:**
+
+```javascript
+// 1. During video call - Send friend request via WebSocket
+// (Handled by streaming-service WebSocket, see STREAMING_SERVICE_FRONTEND.md)
+
+// 2. Get pending requests (show in "Pending Requests" tab)
+async function getPendingRequests(accessToken) {
+  const response = await fetch('http://localhost:3007/me/friends/requests/pending', {
+    headers: { 'Authorization': `Bearer ${accessToken}` }
+  });
+  return await response.json();
+}
+
+// 3. Accept a friend request
+async function acceptFriendRequest(accessToken, requestId) {
+  const response = await fetch(`http://localhost:3007/me/friends/requests/${requestId}/accept`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    }
+  });
+  return await response.json();
+}
+
+// 4. Get sent requests (show in "Sent Requests" tab)
+async function getSentRequests(accessToken, cursor) {
+  const url = cursor 
+    ? `http://localhost:3007/me/friends/requests/sent?cursor=${cursor}`
+    : 'http://localhost:3007/me/friends/requests/sent';
+  const response = await fetch(url, {
+    headers: { 'Authorization': `Bearer ${accessToken}` }
+  });
+  return await response.json();
+}
+
+// 5. Send message to non-friend (nudge them - costs 10 coins)
+async function sendNudgeMessage(accessToken, requestId, message) {
+  const response = await fetch(`http://localhost:3007/me/friends/requests/${requestId}/messages`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ message })
+  });
+  
+  if (!response.ok) {
+    const error = await response.json();
+    if (error.message.includes('Insufficient coins')) {
+      throw new Error('Insufficient balance. You need 10 coins to send this message.');
+    }
+    throw error;
+  }
+  
+  return await response.json();
+}
+
+// 6. Get friends list
+async function getFriends(accessToken, cursor) {
+  const url = cursor
+    ? `http://localhost:3007/me/friends?cursor=${cursor}`
+    : 'http://localhost:3007/me/friends';
+  const response = await fetch(url, {
+    headers: { 'Authorization': `Bearer ${accessToken}` }
+  });
+  return await response.json();
+}
+
+// 7. Send message to friend (free)
+async function sendMessageToFriend(accessToken, friendId, message) {
+  const response = await fetch(`http://localhost:3007/me/friends/${friendId}/messages`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ message })
+  });
+  return await response.json();
+}
+
+// 8. Get message history with friend
+async function getMessageHistory(accessToken, friendId, cursor) {
+  const url = cursor
+    ? `http://localhost:3007/me/friends/${friendId}/messages?cursor=${cursor}`
+    : `http://localhost:3007/me/friends/${friendId}/messages`;
+  const response = await fetch(url, {
+    headers: { 'Authorization': `Bearer ${accessToken}` }
+  });
+  return await response.json();
+}
+
+// 9. Mark messages as read
+async function markMessagesAsRead(accessToken, friendId) {
+  const response = await fetch(`http://localhost:3007/me/friends/${friendId}/messages/read`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    }
+  });
+  return await response.json();
+}
+```
+
+---
+
+### Friend Service UI Flow
+
+**Three Main Tabs in Friends Page:**
+
+1. **Pending Requests Tab** (Incoming)
+   - Show all pending friend requests received
+   - Display: User info, optional message, accept/reject buttons
+   - Show messages sent with request (nudging messages)
+
+2. **Sent Requests Tab** (Outgoing)
+   - Show all friend requests you've sent that are pending
+   - Display: User info, option to send nudge message (costs 10 coins)
+   - Show messages you've sent (nudging messages)
+
+3. **Friends Tab**
+   - Show all accepted friends
+   - Display: User info, chat button
+   - Support unlimited friends (no limit)
+
+**In-Call Friend Request Flow:**
+
+1. User A and User B are in a video call
+2. User A clicks "+" button on User B's video/audio placeholder
+3. Frontend sends WebSocket message: `send-friend-request`
+4. If User B also sent request to User A:
+   - Both requests auto-accepted
+   - Both users become friends immediately
+   - WebSocket event: `friend-request-accepted` (mutual: true)
+5. If only User A sent request:
+   - Request is pending
+   - User B receives NO notification
+   - User B will see request in "Pending Requests" tab when they check
+
+---
+
 ## ⚠️ Test Endpoints (DO NOT USE IN PRODUCTION)
 
 **IMPORTANT:** The following endpoints are **FOR TESTING ONLY** and should **NEVER** be used by the frontend application. These endpoints bypass authentication and are only available for backend testing purposes.
@@ -1790,7 +2498,7 @@ Content-Type: application/json
 - Brand logos: `logoUrl` field is available but may be `null` until production CDN is set up
 - Photo moderation happens automatically - frontend just needs to handle error messages
 - Gender can only be changed once from `PREFER_NOT_TO_SAY` to any other value
-- **Services are independently deployable** - Frontend calls each service directly (auth-service, user-service, wallet-service, discovery-service, etc.)
+- **Services are independently deployable** - Frontend calls each service directly (auth-service, user-service, wallet-service, discovery-service, friend-service, etc.)
 - **Gender Filter:** Users with `PREFER_NOT_TO_SAY` gender can only use the "All Gender" option (default/unfiltered state)
 - **Wallet:** Wallet is automatically created with 0 balance when first accessed (lazy initialization)
 - **Live Meetings:** Count includes users with statuses: `AVAILABLE`, `IN_SQUAD`, `IN_SQUAD_AVAILABLE`, `IN_BROADCAST`, `IN_BROADCAST_AVAILABLE`
@@ -1800,4 +2508,12 @@ Content-Type: application/json
   - Single city only (users can set one preferred city at a time)
   - City search and "locate me" use OpenStreetMap Nominatim API (public, no API key required)
   - Popular cities list shows cities sorted by user count (from users who have set preferred city)
+- **Friend Requests:**
+  - Friend requests can ONLY be sent during video calls via "+" button (no public API endpoint)
+  - No notifications sent when friend request is received (user sees in "Pending Requests" tab)
+  - Mutual requests (both users send to each other) are auto-accepted
+  - Unlimited friends allowed (no maximum limit)
+  - Requests expire after 30 days
+  - Messages to friends are FREE (unlimited)
+  - Messages to non-friends cost 10 coins each (no daily limits)
 - **⚠️ Test Endpoints:** Do NOT use any endpoints under `/test/` or `/users/test/` or `/discovery/test/` in production frontend code. These are for backend testing only and bypass authentication.

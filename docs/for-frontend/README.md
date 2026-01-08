@@ -5,7 +5,7 @@ This folder contains all documentation needed for frontend team to integrate wit
 ## 📚 Start Here
 
 1. **`FRONTEND_SETUP.md`** ⭐⭐⭐ - **START HERE!** Setup guide for all backend services
-2. **`FRONTEND_INTEGRATION.md`** - Complete API documentation for all services
+2. **`FRONTEND_INTEGRATION.md`** - Complete API documentation for all services (includes Friend Service)
 3. **`STREAMING_SERVICE_FRONTEND.md`** 🎥 - Streaming service integration guide (video calls)
 4. **`STREAMING_VIDEO_CALL_EXPLAINED.md`** 📹 - How video calls work (simple explanation)
 5. **`DEPLOYMENT_GUIDE.md`** - Deployment options and workflows (optional)
@@ -33,8 +33,9 @@ docs/for-frontend/
 ## 🆘 Need Help?
 
 - Setup issues? See `FRONTEND_SETUP.md` troubleshooting section
-- API questions? See `FRONTEND_INTEGRATION.md`
+- API questions? See `FRONTEND_INTEGRATION.md` (includes Friend Service endpoints)
 - Video calls? See `STREAMING_SERVICE_FRONTEND.md` and `STREAMING_VIDEO_CALL_EXPLAINED.md`
+- Friend requests/messaging? See Friend Service section in `FRONTEND_INTEGRATION.md`
 - Deployment questions? See `DEPLOYMENT_GUIDE.md`
 - Contact backend team for support
 

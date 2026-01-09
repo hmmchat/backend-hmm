@@ -643,7 +643,7 @@
             const callType = document.getElementById('callType').value;
             
             if (userIds.length < 2 || userIds.length > 4) {
-                log('❌ Room must have 2-4 users', 'error');
+                log('❌ Room must have 2-4 users to be created (single users cannot create rooms)', 'error');
                 return;
             }
 

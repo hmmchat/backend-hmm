@@ -96,19 +96,19 @@ OFFLINE (Default/Initial State)
 ### 5. IN_SQUAD → AVAILABLE
 **Trigger**: User leaves room or room ends
 - **Condition**: 
-  - User manually leaves
-  - Room ends (all users leave or room auto-ends when only 1 participant remains)
+  - User manually leaves (if others remain, room continues; if last one, room ends)
+  - Room ends (all users leave - 0 participants remain)
 - **Action**: User returns to discovery/matchmaking pool (still in loading/matchmaking screen)
-- **Note**: Room automatically ends if only 1 participant remains
+- **Note**: Room only ends when 0 participants remain. Single users can stay in existing rooms.
 - **Next possible transition**: `AVAILABLE` → `OFFLINE` (when user exits matchmaking screen)
 
 ### 6. IN_BROADCAST → AVAILABLE
 **Trigger**: User leaves broadcast or broadcast ends
 - **Condition**: 
-  - User manually leaves
-  - Broadcast ends (all participants leave or room auto-ends)
+  - User manually leaves (if others remain, room continues; if last one, room ends)
+  - Broadcast ends (all participants leave - 0 participants remain)
 - **Action**: User returns to discovery/matchmaking pool (still in loading/matchmaking screen)
-- **Note**: Room automatically ends if only 1 participant remains
+- **Note**: Room only ends when 0 participants remain. Single users can stay in existing rooms.
 - **Next possible transition**: `AVAILABLE` → `OFFLINE` (when user exits matchmaking screen)
 
 ### 10. AVAILABLE → OFFLINE
@@ -150,16 +150,16 @@ OFFLINE (Default/Initial State)
 3. **Users cannot be in multiple active rooms** simultaneously
 
 ### Room End Rules
-1. **Room cannot exist with only 1 person**
-   - If a user leaves and only 1 participant remains, that person is automatically removed
-   - Room is automatically ended
+1. **Single users CAN stay in rooms once created**
+   - If a user leaves and only 1 participant remains, that person CAN stay in the room
+   - Room continues with single user (does NOT auto-end)
 2. **All participants' statuses update** when room ends:
    - Participants (`IN_SQUAD`/`IN_BROADCAST`) → `AVAILABLE`
    - Viewers (`WATCHING_HMM_TV`) → `OFFLINE`
 3. **Room ends when**:
-   - All participants leave
-   - Only 1 participant remains (auto-ended)
+   - 0 participants remain (all participants leave)
    - Broadcast ends (if applicable)
+4. **Room creation requires 2+ users** - Single users cannot create rooms, but can stay once room exists
 
 ### Viewer Rules
 1. **Viewers can only watch when broadcast is active** (`IN_BROADCAST` status)

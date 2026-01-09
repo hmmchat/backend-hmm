@@ -697,8 +697,12 @@ INVALID_ROOM_RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST "$STREAM
     }")
 
 HTTP_STATUS=$(echo "$INVALID_ROOM_RESPONSE" | grep "HTTP_STATUS" | cut -d: -f2)
+ERROR_MSG=$(echo "$INVALID_ROOM_RESPONSE" | grep -v "HTTP_STATUS" | jq -r '.message // empty' 2>/dev/null)
 if [ "$HTTP_STATUS" = "400" ]; then
-    test_result 0 "Create room with 1 user rejected (400)"
+    test_result 0 "Create room with 1 user rejected (400) - Single users cannot create rooms"
+    if [[ "$ERROR_MSG" == *"2"* ]] && [[ "$ERROR_MSG" == *"participants"* ]]; then
+        echo "  Error message confirms: Minimum 2 participants required"
+    fi
 else
     test_result 1 "Create room validation failed (expected 400, got $HTTP_STATUS)"
 fi
@@ -1886,8 +1890,61 @@ else
 fi
 echo ""
 
-# Test 51: View Dare (Real-time Sync)
-echo -e "${CYAN}Test 51: View Dare (Real-time Sync)${NC}"
+# Test 51: Single User Can Stay in Room (After Others Leave)
+echo -e "${CYAN}Test 51: Single User Can Stay in Room (After Others Leave)${NC}"
+SINGLE_USER_ROOM_RESPONSE=$(curl -s -X POST "$STREAMING_SERVICE_URL/streaming/rooms" \
+    -H "Content-Type: application/json" \
+    -d "{
+        \"userIds\": [\"test-single-stay-1-$TIMESTAMP\", \"test-single-stay-2-$TIMESTAMP\"],
+        \"callType\": \"matched\"
+    }")
+
+SINGLE_USER_ROOM_ID=$(echo "$SINGLE_USER_ROOM_RESPONSE" | jq -r '.roomId // empty' 2>/dev/null)
+SINGLE_USER_ID="test-single-stay-1-$TIMESTAMP"
+OTHER_USER_ID="test-single-stay-2-$TIMESTAMP"
+
+if [ ! -z "$SINGLE_USER_ROOM_ID" ] && [ "$SINGLE_USER_ROOM_ID" != "null" ]; then
+    # Both users join the room
+    SINGLE_USER_JOIN_MSG=$(jq -n --arg roomId "$SINGLE_USER_ROOM_ID" '{type: "join-room", data: {roomId: $roomId}}')
+    websocket_send "$SINGLE_USER_ID" "$SINGLE_USER_JOIN_MSG" 5 > /dev/null
+    sleep 1
+    
+    OTHER_USER_JOIN_MSG=$(jq -n --arg roomId "$SINGLE_USER_ROOM_ID" '{type: "join-room", data: {roomId: $roomId}}')
+    websocket_send "$OTHER_USER_ID" "$OTHER_USER_JOIN_MSG" 5 > /dev/null
+    sleep 2
+    
+    # Verify both users are in room
+    BEFORE_LEAVE_INFO=$(curl -s "$STREAMING_SERVICE_URL/streaming/rooms/$SINGLE_USER_ROOM_ID")
+    BEFORE_COUNT=$(echo "$BEFORE_LEAVE_INFO" | jq -r '.participantCount // 0' 2>/dev/null)
+    
+    if [ "$BEFORE_COUNT" = "2" ]; then
+        # Other user leaves
+        OTHER_USER_LEAVE_MSG=$(jq -n --arg roomId "$SINGLE_USER_ROOM_ID" '{type: "leave-room", data: {roomId: $roomId}}')
+        websocket_send "$OTHER_USER_ID" "$OTHER_USER_LEAVE_MSG" 5 > /dev/null
+        sleep 2
+        
+        # Verify single user can stay in room (room should NOT auto-end)
+        AFTER_LEAVE_INFO=$(curl -s "$STREAMING_SERVICE_URL/streaming/rooms/$SINGLE_USER_ROOM_ID")
+        AFTER_STATUS=$(echo "$AFTER_LEAVE_INFO" | jq -r '.status // empty' 2>/dev/null)
+        AFTER_COUNT=$(echo "$AFTER_LEAVE_INFO" | jq -r '.participantCount // 0' 2>/dev/null)
+        ROOM_EXISTS=$(echo "$AFTER_LEAVE_INFO" | jq -r '.exists // false' 2>/dev/null)
+        
+        if [ "$ROOM_EXISTS" = "true" ] && [ "$AFTER_STATUS" = "IN_SQUAD" ] && [ "$AFTER_COUNT" = "1" ]; then
+            test_result 0 "Single user can stay in room after others leave (room continues with 1 participant)"
+            echo "  Status: $AFTER_STATUS, Participants: $AFTER_COUNT (room continues, not auto-ended)"
+        else
+            test_result 1 "Room should continue with 1 participant, but status is $AFTER_STATUS, count is $AFTER_COUNT, exists is $ROOM_EXISTS"
+        fi
+    else
+        test_result 1 "Failed to setup room with 2 participants (got $BEFORE_COUNT)"
+    fi
+else
+    test_result 1 "Failed to create room for single user stay test"
+fi
+echo ""
+
+# Test 52: View Dare (Real-time Sync)
+echo -e "${CYAN}Test 52: View Dare (Real-time Sync)${NC}"
 VIEW_DARE_ROOM_ID=$(curl -s -X POST "$STREAMING_SERVICE_URL/streaming/rooms" \
     -H "Content-Type: application/json" \
     -d "{
@@ -1912,8 +1969,8 @@ else
 fi
 echo ""
 
-# Test 52: Get Gift List
-echo -e "${CYAN}Test 52: Get Gift List${NC}"
+# Test 53: Get Gift List
+echo -e "${CYAN}Test 53: Get Gift List${NC}"
 if [ ! -z "$VIEW_DARE_ROOM_ID" ] && [ "$VIEW_DARE_ROOM_ID" != "null" ]; then
     GIFTS_RESPONSE=$(curl -s "$STREAMING_SERVICE_URL/streaming/rooms/$VIEW_DARE_ROOM_ID/dares/gifts")
     GIFTS_COUNT=$(echo "$GIFTS_RESPONSE" | jq -r '.gifts | length // 0' 2>/dev/null)
@@ -1929,8 +1986,8 @@ else
 fi
 echo ""
 
-# Test 53: Assign Dare to User (Manual assignment - still works for 2+ users)
-echo -e "${CYAN}Test 53: Assign Dare to User (Manual assignment)${NC}"
+# Test 54: Assign Dare to User (Manual assignment - still works for 2+ users)
+echo -e "${CYAN}Test 54: Assign Dare to User (Manual assignment)${NC}"
 ASSIGN_DARE_ROOM_ID=$(curl -s -X POST "$STREAMING_SERVICE_URL/streaming/rooms" \
     -H "Content-Type: application/json" \
     -d "{

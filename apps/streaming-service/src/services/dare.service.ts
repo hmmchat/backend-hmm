@@ -243,6 +243,11 @@ export class DareService {
     }
 
     if (!dareRecord || !dareRecord.assignedTo) {
+      if (participantCount === 1) {
+        throw new BadRequestException(
+          "Cannot send a dare in a single-user call. Dares require at least one other participant."
+        );
+      }
       if (participantCount > 2) {
         throw new NotFoundException(
           `Dare ${dareId} must be assigned first when there are ${participantCount} participants`

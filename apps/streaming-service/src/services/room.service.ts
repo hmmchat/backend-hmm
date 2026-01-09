@@ -43,16 +43,17 @@ export class RoomService {
   ) {}
 
   /**
-   * Create a new room when 2 users enter IN_SQUAD
+   * Create a new room when 2 users enter IN_SQUAD (accept each other's cards)
+   * Note: Single users cannot create rooms, but once created, rooms can have 1 user remain
    */
   async createRoom(
     userIds: string[],
     callType: "matched" | "squad" = "matched"
   ): Promise<{ roomId: string; sessionId: string }> {
-    // Validate input first
+    // Validate input first - minimum 2 users required to create a room
     if (userIds.length < 2 || userIds.length > this.maxParticipants) {
       throw new BadRequestException(
-        `Room must have between 2 and ${this.maxParticipants} participants`
+        `Room must have between 2 and ${this.maxParticipants} participants to be created`
       );
     }
 
@@ -64,7 +65,7 @@ export class RoomService {
     }
     if (callType === "squad" && userIds.length < 2) {
       throw new BadRequestException(
-        "Squad calls must have at least 2 participants"
+        "Squad calls must have at least 2 participants to be created"
       );
     }
 
@@ -511,8 +512,8 @@ export class RoomService {
     });
 
     // Check if room should be ended
-    // BUSINESS RULE: Room cannot exist with only 1 person
-    // If 1 or 0 participants remain, automatically end the room
+    // BUSINESS RULE: Room ends only when no participants remain
+    // Single user rooms are now allowed
     const activeParticipants = await this.prisma.callParticipant.findMany({
       where: {
         sessionId: session.id,
@@ -529,31 +530,7 @@ export class RoomService {
       return;
     }
 
-    // If only 1 participant remains, automatically remove them and end the room
-    if (activeParticipants.length === 1) {
-      const lastUserId = activeParticipants[0].userId;
-      this.logger.log(`Only 1 participant (${lastUserId}) remains in room ${roomId}. Auto-removing and ending room.`);
-      
-      // Mark the last participant as left
-      await this.prisma.callParticipant.updateMany({
-        where: {
-          sessionId: session.id,
-          userId: lastUserId,
-          status: "active",
-          leftAt: null
-        },
-        data: {
-          leftAt: new Date(),
-          status: "left"
-        }
-      });
-
-      // End the room (this will update all remaining users' statuses including the last one)
-      await this.endRoom(roomId);
-      return; // endRoom will handle status updates for all users
-    }
-
-    // More than 1 participant remains - room continues, only update leaving user's status
+    // Room continues (single user or multiple users) - only update leaving user's status
     // Update user status to AVAILABLE
     this.discoveryClient.updateUserStatus(userId, "AVAILABLE").catch((err) => {
       this.logger.error(`Failed to update user ${userId} status to AVAILABLE: ${err.message}`);
@@ -627,8 +604,8 @@ export class RoomService {
       });
 
       // Check if room should be ended
-      // BUSINESS RULE: Room cannot exist with only 1 person
-      // If 1 or 0 participants remain, automatically end the room
+      // BUSINESS RULE: Room ends only when no participants remain
+      // Single user rooms are now allowed
       const activeParticipants = await this.prisma.callParticipant.findMany({
         where: {
           sessionId: session.id,
@@ -645,31 +622,7 @@ export class RoomService {
         return; // endRoom will handle status updates
       }
 
-      // If only 1 participant remains, automatically remove them and end the room
-      if (activeParticipants.length === 1) {
-        const lastUserId = activeParticipants[0].userId;
-        this.logger.log(`Only 1 participant (${lastUserId}) remains in room ${roomId}. Auto-removing and ending room.`);
-        
-        // Mark the last participant as left
-        await this.prisma.callParticipant.updateMany({
-          where: {
-            sessionId: session.id,
-            userId: lastUserId,
-            status: "active",
-            leftAt: null
-          },
-          data: {
-            leftAt: new Date(),
-            status: "left"
-          }
-        });
-
-        // End the room (this will update all remaining users' statuses including the last one)
-        await this.endRoom(roomId);
-        return; // endRoom will handle status updates for all users
-      }
-
-      // More than 1 participant remains - room continues, only update leaving user's status
+      // Room continues (single user or multiple users) - only update leaving user's status
     }
 
     // BUSINESS RULE: When individual user leaves (and room continues), status changes to AVAILABLE

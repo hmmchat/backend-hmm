@@ -262,7 +262,8 @@ After service restart, in-memory room state is lost:
 ## ✅ What's Working Well
 
 1. **Business Rules Enforcement**: ✅
-   - Room cannot exist with 1 person - enforced
+   - Room creation requires 2+ users - enforced (single users cannot create rooms)
+   - Single users can stay in existing rooms - supported (room only ends when 0 remain)
    - Status validation - enforced (in production mode)
    - Max participants - enforced
 

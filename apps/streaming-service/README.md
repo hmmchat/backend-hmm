@@ -5,6 +5,8 @@ Video calling and broadcasting service for hmmchat.live. Implements SFU-based vi
 ## Features
 
 - **Video Calling (IN_SQUAD)**: 2-4 participants in bidirectional video calls
+- **Room Creation**: Requires 2 users accepting each other's cards (single users cannot create rooms)
+- **Single User Support**: Once created, rooms can continue with 1 participant (others can leave)
 - **Broadcasting (IN_BROADCAST)**: One-way streaming to viewers
 - **In-Call Features**: Dares, gifts, and real-time chat
 - **SFU Architecture**: Uses Mediasoup for efficient media routing
@@ -12,7 +14,8 @@ Video calling and broadcasting service for hmmchat.live. Implements SFU-based vi
 ## Architecture
 
 ### Core Call (IN_SQUAD)
-- 2-4 participants in bidirectional video calls
+- 2-4 participants in bidirectional video calls (to create room)
+- Once created, room can continue with 1 participant if others leave
 - All participants send and receive video/audio
 - Dynamic participant management (add 3rd/4th person)
 

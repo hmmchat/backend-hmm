@@ -195,10 +195,11 @@ The tool will automatically test the connection on load.
 
 **Steps**:
 1. Try creating room with 1 user: `user1`
-   - ✅ Expected: Error - "Room must have between 2 and 4 participants"
+   - ✅ Expected: Error - "Room must have between 2 and 4 participants to be created"
+   - ✅ Note: Single users cannot create rooms. Rooms are created when 2 users accept each other's cards.
 
 2. Try creating room with 5 users: `user1, user2, user3, user4, user5`
-   - ✅ Expected: Error - "Room must have between 2 and 4 participants"
+   - ✅ Expected: Error - "Room must have between 2 and 4 participants to be created"
 
 3. Try creating room with duplicate user IDs: `user1, user1`
    - ✅ Expected: Error - "Duplicate user IDs are not allowed"
@@ -242,15 +243,19 @@ The tool will automatically test the connection on load.
 7. ✅ Verify: `user1` status should be updated to `AVAILABLE` (back to discovery pool)
 8. Get room info again
    - ✅ Verify: Participant count decreased (should be 1 now)
-9. If `user2` was the last participant:
-   - ✅ Verify: Room was automatically ended (no active participants)
-   - ✅ Verify: `user2` status updated to `AVAILABLE`
+9. **Single User Behavior**: If `user2` is the last remaining participant:
+   - ✅ Verify: Room **continues** - single user can stay in the room
+   - ✅ Verify: Room status remains `IN_SQUAD` (not ended)
+   - ✅ Verify: `user2` status remains `IN_SQUAD` (not changed to AVAILABLE)
+10. If `user2` also leaves (0 participants):
+    - ✅ Verify: Room was automatically ended (no active participants)
+    - ✅ Verify: All users return to `AVAILABLE` status
 
 **Expected Results**:
 - Users can successfully leave rooms via `leave-room` WebSocket message
-- User status changes to `AVAILABLE` (discovery pool) when leaving
-- Room is auto-ended when last participant leaves
-- All users return to `AVAILABLE` status when room ends
+- User status changes to `AVAILABLE` (discovery pool) when leaving (if others remain)
+- **Single user can stay in room** - Room only auto-ends when 0 participants remain
+- All users return to `AVAILABLE` status when room ends (0 participants)
 - Status updates are logged clearly
 
 **Note**: The `leave-room` functionality is available via WebSocket. There is no REST API endpoint for leaving rooms - only the WebSocket message handler.

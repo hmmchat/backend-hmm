@@ -35,7 +35,8 @@ IN_BROADCAST_AVAILABLE ───┘               │        │
    - When individual user leaves → Status changes: `IN_SQUAD`/`IN_BROADCAST` → `AVAILABLE`
    - User returns to discovery pool (status: `AVAILABLE`) and can be matched again
    - **API**: WebSocket message `leave-room` with `{ roomId }`
-   - If last participant leaves, room is automatically ended
+   - **If 1 participant remains**: Room continues - single user can stay in the room
+   - **If 0 participants remain**: Room is automatically ended
 
 5. **Call End**:
    - When entire room ends → Status changes: `IN_SQUAD`/`IN_BROADCAST` → `AVAILABLE`
@@ -50,10 +51,15 @@ IN_BROADCAST_AVAILABLE ───┘               │        │
 **Location**: `room.service.ts::createRoom()`
 
 **Validations:**
-1. ✅ Minimum 2 users, maximum 4 users
+1. ✅ Minimum 2 users, maximum 4 users (to CREATE a room)
 2. ✅ No duplicate user IDs
 3. ✅ **Users must have `MATCHED` status** (enforced in production, skipped in TEST_MODE)
 4. ✅ **Users cannot be in multiple active rooms** (enforced)
+
+**Important**: 
+- Single users CANNOT create rooms - rooms are only created when 2 users accept each other's cards
+- However, once a room exists, if only 1 participant remains (others leave), that single user CAN stay in the room
+- Room only auto-ends when 0 participants remain
 
 **Error Messages:**
 - If users not MATCHED: `"Users must be in MATCHED status to create/join rooms. Invalid users: X, Y"`

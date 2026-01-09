@@ -133,7 +133,9 @@ Users must follow this status flow:
 
 **Important:**
 - Users must be in `MATCHED` status (enforced in production)
-- Minimum 2 users, maximum 4 users
+- Minimum 2 users, maximum 4 users **to CREATE a room**
+- Single users **cannot create rooms** - rooms are only created when 2 users accept each other's cards
+- Once a room exists, if only 1 participant remains, that single user can stay in the room
 - Users cannot be in another active room
 
 ---
@@ -990,8 +992,9 @@ Frontend needs WebRTC library that supports:
 ## Important Notes
 
 1. **Room Limits:**
-   - Minimum 2 participants, maximum 4 participants
-   - Room automatically ends if only 1 participant remains
+   - **Creation**: Minimum 2 participants, maximum 4 participants (single users cannot create rooms)
+   - **After Creation**: Once a room exists, if only 1 participant remains, the room continues (single user can stay)
+   - **Auto-End**: Room automatically ends only when 0 participants remain
 
 2. **Status Transitions:**
    - Users must be `MATCHED` before creating/joining rooms
@@ -1033,10 +1036,11 @@ Frontend needs WebRTC library that supports:
 2. When broadcast ends, viewers are automatically removed
 3. Handle transition back to main screen
 
-### Scenario 4: Participant Leaves (Last 2 Users)
+### Scenario 4: Participant Leaves (Single User Remains)
 1. When user leaves, check remaining participant count
-2. If count becomes 1, room auto-ends
-3. All participants receive notification and return to matchmaking
+2. **If count becomes 1**: Room continues - single user can stay in the room
+3. **If count becomes 0**: Room auto-ends and all participants return to matchmaking
+4. **Important**: Single users cannot CREATE rooms (requires 2+ users accepting each other's cards), but can STAY in existing rooms
 
 ---
 

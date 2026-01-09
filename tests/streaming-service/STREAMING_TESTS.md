@@ -68,8 +68,9 @@ The script will detect if the service is already running and skip auto-start.
 
 #### Test 3: Create Room - Invalid (1 user)
 **Scenario**: Attempt to create room with only 1 user
-- **Expected**: HTTP 400 - Room must have 2-4 participants
+- **Expected**: HTTP 400 - Room must have between 2 and 4 participants to be created
 - **Edge Case**: Minimum participant validation
+- **Note**: Single users cannot create rooms. Rooms are only created when 2 users accept each other's cards.
 
 #### Test 4: Create Room - Invalid (5 users)
 **Scenario**: Attempt to create room with 5 users
@@ -384,8 +385,12 @@ The script will detect if the service is already running and skip auto-start.
 
 ### Room Lifecycle
 1. **Creation**: 2-4 users → Room created → Status: IN_SQUAD
+   - **Important**: Single users cannot create rooms - rooms are only created when 2 users accept each other's cards
 2. **Broadcasting**: Start broadcast → Status: IN_BROADCAST → Viewers can join
-3. **End**: All participants leave → Room cleaned up → Status: ENDED
+3. **Participant Leaves**: 
+   - If 1 participant remains → Room continues (single user can stay)
+   - If 0 participants remain → Room cleaned up → Status: ENDED
+4. **End**: All participants leave → Room cleaned up → Status: ENDED
 
 ### WebSocket Flow
 1. **Connect**: `ws://localhost:3005/streaming/ws?userId=user-123`

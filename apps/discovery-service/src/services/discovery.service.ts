@@ -43,6 +43,7 @@ interface Card {
   musicPreference?: { name: string; artist: string; albumArtUrl?: string };
   pages: CardPage[];
   status: "AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE";
+  reported?: boolean;
 }
 
 interface LocationCard {
@@ -401,7 +402,8 @@ export class DiscoveryService implements OnModuleInit {
           name: v.value.name
         }
       })),
-      videoEnabled: profile.videoEnabled !== undefined ? profile.videoEnabled : true
+      videoEnabled: profile.videoEnabled !== undefined ? profile.videoEnabled : true,
+      reportCount: profile.reportCount || 0
     };
   }
 
@@ -592,6 +594,10 @@ export class DiscoveryService implements OnModuleInit {
     // Country is not stored separately in preferredCity, would need separate field if needed
     const country = undefined;
 
+    // Check if user is reported (check reportCount against threshold)
+    const reportThreshold = parseInt(process.env.REPORT_THRESHOLD || "5", 10);
+    const isReported = (user.reportCount || 0) >= reportThreshold;
+
     return {
       userId: user.id,
       username: user.username || "Unknown",
@@ -618,7 +624,8 @@ export class DiscoveryService implements OnModuleInit {
           }
         : undefined,
       pages,
-      status: user.status as "AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE"
+      status: user.status as "AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE",
+      reported: isReported
     };
   }
 

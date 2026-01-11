@@ -24,6 +24,7 @@ interface UserProfileResponse {
   videoEnabled: boolean;
   latitude?: number | null;
   longitude?: number | null;
+  reportCount?: number;
 }
 
 export interface DiscoveryUser {
@@ -41,6 +42,7 @@ export interface DiscoveryUser {
   interests: Array<{ interest: { id: string; name: string; genre: string | null } }>;
   values: Array<{ value: { id: string; name: string } }>;
   videoEnabled: boolean;
+  reportCount?: number;
 }
 
 interface DiscoveryUsersResponse {

@@ -1,6 +1,7 @@
-import { Controller, Get, Post, Param, Body, BadRequestException } from "@nestjs/common";
+import { Controller, Get, Post, Param, Body, BadRequestException, Headers } from "@nestjs/common";
 import { RoomService } from "../services/room.service.js";
 import { ChatService } from "../services/chat.service.js";
+import { DiscoveryClientService } from "../services/discovery-client.service.js";
 import { z } from "zod";
 
 // Simple auth guard (you can enhance this later)
@@ -13,7 +14,8 @@ const createRoomSchema = z.object({
 export class StreamingController {
   constructor(
     private roomService: RoomService,
-    private chatService: ChatService
+    private chatService: ChatService,
+    private discoveryClient: DiscoveryClientService
   ) {}
 
   /**
@@ -174,6 +176,49 @@ export class StreamingController {
     }
     
     return { exists: false };
+  }
+
+  /**
+   * Report a user
+   * POST /streaming/report
+   */
+  @Post("report")
+  async reportUser(
+    @Body() body: { reportedUserId: string },
+    @Headers("authorization") authz?: string
+  ) {
+    if (!authz) {
+      throw new BadRequestException("Missing authorization header");
+    }
+
+    const token = authz.replace("Bearer ", "");
+    if (!body.reportedUserId) {
+      throw new BadRequestException("reportedUserId is required");
+    }
+
+    // Get reporter user ID from token
+    const { verifyToken } = await import("@hmm/common");
+    const jwkStr = process.env.JWT_PUBLIC_JWK;
+    if (!jwkStr || jwkStr === "undefined") {
+      throw new BadRequestException("Server configuration error");
+    }
+    const cleanedJwk = jwkStr.trim().replace(/^['"]|['"]$/g, "");
+    const publicJwk = JSON.parse(cleanedJwk);
+    const verifyAccess = await verifyToken(publicJwk);
+    const payload = await verifyAccess(token);
+    const reporterUserId = payload.sub;
+
+    if (reporterUserId === body.reportedUserId) {
+      throw new BadRequestException("Cannot report yourself");
+    }
+
+    // Call user service to increment report count
+    const result = await this.discoveryClient.reportUser(token, body.reportedUserId);
+
+    return {
+      success: true,
+      reportCount: result.reportCount
+    };
   }
 }
 

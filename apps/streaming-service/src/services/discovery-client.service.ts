@@ -172,4 +172,32 @@ export class DiscoveryClientService {
       throw error;
     }
   }
+
+  /**
+   * Report a user (increment report count)
+   */
+  async reportUser(token: string, reportedUserId: string): Promise<{ reportCount: number }> {
+    try {
+      const response = await fetch(`${this.userServiceUrl}/users/report`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({ reportedUserId })
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        this.logger.warn(`Failed to report user (user-service may not be available): ${error}`);
+        throw new Error(`Failed to report user ${reportedUserId}`);
+      }
+
+      const result = await response.json() as { success: boolean; reportCount: number };
+      return { reportCount: result.reportCount };
+    } catch (error: any) {
+      this.logger.error(`Error reporting user: ${error.message}`);
+      throw error;
+    }
+  }
 }

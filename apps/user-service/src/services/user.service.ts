@@ -202,7 +202,7 @@ export class UserService implements OnModuleInit {
       videoEnabled: "videoEnabled",
       profileCompleted: "profileCompleted",
       genderChanged: "genderChanged",
-      reported: "reported",
+      reportCount: "reportCount",
       badgeMember: "badgeMember",
       createdAt: "createdAt",
       updatedAt: "updatedAt",
@@ -615,6 +615,40 @@ export class UserService implements OnModuleInit {
     });
 
     return { user };
+  }
+
+  /* ---------- Reporting ---------- */
+
+  async reportUser(accessToken: string, reportedUserId: string) {
+    const reporterUserId = await this.verifyAccessToken(accessToken);
+
+    if (reporterUserId === reportedUserId) {
+      throw new HttpException("Cannot report yourself", HttpStatus.BAD_REQUEST);
+    }
+
+    // Check if reported user exists
+    const reportedUser = await this.prisma.user.findUnique({
+      where: { id: reportedUserId }
+    });
+
+    if (!reportedUser) {
+      throw new HttpException("Reported user not found", HttpStatus.NOT_FOUND);
+    }
+
+    // Increment report count
+    const updatedUser = await this.prisma.user.update({
+      where: { id: reportedUserId },
+      data: {
+        reportCount: {
+          increment: 1
+        }
+      }
+    });
+
+    return { 
+      success: true, 
+      reportCount: updatedUser.reportCount 
+    };
   }
 
   /* ---------- Batch Operations ---------- */

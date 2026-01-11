@@ -253,6 +253,21 @@ export class UserController {
     return this.userService.updateStatus(token, dto);
   }
 
+  /* ---------- Reporting ---------- */
+
+  @Post("users/report")
+  async reportUser(@Headers("authorization") authz: string, @Body() body: any) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    
+    const { reportedUserId } = body;
+    if (!reportedUserId || typeof reportedUserId !== "string") {
+      throw new HttpException("reportedUserId is required", HttpStatus.BAD_REQUEST);
+    }
+    
+    return this.userService.reportUser(token, reportedUserId);
+  }
+
   /* ---------- Batch Operations ---------- */
 
   @Post("users/batch")

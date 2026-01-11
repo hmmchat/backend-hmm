@@ -88,7 +88,7 @@ model User {
   status        UserStatus @default(ONLINE)
   
   // Moderation & Flags
-  reported      Boolean  @default(false) // 1 = yes, 0 = no
+  reportCount   Int      @default(0) // Number of reports on this user
   badgeMember   Boolean  @default(false) // 1 = yes, 0 = no
   
   // Intent/Bio (max 50 characters)

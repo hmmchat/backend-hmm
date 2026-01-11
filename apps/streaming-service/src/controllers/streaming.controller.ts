@@ -65,6 +65,60 @@ export class StreamingController {
   }
 
   /**
+   * Enable pull stranger mode (HOST only)
+   * POST /streaming/rooms/:roomId/enable-pull-stranger
+   */
+  @Post("rooms/:roomId/enable-pull-stranger")
+  async enablePullStranger(
+    @Param("roomId") roomId: string,
+    @Body() body: { userId: string }
+  ) {
+    if (!body.userId) {
+      throw new BadRequestException("userId is required");
+    }
+    await this.roomService.enablePullStranger(roomId, body.userId);
+    return { success: true, message: "Pull stranger mode enabled" };
+  }
+
+  /**
+   * Join room via pull stranger (one-way acceptance)
+   * POST /streaming/rooms/:roomId/join-via-pull-stranger
+   */
+  @Post("rooms/:roomId/join-via-pull-stranger")
+  async joinViaPullStranger(
+    @Param("roomId") roomId: string,
+    @Body() body: { joiningUserId: string; targetUserId: string }
+  ) {
+    if (!body.joiningUserId || !body.targetUserId) {
+      throw new BadRequestException("joiningUserId and targetUserId are required");
+    }
+    const result = await this.roomService.joinViaPullStranger(
+      roomId,
+      body.joiningUserId,
+      body.targetUserId
+    );
+    return {
+      success: true,
+      roomId: result.roomId,
+      sessionId: result.sessionId,
+      message: "Successfully joined room via pull stranger"
+    };
+  }
+
+  /**
+   * Get room ID for pull stranger user (for discovery service)
+   * GET /streaming/pull-stranger/room/:userId
+   */
+  @Get("pull-stranger/room/:userId")
+  async getRoomForPullStrangerUser(@Param("userId") userId: string) {
+    const roomId = await this.roomService.getRoomForPullStrangerUser(userId);
+    if (!roomId) {
+      return { exists: false };
+    }
+    return { exists: true, roomId };
+  }
+
+  /**
    * Get room info for a user
    * GET /streaming/users/:userId/room
    */

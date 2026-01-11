@@ -298,4 +298,128 @@ export class FriendController {
       autoAccepted: result.autoAccepted
     };
   }
+
+  /**
+   * Check if two users are friends (internal endpoint)
+   * GET /internal/friends/check?userId1=xxx&userId2=xxx
+   */
+  @Get("internal/friends/check")
+  async checkFriendship(
+    @Headers("x-service-token") serviceToken: string,
+    @Query() query: any
+  ) {
+    // Verify service token
+    const expectedToken = process.env.INTERNAL_SERVICE_TOKEN;
+    if (!expectedToken) {
+      throw new HttpException(
+        "Internal service token not configured",
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+
+    if (serviceToken !== expectedToken) {
+      throw new HttpException(
+        "Invalid service token",
+        HttpStatus.UNAUTHORIZED
+      );
+    }
+
+    const { userId1, userId2 } = z.object({
+      userId1: z.string(),
+      userId2: z.string()
+    }).parse(query);
+
+    // Check friendship using friend service method
+    const areFriends = await this.friendService.areFriends(userId1, userId2);
+    
+    return {
+      areFriends
+    };
+  }
+
+  /**
+   * Auto-create friendship (internal endpoint - for external users accepting squad invites)
+   * POST /internal/friends/auto-create
+   */
+  @Post("internal/friends/auto-create")
+  async autoCreateFriendship(
+    @Headers("x-service-token") serviceToken: string,
+    @Body() body: any
+  ) {
+    // Verify service token
+    const expectedToken = process.env.INTERNAL_SERVICE_TOKEN;
+    if (!expectedToken) {
+      throw new HttpException(
+        "Internal service token not configured",
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+
+    if (serviceToken !== expectedToken) {
+      throw new HttpException(
+        "Invalid service token",
+        HttpStatus.UNAUTHORIZED
+      );
+    }
+
+    const { userId1, userId2 } = z.object({
+      userId1: z.string(),
+      userId2: z.string()
+    }).parse(body);
+
+    // Auto-create friendship directly
+    try {
+      await this.friendService.autoCreateFriendship(userId1, userId2);
+      return {
+        ok: true,
+        message: "Friendship created successfully"
+      };
+    } catch (error: any) {
+      // If already friends, return success
+      if (error.message?.includes("already friends")) {
+        return {
+          ok: true,
+          message: "Users are already friends"
+        };
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Get friends list (internal endpoint)
+   * GET /internal/friends?userId=xxx&limit=50
+   */
+  @Get("internal/friends")
+  async getFriendsInternal(
+    @Headers("x-service-token") serviceToken: string,
+    @Query() query: any
+  ) {
+    // Verify service token
+    const expectedToken = process.env.INTERNAL_SERVICE_TOKEN;
+    if (!expectedToken) {
+      throw new HttpException(
+        "Internal service token not configured",
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+
+    if (serviceToken !== expectedToken) {
+      throw new HttpException(
+        "Invalid service token",
+        HttpStatus.UNAUTHORIZED
+      );
+    }
+
+    const { userId, limit } = z.object({
+      userId: z.string(),
+      limit: z.string().optional().transform((val) => val ? parseInt(val, 10) : 50)
+    }).parse(query);
+
+    const result = await this.friendService.getFriends(userId, limit || 50);
+    
+    return {
+      friends: result.friends
+    };
+  }
 }

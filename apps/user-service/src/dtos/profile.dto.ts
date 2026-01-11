@@ -4,6 +4,7 @@ export const GenderEnum = z.enum(["MALE", "FEMALE", "NON_BINARY", "PREFER_NOT_TO
 
 export const UserStatusEnum = z.enum([
   "AVAILABLE",
+  "ONLINE",
   "OFFLINE",
   "MATCHED",
   "IN_SQUAD",

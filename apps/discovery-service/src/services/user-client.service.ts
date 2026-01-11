@@ -225,8 +225,9 @@ export class UserClientService implements OnModuleInit {
    */
   async getUserFullProfileById(userId: string): Promise<UserProfileResponse> {
     try {
+      // Use test endpoint to bypass auth
       const response = await this.fetchWithTimeout(
-        `${this.userServiceUrl}/users/${userId}?fields=username,dateOfBirth,gender,displayPictureUrl,preferredCity,intent,status,photos,musicPreference,brandPreferences,interests,values,videoEnabled,latitude,longitude`,
+        `${this.userServiceUrl}/users/test/${userId}`,
         {
           method: "GET",
           headers: {

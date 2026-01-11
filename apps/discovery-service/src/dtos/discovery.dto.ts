@@ -31,3 +31,34 @@ export type ResetSessionRequest = z.infer<typeof ResetSessionRequestSchema>;
 export type SelectLocationRequest = z.infer<typeof SelectLocationRequestSchema>;
 export type ProceedRequest = z.infer<typeof ProceedRequestSchema>;
 
+// Squad DTOs
+export const InviteFriendRequestSchema = z.object({
+  inviteeId: z.string().min(1, "Invitee ID is required")
+});
+
+export const InviteExternalRequestSchema = z.object({
+  // No fields needed - token will be generated
+});
+
+export const AcceptInvitationRequestSchema = z.object({
+  inviteId: z.string().min(1, "Invitation ID is required")
+});
+
+export const RejectInvitationRequestSchema = z.object({
+  inviteId: z.string().min(1, "Invitation ID is required")
+});
+
+export const ToggleSoloRequestSchema = z.object({
+  // No fields needed
+});
+
+export const EnterCallRequestSchema = z.object({
+  // No fields needed - uses inviter from token
+});
+
+export type InviteFriendRequest = z.infer<typeof InviteFriendRequestSchema>;
+export type InviteExternalRequest = z.infer<typeof InviteExternalRequestSchema>;
+export type AcceptInvitationRequest = z.infer<typeof AcceptInvitationRequestSchema>;
+export type RejectInvitationRequest = z.infer<typeof RejectInvitationRequestSchema>;
+export type ToggleSoloRequest = z.infer<typeof ToggleSoloRequestSchema>;
+export type EnterCallRequest = z.infer<typeof EnterCallRequestSchema>;

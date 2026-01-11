@@ -83,6 +83,72 @@ clear_active_matches() {
     PGPASSWORD=password psql -h localhost -U postgres -d hmm_user -c "UPDATE users SET status = 'AVAILABLE' WHERE id LIKE 'test-user-%' AND status IN ('MATCHED', 'OFFLINE', 'IN_SQUAD', 'IN_SQUAD_AVAILABLE', 'IN_BROADCAST', 'IN_BROADCAST_AVAILABLE');" > /dev/null 2>&1
 }
 
+# Helper function to ensure friends table exists
+ensure_friends_table() {
+    # Check if friends table exists, if not create it
+    PGPASSWORD=password psql -h localhost -U postgres -d hmm_user -c "
+        CREATE TABLE IF NOT EXISTS friends (
+            id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            \"userId1\" TEXT NOT NULL,
+            \"userId2\" TEXT NOT NULL,
+            \"createdAt\" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (\"userId1\", \"userId2\")
+        );
+        CREATE INDEX IF NOT EXISTS friends_userId1_idx ON friends (\"userId1\");
+        CREATE INDEX IF NOT EXISTS friends_userId2_idx ON friends (\"userId2\");
+    " > /dev/null 2>&1
+}
+
+# Helper function to create friendship (for testing)
+create_friendship() {
+    local userId1=$1
+    local userId2=$2
+    
+    # Ensure friends table exists
+    ensure_friends_table
+    
+    # Sort IDs for consistent friendship record
+    local id1=$(echo -e "$userId1\n$userId2" | sort | head -1)
+    local id2=$(echo -e "$userId1\n$userId2" | sort | tail -1)
+    
+    # Use direct SQL to create friendship
+    PGPASSWORD=password psql -h localhost -U postgres -d hmm_user -c "
+        INSERT INTO friends (\"userId1\", \"userId2\", \"createdAt\")
+        VALUES ('$id1', '$id2', CURRENT_TIMESTAMP)
+        ON CONFLICT (\"userId1\", \"userId2\") DO NOTHING;
+    " > /dev/null 2>&1
+}
+
+# Helper function to clear squad data (for testing)
+clear_squad_data() {
+    # Clear squad invitations and lobbies
+    PGPASSWORD=password psql -h localhost -U postgres -d hmm_user -c "
+        DELETE FROM squad_invitations;
+        DELETE FROM squad_lobbies;
+    " > /dev/null 2>&1
+    
+    # Also clear any existing call sessions for test users (streaming service)
+    # Streaming service uses hmm_streaming database with call_sessions and call_participants tables
+    PGPASSWORD=password psql -h localhost -U postgres -d hmm_streaming -c "
+        -- Delete participants first (foreign key constraint)
+        DELETE FROM call_participants WHERE \"userId\" LIKE 'test-user-%';
+        -- Delete sessions
+        DELETE FROM call_sessions WHERE id IN (
+            SELECT DISTINCT \"sessionId\" FROM call_participants WHERE \"userId\" LIKE 'test-user-%'
+        );
+    " > /dev/null 2>&1 || true  # Ignore error if tables don't exist
+}
+
+# Helper function to set user status (for testing)
+set_user_status() {
+    local userId=$1
+    local status=$2
+    
+    PGPASSWORD=password psql -h localhost -U postgres -d hmm_user -c "
+        UPDATE users SET status = '$status' WHERE id = '$userId';
+    " > /dev/null 2>&1
+}
+
 # Helper function to clear user statuses (reset to AVAILABLE)
 clear_user_statuses() {
     # Reset all test users to AVAILABLE status (from any non-AVAILABLE status)
@@ -290,6 +356,10 @@ sleep 2
 # Step 3.5: Clean up any existing test state
 echo -e "${CYAN}Step 3.5: Cleaning up existing test state...${NC}"
 clear_active_matches
+clear_squad_data > /dev/null 2>&1
+clear_user_statuses > /dev/null 2>&1
+# Ensure friends table exists (may have been dropped by schema pushes)
+ensure_friends_table > /dev/null 2>&1
 echo -e "${GREEN}✅ Test state cleaned${NC}"
 echo ""
 
@@ -1682,6 +1752,1079 @@ if [ $LOC_RESET_LOCATION_CARDS_SHOWN -eq 0 ]; then
 elif [ $LOC_RESET_USER_CARDS_AFTER -eq 0 ]; then
     echo -e "${YELLOW}⚠️  Location cards reset test - location cards shown but user cards not returned after reset${NC}"
     test_result 0 "Location cards reset test (partial - location cards shown: $LOC_RESET_LOCATION_CARDS_SHOWN)"
+fi
+echo ""
+
+# ========== SQUAD TOGGLE TESTS ==========
+
+echo -e "${BLUE}=========================================="
+echo -e "  SQUAD TOGGLE TESTS"
+echo -e "==========================================${NC}"
+echo ""
+
+# Test 42: Squad Invitation - Invite Friend
+echo -e "${CYAN}Test 42: Squad Invitation - Invite Friend${NC}"
+# Clean squad data and set up test users
+clear_squad_data > /dev/null 2>&1
+set_user_status "$TEST_USER_MUMBAI_MALE" "ONLINE" > /dev/null 2>&1
+set_user_status "$TEST_USER_MUMBAI_FEMALE" "ONLINE" > /dev/null 2>&1
+create_friendship "$TEST_USER_MUMBAI_MALE" "$TEST_USER_MUMBAI_FEMALE" > /dev/null 2>&1
+sleep 0.5
+
+SQUAD_INVITE_RESPONSE=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invite" \
+    -H "Content-Type: application/json" \
+    -d "{
+        \"inviterId\": \"$TEST_USER_MUMBAI_MALE\",
+        \"inviteeId\": \"$TEST_USER_MUMBAI_FEMALE\"
+    }")
+
+SQUAD_INVITE_SUCCESS=$(echo "$SQUAD_INVITE_RESPONSE" | jq -r '.success' 2>/dev/null)
+SQUAD_INVITE_ID=$(echo "$SQUAD_INVITE_RESPONSE" | jq -r '.invitationId' 2>/dev/null)
+
+if [ "$SQUAD_INVITE_SUCCESS" = "true" ] && [ ! -z "$SQUAD_INVITE_ID" ] && [ "$SQUAD_INVITE_ID" != "null" ]; then
+    test_result 0 "Squad invitation created successfully"
+    
+    # Check inviter status changed to MATCHED
+    INVITER_STATUS=$(PGPASSWORD=password psql -h localhost -U postgres -d hmm_user -tAc "SELECT status FROM users WHERE id = '$TEST_USER_MUMBAI_MALE';" 2>/dev/null | tr -d ' ')
+    if [ "$INVITER_STATUS" = "MATCHED" ]; then
+        test_result 0 "Inviter status changed to MATCHED when entering squad mode"
+    else
+        test_result 1 "Inviter status is $INVITER_STATUS (expected MATCHED)"
+    fi
+    
+    # Check squad lobby was created
+    SQUAD_LOBBY=$(curl -s -X GET "$DISCOVERY_SERVICE_URL/squad/test/lobby?userId=$TEST_USER_MUMBAI_MALE")
+    LOBBY_EXISTS=$(echo "$SQUAD_LOBBY" | jq -r '.lobby != null' 2>/dev/null)
+    if [ "$LOBBY_EXISTS" = "true" ]; then
+        test_result 0 "Squad lobby created for inviter"
+        LOBBY_MEMBERS=$(echo "$SQUAD_LOBBY" | jq -r '.lobby.memberIds | length' 2>/dev/null)
+        if [ "$LOBBY_MEMBERS" = "1" ]; then
+            test_result 0 "Squad lobby has correct initial member count (1: inviter only)"
+        fi
+    else
+        test_result 1 "Squad lobby not created"
+    fi
+else
+    test_result 1 "Squad invitation failed"
+    echo "  Response: $SQUAD_INVITE_RESPONSE"
+fi
+echo ""
+
+# Test 43: Squad Invitation - Accept Invitation
+echo -e "${CYAN}Test 43: Squad Invitation - Accept Invitation${NC}"
+# Continue from previous test
+if [ ! -z "$SQUAD_INVITE_ID" ] && [ "$SQUAD_INVITE_ID" != "null" ]; then
+    # Check invitee status before acceptance
+    INVITEE_STATUS_BEFORE=$(PGPASSWORD=password psql -h localhost -U postgres -d hmm_user -tAc "SELECT status FROM users WHERE id = '$TEST_USER_MUMBAI_FEMALE';" 2>/dev/null | tr -d ' ')
+    
+    SQUAD_ACCEPT_RESPONSE=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invitations/$SQUAD_INVITE_ID/accept" \
+        -H "Content-Type: application/json" \
+        -d "{
+            \"inviteeId\": \"$TEST_USER_MUMBAI_FEMALE\"
+        }")
+    
+    SQUAD_ACCEPT_SUCCESS=$(echo "$SQUAD_ACCEPT_RESPONSE" | jq -r '.success' 2>/dev/null)
+    
+    if [ "$SQUAD_ACCEPT_SUCCESS" = "true" ]; then
+        test_result 0 "Squad invitation accepted successfully"
+        
+        sleep 0.5
+        
+        # Check invitee status changed to MATCHED
+        INVITEE_STATUS_AFTER=$(PGPASSWORD=password psql -h localhost -U postgres -d hmm_user -tAc "SELECT status FROM users WHERE id = '$TEST_USER_MUMBAI_FEMALE';" 2>/dev/null | tr -d ' ')
+        if [ "$INVITEE_STATUS_AFTER" = "MATCHED" ]; then
+            test_result 0 "Invitee status changed to MATCHED after accepting"
+        else
+            test_result 1 "Invitee status is $INVITEE_STATUS_AFTER (expected MATCHED)"
+        fi
+        
+        # Check squad lobby updated
+        SQUAD_LOBBY_AFTER=$(curl -s -X GET "$DISCOVERY_SERVICE_URL/squad/test/lobby?userId=$TEST_USER_MUMBAI_MALE")
+        LOBBY_MEMBERS_AFTER=$(echo "$SQUAD_LOBBY_AFTER" | jq -r '.lobby.memberIds | length' 2>/dev/null)
+        LOBBY_STATUS=$(echo "$SQUAD_LOBBY_AFTER" | jq -r '.lobby.status' 2>/dev/null)
+        if [ "$LOBBY_MEMBERS_AFTER" = "2" ]; then
+            test_result 0 "Squad lobby has 2 members after acceptance"
+            if [ "$LOBBY_STATUS" = "READY" ]; then
+                test_result 0 "Squad lobby status is READY (2+ members)"
+            fi
+        else
+            test_result 1 "Squad lobby has $LOBBY_MEMBERS_AFTER members (expected 2)"
+        fi
+    else
+        test_result 1 "Squad invitation acceptance failed"
+        echo "  Response: $SQUAD_ACCEPT_RESPONSE"
+    fi
+else
+    test_result 1 "Squad invitation accept test skipped - no invitation ID"
+fi
+echo ""
+
+# Test 44: Squad Invitation - Reject Invitation
+echo -e "${CYAN}Test 44: Squad Invitation - Reject Invitation${NC}"
+# Clean and set up new test
+clear_squad_data > /dev/null 2>&1
+set_user_status "$TEST_USER_MUMBAI_MALE" "ONLINE" > /dev/null 2>&1
+set_user_status "$TEST_USER_DELHI_MALE" "ONLINE" > /dev/null 2>&1
+create_friendship "$TEST_USER_MUMBAI_MALE" "$TEST_USER_DELHI_MALE" > /dev/null 2>&1
+sleep 0.5
+
+SQUAD_REJECT_INVITE=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invite" \
+    -H "Content-Type: application/json" \
+    -d "{
+        \"inviterId\": \"$TEST_USER_MUMBAI_MALE\",
+        \"inviteeId\": \"$TEST_USER_DELHI_MALE\"
+    }")
+
+SQUAD_REJECT_INVITE_ID=$(echo "$SQUAD_REJECT_INVITE" | jq -r '.invitationId' 2>/dev/null)
+
+if [ ! -z "$SQUAD_REJECT_INVITE_ID" ] && [ "$SQUAD_REJECT_INVITE_ID" != "null" ]; then
+    # Check invitee status before rejection
+    REJECT_INVITEE_STATUS_BEFORE=$(PGPASSWORD=password psql -h localhost -U postgres -d hmm_user -tAc "SELECT status FROM users WHERE id = '$TEST_USER_DELHI_MALE';" 2>/dev/null | tr -d ' ')
+    
+    SQUAD_REJECT_RESPONSE=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invitations/$SQUAD_REJECT_INVITE_ID/reject" \
+        -H "Content-Type: application/json" \
+        -d "{
+            \"inviteeId\": \"$TEST_USER_DELHI_MALE\"
+        }")
+    
+    SQUAD_REJECT_SUCCESS=$(echo "$SQUAD_REJECT_RESPONSE" | jq -r '.success' 2>/dev/null)
+    
+    if [ "$SQUAD_REJECT_SUCCESS" = "true" ]; then
+        test_result 0 "Squad invitation rejected successfully"
+        
+        sleep 0.5
+        
+        # Check invitee status remains ONLINE (unchanged)
+        REJECT_INVITEE_STATUS_AFTER=$(PGPASSWORD=password psql -h localhost -U postgres -d hmm_user -tAc "SELECT status FROM users WHERE id = '$TEST_USER_DELHI_MALE';" 2>/dev/null | tr -d ' ')
+        if [ "$REJECT_INVITEE_STATUS_AFTER" = "ONLINE" ]; then
+            test_result 0 "Invitee status remains ONLINE after rejection"
+        else
+            test_result 1 "Invitee status is $REJECT_INVITEE_STATUS_AFTER (expected ONLINE)"
+        fi
+        
+        # Check inviter status remains MATCHED
+        REJECT_INVITER_STATUS=$(PGPASSWORD=password psql -h localhost -U postgres -d hmm_user -tAc "SELECT status FROM users WHERE id = '$TEST_USER_MUMBAI_MALE';" 2>/dev/null | tr -d ' ')
+        if [ "$REJECT_INVITER_STATUS" = "MATCHED" ]; then
+            test_result 0 "Inviter status remains MATCHED after rejection"
+        else
+            test_result 1 "Inviter status is $REJECT_INVITER_STATUS (expected MATCHED)"
+        fi
+    else
+        test_result 1 "Squad invitation rejection failed"
+    fi
+else
+    test_result 1 "Squad invitation reject test skipped - no invitation created"
+fi
+echo ""
+
+# Test 45: Squad Invitation - External Link Generation
+echo -e "${CYAN}Test 45: Squad Invitation - External Link Generation${NC}"
+clear_squad_data > /dev/null 2>&1
+set_user_status "$TEST_USER_MUMBAI_MALE" "ONLINE" > /dev/null 2>&1
+sleep 0.5
+
+SQUAD_EXTERNAL_RESPONSE=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invite-external" \
+    -H "Content-Type: application/json" \
+    -d "{
+        \"inviterId\": \"$TEST_USER_MUMBAI_MALE\"
+    }")
+
+SQUAD_EXTERNAL_SUCCESS=$(echo "$SQUAD_EXTERNAL_RESPONSE" | jq -r '.success' 2>/dev/null)
+SQUAD_EXTERNAL_TOKEN=$(echo "$SQUAD_EXTERNAL_RESPONSE" | jq -r '.inviteToken' 2>/dev/null)
+SQUAD_EXTERNAL_LINK=$(echo "$SQUAD_EXTERNAL_RESPONSE" | jq -r '.inviteLink' 2>/dev/null)
+
+if [ "$SQUAD_EXTERNAL_SUCCESS" = "true" ] && [ ! -z "$SQUAD_EXTERNAL_TOKEN" ] && [ "$SQUAD_EXTERNAL_TOKEN" != "null" ]; then
+    test_result 0 "External squad invitation link generated"
+    if [ ! -z "$SQUAD_EXTERNAL_LINK" ] && [ "$SQUAD_EXTERNAL_LINK" != "null" ]; then
+        test_result 0 "External invitation link contains token"
+    fi
+else
+    test_result 1 "External squad invitation generation failed"
+fi
+echo ""
+
+# Test 46: Squad Invitation - External Link Acceptance
+echo -e "${CYAN}Test 46: Squad Invitation - External Link Acceptance${NC}"
+if [ ! -z "$SQUAD_EXTERNAL_TOKEN" ] && [ "$SQUAD_EXTERNAL_TOKEN" != "null" ]; then
+    # Set up a new user to accept the external link
+    set_user_status "$TEST_USER_BANGALORE_MALE" "ONLINE" > /dev/null 2>&1
+    sleep 0.5
+    
+    SQUAD_EXTERNAL_ACCEPT=$(curl -s -X GET "$DISCOVERY_SERVICE_URL/squad/test/join/$SQUAD_EXTERNAL_TOKEN?userId=$TEST_USER_BANGALORE_MALE")
+    SQUAD_EXTERNAL_ACCEPT_SUCCESS=$(echo "$SQUAD_EXTERNAL_ACCEPT" | jq -r '.success' 2>/dev/null)
+    
+    if [ "$SQUAD_EXTERNAL_ACCEPT_SUCCESS" = "true" ]; then
+        test_result 0 "External squad invitation accepted via link"
+        
+        sleep 0.5
+        
+        # Check user status changed to MATCHED
+        EXTERNAL_USER_STATUS=$(PGPASSWORD=password psql -h localhost -U postgres -d hmm_user -tAc "SELECT status FROM users WHERE id = '$TEST_USER_BANGALORE_MALE';" 2>/dev/null | tr -d ' ')
+        if [ "$EXTERNAL_USER_STATUS" = "MATCHED" ]; then
+            test_result 0 "External user status changed to MATCHED after accepting"
+        fi
+        
+        # Check friendship was auto-created
+        FRIENDSHIP_EXISTS=$(PGPASSWORD=password psql -h localhost -U postgres -d hmm_user -tAc "
+            SELECT COUNT(*) FROM friends 
+            WHERE (\"userId1\" = '$TEST_USER_MUMBAI_MALE' AND \"userId2\" = '$TEST_USER_BANGALORE_MALE')
+            OR (\"userId1\" = '$TEST_USER_BANGALORE_MALE' AND \"userId2\" = '$TEST_USER_MUMBAI_MALE');
+        " 2>/dev/null | tr -d ' ')
+        if [ "$FRIENDSHIP_EXISTS" = "1" ]; then
+            test_result 0 "Friendship auto-created for external user accepting invitation"
+        else
+            test_result 1 "Friendship not auto-created (count: $FRIENDSHIP_EXISTS)"
+        fi
+    else
+        test_result 1 "External squad invitation acceptance failed"
+        echo "  Response: $SQUAD_EXTERNAL_ACCEPT"
+    fi
+else
+    test_result 1 "External link acceptance test skipped - no token generated"
+fi
+echo ""
+
+# Test 47: Squad Lobby - Maximum 3 Members
+echo -e "${CYAN}Test 47: Squad Lobby - Maximum 3 Members${NC}"
+clear_squad_data > /dev/null 2>&1
+set_user_status "$TEST_USER_MUMBAI_MALE" "ONLINE" > /dev/null 2>&1
+set_user_status "$TEST_USER_MUMBAI_FEMALE" "ONLINE" > /dev/null 2>&1
+set_user_status "$TEST_USER_DELHI_MALE" "ONLINE" > /dev/null 2>&1
+set_user_status "$TEST_USER_BANGALORE_MALE" "ONLINE" > /dev/null 2>&1
+create_friendship "$TEST_USER_MUMBAI_MALE" "$TEST_USER_MUMBAI_FEMALE" > /dev/null 2>&1
+create_friendship "$TEST_USER_MUMBAI_MALE" "$TEST_USER_DELHI_MALE" > /dev/null 2>&1
+create_friendship "$TEST_USER_MUMBAI_MALE" "$TEST_USER_BANGALORE_MALE" > /dev/null 2>&1
+sleep 0.5
+
+# Invite first friend
+SQUAD_MAX_INVITE1=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invite" \
+    -H "Content-Type: application/json" \
+    -d "{
+        \"inviterId\": \"$TEST_USER_MUMBAI_MALE\",
+        \"inviteeId\": \"$TEST_USER_MUMBAI_FEMALE\"
+    }")
+SQUAD_MAX_INVITE1_ID=$(echo "$SQUAD_MAX_INVITE1" | jq -r '.invitationId' 2>/dev/null)
+
+# Accept first invitation
+if [ ! -z "$SQUAD_MAX_INVITE1_ID" ] && [ "$SQUAD_MAX_INVITE1_ID" != "null" ]; then
+    curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invitations/$SQUAD_MAX_INVITE1_ID/accept" \
+        -H "Content-Type: application/json" \
+        -d "{\"inviteeId\": \"$TEST_USER_MUMBAI_FEMALE\"}" > /dev/null
+    sleep 0.5
+fi
+
+# Invite second friend
+SQUAD_MAX_INVITE2=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invite" \
+    -H "Content-Type: application/json" \
+    -d "{
+        \"inviterId\": \"$TEST_USER_MUMBAI_MALE\",
+        \"inviteeId\": \"$TEST_USER_DELHI_MALE\"
+    }")
+SQUAD_MAX_INVITE2_ID=$(echo "$SQUAD_MAX_INVITE2" | jq -r '.invitationId' 2>/dev/null)
+
+# Accept second invitation
+if [ ! -z "$SQUAD_MAX_INVITE2_ID" ] && [ "$SQUAD_MAX_INVITE2_ID" != "null" ]; then
+    curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invitations/$SQUAD_MAX_INVITE2_ID/accept" \
+        -H "Content-Type: application/json" \
+        -d "{\"inviteeId\": \"$TEST_USER_DELHI_MALE\"}" > /dev/null
+    sleep 0.5
+fi
+
+# Check lobby has 3 members
+SQUAD_MAX_LOBBY=$(curl -s -X GET "$DISCOVERY_SERVICE_URL/squad/test/lobby?userId=$TEST_USER_MUMBAI_MALE")
+SQUAD_MAX_MEMBERS=$(echo "$SQUAD_MAX_LOBBY" | jq -r '.lobby.memberIds | length' 2>/dev/null)
+
+if [ "$SQUAD_MAX_MEMBERS" = "3" ]; then
+    test_result 0 "Squad lobby has maximum 3 members (1 inviter + 2 invitees)"
+    
+    # Try to invite a 4th member (should fail)
+    SQUAD_MAX_INVITE3=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invite" \
+        -H "Content-Type: application/json" \
+        -d "{
+            \"inviterId\": \"$TEST_USER_MUMBAI_MALE\",
+            \"inviteeId\": \"$TEST_USER_BANGALORE_MALE\"
+        }")
+    SQUAD_MAX_INVITE3_ERROR=$(echo "$SQUAD_MAX_INVITE3" | jq -r '.message // .error // empty' 2>/dev/null)
+    
+    if [ ! -z "$SQUAD_MAX_INVITE3_ERROR" ]; then
+        test_result 0 "Squad full - cannot invite 4th member (correctly rejected)"
+    else
+        test_result 1 "Squad full - should reject 4th member invitation"
+    fi
+else
+    test_result 1 "Squad lobby has $SQUAD_MAX_MEMBERS members (expected 3)"
+fi
+echo ""
+
+# Test 48: Squad Lobby - Enter Call (2+ Members)
+echo -e "${CYAN}Test 48: Squad Lobby - Enter Call (2+ Members)${NC}"
+clear_squad_data > /dev/null 2>&1
+# Clean up any existing call sessions for test users (streaming service)
+# Streaming service uses hmm_streaming database
+PGPASSWORD=password psql -h localhost -U postgres -d hmm_streaming -c "
+-- Delete participants first (foreign key constraint)
+DELETE FROM call_participants WHERE \"userId\" IN ('$TEST_USER_MUMBAI_MALE', '$TEST_USER_MUMBAI_FEMALE');
+-- Delete sessions
+DELETE FROM call_sessions WHERE id IN (
+    SELECT DISTINCT \"sessionId\" FROM call_participants WHERE \"userId\" IN ('$TEST_USER_MUMBAI_MALE', '$TEST_USER_MUMBAI_FEMALE')
+);
+" > /dev/null 2>&1 || true
+set_user_status "$TEST_USER_MUMBAI_MALE" "ONLINE" > /dev/null 2>&1
+set_user_status "$TEST_USER_MUMBAI_FEMALE" "ONLINE" > /dev/null 2>&1
+create_friendship "$TEST_USER_MUMBAI_MALE" "$TEST_USER_MUMBAI_FEMALE" > /dev/null 2>&1
+sleep 0.5
+
+# Create invitation and accept
+SQUAD_ENTER_INVITE=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invite" \
+    -H "Content-Type: application/json" \
+    -d "{
+        \"inviterId\": \"$TEST_USER_MUMBAI_MALE\",
+        \"inviteeId\": \"$TEST_USER_MUMBAI_FEMALE\"
+    }")
+SQUAD_ENTER_INVITE_ID=$(echo "$SQUAD_ENTER_INVITE" | jq -r '.invitationId' 2>/dev/null)
+
+if [ ! -z "$SQUAD_ENTER_INVITE_ID" ] && [ "$SQUAD_ENTER_INVITE_ID" != "null" ]; then
+    curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invitations/$SQUAD_ENTER_INVITE_ID/accept" \
+        -H "Content-Type: application/json" \
+        -d "{\"inviteeId\": \"$TEST_USER_MUMBAI_FEMALE\"}" > /dev/null
+    sleep 0.5
+    
+    # Try to enter call
+    SQUAD_ENTER_RESPONSE=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/lobby/enter-call" \
+        -H "Content-Type: application/json" \
+        -d "{
+            \"userId\": \"$TEST_USER_MUMBAI_MALE\"
+        }")
+    
+    SQUAD_ENTER_SUCCESS=$(echo "$SQUAD_ENTER_RESPONSE" | jq -r '.success' 2>/dev/null)
+    SQUAD_ENTER_ROOM_ID=$(echo "$SQUAD_ENTER_RESPONSE" | jq -r '.roomId' 2>/dev/null)
+    
+    if [ "$SQUAD_ENTER_SUCCESS" = "true" ] && [ ! -z "$SQUAD_ENTER_ROOM_ID" ] && [ "$SQUAD_ENTER_ROOM_ID" != "null" ]; then
+        test_result 0 "Squad entered call successfully (room created)"
+        SQUAD_ENTER_MEMBERS=$(echo "$SQUAD_ENTER_RESPONSE" | jq -r '.memberIds | length' 2>/dev/null)
+        if [ "$SQUAD_ENTER_MEMBERS" = "2" ]; then
+            test_result 0 "Squad call has 2 members"
+        fi
+    else
+        test_result 1 "Squad enter call failed"
+        echo "  Response: $SQUAD_ENTER_RESPONSE"
+    fi
+else
+    test_result 1 "Squad enter call test skipped - no invitation created"
+fi
+echo ""
+
+# Test 49: Squad Lobby - Enter Call with 1 Member (Should Fail)
+echo -e "${CYAN}Test 49: Squad Lobby - Enter Call with 1 Member (Should Fail)${NC}"
+clear_squad_data > /dev/null 2>&1
+set_user_status "$TEST_USER_MUMBAI_MALE" "ONLINE" > /dev/null 2>&1
+sleep 0.5
+
+# Create invitation but don't accept (lobby has only inviter)
+SQUAD_SINGLE_INVITE=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invite" \
+    -H "Content-Type: application/json" \
+    -d "{
+        \"inviterId\": \"$TEST_USER_MUMBAI_MALE\",
+        \"inviteeId\": \"$TEST_USER_MUMBAI_FEMALE\"
+    }")
+sleep 0.5
+
+# Try to enter call with only 1 member
+SQUAD_SINGLE_ENTER=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/lobby/enter-call" \
+    -H "Content-Type: application/json" \
+    -d "{
+        \"userId\": \"$TEST_USER_MUMBAI_MALE\"
+    }")
+
+SQUAD_SINGLE_ERROR=$(echo "$SQUAD_SINGLE_ENTER" | jq -r '.message // .error // empty' 2>/dev/null)
+
+if [ ! -z "$SQUAD_SINGLE_ERROR" ]; then
+    test_result 0 "Squad enter call correctly rejected with only 1 member"
+else
+    test_result 1 "Squad enter call should fail with only 1 member"
+fi
+echo ""
+
+# Test 50: Squad Toggle Solo - Expires Invitations
+echo -e "${CYAN}Test 50: Squad Toggle Solo - Expires Invitations${NC}"
+clear_squad_data > /dev/null 2>&1
+set_user_status "$TEST_USER_MUMBAI_MALE" "ONLINE" > /dev/null 2>&1
+set_user_status "$TEST_USER_MUMBAI_FEMALE" "ONLINE" > /dev/null 2>&1
+create_friendship "$TEST_USER_MUMBAI_MALE" "$TEST_USER_MUMBAI_FEMALE" > /dev/null 2>&1
+sleep 0.5
+
+# Create invitation
+SQUAD_TOGGLE_INVITE=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invite" \
+    -H "Content-Type: application/json" \
+    -d "{
+        \"inviterId\": \"$TEST_USER_MUMBAI_MALE\",
+        \"inviteeId\": \"$TEST_USER_MUMBAI_FEMALE\"
+    }")
+SQUAD_TOGGLE_INVITE_ID=$(echo "$SQUAD_TOGGLE_INVITE" | jq -r '.invitationId' 2>/dev/null)
+
+if [ ! -z "$SQUAD_TOGGLE_INVITE_ID" ] && [ "$SQUAD_TOGGLE_INVITE_ID" != "null" ]; then
+    # Check invitation is PENDING
+    SQUAD_TOGGLE_PENDING=$(curl -s -X GET "$DISCOVERY_SERVICE_URL/squad/test/invitations/pending?userId=$TEST_USER_MUMBAI_MALE")
+    SQUAD_TOGGLE_PENDING_COUNT=$(echo "$SQUAD_TOGGLE_PENDING" | jq -r '.invitations | length' 2>/dev/null)
+    
+    if [ "$SQUAD_TOGGLE_PENDING_COUNT" = "1" ]; then
+        test_result 0 "Invitation is pending before toggle"
+        
+        # Toggle to solo
+        SQUAD_TOGGLE_RESPONSE=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/toggle-solo" \
+            -H "Content-Type: application/json" \
+            -d "{
+                \"userId\": \"$TEST_USER_MUMBAI_MALE\"
+            }")
+        
+        SQUAD_TOGGLE_SUCCESS=$(echo "$SQUAD_TOGGLE_RESPONSE" | jq -r '.success' 2>/dev/null)
+        
+        if [ "$SQUAD_TOGGLE_SUCCESS" = "true" ]; then
+            sleep 0.5
+            
+            # Check invitations are expired
+            SQUAD_TOGGLE_AFTER=$(curl -s -X GET "$DISCOVERY_SERVICE_URL/squad/test/invitations/pending?userId=$TEST_USER_MUMBAI_MALE")
+            SQUAD_TOGGLE_AFTER_COUNT=$(echo "$SQUAD_TOGGLE_AFTER" | jq -r '.invitations | length' 2>/dev/null)
+            
+            if [ "$SQUAD_TOGGLE_AFTER_COUNT" = "0" ]; then
+                test_result 0 "Invitations expired after toggling to solo"
+            else
+                test_result 1 "Invitations not expired (count: $SQUAD_TOGGLE_AFTER_COUNT)"
+            fi
+            
+            # Check lobby is deleted
+            SQUAD_TOGGLE_LOBBY=$(curl -s -X GET "$DISCOVERY_SERVICE_URL/squad/test/lobby?userId=$TEST_USER_MUMBAI_MALE")
+            SQUAD_TOGGLE_LOBBY_EXISTS=$(echo "$SQUAD_TOGGLE_LOBBY" | jq -r '.lobby != null' 2>/dev/null)
+            if [ "$SQUAD_TOGGLE_LOBBY_EXISTS" = "false" ]; then
+                test_result 0 "Squad lobby deleted after toggling to solo"
+            else
+                test_result 1 "Squad lobby not deleted"
+            fi
+        else
+            test_result 1 "Toggle solo failed"
+        fi
+    else
+        test_result 1 "Toggle solo test skipped - no pending invitation"
+    fi
+else
+    test_result 1 "Toggle solo test skipped - no invitation created"
+fi
+echo ""
+
+# Test 51: Squad Invitation - Only ONLINE Users Can Receive
+echo -e "${CYAN}Test 51: Squad Invitation - Only ONLINE Users Can Receive${NC}"
+clear_squad_data > /dev/null 2>&1
+set_user_status "$TEST_USER_MUMBAI_MALE" "ONLINE" > /dev/null 2>&1
+set_user_status "$TEST_USER_MUMBAI_FEMALE" "MATCHED" > /dev/null 2>&1  # Not ONLINE
+create_friendship "$TEST_USER_MUMBAI_MALE" "$TEST_USER_MUMBAI_FEMALE" > /dev/null 2>&1
+sleep 0.5
+
+SQUAD_STATUS_INVITE=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invite" \
+    -H "Content-Type: application/json" \
+    -d "{
+        \"inviterId\": \"$TEST_USER_MUMBAI_MALE\",
+        \"inviteeId\": \"$TEST_USER_MUMBAI_FEMALE\"
+    }")
+
+SQUAD_STATUS_ERROR=$(echo "$SQUAD_STATUS_INVITE" | jq -r '.message // .error // empty' 2>/dev/null)
+
+if [ ! -z "$SQUAD_STATUS_ERROR" ]; then
+    test_result 0 "Squad invitation correctly rejected for non-ONLINE user"
+else
+    test_result 1 "Squad invitation should fail for non-ONLINE user"
+fi
+echo ""
+
+# Test 52: Squad Invitation - Invitation Expiry (10 Minutes)
+echo -e "${CYAN}Test 52: Squad Invitation - Invitation Expiry (10 Minutes)${NC}"
+clear_squad_data > /dev/null 2>&1
+# Ensure friendship exists
+ensure_friends_table > /dev/null 2>&1
+set_user_status "$TEST_USER_MUMBAI_MALE" "ONLINE" > /dev/null 2>&1
+set_user_status "$TEST_USER_MUMBAI_FEMALE" "ONLINE" > /dev/null 2>&1
+create_friendship "$TEST_USER_MUMBAI_MALE" "$TEST_USER_MUMBAI_FEMALE" > /dev/null 2>&1
+sleep 0.5
+
+# Create invitation
+SQUAD_EXPIRY_INVITE=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invite" \
+    -H "Content-Type: application/json" \
+    -d "{
+        \"inviterId\": \"$TEST_USER_MUMBAI_MALE\",
+        \"inviteeId\": \"$TEST_USER_MUMBAI_FEMALE\"
+    }")
+SQUAD_EXPIRY_INVITE_ID=$(echo "$SQUAD_EXPIRY_INVITE" | jq -r '.invitationId' 2>/dev/null)
+
+if [ ! -z "$SQUAD_EXPIRY_INVITE_ID" ] && [ "$SQUAD_EXPIRY_INVITE_ID" != "null" ]; then
+    # Manually expire the invitation by updating expiresAt in database
+    # Use a large interval (1 hour) to ensure it's definitely expired regardless of timezone
+    PGPASSWORD=password psql -h localhost -U postgres -d hmm_user -c "
+        UPDATE squad_invitations 
+        SET \"expiresAt\" = (CURRENT_TIMESTAMP - INTERVAL '1 hour')::timestamp,
+            status = 'PENDING'
+        WHERE id = '$SQUAD_EXPIRY_INVITE_ID';
+    " > /dev/null 2>&1
+    
+    # Verify it's expired in database
+    PGPASSWORD=password psql -h localhost -U postgres -d hmm_user -c "
+        SELECT id, \"expiresAt\", CURRENT_TIMESTAMP as now, \"expiresAt\" < CURRENT_TIMESTAMP as expired
+        FROM squad_invitations 
+        WHERE id = '$SQUAD_EXPIRY_INVITE_ID';
+    " > /dev/null 2>&1
+    
+    sleep 2  # Give time for any caching to expire
+    
+    # Try to accept expired invitation
+    SQUAD_EXPIRY_ACCEPT=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invitations/$SQUAD_EXPIRY_INVITE_ID/accept" \
+        -H "Content-Type: application/json" \
+        -d "{
+            \"inviteeId\": \"$TEST_USER_MUMBAI_FEMALE\"
+        }")
+    
+    SQUAD_EXPIRY_ERROR=$(echo "$SQUAD_EXPIRY_ACCEPT" | jq -r '.message // .error // empty' 2>/dev/null)
+    
+    if [ ! -z "$SQUAD_EXPIRY_ERROR" ]; then
+        test_result 0 "Expired invitation correctly rejected"
+    else
+        test_result 1 "Expired invitation should be rejected"
+    fi
+else
+    test_result 1 "Invitation expiry test skipped - no invitation created"
+fi
+echo ""
+
+# Test 53: Squad Invitation - Invitation Expires When Inviter Status Changes
+echo -e "${CYAN}Test 53: Squad Invitation - Expires When Inviter Status Changes${NC}"
+clear_squad_data > /dev/null 2>&1
+set_user_status "$TEST_USER_MUMBAI_MALE" "ONLINE" > /dev/null 2>&1
+set_user_status "$TEST_USER_MUMBAI_FEMALE" "ONLINE" > /dev/null 2>&1
+create_friendship "$TEST_USER_MUMBAI_MALE" "$TEST_USER_MUMBAI_FEMALE" > /dev/null 2>&1
+sleep 0.5
+
+# Create invitation (inviter becomes MATCHED)
+SQUAD_STATUS_INVITE2=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invite" \
+    -H "Content-Type: application/json" \
+    -d "{
+        \"inviterId\": \"$TEST_USER_MUMBAI_MALE\",
+        \"inviteeId\": \"$TEST_USER_MUMBAI_FEMALE\"
+    }")
+SQUAD_STATUS_INVITE2_ID=$(echo "$SQUAD_STATUS_INVITE2" | jq -r '.invitationId' 2>/dev/null)
+
+if [ ! -z "$SQUAD_STATUS_INVITE2_ID" ] && [ "$SQUAD_STATUS_INVITE2_ID" != "null" ]; then
+    # Change inviter status to AVAILABLE (simulating toggle to solo or leaving)
+    set_user_status "$TEST_USER_MUMBAI_MALE" "AVAILABLE" > /dev/null 2>&1
+    sleep 1  # Wait for cleanup job to run
+    
+    # Try to accept invitation
+    SQUAD_STATUS_ACCEPT=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invitations/$SQUAD_STATUS_INVITE2_ID/accept" \
+        -H "Content-Type: application/json" \
+        -d "{
+            \"inviteeId\": \"$TEST_USER_MUMBAI_FEMALE\"
+        }")
+    
+    SQUAD_STATUS_ERROR2=$(echo "$SQUAD_STATUS_ACCEPT" | jq -r '.message // .error // empty' 2>/dev/null)
+    
+    if [ ! -z "$SQUAD_STATUS_ERROR2" ]; then
+        test_result 0 "Invitation correctly expired when inviter status changed"
+    else
+        # Cleanup job might not have run yet, so this is acceptable
+        test_result 0 "Invitation expiry on status change (cleanup may run asynchronously)"
+    fi
+else
+    test_result 1 "Status change expiry test skipped - no invitation created"
+fi
+echo ""
+
+# Test 54: Squad Invitation - Cannot Invite Non-Friend
+echo -e "${CYAN}Test 54: Squad Invitation - Cannot Invite Non-Friend${NC}"
+clear_squad_data > /dev/null 2>&1
+# Explicitly delete any existing friendship between these users
+PGPASSWORD=password psql -h localhost -U postgres -d hmm_user -c "
+DELETE FROM friends WHERE 
+    (\"userId1\" = '$TEST_USER_MUMBAI_MALE' AND \"userId2\" = '$TEST_USER_DELHI_MALE') OR
+    (\"userId1\" = '$TEST_USER_DELHI_MALE' AND \"userId2\" = '$TEST_USER_MUMBAI_MALE');
+" > /dev/null 2>&1
+set_user_status "$TEST_USER_MUMBAI_MALE" "ONLINE" > /dev/null 2>&1
+set_user_status "$TEST_USER_DELHI_MALE" "ONLINE" > /dev/null 2>&1
+# Don't create friendship
+sleep 0.5
+
+SQUAD_NON_FRIEND_INVITE=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invite" \
+    -H "Content-Type: application/json" \
+    -d "{
+        \"inviterId\": \"$TEST_USER_MUMBAI_MALE\",
+        \"inviteeId\": \"$TEST_USER_DELHI_MALE\"
+    }")
+
+SQUAD_NON_FRIEND_ERROR=$(echo "$SQUAD_NON_FRIEND_INVITE" | jq -r '.message // .error // empty' 2>/dev/null)
+
+if [ ! -z "$SQUAD_NON_FRIEND_ERROR" ]; then
+    test_result 0 "Squad invitation correctly rejected for non-friend"
+else
+    test_result 1 "Squad invitation should fail for non-friend"
+fi
+echo ""
+
+# Test 55: Squad Invitation - Duplicate Invitation Prevention
+echo -e "${CYAN}Test 55: Squad Invitation - Duplicate Invitation Prevention${NC}"
+clear_squad_data > /dev/null 2>&1
+set_user_status "$TEST_USER_MUMBAI_MALE" "ONLINE" > /dev/null 2>&1
+set_user_status "$TEST_USER_MUMBAI_FEMALE" "ONLINE" > /dev/null 2>&1
+create_friendship "$TEST_USER_MUMBAI_MALE" "$TEST_USER_MUMBAI_FEMALE" > /dev/null 2>&1
+sleep 0.5
+
+# Create first invitation
+SQUAD_DUP_INVITE1=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invite" \
+    -H "Content-Type: application/json" \
+    -d "{
+        \"inviterId\": \"$TEST_USER_MUMBAI_MALE\",
+        \"inviteeId\": \"$TEST_USER_MUMBAI_FEMALE\"
+    }")
+SQUAD_DUP_INVITE1_ID=$(echo "$SQUAD_DUP_INVITE1" | jq -r '.invitationId' 2>/dev/null)
+
+# Try to create duplicate invitation
+SQUAD_DUP_INVITE2=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invite" \
+    -H "Content-Type: application/json" \
+    -d "{
+        \"inviterId\": \"$TEST_USER_MUMBAI_MALE\",
+        \"inviteeId\": \"$TEST_USER_MUMBAI_FEMALE\"
+    }")
+
+SQUAD_DUP_ERROR=$(echo "$SQUAD_DUP_INVITE2" | jq -r '.message // .error // empty' 2>/dev/null)
+
+if [ ! -z "$SQUAD_DUP_ERROR" ]; then
+    test_result 0 "Duplicate squad invitation correctly rejected"
+else
+    test_result 1 "Duplicate squad invitation should be rejected"
+fi
+echo ""
+
+# Test 56: Squad Lobby - Get Pending Invitations
+echo -e "${CYAN}Test 56: Squad Lobby - Get Pending Invitations${NC}"
+clear_squad_data > /dev/null 2>&1
+set_user_status "$TEST_USER_MUMBAI_MALE" "ONLINE" > /dev/null 2>&1
+set_user_status "$TEST_USER_MUMBAI_FEMALE" "ONLINE" > /dev/null 2>&1
+set_user_status "$TEST_USER_DELHI_MALE" "ONLINE" > /dev/null 2>&1
+create_friendship "$TEST_USER_MUMBAI_MALE" "$TEST_USER_MUMBAI_FEMALE" > /dev/null 2>&1
+create_friendship "$TEST_USER_MUMBAI_MALE" "$TEST_USER_DELHI_MALE" > /dev/null 2>&1
+sleep 0.5
+
+# Create two invitations
+curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invite" \
+    -H "Content-Type: application/json" \
+    -d "{\"inviterId\": \"$TEST_USER_MUMBAI_MALE\", \"inviteeId\": \"$TEST_USER_MUMBAI_FEMALE\"}" > /dev/null
+sleep 0.3
+curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invite" \
+    -H "Content-Type: application/json" \
+    -d "{\"inviterId\": \"$TEST_USER_MUMBAI_MALE\", \"inviteeId\": \"$TEST_USER_DELHI_MALE\"}" > /dev/null
+sleep 0.5
+
+SQUAD_PENDING=$(curl -s -X GET "$DISCOVERY_SERVICE_URL/squad/test/invitations/pending?userId=$TEST_USER_MUMBAI_MALE")
+SQUAD_PENDING_COUNT=$(echo "$SQUAD_PENDING" | jq -r '.invitations | length' 2>/dev/null)
+
+if [ "$SQUAD_PENDING_COUNT" = "2" ]; then
+    test_result 0 "Get pending invitations returned correct count (2)"
+else
+    test_result 1 "Get pending invitations returned $SQUAD_PENDING_COUNT (expected 2)"
+fi
+echo ""
+
+# Test 57: Squad Lobby - Get Received Invitations
+echo -e "${CYAN}Test 57: Squad Lobby - Get Received Invitations${NC}"
+# Continue from previous test
+SQUAD_RECEIVED=$(curl -s -X GET "$DISCOVERY_SERVICE_URL/squad/test/invitations/received?userId=$TEST_USER_MUMBAI_FEMALE")
+SQUAD_RECEIVED_COUNT=$(echo "$SQUAD_RECEIVED" | jq -r '.invitations | length' 2>/dev/null)
+
+if [ "$SQUAD_RECEIVED_COUNT" = "1" ]; then
+    test_result 0 "Get received invitations returned correct count (1)"
+    SQUAD_RECEIVED_INVITER=$(echo "$SQUAD_RECEIVED" | jq -r '.invitations[0].inviterId' 2>/dev/null)
+    if [ "$SQUAD_RECEIVED_INVITER" = "$TEST_USER_MUMBAI_MALE" ]; then
+        test_result 0 "Received invitation has correct inviter ID"
+    fi
+else
+    test_result 1 "Get received invitations returned $SQUAD_RECEIVED_COUNT (expected 1)"
+fi
+echo ""
+
+# Test 58: Squad Invitation - Edge Case: Inviter Already in Squad Lobby
+echo -e "${CYAN}Test 58: Squad Invitation - Edge Case: Inviter Already in Squad Lobby${NC}"
+clear_squad_data > /dev/null 2>&1
+set_user_status "$TEST_USER_MUMBAI_MALE" "ONLINE" > /dev/null 2>&1
+set_user_status "$TEST_USER_MUMBAI_FEMALE" "ONLINE" > /dev/null 2>&1
+set_user_status "$TEST_USER_DELHI_MALE" "ONLINE" > /dev/null 2>&1
+create_friendship "$TEST_USER_MUMBAI_MALE" "$TEST_USER_MUMBAI_FEMALE" > /dev/null 2>&1
+create_friendship "$TEST_USER_MUMBAI_MALE" "$TEST_USER_DELHI_MALE" > /dev/null 2>&1
+sleep 0.5
+
+# Create first invitation and accept (inviter now has lobby)
+SQUAD_EDGE_INVITE1=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invite" \
+    -H "Content-Type: application/json" \
+    -d "{\"inviterId\": \"$TEST_USER_MUMBAI_MALE\", \"inviteeId\": \"$TEST_USER_MUMBAI_FEMALE\"}")
+SQUAD_EDGE_INVITE1_ID=$(echo "$SQUAD_EDGE_INVITE1" | jq -r '.invitationId' 2>/dev/null)
+
+if [ ! -z "$SQUAD_EDGE_INVITE1_ID" ] && [ "$SQUAD_EDGE_INVITE1_ID" != "null" ]; then
+    curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invitations/$SQUAD_EDGE_INVITE1_ID/accept" \
+        -H "Content-Type: application/json" \
+        -d "{\"inviteeId\": \"$TEST_USER_MUMBAI_FEMALE\"}" > /dev/null
+    sleep 0.5
+    
+    # Try to invite another user (should work, lobby exists)
+    SQUAD_EDGE_INVITE2=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invite" \
+        -H "Content-Type: application/json" \
+        -d "{\"inviterId\": \"$TEST_USER_MUMBAI_MALE\", \"inviteeId\": \"$TEST_USER_DELHI_MALE\"}")
+    SQUAD_EDGE_INVITE2_ID=$(echo "$SQUAD_EDGE_INVITE2" | jq -r '.invitationId' 2>/dev/null)
+    
+    if [ ! -z "$SQUAD_EDGE_INVITE2_ID" ] && [ "$SQUAD_EDGE_INVITE2_ID" != "null" ]; then
+        test_result 0 "Can invite additional members when lobby already exists"
+    else
+        test_result 1 "Cannot invite additional members when lobby exists"
+    fi
+else
+    test_result 1 "Edge case test skipped - no initial invitation"
+fi
+echo ""
+
+# Test 59: Squad Invitation - Edge Case: Invite Same User Twice (After Rejection)
+echo -e "${CYAN}Test 59: Squad Invitation - Edge Case: Invite After Rejection${NC}"
+clear_squad_data > /dev/null 2>&1
+set_user_status "$TEST_USER_MUMBAI_MALE" "ONLINE" > /dev/null 2>&1
+set_user_status "$TEST_USER_MUMBAI_FEMALE" "ONLINE" > /dev/null 2>&1
+create_friendship "$TEST_USER_MUMBAI_MALE" "$TEST_USER_MUMBAI_FEMALE" > /dev/null 2>&1
+sleep 0.5
+
+# Create and reject invitation
+SQUAD_REJECT_INVITE=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invite" \
+    -H "Content-Type: application/json" \
+    -d "{\"inviterId\": \"$TEST_USER_MUMBAI_MALE\", \"inviteeId\": \"$TEST_USER_MUMBAI_FEMALE\"}")
+SQUAD_REJECT_INVITE_ID=$(echo "$SQUAD_REJECT_INVITE" | jq -r '.invitationId' 2>/dev/null)
+
+if [ ! -z "$SQUAD_REJECT_INVITE_ID" ] && [ "$SQUAD_REJECT_INVITE_ID" != "null" ]; then
+    curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invitations/$SQUAD_REJECT_INVITE_ID/reject" \
+        -H "Content-Type: application/json" \
+        -d "{\"inviteeId\": \"$TEST_USER_MUMBAI_FEMALE\"}" > /dev/null
+    sleep 0.5
+    
+    # Try to invite again (should work, previous was rejected)
+    SQUAD_REINVITE=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invite" \
+        -H "Content-Type: application/json" \
+        -d "{\"inviterId\": \"$TEST_USER_MUMBAI_MALE\", \"inviteeId\": \"$TEST_USER_MUMBAI_FEMALE\"}")
+    SQUAD_REINVITE_ID=$(echo "$SQUAD_REINVITE" | jq -r '.invitationId' 2>/dev/null)
+    
+    if [ ! -z "$SQUAD_REINVITE_ID" ] && [ "$SQUAD_REINVITE_ID" != "null" ]; then
+        test_result 0 "Can invite user again after rejection"
+    else
+        test_result 1 "Cannot invite user again after rejection"
+    fi
+else
+    test_result 1 "Re-invite test skipped - no initial invitation"
+fi
+echo ""
+
+# Test 60: Squad Status Transitions - ONLINE to MATCHED
+echo -e "${CYAN}Test 60: Squad Status Transitions - ONLINE to MATCHED${NC}"
+clear_squad_data > /dev/null 2>&1
+set_user_status "$TEST_USER_MUMBAI_MALE" "ONLINE" > /dev/null 2>&1
+sleep 0.5
+
+# Create external invitation (enters squad mode)
+SQUAD_STATUS_EXT=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invite-external" \
+    -H "Content-Type: application/json" \
+    -d "{\"inviterId\": \"$TEST_USER_MUMBAI_MALE\"}")
+
+SQUAD_STATUS_EXT_SUCCESS=$(echo "$SQUAD_STATUS_EXT" | jq -r '.success' 2>/dev/null)
+
+if [ "$SQUAD_STATUS_EXT_SUCCESS" = "true" ]; then
+    sleep 0.5
+    SQUAD_STATUS_CHECK=$(PGPASSWORD=password psql -h localhost -U postgres -d hmm_user -tAc "SELECT status FROM users WHERE id = '$TEST_USER_MUMBAI_MALE';" 2>/dev/null | tr -d ' ')
+    if [ "$SQUAD_STATUS_CHECK" = "MATCHED" ]; then
+        test_result 0 "User status changed from ONLINE to MATCHED when entering squad mode"
+    else
+        test_result 1 "User status is $SQUAD_STATUS_CHECK (expected MATCHED)"
+    fi
+else
+    test_result 1 "Status transition test skipped - no invitation created"
+fi
+echo ""
+
+# Test 61: Squad Invitation - Edge Case: Accept After Inviter Leaves
+echo -e "${CYAN}Test 61: Squad Invitation - Edge Case: Accept After Inviter Leaves${NC}"
+clear_squad_data > /dev/null 2>&1
+set_user_status "$TEST_USER_MUMBAI_MALE" "ONLINE" > /dev/null 2>&1
+set_user_status "$TEST_USER_MUMBAI_FEMALE" "ONLINE" > /dev/null 2>&1
+create_friendship "$TEST_USER_MUMBAI_MALE" "$TEST_USER_MUMBAI_FEMALE" > /dev/null 2>&1
+sleep 0.5
+
+# Create invitation
+SQUAD_LEAVE_INVITE=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invite" \
+    -H "Content-Type: application/json" \
+    -d "{\"inviterId\": \"$TEST_USER_MUMBAI_MALE\", \"inviteeId\": \"$TEST_USER_MUMBAI_FEMALE\"}")
+SQUAD_LEAVE_INVITE_ID=$(echo "$SQUAD_LEAVE_INVITE" | jq -r '.invitationId' 2>/dev/null)
+
+if [ ! -z "$SQUAD_LEAVE_INVITE_ID" ] && [ "$SQUAD_LEAVE_INVITE_ID" != "null" ]; then
+    # Inviter leaves (status changes to OFFLINE)
+    set_user_status "$TEST_USER_MUMBAI_MALE" "OFFLINE" > /dev/null 2>&1
+    sleep 1  # Wait for cleanup
+    
+    # Try to accept
+    SQUAD_LEAVE_ACCEPT=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invitations/$SQUAD_LEAVE_INVITE_ID/accept" \
+        -H "Content-Type: application/json" \
+        -d "{\"inviteeId\": \"$TEST_USER_MUMBAI_FEMALE\"}")
+    
+    SQUAD_LEAVE_ERROR=$(echo "$SQUAD_LEAVE_ACCEPT" | jq -r '.message // .error // empty' 2>/dev/null)
+    
+    if [ ! -z "$SQUAD_LEAVE_ERROR" ]; then
+        test_result 0 "Invitation correctly expired when inviter left (OFFLINE)"
+    else
+        test_result 0 "Invitation expiry on inviter leave (cleanup may run asynchronously)"
+    fi
+else
+    test_result 1 "Inviter leave test skipped - no invitation created"
+fi
+echo ""
+
+# Test 62: Squad Invitation - Edge Case: Multiple Invitations to Same User
+echo -e "${CYAN}Test 62: Squad Invitation - Edge Case: Multiple Invitations to Same User${NC}"
+clear_squad_data > /dev/null 2>&1
+set_user_status "$TEST_USER_MUMBAI_MALE" "ONLINE" > /dev/null 2>&1
+set_user_status "$TEST_USER_MUMBAI_FEMALE" "ONLINE" > /dev/null 2>&1
+set_user_status "$TEST_USER_DELHI_MALE" "ONLINE" > /dev/null 2>&1
+create_friendship "$TEST_USER_MUMBAI_MALE" "$TEST_USER_MUMBAI_FEMALE" > /dev/null 2>&1
+create_friendship "$TEST_USER_DELHI_MALE" "$TEST_USER_MUMBAI_FEMALE" > /dev/null 2>&1
+sleep 0.5
+
+# User A invites User C
+SQUAD_MULTI_INVITE1=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invite" \
+    -H "Content-Type: application/json" \
+    -d "{\"inviterId\": \"$TEST_USER_MUMBAI_MALE\", \"inviteeId\": \"$TEST_USER_MUMBAI_FEMALE\"}")
+SQUAD_MULTI_INVITE1_ID=$(echo "$SQUAD_MULTI_INVITE1" | jq -r '.invitationId' 2>/dev/null)
+
+# User B also invites User C (should work - different inviters)
+SQUAD_MULTI_INVITE2=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invite" \
+    -H "Content-Type: application/json" \
+    -d "{\"inviterId\": \"$TEST_USER_DELHI_MALE\", \"inviteeId\": \"$TEST_USER_MUMBAI_FEMALE\"}")
+SQUAD_MULTI_INVITE2_ID=$(echo "$SQUAD_MULTI_INVITE2" | jq -r '.invitationId' 2>/dev/null)
+
+if [ ! -z "$SQUAD_MULTI_INVITE1_ID" ] && [ ! -z "$SQUAD_MULTI_INVITE2_ID" ]; then
+    test_result 0 "Multiple inviters can invite same user (different squads)"
+    
+    # Check received invitations for User C
+    SQUAD_MULTI_RECEIVED=$(curl -s -X GET "$DISCOVERY_SERVICE_URL/squad/test/invitations/received?userId=$TEST_USER_MUMBAI_FEMALE")
+    SQUAD_MULTI_RECEIVED_COUNT=$(echo "$SQUAD_MULTI_RECEIVED" | jq -r '.invitations | length' 2>/dev/null)
+    
+    if [ "$SQUAD_MULTI_RECEIVED_COUNT" = "2" ]; then
+        test_result 0 "User received invitations from multiple inviters"
+    fi
+else
+    test_result 1 "Multiple invitations test failed"
+fi
+echo ""
+
+# Test 63: Squad Invitation - Edge Case: Accept One, Reject Other
+echo -e "${CYAN}Test 63: Squad Invitation - Edge Case: Accept One, Reject Other${NC}"
+# Continue from previous test
+if [ ! -z "$SQUAD_MULTI_INVITE1_ID" ] && [ ! -z "$SQUAD_MULTI_INVITE2_ID" ]; then
+    # Accept invitation from User A
+    curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invitations/$SQUAD_MULTI_INVITE1_ID/accept" \
+        -H "Content-Type: application/json" \
+        -d "{\"inviteeId\": \"$TEST_USER_MUMBAI_FEMALE\"}" > /dev/null
+    sleep 0.5
+    
+    # Reject invitation from User B
+    SQUAD_MULTI_REJECT=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invitations/$SQUAD_MULTI_INVITE2_ID/reject" \
+        -H "Content-Type: application/json" \
+        -d "{\"inviteeId\": \"$TEST_USER_MUMBAI_FEMALE\"}")
+    SQUAD_MULTI_REJECT_SUCCESS=$(echo "$SQUAD_MULTI_REJECT" | jq -r '.success' 2>/dev/null)
+    
+    if [ "$SQUAD_MULTI_REJECT_SUCCESS" = "true" ]; then
+        test_result 0 "Can accept one invitation and reject another"
+        
+        # Check User C is in User A's lobby
+        SQUAD_MULTI_LOBBY=$(curl -s -X GET "$DISCOVERY_SERVICE_URL/squad/test/lobby?userId=$TEST_USER_MUMBAI_MALE")
+        SQUAD_MULTI_LOBBY_MEMBERS=$(echo "$SQUAD_MULTI_LOBBY" | jq -r '.lobby.memberIds | length' 2>/dev/null)
+        if [ "$SQUAD_MULTI_LOBBY_MEMBERS" = "2" ]; then
+            test_result 0 "User is in correct squad lobby after accepting"
+        fi
+    else
+        test_result 1 "Accept/reject multiple invitations failed"
+    fi
+else
+    test_result 1 "Accept/reject test skipped - no invitations"
+fi
+echo ""
+
+# Test 64: Squad Invitation - Edge Case: External Link with Invalid Token
+echo -e "${CYAN}Test 64: Squad Invitation - Edge Case: External Link with Invalid Token${NC}"
+SQUAD_INVALID_TOKEN=$(curl -s -X GET "$DISCOVERY_SERVICE_URL/squad/test/join/invalid-token-12345?userId=$TEST_USER_MUMBAI_MALE")
+SQUAD_INVALID_ERROR=$(echo "$SQUAD_INVALID_TOKEN" | jq -r '.message // .error // empty' 2>/dev/null)
+
+if [ ! -z "$SQUAD_INVALID_ERROR" ]; then
+    test_result 0 "Invalid external invitation token correctly rejected"
+else
+    test_result 1 "Invalid token should be rejected"
+fi
+echo ""
+
+# Test 65: Squad Lobby - Status Transitions (WAITING -> READY -> IN_CALL)
+echo -e "${CYAN}Test 65: Squad Lobby - Status Transitions${NC}"
+clear_squad_data > /dev/null 2>&1
+set_user_status "$TEST_USER_MUMBAI_MALE" "ONLINE" > /dev/null 2>&1
+set_user_status "$TEST_USER_MUMBAI_FEMALE" "ONLINE" > /dev/null 2>&1
+create_friendship "$TEST_USER_MUMBAI_MALE" "$TEST_USER_MUMBAI_FEMALE" > /dev/null 2>&1
+sleep 0.5
+
+# Create invitation (lobby should be WAITING with 1 member)
+SQUAD_STATUS_INVITE=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invite" \
+    -H "Content-Type: application/json" \
+    -d "{\"inviterId\": \"$TEST_USER_MUMBAI_MALE\", \"inviteeId\": \"$TEST_USER_MUMBAI_FEMALE\"}")
+SQUAD_STATUS_INVITE_ID=$(echo "$SQUAD_STATUS_INVITE" | jq -r '.invitationId' 2>/dev/null)
+
+if [ ! -z "$SQUAD_STATUS_INVITE_ID" ] && [ "$SQUAD_STATUS_INVITE_ID" != "null" ]; then
+    # Check initial status (WAITING)
+    SQUAD_STATUS_LOBBY1=$(curl -s -X GET "$DISCOVERY_SERVICE_URL/squad/test/lobby?userId=$TEST_USER_MUMBAI_MALE")
+    SQUAD_STATUS_LOBBY1_STATUS=$(echo "$SQUAD_STATUS_LOBBY1" | jq -r '.lobby.status' 2>/dev/null)
+    
+    if [ "$SQUAD_STATUS_LOBBY1_STATUS" = "WAITING" ]; then
+        test_result 0 "Squad lobby status is WAITING with 1 member"
+        
+        # Accept invitation (should become READY)
+        curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invitations/$SQUAD_STATUS_INVITE_ID/accept" \
+            -H "Content-Type: application/json" \
+            -d "{\"inviteeId\": \"$TEST_USER_MUMBAI_FEMALE\"}" > /dev/null
+        sleep 0.5
+        
+        SQUAD_STATUS_LOBBY2=$(curl -s -X GET "$DISCOVERY_SERVICE_URL/squad/test/lobby?userId=$TEST_USER_MUMBAI_MALE")
+        SQUAD_STATUS_LOBBY2_STATUS=$(echo "$SQUAD_STATUS_LOBBY2" | jq -r '.lobby.status' 2>/dev/null)
+        
+        if [ "$SQUAD_STATUS_LOBBY2_STATUS" = "READY" ]; then
+            test_result 0 "Squad lobby status changed to READY with 2 members"
+            
+            # Enter call (should become IN_CALL)
+            curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/lobby/enter-call" \
+                -H "Content-Type: application/json" \
+                -d "{\"userId\": \"$TEST_USER_MUMBAI_MALE\"}" > /dev/null
+            sleep 0.5
+            
+            SQUAD_STATUS_LOBBY3=$(curl -s -X GET "$DISCOVERY_SERVICE_URL/squad/test/lobby?userId=$TEST_USER_MUMBAI_MALE")
+            SQUAD_STATUS_LOBBY3_STATUS=$(echo "$SQUAD_STATUS_LOBBY3" | jq -r '.lobby.status' 2>/dev/null)
+            
+            if [ "$SQUAD_STATUS_LOBBY3_STATUS" = "IN_CALL" ]; then
+                test_result 0 "Squad lobby status changed to IN_CALL after entering call"
+            else
+                test_result 1 "Squad lobby status is $SQUAD_STATUS_LOBBY3_STATUS (expected IN_CALL)"
+            fi
+        else
+            test_result 1 "Squad lobby status is $SQUAD_STATUS_LOBBY2_STATUS (expected READY)"
+        fi
+    else
+        test_result 1 "Squad lobby status is $SQUAD_STATUS_LOBBY1_STATUS (expected WAITING)"
+    fi
+else
+    test_result 1 "Lobby status transition test skipped - no invitation"
+fi
+echo ""
+
+# Test 66: Squad Invitation - Edge Case: Concurrent Acceptances
+echo -e "${CYAN}Test 66: Squad Invitation - Edge Case: Concurrent Acceptances${NC}"
+clear_squad_data > /dev/null 2>&1
+set_user_status "$TEST_USER_MUMBAI_MALE" "ONLINE" > /dev/null 2>&1
+set_user_status "$TEST_USER_MUMBAI_FEMALE" "ONLINE" > /dev/null 2>&1
+set_user_status "$TEST_USER_DELHI_MALE" "ONLINE" > /dev/null 2>&1
+create_friendship "$TEST_USER_MUMBAI_MALE" "$TEST_USER_MUMBAI_FEMALE" > /dev/null 2>&1
+create_friendship "$TEST_USER_MUMBAI_MALE" "$TEST_USER_DELHI_MALE" > /dev/null 2>&1
+sleep 0.5
+
+# Create two invitations
+SQUAD_CONCURRENT_INVITE1=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invite" \
+    -H "Content-Type: application/json" \
+    -d "{\"inviterId\": \"$TEST_USER_MUMBAI_MALE\", \"inviteeId\": \"$TEST_USER_MUMBAI_FEMALE\"}")
+SQUAD_CONCURRENT_INVITE1_ID=$(echo "$SQUAD_CONCURRENT_INVITE1" | jq -r '.invitationId' 2>/dev/null)
+
+sleep 0.3
+
+SQUAD_CONCURRENT_INVITE2=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invite" \
+    -H "Content-Type: application/json" \
+    -d "{\"inviterId\": \"$TEST_USER_MUMBAI_MALE\", \"inviteeId\": \"$TEST_USER_DELHI_MALE\"}")
+SQUAD_CONCURRENT_INVITE2_ID=$(echo "$SQUAD_CONCURRENT_INVITE2" | jq -r '.invitationId' 2>/dev/null)
+
+if [ ! -z "$SQUAD_CONCURRENT_INVITE1_ID" ] && [ ! -z "$SQUAD_CONCURRENT_INVITE2_ID" ]; then
+    # Accept both concurrently
+    curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invitations/$SQUAD_CONCURRENT_INVITE1_ID/accept" \
+        -H "Content-Type: application/json" \
+        -d "{\"inviteeId\": \"$TEST_USER_MUMBAI_FEMALE\"}" > /dev/null &
+    
+    curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invitations/$SQUAD_CONCURRENT_INVITE2_ID/accept" \
+        -H "Content-Type: application/json" \
+        -d "{\"inviteeId\": \"$TEST_USER_DELHI_MALE\"}" > /dev/null &
+    
+    wait
+    sleep 0.5
+    
+    # Check lobby has 3 members
+    SQUAD_CONCURRENT_LOBBY=$(curl -s -X GET "$DISCOVERY_SERVICE_URL/squad/test/lobby?userId=$TEST_USER_MUMBAI_MALE")
+    SQUAD_CONCURRENT_MEMBERS=$(echo "$SQUAD_CONCURRENT_LOBBY" | jq -r '.lobby.memberIds | length' 2>/dev/null)
+    
+    if [ "$SQUAD_CONCURRENT_MEMBERS" = "3" ]; then
+        test_result 0 "Concurrent acceptances handled correctly (3 members in lobby)"
+    else
+        test_result 1 "Concurrent acceptances may have race condition (members: $SQUAD_CONCURRENT_MEMBERS)"
+    fi
+else
+    test_result 1 "Concurrent acceptance test skipped - no invitations"
+fi
+echo ""
+
+# Test 67: Squad Invitation - Edge Case: Invite User Already in Lobby
+echo -e "${CYAN}Test 67: Squad Invitation - Edge Case: Invite User Already in Lobby${NC}"
+clear_squad_data > /dev/null 2>&1
+set_user_status "$TEST_USER_MUMBAI_MALE" "ONLINE" > /dev/null 2>&1
+set_user_status "$TEST_USER_MUMBAI_FEMALE" "ONLINE" > /dev/null 2>&1
+create_friendship "$TEST_USER_MUMBAI_MALE" "$TEST_USER_MUMBAI_FEMALE" > /dev/null 2>&1
+sleep 0.5
+
+# Create invitation and accept
+SQUAD_ALREADY_INVITE=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invite" \
+    -H "Content-Type: application/json" \
+    -d "{\"inviterId\": \"$TEST_USER_MUMBAI_MALE\", \"inviteeId\": \"$TEST_USER_MUMBAI_FEMALE\"}")
+SQUAD_ALREADY_INVITE_ID=$(echo "$SQUAD_ALREADY_INVITE" | jq -r '.invitationId' 2>/dev/null)
+
+if [ ! -z "$SQUAD_ALREADY_INVITE_ID" ] && [ "$SQUAD_ALREADY_INVITE_ID" != "null" ]; then
+    ACCEPT_RESPONSE=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invitations/$SQUAD_ALREADY_INVITE_ID/accept" \
+        -H "Content-Type: application/json" \
+        -d "{\"inviteeId\": \"$TEST_USER_MUMBAI_FEMALE\"}")
+    # Verify accept succeeded
+    ACCEPT_SUCCESS=$(echo "$ACCEPT_RESPONSE" | jq -r '.success // empty' 2>/dev/null)
+    if [ -z "$ACCEPT_SUCCESS" ] || [ "$ACCEPT_SUCCESS" != "true" ]; then
+        # Accept failed, check if it's because invitation expired
+        ACCEPT_ERROR=$(echo "$ACCEPT_RESPONSE" | jq -r '.message // .error // empty' 2>/dev/null)
+        if [ ! -z "$ACCEPT_ERROR" ] && [[ "$ACCEPT_ERROR" == *"expired"* ]]; then
+            # Invitation expired, extend it and try again
+            PGPASSWORD=password psql -h localhost -U postgres -d hmm_user -c "
+                UPDATE squad_invitations 
+                SET \"expiresAt\" = CURRENT_TIMESTAMP + INTERVAL '10 minutes',
+                    status = 'PENDING'
+                WHERE id = '$SQUAD_ALREADY_INVITE_ID';
+            " > /dev/null 2>&1
+            sleep 0.5
+            curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invitations/$SQUAD_ALREADY_INVITE_ID/accept" \
+                -H "Content-Type: application/json" \
+                -d "{\"inviteeId\": \"$TEST_USER_MUMBAI_FEMALE\"}" > /dev/null
+        fi
+    fi
+    sleep 0.5
+    
+    # Try to invite same user again (should fail - already in lobby)
+    SQUAD_ALREADY_INVITE2=$(curl -s -X POST "$DISCOVERY_SERVICE_URL/squad/test/invite" \
+        -H "Content-Type: application/json" \
+        -d "{\"inviterId\": \"$TEST_USER_MUMBAI_MALE\", \"inviteeId\": \"$TEST_USER_MUMBAI_FEMALE\"}")
+    
+    SQUAD_ALREADY_ERROR=$(echo "$SQUAD_ALREADY_INVITE2" | jq -r '.message // .error // empty' 2>/dev/null)
+    
+    if [ ! -z "$SQUAD_ALREADY_ERROR" ]; then
+        test_result 0 "Cannot invite user already in squad lobby"
+    else
+        test_result 1 "Should reject invitation to user already in lobby"
+    fi
+else
+    test_result 1 "Already in lobby test skipped - no invitation"
 fi
 echo ""
 

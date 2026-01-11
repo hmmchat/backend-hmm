@@ -1,8 +1,115 @@
-// Prisma schema for payment-service (add models when needed).
-// datasource db {
-//   provider = "postgresql"
-//   url      = env("DATABASE_URL")
-// }
-// generator client {
-//   provider = "prisma-client-js"
-// }
+// Prisma schema for payment-service
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+// Payment Order - Tracks coin purchases
+enum PaymentOrderStatus {
+  PENDING     // Order created, awaiting payment
+  PROCESSING  // Payment in progress
+  COMPLETED   // Payment successful, coins credited
+  FAILED      // Payment failed
+  CANCELLED   // Order cancelled
+  REFUNDED    // Payment refunded
+}
+
+model PaymentOrder {
+  id              String            @id @default(cuid())
+  userId          String
+  amountInr       Int               // Amount in paise (e.g., 10000 = ₹100)
+  coinsAmount     Int               // Coins to be credited
+  razorpayOrderId String?           @unique // Razorpay order ID
+  razorpayPaymentId String?         @unique // Razorpay payment ID (after payment)
+  status          PaymentOrderStatus @default(PENDING)
+  failureReason   String?           // Reason if failed
+  metadata        Json?             // Additional metadata (payment method, etc.)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  completedAt     DateTime?         // When payment was completed
+
+  @@index([userId])
+  @@index([status])
+  @@index([razorpayOrderId])
+  @@index([createdAt])
+  @@map("payment_orders")
+}
+
+// Redemption Request - Tracks cashout/redemption requests
+enum RedemptionStatus {
+  PENDING      // Request created, awaiting processing
+  PROCESSING   // Converting diamonds, initiating payout
+  COMPLETED    // Payout successful
+  FAILED       // Payout failed
+  CANCELLED    // User cancelled
+  REFUNDED     // Refunded to wallet
+}
+
+model RedemptionRequest {
+  id                  String           @id @default(cuid())
+  userId              String
+  originalDiamonds    Int              // Original diamonds user wanted to redeem
+  finalDiamonds       Int              // Final diamonds after upsell (if any)
+  coinsDeducted       Int              // Coins deducted for diamonds (including upsell)
+  inrAmount           Int              // INR amount in paise to be paid out
+  upsellLevel         Int              @default(0) // 0 = no upsell, 1-3 = upsell levels
+  status              RedemptionStatus @default(PENDING)
+  razorpayPayoutId    String?          @unique // Razorpay payout ID
+  bankAccountNumber   String?          // Encrypted bank account number
+  bankIfsc            String?          // Bank IFSC code
+  bankAccountName     String?          // Bank account holder name
+  failureReason       String?          // Reason if failed
+  metadata            Json?            // Additional metadata
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+  completedAt         DateTime?        // When payout was completed
+
+  @@index([userId])
+  @@index([status])
+  @@index([razorpayPayoutId])
+  @@index([createdAt])
+  @@map("redemption_requests")
+}
+
+// Payment Webhook - Log all webhooks for audit/debugging
+enum WebhookStatus {
+  PENDING   // Webhook received, not processed yet
+  PROCESSED // Successfully processed
+  FAILED    // Processing failed
+  IGNORED   // Ignored (duplicate, invalid, etc.)
+}
+
+model PaymentWebhook {
+  id          String       @id @default(cuid())
+  eventType   String       // e.g., "payment.captured", "payout.processed"
+  payload     Json         // Full webhook payload
+  signature   String?      // Razorpay signature
+  status      WebhookStatus @default(PENDING)
+  errorMessage String?     // Error message if processing failed
+  processedAt DateTime?    // When webhook was processed
+  createdAt   DateTime     @default(now())
+
+  @@index([eventType])
+  @@index([status])
+  @@index([createdAt])
+  @@map("payment_webhooks")
+}
+
+// Payment Configuration - Stores configurable formulas/rates (optional, can use env vars)
+// This table allows runtime configuration updates without redeployment
+model PaymentConfiguration {
+  id              String   @id @default(cuid())
+  key             String   @unique // e.g., "inr_per_coin", "diamond_to_inr_rate"
+  value           String   // JSON string value (for flexibility)
+  description     String?  // Human-readable description
+  updatedBy       String?  // Admin user ID who updated (optional)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("payment_configurations")
+}

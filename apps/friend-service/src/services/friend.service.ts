@@ -595,7 +595,7 @@ export class FriendService {
   }
 
   // Helper methods
-  private async areFriends(userId1: string, userId2: string): Promise<boolean> {
+  async areFriends(userId1: string, userId2: string): Promise<boolean> {
     const [id1, id2] = [userId1, userId2].sort();
     const cacheKey = `friends:${id1}:${id2}`;
 
@@ -664,6 +664,31 @@ export class FriendService {
     });
     // Invalidate cache
     await this.invalidateFriendshipCache(userId1, userId2);
+  }
+
+  /**
+   * Auto-create friendship (internal - for external users accepting squad invites)
+   */
+  async autoCreateFriendship(userId1: string, userId2: string): Promise<void> {
+    if (userId1 === userId2) {
+      throw new BadRequestException("Cannot create friendship with yourself");
+    }
+
+    // Check if already friends
+    const areFriends = await this.areFriends(userId1, userId2);
+    if (areFriends) {
+      this.logger.log(`Users ${userId1} and ${userId2} are already friends`);
+      return;
+    }
+
+    // Directly create friendship without going through friend request flow
+    await this.createFriendship(userId1, userId2);
+    
+    // Invalidate friendship cache
+    await this.invalidateFriendshipCache(userId1, userId2);
+    
+    this.metrics.incrementFriendshipCreated();
+    this.logger.log(`Auto-created friendship between ${userId1} and ${userId2}`);
   }
 
   /**

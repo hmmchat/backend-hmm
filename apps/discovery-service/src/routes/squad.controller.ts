@@ -1,0 +1,741 @@
+import {
+  Controller,
+  Get,
+  Post,
+  Query,
+  Body,
+  Headers,
+  HttpException,
+  HttpStatus,
+  Param,
+} from "@nestjs/common";
+import { SquadService } from "../services/squad.service.js";
+import { NotificationService } from "../services/notification.service.js";
+import { UserClientService } from "../services/user-client.service.js";
+import { StreamingClientService } from "../services/streaming-client.service.js";
+// DTOs are defined but not needed for test endpoints
+import { verifyToken, AccessPayload } from "@hmm/common";
+import { JWK } from "jose";
+
+@Controller("squad")
+export class SquadController {
+  private verifyAccess!: (token: string) => Promise<AccessPayload>;
+  private publicJwk!: JWK;
+  private jwtInitialized = false;
+
+  constructor(
+    private readonly squadService: SquadService,
+    private readonly notificationService: NotificationService,
+    private readonly userClientService: UserClientService,
+    private readonly streamingClientService: StreamingClientService
+  ) {}
+
+  private async initializeJWT() {
+    if (this.jwtInitialized) return;
+    
+    const jwkStr = process.env.JWT_PUBLIC_JWK;
+    if (!jwkStr || jwkStr === "undefined") {
+      throw new Error("JWT_PUBLIC_JWK environment variable is not set or is invalid");
+    }
+    const cleanedJwk = jwkStr.trim().replace(/^['"]|['"]$/g, "");
+    this.publicJwk = JSON.parse(cleanedJwk) as JWK;
+    this.verifyAccess = await verifyToken(this.publicJwk);
+    this.jwtInitialized = true;
+  }
+
+  private getTokenFromHeader(h?: string): string | null {
+    if (!h) return null;
+    const [t, v] = h.split(" ");
+    return t?.toLowerCase() === "bearer" ? v : null;
+  }
+
+  private async verifyTokenAndGetUserId(token: string): Promise<string> {
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+    await this.initializeJWT();
+    const payload = await this.verifyAccess(token);
+    return payload.sub;
+  }
+
+  /**
+   * Invite friend to squad
+   * POST /squad/invite
+   */
+  @Post("invite")
+  async inviteFriend(
+    @Headers("authorization") authz: string,
+    @Body() body: any
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+
+    const userId = await this.verifyTokenAndGetUserId(token);
+    const { inviteeId } = body;
+    if (!inviteeId) {
+      throw new HttpException("inviteeId is required", HttpStatus.BAD_REQUEST);
+    }
+
+    // Create invitation
+    const result = await this.squadService.createSquadInvitation(userId, inviteeId);
+
+    // Notify invitee via WebSocket
+    await this.notificationService.notifySquadInvitation(inviteeId, {
+      invitationId: result.invitationId,
+      inviterId: userId
+    });
+
+    return {
+      success: true,
+      invitationId: result.invitationId
+    };
+  }
+
+  /**
+   * Generate external invite link (for sharing)
+   * POST /squad/invite-external
+   */
+  @Post("invite-external")
+  async inviteExternal(
+    @Headers("authorization") authz: string
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+
+    const userId = await this.verifyTokenAndGetUserId(token);
+
+    // Create external invitation
+    const result = await this.squadService.createSquadInvitation(userId);
+
+    // Generate deep link
+    const inviteLink = `${process.env.APP_URL || "https://app.hmmchat.live"}/squad/${result.inviteToken}`;
+
+    return {
+      success: true,
+      invitationId: result.invitationId,
+      inviteToken: result.inviteToken,
+      inviteLink
+    };
+  }
+
+  /**
+   * Accept invitation
+   * POST /squad/invitations/:inviteId/accept
+   */
+  @Post("invitations/:inviteId/accept")
+  async acceptInvitation(
+    @Headers("authorization") authz: string,
+    @Param("inviteId") inviteId: string
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+
+    const userId = await this.verifyTokenAndGetUserId(token);
+
+    // Get invitation to find inviter
+    const invitation = await this.squadService.getInvitationById(inviteId);
+    if (!invitation) {
+      throw new HttpException("Invitation not found", HttpStatus.NOT_FOUND);
+    }
+
+    // Accept invitation
+    await this.squadService.acceptSquadInvitation(inviteId, userId);
+
+    // Notify inviter
+    await this.notificationService.notifyInvitationAccepted(invitation.inviterId, userId);
+
+    // Notify all lobby members
+    const lobby = await this.squadService.getSquadLobby(invitation.inviterId);
+    if (lobby) {
+      const memberIds = lobby.memberIds as string[];
+      for (const memberId of memberIds) {
+        if (memberId !== userId) {
+          await this.notificationService.notifySquadMemberJoined(memberId, userId);
+        }
+      }
+    }
+
+    return {
+      success: true
+    };
+  }
+
+  /**
+   * Reject invitation
+   * POST /squad/invitations/:inviteId/reject
+   */
+  @Post("invitations/:inviteId/reject")
+  async rejectInvitation(
+    @Headers("authorization") authz: string,
+    @Param("inviteId") inviteId: string
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+
+    const userId = await this.verifyTokenAndGetUserId(token);
+
+    // Get invitation to find inviter
+    const invitation = await this.squadService.getInvitationById(inviteId);
+    if (!invitation) {
+      throw new HttpException("Invitation not found", HttpStatus.NOT_FOUND);
+    }
+
+    // Reject invitation
+    await this.squadService.rejectSquadInvitation(inviteId, userId);
+
+    // Notify inviter
+    await this.notificationService.notifyInvitationRejected(invitation.inviterId, userId);
+
+    return {
+      success: true
+    };
+  }
+
+  /**
+   * Get current squad lobby
+   * GET /squad/lobby
+   */
+  @Get("lobby")
+  async getLobby(
+    @Headers("authorization") authz?: string
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+
+    const userId = await this.verifyTokenAndGetUserId(token);
+
+    const lobby = await this.squadService.getSquadLobby(userId);
+    if (!lobby) {
+      return {
+        lobby: null
+      };
+    }
+
+    return {
+      lobby: {
+        id: lobby.id,
+        inviterId: lobby.inviterId,
+        memberIds: lobby.memberIds,
+        status: lobby.status,
+        createdAt: lobby.createdAt,
+        updatedAt: lobby.updatedAt
+      }
+    };
+  }
+
+  /**
+   * Enter call with squad (requires 2+ members)
+   * POST /squad/lobby/enter-call
+   */
+  @Post("lobby/enter-call")
+  async enterCall(
+    @Headers("authorization") authz: string
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+
+    const userId = await this.verifyTokenAndGetUserId(token);
+
+    const lobby = await this.squadService.getSquadLobby(userId);
+    if (!lobby) {
+      throw new HttpException("No squad lobby found", HttpStatus.NOT_FOUND);
+    }
+
+    const memberIds = lobby.memberIds as string[];
+    if (memberIds.length < 2) {
+      throw new HttpException(
+        "At least 2 members required to enter call",
+        HttpStatus.BAD_REQUEST
+      );
+    }
+
+    // Create room via streaming service
+    const roomResult = await this.streamingClientService.createSquadRoom(memberIds);
+
+    // Mark lobby as IN_CALL
+    await this.squadService.markLobbyInCall(userId);
+
+    return {
+      success: true,
+      roomId: roomResult.roomId,
+      sessionId: roomResult.sessionId,
+      memberIds,
+      roomType: "squad"
+    };
+  }
+
+  /**
+   * Toggle to solo mode (expires all invitations)
+   * POST /squad/toggle-solo
+   */
+  @Post("toggle-solo")
+  async toggleSolo(
+    @Headers("authorization") authz: string
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+
+    const userId = await this.verifyTokenAndGetUserId(token);
+
+    // Expire all pending invitations
+    await this.squadService.expireInvitations(userId, "User toggled to solo mode");
+
+    // Delete squad lobby
+    await this.squadService.deleteSquadLobby(userId);
+
+    // Update user status back to AVAILABLE (for solo matchmaking)
+    // Note: Status update should be handled by frontend/discovery service
+
+    return {
+      success: true
+    };
+  }
+
+  /**
+   * Get pending invitations sent by user
+   * GET /squad/invitations/pending
+   */
+  @Get("invitations/pending")
+  async getPendingInvitations(
+    @Headers("authorization") authz?: string
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+
+    const userId = await this.verifyTokenAndGetUserId(token);
+
+    const invitations = await this.squadService.getPendingInvitationsSent(userId);
+
+    return {
+      invitations: invitations.map(inv => ({
+        id: inv.id,
+        inviteeId: inv.inviteeId,
+        inviteToken: inv.inviteToken,
+        status: inv.status,
+        expiresAt: inv.expiresAt,
+        createdAt: inv.createdAt
+      }))
+    };
+  }
+
+  /**
+   * Get received invitations for user
+   * GET /squad/invitations/received
+   */
+  @Get("invitations/received")
+  async getReceivedInvitations(
+    @Headers("authorization") authz?: string
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+
+    const userId = await this.verifyTokenAndGetUserId(token);
+
+    const invitations = await this.squadService.getReceivedInvitations(userId);
+
+    return {
+      invitations: invitations.map(inv => ({
+        id: inv.id,
+        inviterId: inv.inviterId,
+        status: inv.status,
+        expiresAt: inv.expiresAt,
+        createdAt: inv.createdAt
+      }))
+    };
+  }
+
+  /**
+   * Handle external link clicks (for authenticated users)
+   * GET /squad/join/:token
+   * Note: Frontend should redirect unauthenticated users to login with token in query
+   */
+  @Get("join/:token")
+  async handleExternalLink(
+    @Headers("authorization") authz: string,
+    @Param("token") token: string
+  ) {
+    const token_header = this.getTokenFromHeader(authz);
+    if (!token_header) {
+      throw new HttpException(
+        "Authentication required. Please login first and try again.",
+        HttpStatus.UNAUTHORIZED
+      );
+    }
+
+    try {
+      const userId = await this.verifyTokenAndGetUserId(token_header);
+
+      // Check if user has profile (check if username exists, which indicates profile exists)
+      try {
+        const userProfile = await this.userClientService.getUserFullProfileById(userId);
+        
+        // If user doesn't have a profile (no username), redirect to profile creation
+        if (!userProfile.username) {
+          throw new HttpException(
+            {
+              message: "Profile not found",
+              requiresProfile: true,
+              inviteToken: token
+            },
+            HttpStatus.NOT_FOUND
+          );
+        }
+
+        // User has profile, handle invitation
+        await this.squadService.handleExternalInviteLink(token, userId);
+        
+        return {
+          success: true,
+          message: "Invitation accepted successfully",
+          redirectTo: "squad"
+        };
+      } catch (error: any) {
+        if (error instanceof HttpException) {
+          throw error;
+        }
+        // Profile doesn't exist or other error
+        throw new HttpException(
+          {
+            message: "Profile not found",
+            requiresProfile: true,
+            inviteToken: token
+          },
+          HttpStatus.NOT_FOUND
+        );
+      }
+    } catch (error: any) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      
+      // Check if invitation is invalid/expired
+      try {
+        await this.squadService.getInvitationByToken(token);
+      } catch (invError: any) {
+        throw new HttpException(
+          {
+            message: "Invitation not found or expired",
+            expired: true
+          },
+          HttpStatus.BAD_REQUEST
+        );
+      }
+      
+      throw new HttpException(
+        "Failed to process invitation",
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  /* ---------- Test Endpoints (No Auth Required) ---------- */
+
+  /**
+   * Test endpoint: Invite friend (bypasses auth)
+   * POST /squad/test/invite
+   */
+  @Post("test/invite")
+  async inviteFriendTest(@Body() body: any) {
+    const { inviterId, inviteeId } = body;
+    if (!inviterId || !inviteeId) {
+      throw new HttpException("inviterId and inviteeId are required", HttpStatus.BAD_REQUEST);
+    }
+
+    const result = await this.squadService.createSquadInvitation(inviterId, inviteeId);
+
+    // Notify invitee via WebSocket
+    await this.notificationService.notifySquadInvitation(inviteeId, {
+      invitationId: result.invitationId,
+      inviterId
+    });
+
+    return {
+      success: true,
+      invitationId: result.invitationId
+    };
+  }
+
+  /**
+   * Test endpoint: Generate external invite link (bypasses auth)
+   * POST /squad/test/invite-external
+   */
+  @Post("test/invite-external")
+  async inviteExternalTest(@Body() body: any) {
+    const { inviterId } = body;
+    if (!inviterId) {
+      throw new HttpException("inviterId is required", HttpStatus.BAD_REQUEST);
+    }
+
+    const result = await this.squadService.createSquadInvitation(inviterId);
+
+    const inviteLink = `${process.env.APP_URL || "https://app.hmmchat.live"}/squad/${result.inviteToken}`;
+
+    return {
+      success: true,
+      invitationId: result.invitationId,
+      inviteToken: result.inviteToken,
+      inviteLink
+    };
+  }
+
+  /**
+   * Test endpoint: Accept invitation (bypasses auth)
+   * POST /squad/test/invitations/:inviteId/accept
+   */
+  @Post("test/invitations/:inviteId/accept")
+  async acceptInvitationTest(
+    @Param("inviteId") inviteId: string,
+    @Body() body: any
+  ) {
+    const { inviteeId } = body;
+    if (!inviteeId) {
+      throw new HttpException("inviteeId is required", HttpStatus.BAD_REQUEST);
+    }
+
+    const invitation = await this.squadService.getInvitationById(inviteId);
+    if (!invitation) {
+      throw new HttpException("Invitation not found", HttpStatus.NOT_FOUND);
+    }
+
+    await this.squadService.acceptSquadInvitation(inviteId, inviteeId);
+
+    await this.notificationService.notifyInvitationAccepted(invitation.inviterId, inviteeId);
+
+    const lobby = await this.squadService.getSquadLobby(invitation.inviterId);
+    if (lobby) {
+      const memberIds = lobby.memberIds as string[];
+      for (const memberId of memberIds) {
+        if (memberId !== inviteeId) {
+          await this.notificationService.notifySquadMemberJoined(memberId, inviteeId);
+        }
+      }
+    }
+
+    return {
+      success: true
+    };
+  }
+
+  /**
+   * Test endpoint: Reject invitation (bypasses auth)
+   * POST /squad/test/invitations/:inviteId/reject
+   */
+  @Post("test/invitations/:inviteId/reject")
+  async rejectInvitationTest(
+    @Param("inviteId") inviteId: string,
+    @Body() body: any
+  ) {
+    const { inviteeId } = body;
+    if (!inviteeId) {
+      throw new HttpException("inviteeId is required", HttpStatus.BAD_REQUEST);
+    }
+
+    const invitation = await this.squadService.getInvitationById(inviteId);
+    if (!invitation) {
+      throw new HttpException("Invitation not found", HttpStatus.NOT_FOUND);
+    }
+
+    await this.squadService.rejectSquadInvitation(inviteId, inviteeId);
+
+    await this.notificationService.notifyInvitationRejected(invitation.inviterId, inviteeId);
+
+    return {
+      success: true
+    };
+  }
+
+  /**
+   * Test endpoint: Get squad lobby (bypasses auth)
+   * GET /squad/test/lobby?userId=xxx
+   */
+  @Get("test/lobby")
+  async getLobbyTest(@Query("userId") userId: string) {
+    if (!userId) {
+      throw new HttpException("userId is required", HttpStatus.BAD_REQUEST);
+    }
+
+    const lobby = await this.squadService.getSquadLobby(userId);
+    if (!lobby) {
+      return {
+        lobby: null
+      };
+    }
+
+    return {
+      lobby: {
+        id: lobby.id,
+        inviterId: lobby.inviterId,
+        memberIds: lobby.memberIds,
+        status: lobby.status,
+        createdAt: lobby.createdAt,
+        updatedAt: lobby.updatedAt
+      }
+    };
+  }
+
+  /**
+   * Test endpoint: Enter call (bypasses auth)
+   * POST /squad/test/lobby/enter-call
+   */
+  @Post("test/lobby/enter-call")
+  async enterCallTest(@Body() body: any) {
+    const { userId } = body;
+    if (!userId) {
+      throw new HttpException("userId is required", HttpStatus.BAD_REQUEST);
+    }
+
+    const lobby = await this.squadService.getSquadLobby(userId);
+    if (!lobby) {
+      throw new HttpException("No squad lobby found", HttpStatus.NOT_FOUND);
+    }
+
+    const memberIds = lobby.memberIds as string[];
+    if (memberIds.length < 2) {
+      throw new HttpException(
+        "At least 2 members required to enter call",
+        HttpStatus.BAD_REQUEST
+      );
+    }
+
+    // Create room first, then mark lobby as IN_CALL
+    // This way if room creation fails, lobby status remains READY
+    let roomResult;
+    try {
+      roomResult = await this.streamingClientService.createSquadRoom(memberIds);
+    } catch (error: any) {
+      // Log error and rethrow with proper error message
+      throw new HttpException(
+        `Failed to create squad room: ${error.message}`,
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+
+    // Only mark lobby as IN_CALL after room is successfully created
+    await this.squadService.markLobbyInCall(userId);
+
+    return {
+      success: true,
+      roomId: roomResult.roomId,
+      sessionId: roomResult.sessionId,
+      memberIds,
+      roomType: "squad"
+    };
+  }
+
+  /**
+   * Test endpoint: Toggle to solo mode (bypasses auth)
+   * POST /squad/test/toggle-solo
+   */
+  @Post("test/toggle-solo")
+  async toggleSoloTest(@Body() body: any) {
+    const { userId } = body;
+    if (!userId) {
+      throw new HttpException("userId is required", HttpStatus.BAD_REQUEST);
+    }
+
+    await this.squadService.expireInvitations(userId, "User toggled to solo mode");
+
+    await this.squadService.deleteSquadLobby(userId);
+
+    return {
+      success: true
+    };
+  }
+
+  /**
+   * Test endpoint: Get pending invitations (bypasses auth)
+   * GET /squad/test/invitations/pending?userId=xxx
+   */
+  @Get("test/invitations/pending")
+  async getPendingInvitationsTest(@Query("userId") userId: string) {
+    if (!userId) {
+      throw new HttpException("userId is required", HttpStatus.BAD_REQUEST);
+    }
+
+    const invitations = await this.squadService.getPendingInvitationsSent(userId);
+
+    return {
+      invitations: invitations.map(inv => ({
+        id: inv.id,
+        inviteeId: inv.inviteeId,
+        inviteToken: inv.inviteToken,
+        status: inv.status,
+        expiresAt: inv.expiresAt,
+        createdAt: inv.createdAt
+      }))
+    };
+  }
+
+  /**
+   * Test endpoint: Get received invitations (bypasses auth)
+   * GET /squad/test/invitations/received?userId=xxx
+   */
+  @Get("test/invitations/received")
+  async getReceivedInvitationsTest(@Query("userId") userId: string) {
+    if (!userId) {
+      throw new HttpException("userId is required", HttpStatus.BAD_REQUEST);
+    }
+
+    const invitations = await this.squadService.getReceivedInvitations(userId);
+
+    return {
+      invitations: invitations.map(inv => ({
+        id: inv.id,
+        inviterId: inv.inviterId,
+        status: inv.status,
+        expiresAt: inv.expiresAt,
+        createdAt: inv.createdAt
+      }))
+    };
+  }
+
+  /**
+   * Test endpoint: Handle external link (bypasses auth)
+   * GET /squad/test/join/:token?userId=xxx
+   */
+  @Get("test/join/:token")
+  async handleExternalLinkTest(
+    @Param("token") token: string,
+    @Query("userId") userId: string
+  ) {
+    if (!userId) {
+      throw new HttpException("userId is required", HttpStatus.BAD_REQUEST);
+    }
+
+    try {
+      await this.squadService.handleExternalInviteLink(token, userId);
+      
+      return {
+        success: true,
+        message: "Invitation accepted successfully",
+        redirectTo: "squad"
+      };
+    } catch (error: any) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new HttpException(
+        "Failed to process invitation",
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+}

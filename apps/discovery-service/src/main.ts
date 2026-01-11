@@ -3,6 +3,9 @@ import { FastifyAdapter, NestFastifyApplication } from "@nestjs/platform-fastify
 import { AppModule } from "./modules/app.module.js";
 import { ConfigService } from "@nestjs/config";
 import { ZodExceptionFilter } from "./filters/zod-exception.filter.js";
+import { NotificationGateway } from "./gateways/notification.gateway.js";
+import { SquadService } from "./services/squad.service.js";
+import { WebSocketServer } from "ws";
 
 async function bootstrap() {
   const app = await NestFactory.create<NestFastifyApplication>(
@@ -23,6 +26,35 @@ async function bootstrap() {
   app.useGlobalFilters(new ZodExceptionFilter());
 
   await app.listen(port, "0.0.0.0");
+  
+  // Setup WebSocket server for notifications (after app is listening)
+  const fastifyInstance = app.getHttpAdapter().getInstance();
+  const server = (fastifyInstance as any).server;
+  
+  // Create WebSocket server for notifications
+  const wss = new WebSocketServer({ 
+    server,
+    path: "/notifications/ws"
+  });
+
+  // Initialize WebSocket gateway
+  const notificationGateway = app.get(NotificationGateway);
+  notificationGateway.initialize(wss);
+
+  // Initialize cleanup jobs for squad invitations
+  const squadService = app.get(SquadService);
+  const cleanupIntervalMs = parseInt(process.env.SQUAD_CLEANUP_INTERVAL_MS || "60000", 10); // Default 1 minute
+  
+  setInterval(async () => {
+    try {
+      await squadService.cleanupExpiredInvitations();
+    } catch (error) {
+      console.error("[ERROR] Failed to cleanup expired squad invitations:", error);
+    }
+  }, cleanupIntervalMs);
+
   console.log(`🚀 Discovery service running on http://localhost:${port}`);
+  console.log(`📡 Notification WebSocket server running on ws://localhost:${port}/notifications/ws`);
+  console.log(`🧹 Squad invitation cleanup job initialized (every ${cleanupIntervalMs}ms)`);
 }
 bootstrap();

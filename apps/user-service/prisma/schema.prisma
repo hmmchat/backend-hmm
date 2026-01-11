@@ -47,6 +47,7 @@ enum Gender {
 
 enum UserStatus {
   AVAILABLE
+  ONLINE
   OFFLINE
   MATCHED
   IN_SQUAD
@@ -84,7 +85,7 @@ model User {
   values        UserValue[]
   
   // User Status
-  status        UserStatus @default(AVAILABLE)
+  status        UserStatus @default(ONLINE)
   
   // Moderation & Flags
   reported      Boolean  @default(false) // 1 = yes, 0 = no

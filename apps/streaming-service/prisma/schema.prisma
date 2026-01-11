@@ -25,6 +25,7 @@ model CallSession {
   roomId        String      @unique
   status        CallStatus  @default(IN_SQUAD)
   isBroadcasting Boolean    @default(false)
+  pullStrangerEnabled Boolean @default(false)
   maxParticipants Int       @default(4)
   createdAt     DateTime    @default(now())
   startedAt     DateTime?

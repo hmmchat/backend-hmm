@@ -335,6 +335,48 @@
                     <button onclick="joinAsViewer()">Join as Viewer</button>
                 </div>
             </div>
+
+        <!-- Pull Stranger -->
+        <div class="section">
+            <h2>👥 Pull Stranger</h2>
+            <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+                <h3 style="margin-top: 0; font-size: 14px;">💡 How it works:</h3>
+                <ul style="margin: 10px 0; padding-left: 20px; font-size: 13px; line-height: 1.8;">
+                    <li><strong>Enable Pull Stranger:</strong> HOST clicks button → All participants become IN_SQUAD_AVAILABLE</li>
+                    <li><strong>Face Cards:</strong> Users with IN_SQUAD_AVAILABLE status appear in discovery (separate cards)</li>
+                    <li><strong>Join:</strong> New user accepts card → Joins room directly (one-way acceptance, no mutual acceptance needed)</li>
+                    <li><strong>Status:</strong> All participants restored to IN_SQUAD/IN_BROADCAST after join</li>
+                    <li><strong>Limit:</strong> Only 1 person can join per enable (can enable again after join)</li>
+                </ul>
+            </div>
+            <div class="two-columns">
+                <div>
+                    <div class="form-group">
+                        <label>Enable Pull Stranger (HOST only):</label>
+                        <input type="text" id="pullStrangerRoomId" placeholder="Enter room ID" style="width: 200px; display: inline-block; margin-right: 10px;">
+                        <input type="text" id="pullStrangerHostUserId" placeholder="HOST user ID" style="width: 150px; display: inline-block; margin-right: 10px;">
+                        <button onclick="enablePullStranger()">Enable Pull Stranger</button>
+                    </div>
+                    <div class="form-group">
+                        <label>Get Room for Pull Stranger User:</label>
+                        <input type="text" id="getPullStrangerRoomUserId" placeholder="User ID" style="width: 150px; display: inline-block; margin-right: 10px;">
+                        <button onclick="getRoomForPullStrangerUser()">Get Room</button>
+                    </div>
+                </div>
+                <div>
+                    <div class="form-group">
+                        <label>Join Via Pull Stranger:</label>
+                        <input type="text" id="joinPullStrangerRoomId" placeholder="Room ID" style="width: 150px; display: inline-block; margin-right: 5px;">
+                        <input type="text" id="joinPullStrangerUserId" placeholder="Joining User ID" style="width: 150px; display: inline-block; margin-right: 5px;">
+                        <input type="text" id="joinPullStrangerTargetUserId" placeholder="Target User ID" style="width: 150px; display: inline-block; margin-right: 10px;">
+                        <button onclick="joinViaPullStranger()">Join Room</button>
+                    </div>
+                    <p style="font-size: 12px; color: #666; margin-top: 8px; margin-bottom: 0;">
+                        Target User ID = The user whose card was accepted (must have IN_SQUAD_AVAILABLE status)
+                    </p>
+                </div>
+            </div>
+        </div>
             <div class="form-group" style="margin-top: 10px;">
                 <label>Kick User (HOST only):</label>
                 <input type="text" id="kickTargetUserId" placeholder="user3" value="" style="width: 200px; display: inline-block; margin-right: 10px;">
@@ -452,6 +494,7 @@
                 <li><strong>Host Features:</strong> Kick participants, start/stop broadcasting (HOSTs only)</li>
                 <li><strong>Chat:</strong> Send messages, view chat history</li>
                 <li><strong>Broadcasting:</strong> Start/stop broadcast, join as viewer</li>
+                <li><strong>Pull Stranger:</strong> Enable pull stranger mode (HOST only), join room via pull stranger (one-way acceptance)</li>
                 <li><strong>Dares:</strong> View dares (real-time sync), assign to users, send with gifts, 100% payment on send</li>
                 <li><strong>Icebreakers:</strong> Get random conversation starters (displayed only to you, no rewards)</li>
                 <li><strong>Room Info:</strong> View room details including HOST/PARTICIPANT roles</li>
@@ -1258,6 +1301,99 @@
                 type: 'stop-broadcast',
                 data: { roomId }
             });
+        }
+
+        async function enablePullStranger() {
+            const roomId = document.getElementById('pullStrangerRoomId').value.trim();
+            const userId = document.getElementById('pullStrangerHostUserId').value.trim();
+
+            if (!roomId || !userId) {
+                log('❌ Please enter room ID and HOST user ID', 'error');
+                return;
+            }
+
+            log(`🔄 Enabling pull stranger mode for room ${roomId} (HOST: ${userId})...`, 'info');
+
+            try {
+                const response = await fetch(`${API_URL()}/streaming/rooms/${roomId}/enable-pull-stranger`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    log(`✅ Pull stranger mode enabled! All participants now have IN_SQUAD_AVAILABLE status`, 'success');
+                    log(`💡 Users with IN_SQUAD_AVAILABLE status will appear in discovery as separate face cards`, 'info');
+                } else {
+                    log(`❌ Failed to enable pull stranger: ${JSON.stringify(data)}`, 'error');
+                }
+            } catch (error) {
+                log(`❌ Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function getRoomForPullStrangerUser() {
+            const userId = document.getElementById('getPullStrangerRoomUserId').value.trim();
+
+            if (!userId) {
+                log('❌ Please enter user ID', 'error');
+                return;
+            }
+
+            log(`🔄 Getting room for pull stranger user: ${userId}...`, 'info');
+
+            try {
+                const response = await fetch(`${API_URL()}/streaming/pull-stranger/room/${userId}`);
+                const data = await response.json();
+
+                if (response.ok) {
+                    if (data.exists) {
+                        log(`✅ User ${userId} is in room: ${data.roomId} (pull stranger enabled)`, 'success');
+                        document.getElementById('joinPullStrangerRoomId').value = data.roomId;
+                    } else {
+                        log(`ℹ️ User ${userId} is not in a room with pull stranger enabled`, 'info');
+                    }
+                } else {
+                    log(`❌ Failed to get room: ${JSON.stringify(data)}`, 'error');
+                }
+            } catch (error) {
+                log(`❌ Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function joinViaPullStranger() {
+            const roomId = document.getElementById('joinPullStrangerRoomId').value.trim();
+            const joiningUserId = document.getElementById('joinPullStrangerUserId').value.trim();
+            const targetUserId = document.getElementById('joinPullStrangerTargetUserId').value.trim();
+
+            if (!roomId || !joiningUserId || !targetUserId) {
+                log('❌ Please enter room ID, joining user ID, and target user ID', 'error');
+                return;
+            }
+
+            log(`🔄 User ${joiningUserId} joining room ${roomId} via pull stranger (target: ${targetUserId})...`, 'info');
+
+            try {
+                const response = await fetch(`${API_URL()}/streaming/rooms/${roomId}/join-via-pull-stranger`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ joiningUserId, targetUserId })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    log(`✅ User ${joiningUserId} joined room successfully!`, 'success');
+                    log(`💡 All participants restored to IN_SQUAD/IN_BROADCAST status`, 'info');
+                    log(`💡 Pull stranger mode disabled (can be enabled again for another user)`, 'info');
+                } else {
+                    log(`❌ Failed to join: ${JSON.stringify(data)}`, 'error');
+                }
+            } catch (error) {
+                log(`❌ Error: ${error.message}`, 'error');
+            }
         }
 
         function joinAsViewer() {

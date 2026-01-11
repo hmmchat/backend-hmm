@@ -2,7 +2,6 @@ import { Injectable, Logger, NotFoundException, BadRequestException } from "@nes
 import { PrismaService } from "../prisma/prisma.service.js";
 import { MediasoupService } from "./mediasoup.service.js";
 import { DiscoveryClientService } from "./discovery-client.service.js";
-import { FriendClientService } from "./friend-client.service.js";
 import { types as MediasoupTypes } from "mediasoup";
 import { v4 as uuidv4 } from "uuid";
 
@@ -38,8 +37,7 @@ export class RoomService {
   constructor(
     private prisma: PrismaService,
     private mediasoup: MediasoupService,
-    private discoveryClient: DiscoveryClientService,
-    private friendClient: FriendClientService
+    private discoveryClient: DiscoveryClientService
   ) {}
 
   /**
@@ -63,10 +61,17 @@ export class RoomService {
         "Matched calls must have exactly 2 participants"
       );
     }
-    if (callType === "squad" && userIds.length < 2) {
-      throw new BadRequestException(
-        "Squad calls must have at least 2 participants to be created"
-      );
+    if (callType === "squad") {
+      if (userIds.length < 2) {
+        throw new BadRequestException(
+          "Squad calls must have at least 2 participants to be created"
+        );
+      }
+      if (userIds.length > 3) {
+        throw new BadRequestException(
+          "Squad calls must have at most 3 participants (1 inviter + 2 invitees)"
+        );
+      }
     }
 
     // Check for duplicate user IDs
@@ -122,11 +127,18 @@ export class RoomService {
       }
 
       // Validate that all users have MATCHED status (required to create/join room)
+      // Only users with _AVAILABLE statuses (AVAILABLE, IN_SQUAD_AVAILABLE, IN_BROADCAST_AVAILABLE) can become MATCHED
       // In TEST_MODE, skip status validation
       if (process.env.TEST_MODE !== "true") {
         for (const userId of userIds) {
           try {
             const userStatus = await this.discoveryClient.getUserStatus(userId);
+            
+            // Explicitly reject users with IN_SQUAD or IN_BROADCAST status (they're already in a call)
+            if (userStatus === "IN_SQUAD" || userStatus === "IN_BROADCAST") {
+              invalidStatusUsers.push(`${userId} (status: ${userStatus} - user is already in an active call)`);
+              continue; // Skip to next user
+            }
             
             // Only MATCHED users can create/join rooms
             if (userStatus !== "MATCHED") {
@@ -147,7 +159,8 @@ export class RoomService {
         if (invalidStatusUsers.length > 0) {
           throw new BadRequestException(
             `Users must be in MATCHED status to create/join rooms. Invalid users: ${invalidStatusUsers.join(", ")}. ` +
-            `Valid statuses to become MATCHED: AVAILABLE, IN_SQUAD_AVAILABLE, IN_BROADCAST_AVAILABLE`
+            `Valid statuses to become MATCHED: AVAILABLE, IN_SQUAD_AVAILABLE, IN_BROADCAST_AVAILABLE. ` +
+            `Users with IN_SQUAD or IN_BROADCAST status cannot join new rooms (they are already in an active call).`
           );
         }
       } else {
@@ -428,10 +441,20 @@ export class RoomService {
     }
 
     // BUSINESS RULE: Only users with status MATCHED can join rooms
+    // Only users with _AVAILABLE statuses (AVAILABLE, IN_SQUAD_AVAILABLE, IN_BROADCAST_AVAILABLE) can become MATCHED
+    // Users with IN_SQUAD or IN_BROADCAST cannot join (they're already in a call)
     // In TEST_MODE, skip status validation
     if (process.env.TEST_MODE !== "true") {
       try {
         const userStatus = await this.discoveryClient.getUserStatus(userId);
+        
+        // Explicitly reject users with IN_SQUAD or IN_BROADCAST status (they're already in a call)
+        if (userStatus === "IN_SQUAD" || userStatus === "IN_BROADCAST") {
+          throw new BadRequestException(
+            `User ${userId} cannot join a room because they are already in an active call (status: ${userStatus}). ` +
+            `Users must leave their current call before joining a new room.`
+          );
+        }
         
         if (userStatus !== "MATCHED") {
           throw new BadRequestException(
@@ -625,14 +648,14 @@ export class RoomService {
       // Room continues (single user or multiple users) - only update leaving user's status
     }
 
-    // BUSINESS RULE: When individual user leaves (and room continues), status changes to AVAILABLE
-    // This returns them to the discovery pool so they can be matched again
-    // Update user status from IN_SQUAD/IN_BROADCAST → AVAILABLE
-    this.discoveryClient.updateUserStatus(userId, "AVAILABLE").catch((err) => {
-      this.logger.error(`Failed to update user ${userId} status to AVAILABLE: ${err.message}`);
+    // BUSINESS RULE: When individual user leaves (and room continues), status changes to ONLINE
+    // User returns to app home (ONLINE), not to matchmaking pool
+    // Update user status from IN_SQUAD/IN_BROADCAST → ONLINE
+    this.discoveryClient.updateUserStatus(userId, "ONLINE").catch((err) => {
+      this.logger.error(`Failed to update user ${userId} status to ONLINE: ${err.message}`);
     });
 
-    this.logger.log(`Participant ${userId} removed from room ${roomId}, status updated to AVAILABLE (back to discovery pool)`);
+    this.logger.log(`Participant ${userId} removed from room ${roomId}, status updated to ONLINE (back to app home)`);
   }
 
   /**
@@ -845,6 +868,275 @@ export class RoomService {
     }
 
     this.logger.log(`Broadcasting disabled for room ${roomId} by HOST ${userId} - returning to IN_SQUAD`);
+  }
+
+  /**
+   * Enable pull stranger mode for a room (HOST only)
+   * Updates all participants to IN_SQUAD_AVAILABLE status
+   * Only users with _AVAILABLE statuses can be shown in face cards and matched
+   */
+  async enablePullStranger(roomId: string, userId: string): Promise<void> {
+    // Verify room exists
+    const session = await this.prisma.callSession.findUnique({
+      where: { roomId },
+      include: {
+        participants: {
+          where: {
+            status: "active",
+            leftAt: null
+          }
+        }
+      }
+    });
+
+    if (!session) {
+      throw new NotFoundException(`Room ${roomId} not found`);
+    }
+
+    // Verify user is HOST
+    const isUserHost = await this.isHost(roomId, userId);
+    if (!isUserHost) {
+      throw new BadRequestException(`Only HOST can enable pull stranger mode`);
+    }
+
+    // Check if room is full
+    if (session.participants.length >= this.maxParticipants) {
+      throw new BadRequestException(
+        `Room is full (${session.participants.length}/${this.maxParticipants} participants). Cannot enable pull stranger mode.`
+      );
+    }
+
+    // Check if room is already in pull stranger mode
+    if (session.pullStrangerEnabled) {
+      throw new BadRequestException(
+        `Pull stranger mode is already enabled. Wait for a stranger to join before enabling again.`
+      );
+    }
+
+    // Get all participant user IDs
+    const participantUserIds = session.participants.map(p => p.userId);
+
+    // Update database: enable pull stranger mode
+    await this.prisma.callSession.update({
+      where: { id: session.id },
+      data: { pullStrangerEnabled: true }
+    });
+
+    // Update all participants to IN_SQUAD_AVAILABLE status
+    // This makes them available for matching (only _AVAILABLE statuses can be shown in face cards)
+    this.discoveryClient.updateUserStatuses(participantUserIds, "IN_SQUAD_AVAILABLE").catch((err) => {
+      this.logger.error(`Failed to update user statuses to IN_SQUAD_AVAILABLE: ${err.message}`);
+    });
+
+    // Log event
+    await this.prisma.callEvent.create({
+      data: {
+        sessionId: session.id,
+        eventType: "pull_stranger_enabled",
+        userId: userId,
+        metadata: JSON.stringify({ enabledBy: userId, participantCount: session.participants.length })
+      }
+    });
+
+    this.logger.log(`Pull stranger mode enabled for room ${roomId} by HOST ${userId}. Participants: ${participantUserIds.join(", ")}`);
+  }
+
+  /**
+   * Join room via pull stranger (one-way acceptance)
+   * C accepts A's card → C joins room directly (no match record needed)
+   * Uses transaction with Serializable isolation to prevent race conditions
+   * (e.g., C sees A and E sees B, both accept simultaneously - only one succeeds)
+   */
+  async joinViaPullStranger(
+    roomId: string,
+    joiningUserId: string,
+    targetUserId: string
+  ): Promise<{ roomId: string; sessionId: string }> {
+    return this.prisma.$transaction(async (tx) => {
+      // Get room with lock to prevent concurrent joins
+      const session = await tx.callSession.findUnique({
+        where: { roomId },
+        include: {
+          participants: {
+            where: {
+              status: "active",
+              leftAt: null
+            }
+          }
+        }
+      });
+
+      if (!session) {
+        throw new NotFoundException(`Room ${roomId} not found`);
+      }
+
+      // Verify pull stranger mode is enabled
+      if (!session.pullStrangerEnabled) {
+        throw new BadRequestException(
+          `Pull stranger mode is not enabled for this room. A HOST must enable it first.`
+        );
+      }
+
+      // Verify target user is in the room
+      const targetParticipant = session.participants.find(p => p.userId === targetUserId);
+      if (!targetParticipant) {
+        throw new BadRequestException(
+          `Target user ${targetUserId} is not a participant in room ${roomId}`
+        );
+      }
+
+      // Verify target user has IN_SQUAD_AVAILABLE status
+      if (process.env.TEST_MODE !== "true") {
+        try {
+          const targetUserStatus = await this.discoveryClient.getUserStatus(targetUserId);
+          if (targetUserStatus !== "IN_SQUAD_AVAILABLE") {
+            throw new BadRequestException(
+              `Target user ${targetUserId} does not have IN_SQUAD_AVAILABLE status (current: ${targetUserStatus}). ` +
+              `They may have already been matched or their status changed.`
+            );
+          }
+        } catch (error: any) {
+          if (error instanceof BadRequestException) {
+            throw error;
+          }
+          this.logger.warn(`Could not verify target user status: ${error.message}`);
+          throw new BadRequestException(
+            `Could not verify target user status. Please ensure user-service is running.`
+          );
+        }
+      }
+
+      // Check room capacity
+      if (session.participants.length >= this.maxParticipants) {
+        throw new BadRequestException(
+          `Room is full (${session.participants.length}/${this.maxParticipants} participants). Cannot join.`
+        );
+      }
+
+      // Verify joining user is not already in the room
+      const existingParticipant = session.participants.find(p => p.userId === joiningUserId);
+      if (existingParticipant) {
+        throw new BadRequestException(`User ${joiningUserId} is already a participant in this room`);
+      }
+
+      // Verify joining user has AVAILABLE or IN_SQUAD_AVAILABLE status (only _AVAILABLE statuses can join)
+      if (process.env.TEST_MODE !== "true") {
+        try {
+          const joiningUserStatus = await this.discoveryClient.getUserStatus(joiningUserId);
+          if (joiningUserStatus !== "AVAILABLE" && joiningUserStatus !== "IN_SQUAD_AVAILABLE") {
+            // Explicitly reject IN_SQUAD/IN_BROADCAST
+            if (joiningUserStatus === "IN_SQUAD" || joiningUserStatus === "IN_BROADCAST") {
+              throw new BadRequestException(
+                `User ${joiningUserId} cannot join because they are already in an active call (status: ${joiningUserStatus}). ` +
+                `Users must leave their current call before joining a new room.`
+              );
+            }
+            throw new BadRequestException(
+              `User ${joiningUserId} must be in AVAILABLE or IN_SQUAD_AVAILABLE status to join via pull stranger. ` +
+              `Current status: ${joiningUserStatus}. Only users with _AVAILABLE statuses can join.`
+            );
+          }
+        } catch (error: any) {
+          if (error instanceof BadRequestException) {
+            throw error;
+          }
+          this.logger.warn(`Could not verify joining user status: ${error.message}`);
+          throw new BadRequestException(
+            `Could not verify joining user status. Please ensure user-service is running.`
+          );
+        }
+      }
+
+      // Add joining user to room
+      await tx.callParticipant.create({
+        data: {
+          sessionId: session.id,
+          userId: joiningUserId,
+          role: "PARTICIPANT",
+          status: "active"
+        }
+      });
+
+      // Disable pull stranger mode (only 1 person can join per enable)
+      await tx.callSession.update({
+        where: { id: session.id },
+        data: { pullStrangerEnabled: false }
+      });
+
+      // Get all participant user IDs (including new joiner)
+      const allParticipantUserIds = [...session.participants.map(p => p.userId), joiningUserId];
+
+      // Determine status to restore based on room's broadcasting state
+      const statusToRestore = session.isBroadcasting ? "IN_BROADCAST" : "IN_SQUAD";
+
+      // Update all participants (including new joiner) to restored status
+      this.discoveryClient.updateUserStatuses(allParticipantUserIds, statusToRestore).catch((err) => {
+        this.logger.error(`Failed to update user statuses to ${statusToRestore}: ${err.message}`);
+      });
+
+      // Log event
+      await tx.callEvent.create({
+        data: {
+          sessionId: session.id,
+          eventType: "participant_joined_via_pull_stranger",
+          userId: joiningUserId,
+          metadata: JSON.stringify({
+            joiningUserId,
+            targetUserId,
+            participantCount: allParticipantUserIds.length,
+            restoredStatus: statusToRestore
+          })
+        }
+      });
+
+      // Update in-memory room state if it exists
+      try {
+        const room = this.getRoom(roomId);
+        // Note: Participant state will be created when user connects via WebSocket
+        // For now, just mark that they're a participant in the room
+        if (!room.participants.has(joiningUserId)) {
+          // Participant state will be initialized when they connect via WebSocket
+          // We just need to ensure the room knows about them
+          this.logger.debug(`Room ${roomId} in memory - participant ${joiningUserId} will be initialized on WebSocket connect`);
+        }
+      } catch (error) {
+        // Room not in memory, that's okay
+        this.logger.debug(`Room ${roomId} not in memory, skipping in-memory update`);
+      }
+
+      this.logger.log(
+        `User ${joiningUserId} joined room ${roomId} via pull stranger (target: ${targetUserId}). ` +
+        `All participants restored to ${statusToRestore} status. Pull stranger mode disabled.`
+      );
+
+      return { roomId, sessionId: session.id };
+    }, {
+      isolationLevel: "Serializable", // Highest isolation to prevent concurrent joins (race condition protection)
+      timeout: 10000 // 10 seconds timeout
+    });
+  }
+
+  /**
+   * Get room ID for a user with IN_SQUAD_AVAILABLE status (for discovery service)
+   * Returns roomId if user is in a room with pull stranger enabled
+   */
+  async getRoomForPullStrangerUser(userId: string): Promise<string | null> {
+    const session = await this.prisma.callSession.findFirst({
+      where: {
+        pullStrangerEnabled: true,
+        status: { in: ["IN_SQUAD", "IN_BROADCAST"] },
+        participants: {
+          some: {
+            userId: userId,
+            status: "active",
+            leftAt: null
+          }
+        }
+      },
+      select: { roomId: true }
+    });
+
+    return session?.roomId || null;
   }
 
   /**
@@ -1122,18 +1414,18 @@ export class RoomService {
     });
 
     // BUSINESS RULE: When entire room ends:
-    // - Participants (IN_SQUAD/IN_BROADCAST) → AVAILABLE (back to discovery pool)
-    // - Viewers (WATCHING_HMM_TV) → OFFLINE (they stop watching, not in matchmaking)
+    // - Participants (IN_SQUAD/IN_BROADCAST) → ONLINE (back to app home)
+    // - Viewers (WATCHING_HMM_TV) → ONLINE (back to app home)
     if (participantUserIds.length > 0) {
-      this.logger.log(`Updating ${participantUserIds.length} participant(s) to AVAILABLE status: ${participantUserIds.join(", ")}`);
-      this.discoveryClient.updateUserStatuses(participantUserIds, "AVAILABLE").catch((err) => {
+      this.logger.log(`Updating ${participantUserIds.length} participant(s) to ONLINE status: ${participantUserIds.join(", ")}`);
+      this.discoveryClient.updateUserStatuses(participantUserIds, "ONLINE").catch((err) => {
         this.logger.error(`Failed to update participant statuses: ${err.message}`);
       });
     }
 
     if (viewerUserIds.length > 0) {
-      this.logger.log(`Updating ${viewerUserIds.length} viewer(s) to OFFLINE status: ${viewerUserIds.join(", ")}`);
-      this.discoveryClient.updateUserStatuses(viewerUserIds, "OFFLINE").catch((err) => {
+      this.logger.log(`Updating ${viewerUserIds.length} viewer(s) to ONLINE status: ${viewerUserIds.join(", ")}`);
+      this.discoveryClient.updateUserStatuses(viewerUserIds, "ONLINE").catch((err) => {
         this.logger.error(`Failed to update viewer statuses: ${err.message}`);
       });
     }

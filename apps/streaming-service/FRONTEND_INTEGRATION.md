@@ -238,6 +238,82 @@ POST /streaming/rooms/:roomId/broadcast/start
 POST /streaming/rooms/:roomId/broadcast/stop
 ```
 
+### Enable Pull Stranger (HOST only)
+```javascript
+POST /streaming/rooms/:roomId/enable-pull-stranger
+Content-Type: application/json
+
+{
+  "userId": "host-user-id"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Pull stranger mode enabled"
+}
+```
+
+**Behavior:**
+- Only HOST can enable pull stranger mode
+- All participants in the room get `IN_SQUAD_AVAILABLE` status
+- Users with `IN_SQUAD_AVAILABLE` status appear in discovery as separate face cards
+- Only 1 user can join per enable (mode disables after join)
+
+### Join Via Pull Stranger (One-way acceptance)
+```javascript
+POST /streaming/rooms/:roomId/join-via-pull-stranger
+Content-Type: application/json
+
+{
+  "joiningUserId": "user-c-id",
+  "targetUserId": "user-a-id"  // The user whose card was accepted
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "roomId": "room-123",
+  "sessionId": "session-456",
+  "message": "Successfully joined room via pull stranger"
+}
+```
+
+**Behavior:**
+- Joining user must have `AVAILABLE` or `IN_SQUAD_AVAILABLE` status
+- Target user must be in room with `IN_SQUAD_AVAILABLE` status
+- Pull stranger mode must be enabled
+- Room must not be full (< 4 participants)
+- After join, all participants (including new joiner) get status restored to `IN_SQUAD` or `IN_BROADCAST` (preserves original broadcasting state)
+- Pull stranger mode is disabled after join (HOST can enable again)
+
+### Get Room For Pull Stranger User
+```javascript
+GET /streaming/rooms/pull-stranger/room/:userId
+```
+
+**Response:**
+```json
+{
+  "exists": true,
+  "roomId": "room-123"
+}
+```
+
+or
+
+```json
+{
+  "exists": false
+}
+```
+
+**Use Case:** Discovery service can use this to get the room ID when a user with `IN_SQUAD_AVAILABLE` status is shown in face cards.
+
 ### End Call
 ```javascript
 POST /streaming/rooms/:roomId/end

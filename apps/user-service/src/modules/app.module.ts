@@ -6,11 +6,12 @@ import { UserService } from "../services/user.service.js";
 import { ProfileCompletionService } from "../services/profile-completion.service.js";
 import { ModerationClientService } from "../services/moderation-client.service.js";
 import { MusicService } from "../services/music.service.js";
+import { BrandService } from "../services/brand.service.js";
 
 @Module({
   imports: [ConfigModule.forRoot()],
   controllers: [UserController],
-  providers: [PrismaService, UserService, ProfileCompletionService, ModerationClientService, MusicService]
+  providers: [PrismaService, UserService, ProfileCompletionService, ModerationClientService, MusicService, BrandService]
 })
 export class AppModule {}
 

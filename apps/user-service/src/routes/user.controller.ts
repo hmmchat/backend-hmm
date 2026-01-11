@@ -148,6 +148,24 @@ export class UserController {
     return this.userService.getBrands();
   }
 
+  @Get("brands/search")
+  async searchBrands(@Query("q") query?: string, @Query("limit") limit?: string) {
+    if (!query || query.trim().length === 0) {
+      throw new HttpException("Search query (q) is required", HttpStatus.BAD_REQUEST);
+    }
+    const limitNum = limit ? parseInt(limit, 10) : 20;
+    if (isNaN(limitNum) || limitNum < 1 || limitNum > 50) {
+      throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);
+    }
+    const results = await this.userService.searchBrands(query, limitNum);
+    return { brands: results };
+  }
+
+  @Post("brands/:brandId/fetch-logo")
+  async fetchBrandLogo(@Param("brandId") brandId: string) {
+    return this.userService.fetchBrandLogo(brandId);
+  }
+
   @Get("interests")
   async getInterests() {
     return this.userService.getInterests();

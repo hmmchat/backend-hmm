@@ -150,8 +150,11 @@ model Song {
 model Brand {
   id          String   @id @default(cuid())
   name        String   @unique // Brand name (e.g., "JBL", "Apple", "Nike", "BMW")
-  logoUrl     String?  // Optional: Brand logo URL
+  domain      String?  // Optional: Domain name for Brandfetch API (e.g., "apple.com", "nike.com")
+  logoUrl     String?  // Optional: Brand logo URL (fetched from Brandfetch API)
+  brandfetchId String? // Optional: Brandfetch brand ID for reference
   createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
   
   userPreferences UserBrand[]
   

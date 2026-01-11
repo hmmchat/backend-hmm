@@ -1,40 +1,98 @@
 import { PrismaClient } from "@prisma/client";
+import fetch from "node-fetch";
 
 const prisma = new PrismaClient();
+
+// Helper function to fetch brand logo from Brandfetch (optional)
+async function fetchBrandLogo(domain: string): Promise<string | null> {
+  const apiKey = process.env.BRANDFETCH_API_KEY;
+  if (!apiKey) {
+    return null; // Brandfetch not configured, skip logo fetching
+  }
+
+  try {
+    const url = `https://api.brandfetch.io/v2/brands/${domain}`;
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+      }
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const data = await response.json() as { images?: { logo?: string; icon?: string }; logo?: string };
+    return data.images?.logo || data.images?.icon || data.logo || null;
+  } catch (error) {
+    console.warn(`Failed to fetch logo for ${domain}:`, error);
+    return null;
+  }
+}
 
 async function main() {
   console.log("🌱 Starting seed...");
 
   // Seed Brands
   console.log("📦 Seeding brands...");
-  // Note: Update logoUrl values with actual CDN/file storage URLs for production
-  // Logo images should be hosted on your file storage (Cloudflare R2, AWS S3, etc.)
+  // Brand name to domain mapping for Brandfetch API
   const brands = [
-    { name: "JBL", logoUrl: null }, // TODO: Add logo URL: "https://your-cdn.com/logos/jbl.png"
-    { name: "Apple", logoUrl: null }, // TODO: Add logo URL: "https://your-cdn.com/logos/apple.png"
-    { name: "Nike", logoUrl: null }, // TODO: Add logo URL: "https://your-cdn.com/logos/nike.png"
-    { name: "BMW", logoUrl: null }, // TODO: Add logo URL: "https://your-cdn.com/logos/bmw.png"
-    { name: "Adidas", logoUrl: null }, // TODO: Add logo URL: "https://your-cdn.com/logos/adidas.png"
-    { name: "Samsung", logoUrl: null }, // TODO: Add logo URL: "https://your-cdn.com/logos/samsung.png"
-    { name: "Sony", logoUrl: null }, // TODO: Add logo URL: "https://your-cdn.com/logos/sony.png"
-    { name: "Tesla", logoUrl: null }, // TODO: Add logo URL: "https://your-cdn.com/logos/tesla.png"
-    { name: "Gucci", logoUrl: null }, // TODO: Add logo URL: "https://your-cdn.com/logos/gucci.png"
-    { name: "Chanel", logoUrl: null }, // TODO: Add logo URL: "https://your-cdn.com/logos/chanel.png"
-    { name: "Bose", logoUrl: null }, // TODO: Add logo URL: "https://your-cdn.com/logos/bose.png"
-    { name: "Mercedes-Benz", logoUrl: null }, // TODO: Add logo URL: "https://your-cdn.com/logos/mercedes-benz.png"
-    { name: "Puma", logoUrl: null }, // TODO: Add logo URL: "https://your-cdn.com/logos/puma.png"
-    { name: "Microsoft", logoUrl: null }, // TODO: Add logo URL: "https://your-cdn.com/logos/microsoft.png"
-    { name: "Google", logoUrl: null } // TODO: Add logo URL: "https://your-cdn.com/logos/google.png"
+    { name: "JBL", domain: "jbl.com" },
+    { name: "Apple", domain: "apple.com" },
+    { name: "Nike", domain: "nike.com" },
+    { name: "BMW", domain: "bmw.com" },
+    { name: "Adidas", domain: "adidas.com" },
+    { name: "Samsung", domain: "samsung.com" },
+    { name: "Sony", domain: "sony.com" },
+    { name: "Tesla", domain: "tesla.com" },
+    { name: "Gucci", domain: "gucci.com" },
+    { name: "Chanel", domain: "chanel.com" },
+    { name: "Bose", domain: "bose.com" },
+    { name: "Mercedes-Benz", domain: "mercedes-benz.com" },
+    { name: "Puma", domain: "puma.com" },
+    { name: "Microsoft", domain: "microsoft.com" },
+    { name: "Google", domain: "google.com" }
   ];
 
+  const hasBrandfetch = !!process.env.BRANDFETCH_API_KEY;
+  if (hasBrandfetch) {
+    console.log("🔍 Fetching brand logos from Brandfetch...");
+  } else {
+    console.log("⚠️  BRANDFETCH_API_KEY not set - logos will be fetched automatically when brands are accessed");
+  }
+
   for (const brand of brands) {
+    let logoUrl: string | null = null;
+    
+    // Try to fetch logo if Brandfetch is configured
+    if (hasBrandfetch) {
+      logoUrl = await fetchBrandLogo(brand.domain);
+      if (logoUrl) {
+        console.log(`  ✓ Fetched logo for ${brand.name}`);
+      }
+    }
+
+    // Check if brand exists to see if it has a logo already
+    const existing = await prisma.brand.findUnique({
+      where: { name: brand.name }
+    });
+
     await prisma.brand.upsert({
       where: { name: brand.name },
-      update: {},
-      create: brand
+      update: {
+        domain: brand.domain,
+        // Only update logoUrl if we fetched a new one OR if brand doesn't have one
+        ...(logoUrl && !existing?.logoUrl ? { logoUrl } : {})
+      },
+      create: {
+        name: brand.name,
+        domain: brand.domain,
+        logoUrl
+      }
     });
   }
-  console.log(`✅ Seeded ${brands.length} brands`);
+  console.log(`✅ Seeded ${brands.length} brands${hasBrandfetch ? ' with logos' : ''}`);
 
   // Seed Interests
   console.log("🎯 Seeding interests...");

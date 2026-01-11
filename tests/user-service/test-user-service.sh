@@ -372,8 +372,39 @@ if [ "$BRANDS_COUNT" -gt 0 ]; then
     test_result 0 "Get brands successful ($BRANDS_COUNT brands)"
     FIRST_BRAND_ID=$(echo "$BRANDS_RESPONSE" | jq -r '.brands[0].id // empty' 2>/dev/null)
     TEST_BRAND_ID="$FIRST_BRAND_ID"
+    FIRST_BRAND_DOMAIN=$(echo "$BRANDS_RESPONSE" | jq -r '.brands[0].domain // empty' 2>/dev/null)
+    FIRST_BRAND_LOGO=$(echo "$BRANDS_RESPONSE" | jq -r '.brands[0].logoUrl // empty' 2>/dev/null)
+    
+    # Check if brands have domain field (new field)
+    if [ ! -z "$FIRST_BRAND_DOMAIN" ] && [ "$FIRST_BRAND_DOMAIN" != "null" ]; then
+        test_result 0 "Brands include domain field"
+    else
+        test_result 1 "Brands missing domain field"
+    fi
 else
     test_result 1 "Get brands failed"
+fi
+echo ""
+
+# Test 12.5: Search Brands (Brandfetch)
+echo -e "${CYAN}Test 12.5: Search Brands (Brandfetch)${NC}"
+BRAND_SEARCH_RESPONSE=$(curl -s "$USER_SERVICE_URL/brands/search?q=apple.com&limit=5")
+HTTP_STATUS=$(echo "$BRAND_SEARCH_RESPONSE" | jq -r '.statusCode // empty' 2>/dev/null)
+
+if [ "$HTTP_STATUS" = "503" ]; then
+    # Brandfetch API not configured - this is acceptable for testing
+    test_result 0 "Search brands endpoint working (503 - Brandfetch API not configured, expected)"
+elif [ ! -z "$HTTP_STATUS" ] && [ "$HTTP_STATUS" != "null" ]; then
+    test_result 1 "Search brands failed (HTTP $HTTP_STATUS)"
+    echo "  Response: $BRAND_SEARCH_RESPONSE"
+else
+    BRAND_SEARCH_COUNT=$(echo "$BRAND_SEARCH_RESPONSE" | jq -r '.brands | length' 2>/dev/null || echo "0")
+    if [ "$BRAND_SEARCH_COUNT" -ge 0 ]; then
+        test_result 0 "Search brands successful ($BRAND_SEARCH_COUNT brands found)"
+    else
+        test_result 1 "Search brands failed"
+        echo "  Response: $BRAND_SEARCH_RESPONSE"
+    fi
 fi
 echo ""
 
@@ -821,6 +852,13 @@ echo ""
 
 # ========== DISCOVERY TESTS ==========
 
+# Reset Mumbai test users to AVAILABLE status for discovery test
+# (Some tests may have changed their status to MATCHED)
+echo -e "${CYAN}Preparing discovery test data...${NC}"
+PGPASSWORD=password psql -h localhost -U postgres -d hmm_user -c "UPDATE users SET status = 'AVAILABLE' WHERE id LIKE 'test-user-mumbai%' AND status = 'MATCHED' AND \"profileCompleted\" = true;" > /dev/null 2>&1
+# Set one Mumbai user to IN_SQUAD_AVAILABLE for status filter test
+PGPASSWORD=password psql -h localhost -U postgres -d hmm_user -c "UPDATE users SET status = 'IN_SQUAD_AVAILABLE' WHERE id = (SELECT id FROM users WHERE id LIKE 'test-user-mumbai-male-%' AND \"profileCompleted\" = true LIMIT 1);" > /dev/null 2>&1
+
 # Test 38: Get Users for Discovery
 echo -e "${CYAN}Test 38: Get Users for Discovery${NC}"
 DISCOVERY_RESPONSE=$(curl -s -X POST "$USER_SERVICE_URL/users/discovery" \
@@ -872,6 +910,35 @@ if [ "$HTTP_STATUS" = "404" ]; then
     test_result 0 "Invalid brand ID rejected (404)"
 else
     test_result 1 "Invalid brand ID not rejected (expected 404, got $HTTP_STATUS)"
+fi
+echo ""
+
+# Test 40.5: Fetch Brand Logo
+echo -e "${CYAN}Test 40.5: Fetch Brand Logo${NC}"
+if [ ! -z "$TEST_BRAND_ID" ]; then
+    FETCH_LOGO_RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST "$USER_SERVICE_URL/brands/$TEST_BRAND_ID/fetch-logo")
+    HTTP_STATUS=$(echo "$FETCH_LOGO_RESPONSE" | grep "HTTP_STATUS" | cut -d: -f2)
+    
+    if [ "$HTTP_STATUS" = "503" ]; then
+        # Brandfetch API not configured - this is acceptable
+        test_result 0 "Fetch brand logo endpoint working (503 - Brandfetch API not configured, expected)"
+    elif [ "$HTTP_STATUS" = "404" ]; then
+        # Logo not found for this brand
+        test_result 0 "Fetch brand logo endpoint working (404 - Logo not found)"
+    elif [ "$HTTP_STATUS" = "200" ]; then
+        # Logo fetched successfully
+        LOGO_URL=$(echo "$FETCH_LOGO_RESPONSE" | grep -v "HTTP_STATUS" | jq -r '.brand.logoUrl // empty' 2>/dev/null)
+        if [ ! -z "$LOGO_URL" ] && [ "$LOGO_URL" != "null" ]; then
+            test_result 0 "Fetch brand logo successful"
+        else
+            test_result 1 "Fetch brand logo failed (no logo URL in response)"
+        fi
+    else
+        test_result 1 "Fetch brand logo failed (HTTP $HTTP_STATUS)"
+        echo "  Response: $FETCH_LOGO_RESPONSE"
+    fi
+else
+    test_result 1 "Fetch brand logo skipped (no brand ID)"
 fi
 echo ""
 

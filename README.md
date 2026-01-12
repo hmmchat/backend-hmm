@@ -5,7 +5,7 @@ Backend service for hmmchat.live
 - Domain: https://hmmchat.live
 - App: https://app.hmmchat.live
 - Staging App: https://staging.hmmchat.live
-- API (planned): https://api.hmmchat.live
+- API: https://api.hmmchat.live (via API Gateway)
 
 ## Tech Stack
 
@@ -52,7 +52,7 @@ Backend service for hmmchat.live
   - **user-service** - User profile management & preferences
   - **moderation-service** - Content moderation (NSFW image checks)
   - **discovery-service** - User discovery & matching
-  - **files-service** - File upload & storage
+  - **files-service** - File upload & storage (Cloudflare R2, image processing)
   - **payment-service** - Payment processing
   - **streaming-service** - Video/audio streaming
   - **wallet-service** - Wallet management

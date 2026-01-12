@@ -10,6 +10,13 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum AccountStatus {
+  ACTIVE
+  DEACTIVATED
+  SUSPENDED
+  BANNED
+}
+
 model User {
   id        String   @id @default(cuid())
   createdAt DateTime @default(now())
@@ -27,6 +34,15 @@ model User {
   acceptedTerms    Boolean   @default(false)
   acceptedTermsAt  DateTime?
   acceptedTermsVer String?
+
+  // Account Management
+  accountStatus AccountStatus @default(ACTIVE)
+  deactivatedAt DateTime?
+  suspendedAt   DateTime?
+  bannedAt      DateTime?
+  deletedAt     DateTime? // Soft delete - account marked for deletion
+  suspensionReason String? // Reason for suspension/ban
+  banReason        String? // Reason for ban
 
   preferences Preference?
   sessions    Session[]

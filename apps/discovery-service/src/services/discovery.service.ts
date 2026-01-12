@@ -1374,5 +1374,65 @@ export class DiscoveryService implements OnModuleInit {
     
     console.log(`[INFO] Cleanup interval initialized: checking expired acceptances every ${cleanupIntervalMs}ms`);
   }
+
+  /**
+   * Handle room created notification from streaming-service
+   * Updates all users in the room to IN_SQUAD status
+   */
+  async handleRoomCreated(roomId: string, userIds: string[]): Promise<void> {
+    try {
+      console.log(`[INFO] Room ${roomId} created with users: ${userIds.join(", ")} - updating to IN_SQUAD`);
+      
+      // Update all users to IN_SQUAD status
+      await Promise.all(
+        userIds.map((userId) => this.matchingService.updateUserStatus(userId, "IN_SQUAD"))
+      );
+      
+      console.log(`[INFO] Successfully updated ${userIds.length} users to IN_SQUAD for room ${roomId}`);
+    } catch (error: any) {
+      console.error(`[ERROR] Failed to handle room created for room ${roomId}:`, error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Handle broadcast started notification from streaming-service
+   * Updates all users in the room to IN_BROADCAST status
+   */
+  async handleBroadcastStarted(roomId: string, userIds: string[]): Promise<void> {
+    try {
+      console.log(`[INFO] Broadcast started for room ${roomId} with users: ${userIds.join(", ")} - updating to IN_BROADCAST`);
+      
+      // Update all users to IN_BROADCAST status
+      await Promise.all(
+        userIds.map((userId) => this.matchingService.updateUserStatus(userId, "IN_BROADCAST"))
+      );
+      
+      console.log(`[INFO] Successfully updated ${userIds.length} users to IN_BROADCAST for room ${roomId}`);
+    } catch (error: any) {
+      console.error(`[ERROR] Failed to handle broadcast started for room ${roomId}:`, error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Handle call ended notification from streaming-service
+   * Updates all users in the room to AVAILABLE status
+   */
+  async handleCallEnded(roomId: string, userIds: string[]): Promise<void> {
+    try {
+      console.log(`[INFO] Call ended for room ${roomId} with users: ${userIds.join(", ")} - updating to AVAILABLE`);
+      
+      // Update all users to AVAILABLE status
+      await Promise.all(
+        userIds.map((userId) => this.matchingService.updateUserStatus(userId, "AVAILABLE"))
+      );
+      
+      console.log(`[INFO] Successfully updated ${userIds.length} users to AVAILABLE after call ended in room ${roomId}`);
+    } catch (error: any) {
+      console.error(`[ERROR] Failed to handle call ended for room ${roomId}:`, error.message);
+      throw error;
+    }
+  }
 }
 

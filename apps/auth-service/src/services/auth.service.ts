@@ -164,6 +164,24 @@ export class AuthService implements OnModuleInit {
         }
       }));
 
+    // Check account status - prevent login for deactivated, suspended, banned, or deleted accounts
+    if (user.accountStatus !== "ACTIVE" || user.deletedAt) {
+      const statusMessages: Record<string, string> = {
+        DEACTIVATED: "Account has been deactivated. Please contact support to reactivate.",
+        SUSPENDED: user.suspensionReason 
+          ? `Account has been suspended: ${user.suspensionReason}` 
+          : "Account has been suspended. Please contact support.",
+        BANNED: user.banReason 
+          ? `Account has been banned: ${user.banReason}` 
+          : "Account has been banned. This action cannot be reversed."
+      };
+      
+      throw new HttpException(
+        statusMessages[user.accountStatus] || "Account is not active",
+        HttpStatus.FORBIDDEN
+      );
+    }
+
     const accessToken = await signAccessToken(this.privateKey, {
       sub: user.id,
       uid: user.id
@@ -183,5 +201,169 @@ export class AuthService implements OnModuleInit {
     });
 
     return { accessToken, refreshToken };
+  }
+
+  /* ---------- Account Management ---------- */
+
+  /**
+   * Deactivate user account (user-initiated)
+   * Sets accountStatus to DEACTIVATED and deactivatedAt timestamp
+   */
+  async deactivateAccount(userId: string): Promise<void> {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        accountStatus: "DEACTIVATED",
+        deactivatedAt: new Date()
+      }
+    });
+
+    // Delete all active sessions
+    await this.prisma.session.deleteMany({
+      where: { userId }
+    });
+  }
+
+  /**
+   * Reactivate user account
+   * Sets accountStatus back to ACTIVE and clears deactivatedAt
+   */
+  async reactivateAccount(userId: string): Promise<void> {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        accountStatus: "ACTIVE",
+        deactivatedAt: null
+      }
+    });
+  }
+
+  /**
+   * Suspend user account (admin-initiated)
+   * Sets accountStatus to SUSPENDED with optional reason
+   */
+  async suspendAccount(userId: string, reason?: string): Promise<void> {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        accountStatus: "SUSPENDED",
+        suspendedAt: new Date(),
+        suspensionReason: reason || null
+      }
+    });
+
+    // Delete all active sessions
+    await this.prisma.session.deleteMany({
+      where: { userId }
+    });
+  }
+
+  /**
+   * Unsuspend user account (admin-initiated)
+   * Sets accountStatus back to ACTIVE
+   */
+  async unsuspendAccount(userId: string): Promise<void> {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        accountStatus: "ACTIVE",
+        suspendedAt: null,
+        suspensionReason: null
+      }
+    });
+  }
+
+  /**
+   * Ban user account (admin-initiated, permanent)
+   * Sets accountStatus to BANNED with reason
+   */
+  async banAccount(userId: string, reason: string): Promise<void> {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        accountStatus: "BANNED",
+        bannedAt: new Date(),
+        banReason: reason
+      }
+    });
+
+    // Delete all active sessions
+    await this.prisma.session.deleteMany({
+      where: { userId }
+    });
+  }
+
+  /**
+   * Delete user account (user-initiated, soft delete)
+   * Sets deletedAt timestamp and deactivates account
+   * Actual data deletion should be handled by a cleanup job
+   */
+  async deleteAccount(userId: string): Promise<void> {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        accountStatus: "DEACTIVATED",
+        deletedAt: new Date(),
+        deactivatedAt: new Date()
+      }
+    });
+
+    // Delete all active sessions
+    await this.prisma.session.deleteMany({
+      where: { userId }
+    });
+  }
+
+  /**
+   * Check if account is active
+   */
+  async isAccountActive(userId: string): Promise<boolean> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { accountStatus: true, deletedAt: true }
+    });
+
+    if (!user) return false;
+    return user.accountStatus === "ACTIVE" && !user.deletedAt;
+  }
+
+  /**
+   * Get account status
+   */
+  async getAccountStatus(userId: string): Promise<{
+    status: string;
+    deactivatedAt: Date | null;
+    suspendedAt: Date | null;
+    bannedAt: Date | null;
+    deletedAt: Date | null;
+    suspensionReason: string | null;
+    banReason: string | null;
+  }> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        accountStatus: true,
+        deactivatedAt: true,
+        suspendedAt: true,
+        bannedAt: true,
+        deletedAt: true,
+        suspensionReason: true,
+        banReason: true
+      }
+    });
+
+    if (!user) {
+      throw new HttpException("User not found", HttpStatus.NOT_FOUND);
+    }
+
+    return {
+      status: user.accountStatus,
+      deactivatedAt: user.deactivatedAt,
+      suspendedAt: user.suspendedAt,
+      bannedAt: user.bannedAt,
+      deletedAt: user.deletedAt,
+      suspensionReason: user.suspensionReason,
+      banReason: user.banReason
+    };
   }
 }

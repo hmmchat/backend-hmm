@@ -508,5 +508,42 @@ export class UserController {
     const dto = UpdateStatusSchema.parse(body);
     return this.userService.updateStatusForUser(userId, dto);
   }
+
+  /* ---------- Account Management Endpoints ---------- */
+
+  /**
+   * Export user data (GDPR compliance)
+   * GET /me/export
+   */
+  @Get("me/export")
+  async exportUserData(@Headers("authorization") authz: string) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+
+    // Verify token and get userId
+    const { verifyToken } = await import("@hmm/common");
+    const jwkStr = process.env.JWT_PUBLIC_JWK;
+    if (!jwkStr || jwkStr === "undefined") {
+      throw new HttpException("Server configuration error", HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+    const cleanedJwk = jwkStr.trim().replace(/^['"]|['"]$/g, "");
+    const publicJwk = JSON.parse(cleanedJwk);
+    const verifyAccess = await verifyToken(publicJwk);
+    const payload = await verifyAccess(token);
+
+    return this.userService.exportUserData(payload.sub);
+  }
+
+  /**
+   * Delete user account (internal endpoint, called by auth-service)
+   * DELETE /users/internal/:userId
+   * Note: This should be protected by internal service authentication
+   */
+  @Delete("users/internal/:userId")
+  async deleteUserAccountInternal(@Param("userId") userId: string) {
+    // TODO: Add internal service authentication
+    await this.userService.deleteUserAccount(userId);
+    return { ok: true, message: `User account ${userId} deleted` };
+  }
 }
 

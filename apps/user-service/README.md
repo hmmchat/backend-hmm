@@ -171,9 +171,11 @@ The service verifies tokens using the same JWT public key as auth-service.
 - User authenticates → Gets userId
 - Frontend calls `POST /users/:userId/profile` to create profile
 
-### Files Service (TODO)
-- Photo uploads should go through files-service
-- Store URLs in user-service
+### Files Service
+- Photo uploads can go through files-service (recommended)
+- Frontend uploads to files-service, gets URL, then sends to user-service
+- Files-service handles: upload, image processing, Cloudflare R2 storage
+- See `apps/files-service/README.md` for integration details
 
 ### Moderation Service (TODO)
 - NSFW validation for display picture and photos

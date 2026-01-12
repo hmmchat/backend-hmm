@@ -1,8 +1,27 @@
-// Prisma schema for files-service (add models when needed).
-// datasource db {
-//   provider = "postgresql"
-//   url      = env("DATABASE_URL")
-// }
-// generator client {
-//   provider = "prisma-client-js"
-// }
+// Prisma schema for files-service
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+model File {
+  id        String   @id @default(cuid())
+  userId    String?  // Optional - some files might be user-agnostic
+  url       String   // Public URL to access the file
+  key       String   @unique // R2 object key (path in bucket)
+  mimeType  String   // MIME type (e.g., image/jpeg, image/png)
+  size      Int      // File size in bytes
+  width     Int?     // Image width (for images only)
+  height    Int?     // Image height (for images only)
+  metadata  Json?    // Additional metadata (JSON object)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([key])
+}

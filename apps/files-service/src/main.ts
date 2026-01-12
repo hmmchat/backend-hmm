@@ -1,2 +1,37 @@
-// TODO: Initialize NestJS Fastify app for files-service here.
-console.log("files-service skeleton ready. Add Nest bootstrap in src/main.ts");
+import { NestFactory } from "@nestjs/core";
+import { FastifyAdapter, NestFastifyApplication } from "@nestjs/platform-fastify";
+import { AppModule } from "./modules/app.module.js";
+import { ConfigService } from "@nestjs/config";
+import { ZodExceptionFilter } from "./filters/zod-exception.filter.js";
+import multipart from "fastify-multipart";
+
+async function bootstrap() {
+  const app = await NestFactory.create<NestFastifyApplication>(
+    AppModule,
+    new FastifyAdapter({ logger: true })
+  );
+
+  // Register multipart plugin for file uploads
+  await app.register(multipart, {
+    limits: {
+      fileSize: 10 * 1024 * 1024, // 10MB max file size
+      files: 1 // Only one file per request
+    }
+  });
+
+  const config = app.get(ConfigService);
+  const port = config.get<number>("PORT") || 3008;
+
+  const origins = (process.env.ALLOWED_ORIGINS ?? "").split(",").filter(Boolean);
+  app.enableCors({
+    origin: origins.length ? origins : true,
+    credentials: true
+  });
+
+  // Register global exception filter for Zod validation errors
+  app.useGlobalFilters(new ZodExceptionFilter());
+
+  await app.listen(port, "0.0.0.0");
+  console.log(`🚀 Files service running on http://localhost:${port}`);
+}
+bootstrap();

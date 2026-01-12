@@ -1243,6 +1243,95 @@ export class UserService implements OnModuleInit {
   }
 
   /**
+   * Export all user data (GDPR compliance)
+   * Returns all user data in a structured format
+   */
+  async exportUserData(userId: string): Promise<any> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        photos: { orderBy: { order: "asc" } },
+        musicPreference: true,
+        brandPreferences: { include: { brand: true } },
+        interests: { include: { interest: true } },
+        values: { include: { value: true } }
+      }
+    });
+
+    if (!user) {
+      throw new HttpException("User not found", HttpStatus.NOT_FOUND);
+    }
+
+    // Get profile completion
+    const profileCompletion = await this.profileCompletion.getProfileCompletion(userId);
+
+    return {
+      userId: user.id,
+      exportedAt: new Date().toISOString(),
+      profile: {
+        username: user.username,
+        dateOfBirth: user.dateOfBirth,
+        gender: user.gender,
+        displayPictureUrl: user.displayPictureUrl,
+        intent: user.intent,
+        status: user.status,
+        latitude: user.latitude,
+        longitude: user.longitude,
+        preferredCity: (user as any).preferredCity,
+        videoEnabled: (user as any).videoEnabled,
+        profileCompleted: user.profileCompleted,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt
+      },
+      photos: user.photos.map(photo => ({
+        id: photo.id,
+        url: photo.url,
+        order: photo.order,
+        createdAt: photo.createdAt
+      })),
+      musicPreference: user.musicPreference ? {
+        name: user.musicPreference.name,
+        artist: user.musicPreference.artist,
+        albumArtUrl: user.musicPreference.albumArtUrl
+      } : null,
+      brandPreferences: user.brandPreferences.map(bp => ({
+        brand: {
+          name: bp.brand.name,
+          logoUrl: bp.brand.logoUrl
+        }
+      })),
+      interests: user.interests.map(interest => ({
+        name: interest.interest.name,
+        genre: interest.interest.genre
+      })),
+      values: user.values.map(value => ({
+        name: value.value.name
+      })),
+      profileCompletion
+    };
+  }
+
+  /**
+   * Delete user account and all associated data
+   * This is called when account deletion is confirmed
+   * Note: This should be called after auth-service marks account as deleted
+   */
+  async deleteUserAccount(userId: string): Promise<void> {
+    // Delete all user data
+    await this.prisma.user.delete({
+      where: { id: userId }
+    });
+
+    // Note: Related data (photos, preferences, etc.) will be cascade deleted
+    // Additional cleanup may be needed for:
+    // - Files in Cloudflare R2 (via files-service)
+    // - Wallet data (via wallet-service)
+    // - Friend relationships (via friend-service)
+    // - Streaming sessions (via streaming-service)
+    // - Discovery matches (via discovery-service)
+  }
+
+  /**
    * Update status for user by ID (test endpoint, bypasses auth)
    */
   async updateStatusForUser(userId: string, data: UpdateStatusDto) {

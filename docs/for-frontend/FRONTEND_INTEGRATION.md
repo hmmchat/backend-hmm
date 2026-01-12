@@ -1,26 +1,73 @@
-# Backend API - Frontend Integration
+# Frontend Integration Guide
 
-## 🚀 Getting Started
+Complete API integration guide for all backend services. This document covers every use case and endpoint you'll need to build the frontend.
 
-**Local Setup:** See `FRONTEND_SETUP.md` for backend setup instructions.
+## 📚 Table of Contents
 
-**Base URLs (Development):**
-- Auth Service: `http://localhost:3001`
-- User Service: `http://localhost:3002`
-- Moderation Service: `http://localhost:3003` (called automatically by user-service)
-- Wallet Service: `http://localhost:3006`
-- Discovery Service: `http://localhost:3004`
-- Friend Service: `http://localhost:3007`
-
-All endpoints accept `Content-Type: application/json` and return JSON responses.
+1. [Getting Started](#getting-started)
+2. [Authentication & User Onboarding](#authentication--user-onboarding)
+3. [User Profile Management](#user-profile-management)
+4. [Discovery & Matching](#discovery--matching)
+5. [Streaming & Video Calls](#streaming--video-calls)
+6. [Friends & Messaging](#friends--messaging)
+7. [Wallet & Payments](#wallet--payments)
+8. [File Uploads](#file-uploads)
+9. [Error Handling](#error-handling)
 
 ---
 
-## Authentication Endpoints
+## Getting Started
 
-### Google Sign-In
+### Base URLs
 
-**Endpoint:** `POST /auth/google`
+**Recommended: Use API Gateway**
+- Base URL: `http://localhost:3000`
+- All endpoints: `/v1/*`
+- Example: `http://localhost:3000/v1/auth/google`
+
+**Alternative: Direct Service Access**
+- Auth: `http://localhost:3001`
+- User: `http://localhost:3002`
+- Discovery: `http://localhost:3004`
+- Streaming: `http://localhost:3005`
+- Wallet: `http://localhost:3006`
+- Payment: `http://localhost:3007`
+- Friend: `http://localhost:3009`
+- Files: `http://localhost:3008`
+
+### Authentication Header
+
+All authenticated endpoints require:
+```
+Authorization: Bearer {accessToken}
+```
+
+### Response Format
+
+All endpoints return JSON:
+```json
+{
+  "success": true,
+  "data": { ... }
+}
+```
+
+Errors:
+```json
+{
+  "statusCode": 400,
+  "message": "Error message",
+  "error": "Bad Request"
+}
+```
+
+---
+
+## Authentication & User Onboarding
+
+### 1. Google Sign-In
+
+**Endpoint:** `POST /v1/auth/google`
 
 **Request:**
 ```json
@@ -39,38 +86,31 @@ All endpoints accept `Content-Type: application/json` and return JSON responses.
 }
 ```
 
-**SDK:** Get `idToken` from Google Sign-In SDK (`@react-oauth/google` or equivalent)
+**Frontend Implementation:**
+```javascript
+import { GoogleLogin } from '@react-oauth/google';
 
----
-
-### Facebook/Meta Sign-In
-
-**Endpoint:** `POST /auth/facebook`
-
-**Request:**
-```json
-{
-  "accessToken": "string (from Facebook SDK)",
-  "acceptedTerms": true,
-  "acceptedTermsVer": "v1.0"
-}
+const handleGoogleSignIn = async (credentialResponse) => {
+  const response = await fetch('http://localhost:3000/v1/auth/google', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      idToken: credentialResponse.credential,
+      acceptedTerms: true,
+      acceptedTermsVer: 'v1.0'
+    })
+  });
+  
+  const data = await response.json();
+  // Store tokens
+  localStorage.setItem('accessToken', data.accessToken);
+  localStorage.setItem('refreshToken', data.refreshToken);
+};
 ```
 
-**Response:**
-```json
-{
-  "accessToken": "string (JWT)",
-  "refreshToken": "string (JWT)"
-}
-```
+### 2. Apple Sign-In
 
-**SDK:** Get `accessToken` from Facebook Login SDK (`react-facebook-login` or equivalent)
-
----
-
-### Apple Sign-In
-
-**Endpoint:** `POST /auth/apple`
+**Endpoint:** `POST /v1/auth/apple`
 
 **Request:**
 ```json
@@ -81,27 +121,33 @@ All endpoints accept `Content-Type: application/json` and return JSON responses.
 }
 ```
 
-**Response:**
-```json
-{
-  "accessToken": "string (JWT)",
-  "refreshToken": "string (JWT)"
-}
-```
+**Response:** Same as Google (accessToken + refreshToken)
 
-**SDK:** Get `identityToken` from Apple Sign-In SDK (`@apple/apple-auth` or `AuthenticationServices`)
+### 3. Facebook Sign-In
 
----
-
-### Phone OTP (Two-Step)
-
-#### Step 1: Send OTP
-**Endpoint:** `POST /auth/phone/send-otp`
+**Endpoint:** `POST /v1/auth/facebook`
 
 **Request:**
 ```json
 {
-  "phone": "+918073656316"
+  "accessToken": "string (from Facebook SDK)",
+  "acceptedTerms": true,
+  "acceptedTermsVer": "v1.0"
+}
+```
+
+**Response:** Same as Google (accessToken + refreshToken)
+
+### 4. Phone OTP (Two-Step)
+
+#### Step 1: Send OTP
+
+**Endpoint:** `POST /v1/auth/phone/send-otp`
+
+**Request:**
+```json
+{
+  "phone": "+916123456789"
 }
 ```
 
@@ -113,13 +159,16 @@ All endpoints accept `Content-Type: application/json` and return JSON responses.
 }
 ```
 
+**Phone Format:** Indian numbers only - `+91[6-9]XXXXXXXXX` (10 digits, first digit 6-9)
+
 #### Step 2: Verify OTP
-**Endpoint:** `POST /auth/phone/verify`
+
+**Endpoint:** `POST /v1/auth/phone/verify`
 
 **Request:**
 ```json
 {
-  "phone": "+918073656316",
+  "phone": "+916123456789",
   "code": "123456",
   "acceptedTerms": true,
   "acceptedTermsVer": "v1.0"
@@ -134,20 +183,50 @@ All endpoints accept `Content-Type: application/json` and return JSON responses.
 }
 ```
 
-**Phone Format:** Indian numbers only - `+91[6-9]XXXXXXXXX` (10 digits, first digit 6-9)
+### 5. Refresh Token
 
----
+**Endpoint:** `POST /v1/auth/refresh`
 
-## Authenticated Endpoints (Auth Service)
-
-All authenticated endpoints require header:
+**Request:**
+```json
+{
+  "refreshToken": "string"
+}
 ```
-Authorization: Bearer {accessToken}
+
+**Response:**
+```json
+{
+  "accessToken": "string (new JWT)",
+  "refreshToken": "string (new JWT)"
+}
 ```
 
-### Get User Info
+**Use Case:** Call this before access token expires to get new tokens.
 
-**Endpoint:** `GET http://localhost:3001/me`
+### 6. Logout
+
+**Endpoint:** `POST /v1/auth/logout`
+
+**Request:**
+```json
+{
+  "refreshToken": "string"
+}
+```
+
+**Response:**
+```json
+{
+  "ok": true
+}
+```
+
+### 7. Get User Info (Auth Service)
+
+**Endpoint:** `GET /auth/me`
+
+**Headers:** `Authorization: Bearer {accessToken}`
 
 **Response:**
 ```json
@@ -172,11 +251,9 @@ Authorization: Bearer {accessToken}
 }
 ```
 
----
+### 8. Update Preferences (Auth Service)
 
-### Update Preferences
-
-**Endpoint:** `PATCH http://localhost:3001/me/preferences`
+**Endpoint:** `PATCH /auth/me/preferences`
 
 **Request:**
 ```json
@@ -190,37 +267,23 @@ Authorization: Bearer {accessToken}
 }
 ```
 
-**Response:**
-```json
-{
-  "preferences": {
-    "videoEnabled": "boolean",
-    "meetMode": "string",
-    "location": {
-      "lat": "number",
-      "lng": "number"
-    } | null
-  }
-}
-```
-
 ---
 
-## User Service Endpoints
+## User Profile Management
 
 ### 1. Create User Profile
 
-After user signs up, they need to create their profile:
+**When:** After user signs up, before they can use the app.
 
-**Endpoint:** `POST http://localhost:3002/users/:userId/profile`
+**Endpoint:** `POST /users/:userId/profile`
 
 **Request:**
 ```json
 {
-  "username": "johndoe",  // 3-30 chars, alphanumeric + underscore (can be duplicate/common names)
+  "username": "johndoe",  // 3-30 chars, alphanumeric + underscore
   "dateOfBirth": "2000-01-01T00:00:00Z",  // User must be 18+
   "gender": "MALE",  // MALE | FEMALE | NON_BINARY | PREFER_NOT_TO_SAY
-  "displayPictureUrl": "https://your-cdn.com/profile.jpg"  // Photo already uploaded to your CDN
+  "displayPictureUrl": "https://your-cdn.com/profile.jpg"  // Photo URL (upload first)
 }
 ```
 
@@ -244,34 +307,31 @@ After user signs up, they need to create their profile:
 }
 ```
 
-**Important Notes:**
-- `displayPictureUrl` must be uploaded to your CDN/storage first
-- Photo will be automatically checked by moderation service
-- If photo fails moderation, profile creation will fail
-
----
+**Important:** 
+- Upload photo first using Files Service (see File Uploads section)
+- Photo is automatically checked by moderation service
+- If photo fails moderation, profile creation fails
 
 ### 2. Get User Profile
 
-**Endpoint:** `GET http://localhost:3002/users/:userId` (public)  
-**Endpoint:** `GET http://localhost:3002/me` (authenticated, own profile)
+**Endpoint:** `GET /users/:userId` (public) or `GET /me` (authenticated, own profile)
 
 **Query Parameters:**
-- `fields` (optional): Comma-separated list of fields to return (e.g., `?fields=username,status,photos`)
+- `fields` (optional): Comma-separated list of fields (e.g., `?fields=username,status,photos`)
 
 **Examples:**
 ```javascript
 // Get full profile
-GET http://localhost:3002/me
+GET /me
 
 // Get specific fields only (optimized)
-GET http://localhost:3002/me?fields=username,status,displayPictureUrl
+GET /me?fields=username,status,displayPictureUrl
 
 // Get public user profile
-GET http://localhost:3002/users/{userId}?fields=username,photos,brandPreferences
+GET /users/{userId}?fields=username,photos,brandPreferences
 ```
 
-**Response (full profile):**
+**Response:**
 ```json
 {
   "user": {
@@ -300,361 +360,9 @@ GET http://localhost:3002/users/{userId}?fields=username,photos,brandPreferences
 }
 ```
 
-**Field Selection:**
-- Available fields: `username`, `dateOfBirth`, `gender`, `displayPictureUrl`, `status`, `intent`, `photos`, `musicPreference`, `brandPreferences`, `interests`, `values`, etc.
-- `id` field is always included automatically
-- Use `profileCompletion` in fields to include completion percentage
+### 3. Get Profile Completion
 
----
-
-### 3. Update Profile
-
-**Endpoint:** `PATCH http://localhost:3002/me/profile`
-
-**Request:**
-```json
-{
-  "username": "newusername",  // Optional, can be duplicate/common names
-  "intent": "Here to meet new people",  // Optional, max 50 chars
-  "videoEnabled": false  // Optional
-}
-```
-
-**Response:**
-```json
-{
-  "user": {
-    // Updated user object
-  },
-  "profileCompletion": {
-    // Updated completion percentage
-  }
-}
-```
-
-**Gender Change Rules:**
-- Can change **once** from `PREFER_NOT_TO_SAY` to any other value
-- Cannot change from any other value
-- Cannot change if already changed once
-
----
-
-### 4. Photo Management
-
-#### Add Photo
-
-**Endpoint:** `POST http://localhost:3002/me/photos`
-
-**Request:**
-```json
-{
-  "url": "https://your-cdn.com/photo.jpg",  // Photo already uploaded to CDN
-  "order": 0  // Must be unique: 0, 1, 2, or 3 (max 4 photos)
-}
-```
-
-**Limit:** Maximum 4 photos (excluding display picture)
-
-#### Get Photos
-
-**Endpoint:** `GET http://localhost:3002/me/photos` (authenticated)  
-**Endpoint:** `GET http://localhost:3002/users/:userId/photos` (public)
-
-#### Delete Photo
-
-**Endpoint:** `DELETE http://localhost:3002/me/photos/:photoId`
-
----
-
-### 5. Music Preference
-
-#### Search for Songs
-
-**Endpoint:** `GET http://localhost:3002/music/search?q={query}&limit={limit}`
-
-**Query Parameters:**
-- `q` (required): Search query (song name, artist name, or both)
-- `limit` (optional): Number of results to return (1-50, default: 20)
-
-**Response:**
-```json
-{
-  "songs": [
-    {
-      "name": "Sicko Mode",
-      "artist": "Travis Scott",
-      "albumArtUrl": "https://i.scdn.co/image/ab67616d0000b273...",
-      "spotifyId": "2xLMifQCjDGFmkHkpNLD9h",
-      "albumName": "ASTROWORLD",
-      "spotifyUrl": "https://open.spotify.com/track/2xLMifQCjDGFmkHkpNLD9h"
-    },
-    // ... more results
-  ]
-}
-```
-
-**Note:** This endpoint uses Spotify Web API (completely FREE - no payment required). 
-The backend needs `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` environment variables.
-To get these credentials:
-1. Register a free account at https://developer.spotify.com/
-2. Create a new app in the Dashboard
-3. Copy the Client ID and Client Secret
-4. Set them as environment variables
-
-#### Create/Get Music Preference (from search result)
-
-**Endpoint:** `POST http://localhost:3002/music/preferences`
-
-**Request:**
-```json
-{
-  "songName": "Sicko Mode",
-  "artistName": "Travis Scott",
-  "albumArtUrl": "https://i.scdn.co/image/ab67616d0000b273...",
-  "spotifyId": "2xLMifQCjDGFmkHkpNLD9h"
-}
-```
-
-**Response:**
-```json
-{
-  "song": {
-    "id": "song-id",
-    "name": "Sicko Mode",
-    "artist": "Travis Scott",
-    "albumArtUrl": "https://i.scdn.co/image/ab67616d0000b273...",
-    "spotifyId": "2xLMifQCjDGFmkHkpNLD9h",
-    "createdAt": "2025-01-01T00:00:00Z"
-  }
-}
-```
-
-#### Update Music Preference
-
-**Endpoint:** `PATCH http://localhost:3002/me/music-preference`
-
-**Request:**
-```json
-{
-  "musicPreferenceId": "song-id"
-}
-```
-
-**Response:**
-```json
-{
-  "user": {
-    "id": "user-id",
-    "musicPreference": {
-      "id": "song-id",
-      "name": "Sicko Mode",
-      "artist": "Travis Scott",
-      "albumArtUrl": "https://i.scdn.co/image/ab67616d0000b273...",
-      "spotifyId": "2xLMifQCjDGFmkHkpNLD9h"
-    }
-  }
-}
-```
-
-**Complete Flow:**
-
-Here's the step-by-step flow for adding a music preference with album art:
-
-1. **User searches for songs:**
-   ```javascript
-   GET /music/search?q=sicko mode&limit=20
-   ```
-   Response includes songs with `albumArtUrl`, `name`, `artist`, `spotifyId`, etc.
-
-2. **Frontend displays results:**
-   - Show each song with its album art (`albumArtUrl`)
-   - Display song name and artist name
-   - User can see visual preview before selecting
-
-3. **User selects a song:**
-   - User clicks on a song from the search results
-   - Frontend has access to: `name`, `artist`, `albumArtUrl`, `spotifyId`
-
-4. **Frontend creates/gets the song in database:**
-   ```javascript
-   POST /music/preferences
-   {
-     "songName": "Sicko Mode",
-     "artistName": "Travis Scott",
-     "albumArtUrl": "https://i.scdn.co/image/ab67616d0000b273...",
-     "spotifyId": "2xLMifQCjDGFmkHkpNLD9h"
-   }
-   ```
-   Response returns the song with its database `id`.
-
-5. **Frontend updates user's music preference:**
-   ```javascript
-   PATCH /me/music-preference
-   Authorization: Bearer {accessToken}
-   {
-     "musicPreferenceId": "song-id-from-step-4"
-   }
-   ```
-   User's profile now has this song as their music preference.
-
-**Example Frontend Code:**
-```javascript
-// 1. Search for songs
-const searchSongs = async (query) => {
-  const response = await fetch(`http://localhost:3002/music/search?q=${encodeURIComponent(query)}`);
-  const data = await response.json();
-  return data.songs; // Array with albumArtUrl, name, artist, etc.
-};
-
-// 2. Display results (React example)
-{songs.map(song => (
-  <div key={song.spotifyId} onClick={() => selectSong(song)}>
-    <img src={song.albumArtUrl} alt={song.name} />
-    <p>{song.name}</p>
-    <p>{song.artist}</p>
-  </div>
-))}
-
-// 3. Create song and set as preference
-const selectSong = async (song) => {
-  // Create/get song in database
-  const createResponse = await fetch('http://localhost:3002/music/preferences', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      songName: song.name,
-      artistName: song.artist,
-      albumArtUrl: song.albumArtUrl,
-      spotifyId: song.spotifyId
-    })
-  });
-  const { song: createdSong } = await createResponse.json();
-  
-  // Set as user's music preference
-  await fetch('http://localhost:3002/me/music-preference', {
-    method: 'PATCH',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${accessToken}`
-    },
-    body: JSON.stringify({
-      musicPreferenceId: createdSong.id
-    })
-  });
-};
-```
-
-**Displaying Music Preference:**
-When fetching user profile, the `musicPreference` object includes `albumArtUrl`:
-```javascript
-GET /me?fields=musicPreference
-// Response includes:
-{
-  "user": {
-    "musicPreference": {
-      "id": "song-id",
-      "name": "Sicko Mode",
-      "artist": "Travis Scott",
-      "albumArtUrl": "https://i.scdn.co/image/ab67616d0000b273...",
-      "spotifyId": "2xLMifQCjDGFmkHkpNLD9h"
-    }
-  }
-}
-```
-You can display this with the album art, song name, and artist name in your UI.
-
----
-
-### 6. Brand Preferences
-
-**Endpoint:** `PATCH http://localhost:3002/me/brand-preferences`
-
-**Request:**
-```json
-{
-  "brandIds": ["brand-id-1", "brand-id-2", "brand-id-3", "brand-id-4"]  // Max 5 brands
-}
-```
-
----
-
-### 7. Interests
-
-**Endpoint:** `PATCH http://localhost:3002/me/interests`
-
-**Request:**
-```json
-{
-  "interestIds": ["interest-id-1", "interest-id-2", "interest-id-3"]  // Max 4 interests
-}
-```
-
----
-
-### 8. Values
-
-**Endpoint:** `PATCH http://localhost:3002/me/values`
-
-**Request:**
-```json
-{
-  "valueIds": ["value-id-1", "value-id-2", "value-id-3", "value-id-4"]  // Max 4 values
-}
-```
-
----
-
-### 9. Location (GPS Coordinates)
-
-**Endpoint:** `PATCH http://localhost:3002/me/location`
-
-**Request:**
-```json
-{
-  "latitude": 28.7041,
-  "longitude": 77.1025
-}
-```
-
-**Note:** This endpoint updates GPS coordinates. For location-based matching with preferred cities, use the Discovery Service location endpoints (`/location/preference`). See "Location Feature" section under Discovery Service endpoints.
-
----
-
-### 9.1 Preferred Cities (Location-Based Matching)
-
-**Note:** Preferred cities are managed through the Discovery Service. See "Location Feature" section under Discovery Service endpoints.
-
-**Summary:**
-- **Get preferred city:** `GET http://localhost:3004/location/preference` (requires auth)
-- **Update preferred city:** `PATCH http://localhost:3004/location/preference` (requires auth)
-- **Get popular cities:** `GET http://localhost:3004/location/cities` (public)
-- **Search cities:** `GET http://localhost:3004/location/search?q=mumbai` (public)
-- **Locate me:** `POST http://localhost:3004/location/locate-me` (public)
-
-**Business Logic:**
-- `null` preferred city = user can connect with anyone from anywhere (default)
-- Non-null city = user prefers to connect with people from this city
-- Single city only (not multiple cities)
-- City is stored as string (exact match for filtering)
-
----
-
-### 10. User Status
-
-**Endpoint:** `PATCH http://localhost:3002/me/status`
-
-**Request:**
-```json
-{
-  "status": "IDLE"  // IDLE | IN_MATCHMAKING | IN_1V1_CALL | IN_SQUAD | IN_BROADCAST | WATCHING_HMM_TV
-}
-```
-
----
-
-### 11. Profile Completion
-
-**Endpoint:** `GET http://localhost:3002/me/profile-completion`
+**Endpoint:** `GET /me/profile-completion`
 
 **Response:**
 ```json
@@ -663,220 +371,66 @@ You can display this with the album art, song name, and artist name in your UI.
   "completed": 15,
   "total": 24,
   "details": {
-    "required": {
-      "username": true,
-      "dateOfBirth": true,
-      "gender": true,
-      "displayPictureUrl": true
-    },
-    "optional": {
-      "photos": { "filled": 2, "max": 4 },
-      "musicPreference": true,
-      "brandPreferences": { "filled": 3, "max": 5 },
-      "interests": { "filled": 2, "max": 4 },
-      "values": { "filled": 1, "max": 4 },
-      "intent": true,
-      "location": true
-    }
+    "username": true,
+    "dateOfBirth": true,
+    "gender": true,
+    "displayPictureUrl": true,
+    "photos": false,
+    // ... etc
   }
 }
 ```
 
----
+### 4. Update Profile
 
-### 12. Catalog Endpoints (Public)
-
-#### Get All Brands
-
-**Endpoint:** `GET http://localhost:3002/brands`
-
-**Response:**
-```json
-{
-  "brands": [
-    {
-      "id": "string",
-      "name": "JBL",
-      "logoUrl": "https://cdn.example.com/logos/jbl.png",  // May be null
-      "createdAt": "2025-01-01T00:00:00Z"
-    },
-    // ... more brands (sorted alphabetically)
-  ]
-}
-```
-
-**Note:** Brands include `logoUrl` field for displaying logos. In production, these will be populated.
-
-#### Get All Interests
-
-**Endpoint:** `GET http://localhost:3002/interests`
-
-**Response:**
-```json
-{
-  "interests": [
-    {
-      "id": "string",
-      "name": "Music",
-      "createdAt": "2025-01-01T00:00:00Z"
-    },
-    // ... more interests (sorted alphabetically)
-  ]
-}
-```
-
-#### Get All Values
-
-**Endpoint:** `GET http://localhost:3002/values`
-
-**Response:**
-```json
-{
-  "values": [
-    {
-      "id": "string",
-      "name": "Honesty",
-      "createdAt": "2025-01-01T00:00:00Z"
-    },
-    // ... more values (sorted alphabetically)
-  ]
-}
-```
-
----
-
-### 13. Batch User Lookup
-
-**Endpoint:** `POST http://localhost:3002/users/batch`
+**Endpoint:** `PATCH /me/profile`
 
 **Request:**
 ```json
 {
-  "userIds": ["user-id-1", "user-id-2", "user-id-3"]
+  "username": "newusername",  // Optional
+  "intent": "Here to meet new people",  // Optional, max 50 chars
+  "videoEnabled": false  // Optional
 }
 ```
+
+### 5. Photo Management
+
+#### Get Photos
+
+**Endpoint:** `GET /me/photos` (own photos) or `GET /users/:userId/photos` (public)
 
 **Response:**
 ```json
 {
-  "users": [
-    // Array of user objects
+  "photos": [
+    {
+      "id": "string",
+      "url": "string",
+      "order": 1,
+      "createdAt": "string"
+    }
   ]
 }
 ```
 
----
+#### Add Photo
 
-### 14. Nearby Users
-
-**Endpoint:** `GET http://localhost:3002/users/nearby?latitude=28.7041&longitude=77.1025&radius=10`
-
-**Query Parameters:**
-- `latitude` (required): User's latitude
-- `longitude` (required): User's longitude
-- `radius` (optional): Search radius in kilometers (default: 10)
-
-**Response:**
-```json
-{
-  "users": [
-    // Array of nearby user objects
-  ]
-}
-```
-
----
-
-## Photo Upload & Moderation Flow
-
-### Overview
-
-When uploading photos (display picture or additional photos), moderation happens automatically:
-
-```
-1. User selects photo in frontend
-2. Upload photo to your CDN/storage (Cloudflare R2, AWS S3, etc.)
-3. Get photo URL from CDN
-4. Send URL to user-service (for display picture or additional photos)
-5. User-service automatically calls moderation-service
-6. Moderation checks:
-   - ✅ Contains a human person (not objects/landscapes)
-   - ✅ No NSFW content (nudity, adult content)
-   - ✅ No violence or offensive content
-7. If checks pass → Photo accepted
-8. If checks fail → Request rejected with error message
-```
-
-### Error Messages
-
-The backend will return specific error messages:
-
-- **No Human Detected:**
-  ```
-  "Image must contain a human person. Please upload a photo of yourself."
-  ```
-
-- **NSFW Content:**
-  ```
-  "Image contains inappropriate adult content. Please upload a safe, appropriate photo."
-  ```
-
-- **Suggestive Content:**
-  ```
-  "Image contains suggestive content. Please upload a more appropriate photo."
-  ```
-
-**Best Practice:** Show these error messages directly to the user so they know what to fix.
-
-**Note:** Frontend should not call moderation service directly. It's called automatically by user-service when photos are uploaded.
-
----
-
-## Token Management (Auth Service)
-
-### Refresh Access Token
-
-**Endpoint:** `POST /auth/refresh`
+**Endpoint:** `POST /me/photos`
 
 **Request:**
 ```json
 {
-  "refreshToken": "string (JWT)"
+  "url": "https://your-cdn.com/photo.jpg",  // Upload first using Files Service
+  "order": 1  // Optional, defaults to next available order
 }
 ```
 
-**Response:**
-```json
-{
-  "accessToken": "string (new JWT)"
-}
-```
+**Important:** Upload photo first using Files Service, then use the returned URL.
 
-**Token Expiration:**
-- Access Token: 15 minutes
-- Refresh Token: 30 days
+#### Delete Photo
 
-**Flow:**
-```
-API call → 401 Unauthorized
-  ↓
-POST /auth/refresh with refreshToken
-  ↓
-Retry original request with new accessToken
-```
-
----
-
-### Logout
-
-**Endpoint:** `POST /auth/logout`
-
-**Request:**
-```json
-{
-  "refreshToken": "string (JWT)"
-}
-```
+**Endpoint:** `DELETE /me/photos/:photoId`
 
 **Response:**
 ```json
@@ -885,321 +439,157 @@ Retry original request with new accessToken
 }
 ```
 
-**Effect:** Invalidates refresh token. User must sign in again.
+### 6. Music Preference
 
----
+#### Search Songs
 
-## Complete User Flows
+**Endpoint:** `GET /music/search?q={query}&limit={limit}`
 
-### Signup/Login Flow
-```
-1. User selects method (Google/Facebook/Apple/Phone)
-2. Get OAuth token from provider SDK
-3. POST http://localhost:3001/auth/{provider} with token + acceptedTerms
-4. Store accessToken + refreshToken
-```
+**Query Parameters:**
+- `q` (required): Search query
+- `limit` (optional): Results limit (1-50, default 20)
 
-### Phone OTP Flow
-```
-1. User enters phone → POST http://localhost:3001/auth/phone/send-otp
-2. User receives SMS OTP
-3. User enters OTP → POST http://localhost:3001/auth/phone/verify
-4. Receive accessToken + refreshToken
-```
-
-### Authenticated Request Flow
-```
-1. Include: Authorization: Bearer {accessToken}
-2. If 401 → POST http://localhost:3001/auth/refresh
-3. Retry with new accessToken
-```
-
-### Complete Profile Setup Flow
-```
-1. User signs up (via auth-service)
-2. Get userId from JWT token (decode or call /me endpoint)
-3. Upload display picture to CDN
-4. POST http://localhost:3002/users/{userId}/profile with profile data
-   - Moderation check happens automatically
-5. (Optional) Add additional photos (max 4)
-6. (Optional) Fetch catalog data (brands, interests, values)
-7. (Optional) Update preferences (brands, interests, values, music, location, etc.)
-```
-
-### Fetching Catalog Data Flow
-```
-1. GET http://localhost:3002/brands → Display brands in UI (with logos if logoUrl available)
-2. GET http://localhost:3002/interests → Display interests in UI
-3. GET http://localhost:3002/values → Display values in UI
-4. User selects items
-5. PATCH http://localhost:3002/me/{brand-preferences|interests|values} with selected IDs
-```
-
----
-
-## Requirements
-
-### Terms & Conditions
-All signup endpoints require:
-- `acceptedTerms: true` (boolean)
-- `acceptedTermsVer: "v1.0"` (string)
-
-### Phone Numbers
-- Indian numbers only: `+91[6-9]XXXXXXXXX`
-- Must start with `+91`
-- 10 digits after, first digit must be 6-9
-
----
-
-## Error Responses
-
-**Format:**
+**Response:**
 ```json
 {
-  "statusCode": 400 | 401 | 500,
-  "message": "string",
-  "error": "Bad Request" | "Unauthorized" | "Internal Server Error"
+  "songs": [
+    {
+      "id": "string",
+      "title": "string",
+      "artist": "string",
+      "album": "string",
+      "artworkUrl": "string",
+      "previewUrl": "string"
+    }
+  ]
 }
 ```
 
-**Common Status Codes:**
-- `200` - Success
-- `201` - Created (resource created successfully)
-- `400` - Bad Request (validation error, moderation failure)
-- `401` - Unauthorized (invalid/expired token)
-- `404` - Not Found (resource doesn't exist)
-- `409` - Conflict (resource already exists)
-- `500` - Internal Server Error
-- `503` - Service Unavailable (moderation service unavailable)
+#### Create Music Preference
 
----
+**Endpoint:** `POST /music/preferences`
 
-## Endpoint Reference
+**Request:**
+```json
+{
+  "songs": [
+    {
+      "id": "string",
+      "title": "string",
+      "artist": "string",
+      "album": "string",
+      "artworkUrl": "string",
+      "previewUrl": "string"
+    }
+  ]
+}
+```
 
-### Auth Service (http://localhost:3001)
+#### Update Music Preference
 
-| Endpoint | Method | Auth | Purpose |
-|----------|--------|------|---------|
-| `/auth/google` | POST | No | Google signup/login |
-| `/auth/facebook` | POST | No | Facebook signup/login |
-| `/auth/apple` | POST | No | Apple signup/login |
-| `/auth/phone/send-otp` | POST | No | Send OTP |
-| `/auth/phone/verify` | POST | No | Verify OTP & signup/login |
-| `/me` | GET | Yes | Get user info |
-| `/me/preferences` | PATCH | Yes | Update preferences |
-| `/me/metrics` | GET | No | Get live meetings count |
-| `/auth/refresh` | POST | No | Refresh access token |
-| `/auth/logout` | POST | No | Logout user |
+**Endpoint:** `PATCH /me/music-preference`
 
-### Discovery Service (http://localhost:3004)
+**Request:** Same as create
 
-| Endpoint | Method | Auth | Purpose |
-|----------|--------|------|---------|
-| `/metrics/meetings` | GET | No | Get live meetings count |
-| `/location/cities` | GET | No | Get cities with maximum users |
-| `/location/search` | GET | No | Search for cities |
-| `/location/locate-me` | POST | No | Get city from GPS coordinates |
-| `/location/preference` | GET | Yes | Get user's preferred city |
-| `/location/preference` | PATCH | Yes | Update user's preferred city |
-| `/gender-filters` | GET | Yes | Get available gender filters |
-| `/gender-filters/apply` | POST | Yes | Purchase and activate gender filter |
+### 7. Brand Preferences
 
-### Wallet Service (http://localhost:3006)
+#### Get All Brands
 
-| Endpoint | Method | Auth | Purpose |
-|----------|--------|------|---------|
-| `/me/balance` | GET | Yes | Get coin balance |
-| `/me/transactions/gender-filter` | POST | Yes | Deduct coins for gender filter (internal use) |
-
-### User Service (http://localhost:3002)
-
-| Endpoint | Method | Auth | Purpose |
-|----------|--------|------|---------|
-| `/users/:userId/profile` | POST | No | Create user profile |
-| `/users/:userId` | GET | No | Get user profile (public, supports ?fields=...) |
-| `/me` | GET | Yes | Get own profile (supports ?fields=...) |
-| `/me/profile` | PATCH | Yes | Update profile |
-| `/me/profile-completion` | GET | Yes | Get profile completion percentage |
-| `/me/photos` | GET | Yes | Get own photos |
-| `/me/photos` | POST | Yes | Add photo (max 4) |
-| `/me/photos/:photoId` | DELETE | Yes | Delete photo |
-| `/users/:userId/photos` | GET | No | Get user photos (public) |
-| `/brands` | GET | No | Get all available brands |
-| `/interests` | GET | No | Get all available interests |
-| `/values` | GET | No | Get all available values |
-| `/music/search` | GET | No | Search for songs (requires Spotify API credentials) |
-| `/music/preferences` | POST | No | Create/get music preference |
-| `/me/music-preference` | PATCH | Yes | Update music preference |
-| `/me/brand-preferences` | PATCH | Yes | Update brand preferences (4-5 brands) |
-| `/me/interests` | PATCH | Yes | Update interests (max 4) |
-| `/me/values` | PATCH | Yes | Update values (max 4) |
-| `/me/location` | PATCH | Yes | Update location (lat/lng) |
-| `/me/preferred-city` | PATCH | Yes | Update preferred city (internal use) |
-| `/metrics/cities` | GET | No | Get cities with max users (internal use) |
-| `/me/status` | PATCH | Yes | Update user status |
-| `/users/batch` | POST | No | Get multiple users by IDs |
-| `/users/nearby` | GET | No | Get nearby users |
-
-### Moderation Service (http://localhost:3003)
-
-| Endpoint | Method | Auth | Purpose |
-|----------|--------|------|---------|
-| `/moderation/check-image` | POST | No | Check image (called by user-service, not directly) |
-
-**Note:** Frontend should not call moderation service directly. It's called automatically by user-service when photos are uploaded.
-
-### Friend Service (http://localhost:3007)
-
-| Endpoint | Method | Auth | Purpose |
-|----------|--------|------|---------|
-| `/me/friends/requests/pending` | GET | Yes | Get incoming friend requests |
-| `/me/friends/requests/sent` | GET | Yes | Get outgoing friend requests (paginated) |
-| `/me/friends/requests/:requestId/messages` | GET | Yes | Get messages for a request |
-| `/me/friends/requests/:requestId/accept` | POST | Yes | Accept friend request |
-| `/me/friends/requests/:requestId/reject` | POST | Yes | Reject friend request |
-| `/me/friends` | GET | Yes | Get friends list (paginated) |
-| `/me/friends/:friendId/unfriend` | POST | Yes | Unfriend a user |
-| `/me/friends/:friendId/block` | POST | Yes | Block a user |
-| `/me/friends/:friendId/messages` | POST | Yes | Send message to friend (free) |
-| `/me/friends/:friendId/messages` | GET | Yes | Get message history (paginated) |
-| `/me/friends/:friendId/messages/read` | POST | Yes | Mark messages as read |
-| `/me/friends/requests/:requestId/messages` | POST | Yes | Send message to non-friend (10 coins) |
-
-**Note:** Friend requests can ONLY be sent during video calls via "+" button (WebSocket integration via streaming-service). There is no public API endpoint for sending friend requests. See Friend Service section below for details.
-
----
-
-## Data Types
-
-**Gender Values:**
-- `"MALE"`
-- `"FEMALE"`
-- `"NON_BINARY"`
-- `"PREFER_NOT_TO_SAY"`
-
-**User Status Values:**
-- `"IDLE"`
-- `"IN_MATCHMAKING"`
-- `"IN_1V1_CALL"`
-- `"IN_SQUAD"`
-- `"IN_BROADCAST"`
-- `"WATCHING_HMM_TV"`
-
-**Meet Mode Values (Auth Service):**
-- `"location"` - Location-based only
-- `"video"` - Video calls only
-- `"both"` - Both location and video
-
-**Date Format:** ISO 8601 datetime strings
-
----
-
-## CORS
-
-**Development:** Enabled for `http://localhost:3000` and `http://localhost:5173`
-
-**Production:** Configure `ALLOWED_ORIGINS` environment variable
-
----
-
----
-
-## Discovery Service Endpoints
-
-### 1. Location Feature
-
-The location feature allows users to:
-- View cities with the most users
-- Search for cities
-- Get their current city from GPS coordinates
-- Set preferred city for location-based matching
-
-#### 1.1 Get Cities with Maximum Users
-
-**Endpoint:** `GET http://localhost:3004/location/cities`
-
-**Query Parameters:**
-- `limit` (optional): Number of cities to return (1-100, default: 20)
-
-**Description:** Returns a list of cities sorted by the number of users who have set that city as their preferred city. Useful for showing popular cities on the homepage.
+**Endpoint:** `GET /brands`
 
 **Response:**
 ```json
-[
-  {
-    "city": "Mumbai",
-    "availableCount": 450
-  },
-  {
-    "city": "Delhi",
-    "availableCount": 320
-  },
-  {
-    "city": "Bangalore",
-    "availableCount": 280
-  }
-]
+{
+  "brands": [
+    {
+      "id": "string",
+      "name": "string",
+      "logoUrl": "string | null"
+    }
+  ]
+}
 ```
 
-**Note:** `availableCount` includes users with any available status:
-- `AVAILABLE` - User is available for matching
-- `IN_SQUAD_AVAILABLE` - User is in a squad but available
-- `IN_BROADCAST_AVAILABLE` - User is in a broadcast but available
+#### Search Brands
 
-**Example Usage:**
-```javascript
-// Get top 10 cities
-const response = await fetch('http://localhost:3004/location/cities?limit=10');
-const cities = await response.json();
-// cities is an array of { city, availableCount }
-// Display cities in UI with available user counts
+**Endpoint:** `GET /brands/search?q={query}&limit={limit}`
+
+#### Update Brand Preferences
+
+**Endpoint:** `PATCH /me/brand-preferences`
+
+**Request:**
+```json
+{
+  "brandIds": ["brand-id-1", "brand-id-2"]
+}
 ```
 
-**Note:** This endpoint is public (no authentication required).
+### 8. Interests
 
----
+#### Get All Interests
 
-#### 1.2 Search Cities
-
-**Endpoint:** `GET http://localhost:3004/location/search`
-
-**Query Parameters:**
-- `q` (required): Search query (city name, min 1 char, max 100 chars)
-- `limit` (optional): Number of results to return (1-100, default: 20)
-
-**Description:** Searches for cities using OpenStreetMap Nominatim API. Returns matching cities with country and state information.
+**Endpoint:** `GET /interests`
 
 **Response:**
 ```json
-[
-  {
-    "city": "Mumbai",
-    "country": "India",
-    "state": "Maharashtra"
-  },
-  {
-    "city": "Mumbai Beach",
-    "country": "United States",
-    "state": "Florida"
-  }
-]
+{
+  "interests": [
+    {
+      "id": "string",
+      "name": "string",
+      "category": "string"
+    }
+  ]
+}
 ```
 
-**Example Usage:**
-```javascript
-// Search for cities
-const response = await fetch(`http://localhost:3004/location/search?q=${encodeURIComponent('mumbai')}&limit=10`);
-const cities = await response.json();
-// Display search results in UI
+#### Update Interests
+
+**Endpoint:** `PATCH /me/interests`
+
+**Request:**
+```json
+{
+  "interestIds": ["interest-id-1", "interest-id-2"]
+}
 ```
 
-**Note:** This endpoint is public (no authentication required). Uses OpenStreetMap Nominatim API for city search.
+### 9. Values
 
----
+#### Get All Values
 
-#### 1.3 Locate Me (Get City from GPS Coordinates)
+**Endpoint:** `GET /values`
 
-**Endpoint:** `POST http://localhost:3004/location/locate-me`
+**Response:**
+```json
+{
+  "values": [
+    {
+      "id": "string",
+      "name": "string",
+      "category": "string"
+    }
+  ]
+}
+```
+
+#### Update Values
+
+**Endpoint:** `PATCH /me/values`
+
+**Request:**
+```json
+{
+  "valueIds": ["value-id-1", "value-id-2"]
+}
+```
+
+### 10. Location & Status
+
+#### Update Location
+
+**Endpoint:** `PATCH /me/location`
 
 **Request:**
 ```json
@@ -1209,612 +599,389 @@ const cities = await response.json();
 }
 ```
 
-**Description:** Uses reverse geocoding to get the city name from GPS coordinates. Useful for "Locate Me" button that gets user's current location.
+#### Update Status
 
-**Response:**
-```json
-{
-  "city": "Mumbai",
-  "country": "India",
-  "state": "Maharashtra"
-}
-```
-
-**Example Usage:**
-```javascript
-// Get user's current location using browser Geolocation API
-navigator.geolocation.getCurrentPosition(async (position) => {
-  const { latitude, longitude } = position.coords;
-  
-  // Get city from coordinates
-  const response = await fetch('http://localhost:3004/location/locate-me', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ latitude, longitude })
-  });
-  const { city, country, state } = await response.json();
-  // Display: "Mumbai, Maharashtra, India"
-});
-```
-
-**Note:** This endpoint is public (no authentication required). Uses OpenStreetMap Nominatim API for reverse geocoding.
-
-**Coordinate Validation:**
-- `latitude`: -90 to 90
-- `longitude`: -180 to 180
-
----
-
-#### 1.4 Get Preferred City
-
-**Endpoint:** `GET http://localhost:3004/location/preference`
-
-**Headers:**
-```
-Authorization: Bearer {accessToken}
-```
-
-**Description:** Returns the user's currently preferred city. `null` means user can connect with anyone from anywhere (default state).
-
-**Response:**
-```json
-{
-  "city": "Mumbai"
-}
-```
-
-**Response (no preferred city - default):**
-```json
-{
-  "city": null
-}
-```
-
-**Example Usage:**
-```javascript
-// Get user's preferred city
-const response = await fetch('http://localhost:3004/location/preference', {
-  headers: {
-    'Authorization': `Bearer ${accessToken}`
-  }
-});
-const { city } = await response.json();
-
-if (!city) {
-  // User can connect with anyone from anywhere
-  console.log('No location preference set');
-} else {
-  // User prefers this city
-  console.log(`Preferred city: ${city}`);
-}
-```
-
----
-
-#### 1.5 Update Preferred City
-
-**Endpoint:** `PATCH http://localhost:3004/location/preference`
-
-**Headers:**
-```
-Authorization: Bearer {accessToken}
-Content-Type: application/json
-```
+**Endpoint:** `PATCH /me/status`
 
 **Request:**
 ```json
 {
-  "city": "Mumbai"
+  "status": "IDLE"  // IDLE | DISCOVERING | IN_SQUAD | IN_CALL
 }
 ```
 
-**Request (clear preference - allow anyone from anywhere):**
-```json
-{
-  "city": null
-}
-```
+#### Update Intent
 
-**Description:** Updates the user's preferred city. Users can set one city. `null` clears the preference (user can connect with anyone from anywhere).
-
-**Response:**
-```json
-{
-  "city": "Mumbai"
-}
-```
-
-**Validation Rules:**
-- City name must be at least 1 character and max 100 characters
-- `null` is allowed (clears preference)
-
-**Example Usage:**
-```javascript
-// Set preferred city
-const response = await fetch('http://localhost:3004/location/preference', {
-  method: 'PATCH',
-  headers: {
-    'Authorization': `Bearer ${accessToken}`,
-    'Content-Type': 'application/json'
-  },
-  body: JSON.stringify({
-    city: 'Mumbai'
-  })
-});
-const { city } = await response.json();
-
-// Clear preference (allow anyone from anywhere)
-const clearResponse = await fetch('http://localhost:3004/location/preference', {
-  method: 'PATCH',
-  headers: {
-    'Authorization': `Bearer ${accessToken}`,
-    'Content-Type': 'application/json'
-  },
-  body: JSON.stringify({
-    city: null
-  })
-});
-```
-
-**Business Rules:**
-- **`null`:** User can connect with anyone from anywhere (default state)
-- **Non-null city:** User prefers to connect with people from this city
-- **Single city only:** Users can only set one preferred city at a time
-- **City name:** Stored as string (exact match required for filtering)
-
-**Complete Location Flow:**
-1. User clicks "Location" button on homepage
-2. Frontend shows list of cities: `GET /location/cities?limit=20`
-3. User can:
-   - **Search for cities:** `GET /location/search?q=mumbai`
-   - **Use "Locate Me":** Get GPS → `POST /location/locate-me` with coordinates
-   - **Select from popular cities:** Display results from step 2
-4. User selects a city and saves: `PATCH /location/preference` with selected city
-5. User's preference is stored and used for matching
-
----
-
-### 2. Get Live Meetings Count
-
-**Endpoint:** `GET http://localhost:3004/metrics/meetings`
-
-**Description:** Returns the count of users currently active and available for meetings. This includes users with statuses: `AVAILABLE`, `IN_SQUAD`, `IN_SQUAD_AVAILABLE`, `IN_BROADCAST`, `IN_BROADCAST_AVAILABLE`.
-
-**Response:**
-```json
-{
-  "liveMeetings": 1250
-}
-```
-
-**Example Usage:**
-```javascript
-// Get live meetings count for homepage
-const response = await fetch('http://localhost:3004/metrics/meetings');
-const { liveMeetings } = await response.json();
-// Display: "1,250 meeting now"
-```
-
-**Note:** This endpoint is public (no authentication required).
-
----
-
-### 2. Get Gender Filters
-
-**Endpoint:** `GET http://localhost:3004/gender-filters`
-
-**Headers:**
-```
-Authorization: Bearer {accessToken}
-```
-
-**Description:** Returns available gender filter options based on the user's gender. Users with `PREFER_NOT_TO_SAY` gender can only use the "All Gender" option (default/unfiltered state).
-
-**Response (for MALE/FEMALE users):**
-```json
-{
-  "applicable": true,
-  "availableFilters": [
-    {
-      "gender": "MALE",
-      "label": "Guys",
-      "cost": 200,
-      "screens": 10
-    },
-    {
-      "gender": "FEMALE",
-      "label": "Girls",
-      "cost": 200,
-      "screens": 10
-    },
-    {
-      "gender": "ALL",
-      "label": "All Gender",
-      "cost": 0,
-      "screens": 0
-    }
-  ],
-  "currentPreference": {
-    "genders": ["MALE", "FEMALE"],
-    "screensRemaining": 5
-  },
-  "config": {
-    "coinsPerScreen": 200,
-    "screensPerPurchase": 10
-  }
-}
-```
-
-**Response (for NON_BINARY users):**
-```json
-{
-  "applicable": true,
-  "availableFilters": [
-    {
-      "gender": "MALE",
-      "label": "Guys",
-      "cost": 200,
-      "screens": 10
-    },
-    {
-      "gender": "FEMALE",
-      "label": "Girls",
-      "cost": 200,
-      "screens": 10
-    },
-    {
-      "gender": "NON_BINARY",
-      "label": "Nonbinary",
-      "cost": 200,
-      "screens": 10
-    },
-    {
-      "gender": "ALL",
-      "label": "All Gender",
-      "cost": 0,
-      "screens": 0
-    }
-  ],
-  "config": {
-    "coinsPerScreen": 200,
-    "screensPerPurchase": 10
-  }
-}
-```
-
-**Response (for PREFER_NOT_TO_SAY users):**
-```json
-{
-  "applicable": true,
-  "availableFilters": [
-    {
-      "gender": "ALL",
-      "label": "All Gender",
-      "cost": 0,
-      "screens": 0
-    }
-  ],
-  "config": {
-    "coinsPerScreen": 200,
-    "screensPerPurchase": 10
-  }
-}
-```
-
-**Note:** PREFER_NOT_TO_SAY users can only use the "All Gender" option (no filter), which is the default state.
-
-**Business Rules:**
-- **MALE/FEMALE users:** Can see and filter by MALE, FEMALE, and "All Gender" (3 options)
-- **NON_BINARY users:** Can see and filter by MALE, FEMALE, NON_BINARY, and "All Gender" (4 options)
-- **"All Gender" option:** Always available, free (cost: 0), clears filter (default/unfiltered state)
-- **PREFER_NOT_TO_SAY users:** Filter is disabled
-
-**Example Usage:**
-```javascript
-// Get available gender filters
-const response = await fetch('http://localhost:3004/gender-filters', {
-  headers: {
-    'Authorization': `Bearer ${accessToken}`
-  }
-});
-const data = await response.json();
-
-if (!data.applicable) {
-  // Show message: "You need to set your gender to use filters"
-  console.log(data.reason);
-} else {
-  // Display filter options in UI
-  data.availableFilters.forEach(filter => {
-    console.log(`${filter.label}: ${filter.cost} coins for ${filter.screens} screens`);
-  });
-  
-  // Show current preference if exists
-  if (data.currentPreference) {
-    console.log(`Currently filtering by: ${data.currentPreference.genders.join(', ')}`);
-    console.log(`Screens remaining: ${data.currentPreference.screensRemaining}`);
-  }
-}
-```
-
----
-
-### 3. Apply Gender Filter
-
-**Endpoint:** `POST http://localhost:3004/gender-filters/apply`
-
-**Headers:**
-```
-Authorization: Bearer {accessToken}
-Content-Type: application/json
-```
+**Endpoint:** `PATCH /me/intent`
 
 **Request:**
 ```json
 {
-  "genders": ["MALE", "FEMALE"]
+  "intent": "Here to meet new people"  // Max 50 chars
 }
 ```
 
-**Request (to clear filter / set to default):**
+---
+
+## Discovery & Matching
+
+### 1. Get Discovery Card
+
+**Endpoint:** `GET /discovery/card?sessionId={sessionId}&soloOnly={soloOnly}`
+
+**Query Parameters:**
+- `sessionId` (optional): Session ID for discovery session
+- `soloOnly` (optional, default false): Only show solo users (not in squads)
+
+**Response:**
 ```json
 {
-  "genders": ["ALL"]
+  "card": {
+    "user": {
+      "id": "string",
+      "username": "string",
+      "displayPictureUrl": "string",
+      "photos": [...],
+      "age": 25,
+      "gender": "MALE",
+      "intent": "string",
+      "location": {
+        "city": "Mumbai",
+        "distance": 5.2  // km
+      }
+    },
+    "match": {
+      "id": "string",
+      "status": "PENDING",  // PENDING | MATCHED | RAINCHECKED
+      "createdAt": "string"
+    }
+  },
+  "sessionId": "string",
+  "hasMore": true
 }
 ```
 
-**Description:** 
-- Purchases and activates gender filter. Deducts coins from wallet and creates/updates filter preference. One payment covers all selected genders (you pay once regardless of how many genders you select).
-- **Special case:** Selecting `["ALL"]` clears the filter (no wallet deduction, no storage). This is the default/unfiltered state.
+**Use Case:** Swipe through potential matches. Call this repeatedly to get next cards.
 
-**Response (for paid filters):**
+### 2. Raincheck (Pass/Skip)
+
+**Endpoint:** `POST /discovery/raincheck`
+
+**Request:**
+```json
+{
+  "sessionId": "string",
+  "raincheckedUserId": "string"
+}
+```
+
+**Response:**
 ```json
 {
   "success": true,
-  "screensRemaining": 10,
-  "newBalance": 4800
+  "nextCard": { ... }  // Next card automatically returned
 }
 ```
 
-**Response (for "ALL" - clears filter):**
+**Use Case:** User swipes left/passes on a card.
+
+### 3. Proceed (Match)
+
+**Endpoint:** `POST /discovery/proceed`
+
+**Request:**
+```json
+{
+  "matchedUserId": "string"
+}
+```
+
+**Response:**
 ```json
 {
   "success": true
 }
 ```
 
-**Business Rules:**
-- Cost: 200 coins per filter (configurable, default: 200)
-- Screens per purchase: 10 (configurable, default: 10)
-- If user already has a preference, screens are added to existing count
-- Selected genders must be valid based on user's gender:
-  - MALE/FEMALE users: Can only select MALE or FEMALE (excluding "ALL")
-  - NON_BINARY users: Can select any combination (excluding "ALL")
-- **"ALL" option:**
-  - Free (cost: 0, no wallet deduction)
-  - Clears any existing filter preference (no storage)
-  - Represents the default/unfiltered state
-  - Always available for all users
+**Use Case:** User swipes right/likes a card. If both users proceed, they match and enter IN_SQUAD status.
 
-**Error Responses:**
-- `400 Bad Request` - Invalid gender selection or insufficient balance
-- `401 Unauthorized` - Missing or invalid token
-- `403 Forbidden` - User has PREFER_NOT_TO_SAY gender
+**Important:** After both users proceed:
+1. Both users' status changes to `IN_SQUAD`
+2. Create a room using Streaming Service (see Streaming section)
+3. Users can now video call
 
-**Example Usage:**
-```javascript
-// Apply gender filter (paid)
-const response = await fetch('http://localhost:3004/gender-filters/apply', {
-  method: 'POST',
-  headers: {
-    'Authorization': `Bearer ${accessToken}`,
-    'Content-Type': 'application/json'
-  },
-  body: JSON.stringify({
-    genders: ['MALE', 'FEMALE'] // User selects which genders to filter by
-  })
-});
-const { success, screensRemaining, newBalance } = await response.json();
+### 4. Select Location
 
-// Clear filter / set to default (free)
-const clearResponse = await fetch('http://localhost:3004/gender-filters/apply', {
-  method: 'POST',
-  headers: {
-    'Authorization': `Bearer ${accessToken}`,
-    'Content-Type': 'application/json'
-  },
-  body: JSON.stringify({
-    genders: ['ALL'] // Clears filter, no cost
-  })
-});
-const { success: clearSuccess } = await clearResponse.json();
-
-if (response.ok) {
-  const { screensRemaining, newBalance } = await response.json();
-  console.log(`Filter activated! ${screensRemaining} screens remaining`);
-  console.log(`New balance: ${newBalance} coins`);
-} else {
-  const error = await response.json();
-  console.error('Failed to apply filter:', error.message);
-}
-```
-
-**Complete Flow:**
-1. User opens filter screen → `GET /gender-filters` to see options
-2. User selects genders → `POST /gender-filters/apply` to purchase
-3. Coins deducted, filter activated
-4. When user views matches, screens are decremented (handled by backend)
-5. When screens reach 0, user needs to purchase again
-
----
-
-## Wallet Service Endpoints
-
-### 1. Get Coin Balance
-
-**Endpoint:** `GET http://localhost:3005/me/balance`
-
-**Headers:**
-```
-Authorization: Bearer {accessToken}
-```
-
-**Response:**
-```json
-{
-  "balance": 25500
-}
-```
-
-**Description:**
-- Returns the current coin balance for the authenticated user
-- Wallet is automatically created with 0 balance if it doesn't exist (lazy initialization)
-- Balance is always a non-negative integer
-
-**Example Usage:**
-```javascript
-// Fetch coin balance
-const response = await fetch('http://localhost:3005/me/balance', {
-  headers: {
-    'Authorization': `Bearer ${accessToken}`
-  }
-});
-const { balance } = await response.json();
-// Display balance in UI: balance = 25500
-```
-
-**Error Responses:**
-- `401 Unauthorized` - Missing or invalid token
-- `500 Internal Server Error` - Server configuration error
-
----
-
-### 2. Deduct Coins for Gender Filter
-
-**Endpoint:** `POST http://localhost:3005/me/transactions/gender-filter`
-
-**Headers:**
-```
-Authorization: Bearer {accessToken}
-Content-Type: application/json
-```
+**Endpoint:** `POST /discovery/select-location`
 
 **Request:**
 ```json
 {
-  "amount": 200,
-  "screens": 10
+  "userId": "string",
+  "sessionId": "string",
+  "city": "Mumbai"
 }
 ```
 
-**Description:** Deducts coins from wallet for gender filter purchase. Creates a transaction record. This endpoint is typically called by discovery-service, not directly by frontend.
+**Use Case:** User selects a city for discovery.
+
+### 5. Reset Discovery Session
+
+**Endpoint:** `POST /discovery/reset-session`
+
+**Request:**
+```json
+{
+  "userId": "string",
+  "sessionId": "string",
+  "city": "Mumbai"
+}
+```
+
+**Use Case:** Reset discovery session to start fresh.
+
+### 6. Get Fallback Cities
+
+**Endpoint:** `GET /discovery/fallback-cities?limit={limit}`
 
 **Response:**
 ```json
 {
-  "newBalance": 4800,
-  "transactionId": "transaction-id-123"
+  "cities": [
+    {
+      "name": "Mumbai",
+      "state": "Maharashtra",
+      "country": "India"
+    }
+  ]
 }
 ```
 
-**Error Responses:**
-- `400 Bad Request` - Insufficient balance or invalid amount
-- `401 Unauthorized` - Missing or invalid token
-- `500 Internal Server Error` - Server error
+**Use Case:** When user has exhausted all matches in current city, show suggested cities.
 
-**Note:** Frontend should use `POST /gender-filters/apply` (discovery-service) instead of calling this endpoint directly. The discovery-service handles the wallet deduction automatically.
+### 7. Location Services
+
+#### Get Cities
+
+**Endpoint:** `GET /discovery/cities`
+
+**Response:**
+```json
+{
+  "cities": [
+    {
+      "name": "Mumbai",
+      "state": "Maharashtra",
+      "country": "India"
+    }
+  ]
+}
+```
+
+#### Search Cities
+
+**Endpoint:** `GET /discovery/cities/search?q={query}`
+
+#### Get Location Preference
+
+**Endpoint:** `GET /discovery/location-preference`
+
+**Response:**
+```json
+{
+  "city": "Mumbai",
+  "latitude": 19.0760,
+  "longitude": 72.8777
+}
+```
+
+#### Update Location Preference
+
+**Endpoint:** `POST /discovery/location-preference`
+
+**Request:**
+```json
+{
+  "city": "Mumbai",
+  "latitude": 19.0760,
+  "longitude": 72.8777
+}
+```
+
+### 8. Gender Filters
+
+#### Get Gender Filter Status
+
+**Endpoint:** `GET /gender-filters`
+
+**Response:**
+```json
+{
+  "availableGenders": ["FEMALE", "MALE", "NON_BINARY"],
+  "activeFilters": ["FEMALE"],
+  "hasActiveFilter": true
+}
+```
+
+#### Apply Gender Filter
+
+**Endpoint:** `POST /gender-filters/apply`
+
+**Request:**
+```json
+{
+  "genders": ["FEMALE", "MALE"]
+}
+```
+
+**Use Case:** User purchases and activates gender filter to see specific genders.
 
 ---
 
-## Friend Service Endpoints
+## Streaming & Video Calls
 
-**Base URL:** `http://localhost:3007`
+### 1. Create Room
 
-### Overview
+**Endpoint:** `POST /streaming/rooms`
 
-The Friend Service handles friend requests, friendships, and messaging between users.
-
-**Key Features:**
-- **In-Call Friend Requests ONLY**: Friend requests can ONLY be sent during video calls via "+" button on participant's video/audio placeholder
-- **No Notifications**: When a user sends a friend request, the target user receives NO notification. They will see the request in their "Pending Requests" tab
-- **Auto-Accept Mutual Requests**: When both users send requests to each other during a call, both requests are automatically accepted
-- **Messaging**:
-  - Free messaging between friends
-  - Paid messaging to non-friends (10 coins per message)
-  - Message persistence and history
-  - Read receipts
-- **Unlimited Friends**: No maximum friend limit
-- **Request Expiration**: Friend requests expire after 30 days
-
-### Authentication
-
-All endpoints require:
+**Request:**
+```json
+{
+  "userIds": ["user-id-1", "user-id-2"],  // 2-4 users
+  "callType": "matched"  // "matched" | "squad"
+}
 ```
-Authorization: Bearer {accessToken}
+
+**Response:**
+```json
+{
+  "roomId": "string",
+  "token": "string",  // Agora token for video call
+  "channelName": "string",  // Agora channel name
+  "appId": "string",  // Agora app ID
+  "userIds": ["user-id-1", "user-id-2"],
+  "hostId": "user-id-1",  // First user is host
+  "callType": "matched"
+}
 ```
+
+**Use Case:** 
+- Called automatically when users match (both proceed)
+- Or when creating a squad call
+
+**Important:** 
+- Store `token`, `channelName`, and `appId` for Agora SDK
+- Use these to join video call
+
+### 2. Get Room Info
+
+**Endpoint:** `GET /streaming/rooms/:roomId`
+
+**Response:**
+```json
+{
+  "exists": true,
+  "roomId": "string",
+  "userIds": ["user-id-1", "user-id-2"],
+  "hostId": "user-id-1",
+  "callType": "matched",
+  "status": "active",  // "active" | "ended"
+  "createdAt": "string"
+}
+```
+
+### 3. Get Chat History
+
+**Endpoint:** `GET /streaming/rooms/:roomId/chat`
+
+**Response:**
+```json
+{
+  "messages": [
+    {
+      "id": "string",
+      "userId": "string",
+      "message": "string",
+      "timestamp": "string"
+    }
+  ]
+}
+```
+
+### 4. Enable Pull Stranger Mode
+
+**Endpoint:** `POST /streaming/rooms/:roomId/enable-pull-stranger`
+
+**Request:**
+```json
+{
+  "userId": "string"  // Must be host
+}
+```
+
+**Use Case:** Host enables mode to allow strangers to join call.
+
+### 5. Join via Pull Stranger
+
+**Endpoint:** `POST /streaming/rooms/:roomId/join-via-pull-stranger`
+
+**Request:**
+```json
+{
+  "joiningUserId": "string",
+  "targetUserId": "string"  // User to join (one-way acceptance)
+}
+```
+
+**Use Case:** Stranger joins call with specific user (no mutual match required).
+
+### 6. End Call
+
+**Endpoint:** `POST /streaming/rooms/:roomId/end`
+
+**Request:**
+```json
+{
+  "userId": "string"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true
+}
+```
+
+**Use Case:** User ends the call. Updates user status back to `IDLE` or `DISCOVERING`.
 
 ---
 
-### Friend Requests
+## Friends & Messaging
 
-#### ⚠️ Important: How Friend Requests Work
+### 1. Send Friend Request
 
-**Friend requests can ONLY be sent during video calls** via the "+" button on a participant's video/audio placeholder. There is NO public API endpoint for users to send friend requests directly.
+**Endpoint:** `POST /me/friends/requests`
 
-**Flow:**
-1. User A and User B are in a video call (streaming-service)
-2. User A clicks the "+" button on User B's video/audio placeholder
-3. Frontend sends WebSocket message to streaming-service: `send-friend-request`
-4. Streaming-service calls friend-service internal endpoint
-5. If User B also sent request to User A, both are auto-accepted
-6. Otherwise, User B will see the request in their "Pending Requests" tab (no notification)
-
-**WebSocket Integration (via Streaming Service):**
-
-During video calls, send friend requests via WebSocket:
-
-**Message Type:** `send-friend-request`
+**Request:**
 ```json
 {
-  "type": "send-friend-request",
-  "data": {
-    "roomId": "string",
-    "toUserId": "string"
-  }
+  "toUserId": "string"
 }
 ```
 
-**Response:** `friend-request-sent`
+**Response:**
 ```json
 {
-  "type": "friend-request-sent",
-  "data": {
-    "roomId": "string",
-    "toUserId": "string",
-    "requestId": "string",
-    "autoAccepted": false
-  }
+  "id": "string",
+  "fromUserId": "string",
+  "toUserId": "string",
+  "status": "PENDING",
+  "createdAt": "string"
 }
 ```
 
-**If Auto-Accepted (Mutual Request):** `friend-request-accepted`
-```json
-{
-  "type": "friend-request-accepted",
-  "data": {
-    "roomId": "string",
-    "friendId": "string",
-    "mutual": true
-  }
-}
-```
-
-**Note:** If the request is pending (not auto-accepted), the target user receives NO notification. They will see the request in their "Pending Requests" tab when they check.
-
----
-
-#### 1. Get Pending Requests (Incoming)
-
-Get all incoming friend requests that are pending acceptance.
+### 2. Get Pending Friend Requests
 
 **Endpoint:** `GET /me/friends/requests/pending`
 
@@ -1828,38 +995,295 @@ Get all incoming friend requests that are pending acceptance.
       "fromUser": {
         "id": "string",
         "username": "string",
-        "displayPictureUrl": "string | null"
+        "displayPictureUrl": "string"
       },
-      "message": "string | null",
-      "createdAt": "2024-01-01T00:00:00Z",
-      "expiresAt": "2024-01-31T00:00:00Z"
+      "status": "PENDING",
+      "createdAt": "string"
     }
   ]
 }
 ```
 
-**Example:**
-```javascript
-const response = await fetch('http://localhost:3007/me/friends/requests/pending', {
-  headers: {
-    'Authorization': `Bearer ${accessToken}`
+### 3. Get Sent Friend Requests
+
+**Endpoint:** `GET /me/friends/requests/sent`
+
+**Response:** Same format as pending requests
+
+### 4. Accept Friend Request
+
+**Endpoint:** `POST /me/friends/requests/:requestId/accept`
+
+**Response:**
+```json
+{
+  "success": true,
+  "friendship": {
+    "id": "string",
+    "user1Id": "string",
+    "user2Id": "string",
+    "status": "FRIENDS",
+    "createdAt": "string"
   }
-});
-const data = await response.json();
-// data.requests contains array of pending requests
+}
+```
+
+### 5. Reject Friend Request
+
+**Endpoint:** `POST /me/friends/requests/:requestId/reject`
+
+**Response:**
+```json
+{
+  "success": true
+}
+```
+
+### 6. Get Friends List
+
+**Endpoint:** `GET /me/friends`
+
+**Response:**
+```json
+{
+  "friends": [
+    {
+      "id": "string",
+      "userId": "string",
+      "user": {
+        "id": "string",
+        "username": "string",
+        "displayPictureUrl": "string"
+      },
+      "status": "FRIENDS",
+      "createdAt": "string"
+    }
+  ]
+}
+```
+
+### 7. Send Message to Friend
+
+**Endpoint:** `POST /me/friends/:friendId/messages`
+
+**Request:**
+```json
+{
+  "message": "Hello!"
+}
+```
+
+**Response:**
+```json
+{
+  "id": "string",
+  "userId": "string",
+  "friendId": "string",
+  "message": "Hello!",
+  "read": false,
+  "timestamp": "string"
+}
+```
+
+### 8. Get Messages with Friend
+
+**Endpoint:** `GET /me/friends/:friendId/messages`
+
+**Query Parameters:**
+- `limit` (optional): Number of messages (default 50)
+- `before` (optional): Get messages before this timestamp
+
+**Response:**
+```json
+{
+  "messages": [
+    {
+      "id": "string",
+      "userId": "string",
+      "message": "string",
+      "read": false,
+      "timestamp": "string"
+    }
+  ]
+}
+```
+
+### 9. Mark Messages as Read
+
+**Endpoint:** `POST /me/friends/:friendId/messages/read`
+
+**Request:**
+```json
+{
+  "messageIds": ["message-id-1", "message-id-2"]  // Optional, marks all if not provided
+}
+```
+
+### 10. Unfriend
+
+**Endpoint:** `POST /me/friends/:friendId/unfriend`
+
+**Response:**
+```json
+{
+  "success": true
+}
+```
+
+### 11. Block User
+
+**Endpoint:** `POST /me/friends/:friendId/block`
+
+**Response:**
+```json
+{
+  "success": true
+}
 ```
 
 ---
 
-#### 2. Get Sent Requests (Outgoing)
+## Wallet & Payments
 
-Get all friend requests you've sent that are still pending.
+### 1. Get Wallet Balance
 
-**Endpoint:** `GET /me/friends/requests/sent`
+**Endpoint:** `GET /me/balance`
+
+**Response:**
+```json
+{
+  "balance": 1000,  // Coins
+  "userId": "string"
+}
+```
+
+### 2. Get Transaction History
+
+**Endpoint:** `GET /me/transactions`
 
 **Query Parameters:**
-- `limit` (optional): Number of requests to return (default: 50, max: 100)
-- `cursor` (optional): Pagination cursor from previous response
+- `limit` (optional): Number of transactions
+- `type` (optional): Filter by type
+
+**Response:**
+```json
+{
+  "transactions": [
+    {
+      "id": "string",
+      "type": "EARNED" | "SPENT" | "PURCHASED",
+      "amount": 100,
+      "description": "string",
+      "createdAt": "string"
+    }
+  ]
+}
+```
+
+### 3. Purchase Coins
+
+#### Initiate Purchase
+
+**Endpoint:** `POST /v1/payments/purchase/initiate`
+
+**Request:**
+```json
+{
+  "amountInr": 100,
+  "productId": "coins_100"  // Optional
+}
+```
+
+**Response:**
+```json
+{
+  "orderId": "string",
+  "amount": 100,
+  "currency": "INR",
+  "razorpayOrderId": "string",
+  "razorpayKey": "string"  // Use this for Razorpay checkout
+}
+```
+
+**Use Case:** 
+1. Call this to create order
+2. Use `razorpayOrderId` and `razorpayKey` with Razorpay SDK
+3. Complete payment on frontend
+4. Call verify endpoint
+
+#### Verify Purchase
+
+**Endpoint:** `POST /v1/payments/purchase/verify`
+
+**Request:**
+```json
+{
+  "orderId": "string",
+  "razorpayPaymentId": "string",
+  "razorpaySignature": "string"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "coinsAdded": 100,
+  "newBalance": 1100
+}
+```
+
+### 4. Redemption (Diamonds to INR)
+
+#### Preview Redemption
+
+**Endpoint:** `POST /v1/payments/redemption/preview`
+
+**Request:**
+```json
+{
+  "diamonds": 1000
+}
+```
+
+**Response:**
+```json
+{
+  "diamonds": 1000,
+  "estimatedInr": 100,
+  "fees": 5,
+  "netAmount": 95
+}
+```
+
+#### Initiate Redemption
+
+**Endpoint:** `POST /v1/payments/redemption/initiate`
+
+**Request:**
+```json
+{
+  "diamonds": 1000,
+  "bankAccount": {
+    "accountNumber": "string",
+    "ifsc": "string",
+    "accountHolderName": "string"
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "requestId": "string",
+  "status": "PENDING",
+  "estimatedInr": 100
+}
+```
+
+#### Get Redemption Requests
+
+**Endpoint:** `GET /v1/payments/redemption/requests`
 
 **Response:**
 ```json
@@ -1867,653 +1291,315 @@ Get all friend requests you've sent that are still pending.
   "requests": [
     {
       "id": "string",
-      "toUserId": "string",
-      "toUser": {
-        "id": "string",
-        "username": "string",
-        "displayPictureUrl": "string | null"
-      },
-      "message": "string | null",
-      "createdAt": "2024-01-01T00:00:00Z",
-      "expiresAt": "2024-01-31T00:00:00Z"
-    }
-  ],
-  "nextCursor": "string | null",
-  "hasMore": false
-}
-```
-
-**Example (with pagination):**
-```javascript
-const response = await fetch('http://localhost:3007/me/friends/requests/sent?limit=20&cursor=abc123', {
-  headers: {
-    'Authorization': `Bearer ${accessToken}`
-  }
-});
-const data = await response.json();
-// Use data.nextCursor for next page if data.hasMore is true
-```
-
----
-
-#### 3. Get Messages for a Request
-
-Get all messages sent with a pending friend request (nudging messages).
-
-**Endpoint:** `GET /me/friends/requests/:requestId/messages`
-
-**Response:**
-```json
-{
-  "messages": [
-    {
-      "id": "string",
-      "fromUserId": "string",
-      "toUserId": "string",
-      "message": "string",
-      "isRead": false,
-      "readAt": "2024-01-01T00:00:00Z | null",
-      "transactionId": "string | null",
-      "createdAt": "2024-01-01T00:00:00Z"
+      "diamonds": 1000,
+      "inr": 100,
+      "status": "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED",
+      "createdAt": "string"
     }
   ]
 }
 ```
 
-**Example:**
-```javascript
-const response = await fetch(`http://localhost:3007/me/friends/requests/${requestId}/messages`, {
-  headers: {
-    'Authorization': `Bearer ${accessToken}`
-  }
-});
-const data = await response.json();
-```
-
 ---
 
-#### 4. Accept Friend Request
+## File Uploads
 
-Accept a pending friend request.
+### 1. Upload File
 
-**Endpoint:** `POST /me/friends/requests/:requestId/accept`
+**Endpoint:** `POST /files/upload`
+
+**Content-Type:** `multipart/form-data`
+
+**Form Data:**
+- `file`: File to upload
+- `folder` (optional): Folder path
+- `processImage` (optional, default true): Process/resize image
+- `maxWidth` (optional): Max width for image
+- `maxHeight` (optional): Max height for image
+- `quality` (optional): Image quality (1-100)
 
 **Response:**
 ```json
 {
-  "ok": true,
-  "friendship": {
+  "success": true,
+  "file": {
     "id": "string",
-    "friendId": "string",
-    "friend": {
-      "id": "string",
-      "username": "string",
-      "displayPictureUrl": "string | null"
-    },
-    "createdAt": "2024-01-01T00:00:00Z"
+    "url": "https://your-cdn.com/file.jpg",
+    "filename": "file.jpg",
+    "mimeType": "image/jpeg",
+    "size": 1024,
+    "folder": "string",
+    "createdAt": "string"
   }
 }
 ```
 
-**Example:**
+**Use Case:** 
+- Upload profile pictures
+- Upload photos for profile
+- Upload any other files
+
+**Frontend Implementation:**
 ```javascript
-const response = await fetch(`http://localhost:3007/me/friends/requests/${requestId}/accept`, {
-  method: 'POST',
-  headers: {
-    'Authorization': `Bearer ${accessToken}`,
-    'Content-Type': 'application/json'
-  }
-});
-const data = await response.json();
+const uploadFile = async (file) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('folder', 'profile-pictures');
+  formData.append('processImage', 'true');
+  formData.append('maxWidth', '800');
+  formData.append('maxHeight', '800');
+  
+  const response = await fetch('http://localhost:3008/files/upload', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`
+    },
+    body: formData
+  });
+  
+  const data = await response.json();
+  return data.file.url;  // Use this URL in profile creation
+};
 ```
 
----
+### 2. Get Presigned URL (Direct Upload)
 
-#### 5. Reject Friend Request
+**Endpoint:** `POST /files/presigned-url`
 
-Reject a pending friend request.
-
-**Endpoint:** `POST /me/friends/requests/:requestId/reject`
+**Request:**
+```json
+{
+  "filename": "photo.jpg",
+  "mimeType": "image/jpeg",
+  "folder": "profile-pictures",
+  "expiresIn": 3600  // Optional, seconds
+}
+```
 
 **Response:**
 ```json
 {
-  "ok": true
+  "success": true,
+  "url": "https://presigned-url...",
+  "key": "string",
+  "expiresAt": "string"
 }
 ```
 
-**Example:**
-```javascript
-const response = await fetch(`http://localhost:3007/me/friends/requests/${requestId}/reject`, {
-  method: 'POST',
-  headers: {
-    'Authorization': `Bearer ${accessToken}`,
-    'Content-Type': 'application/json'
-  }
-});
-```
+**Use Case:** Get presigned URL for direct upload to Cloudflare R2 (bypasses backend).
 
----
+### 3. Get User Files
 
-### Friends
-
-#### 6. Get Friends List
-
-Get all friends (accepted friendships).
-
-**Endpoint:** `GET /me/friends`
+**Endpoint:** `GET /me/files`
 
 **Query Parameters:**
-- `limit` (optional): Number of friends to return (default: 50, max: 100)
-- `cursor` (optional): Pagination cursor from previous response
+- `limit` (optional): Number of files
 
 **Response:**
 ```json
 {
-  "friends": [
+  "files": [
     {
-      "friendId": "string",
-      "friend": {
-        "id": "string",
-        "username": "string",
-        "displayPictureUrl": "string | null"
-      },
-      "createdAt": "2024-01-01T00:00:00Z"
+      "id": "string",
+      "url": "string",
+      "filename": "string",
+      "mimeType": "string",
+      "size": 1024,
+      "createdAt": "string"
     }
-  ],
-  "nextCursor": "string | null",
-  "hasMore": false
+  ]
 }
 ```
 
-**Example (with pagination):**
-```javascript
-const response = await fetch('http://localhost:3007/me/friends?limit=50&cursor=abc123', {
-  headers: {
-    'Authorization': `Bearer ${accessToken}`
-  }
-});
-const data = await response.json();
-// Use data.nextCursor for next page if data.hasMore is true
-```
+### 4. Delete File
 
----
-
-#### 7. Unfriend a User
-
-Remove a friendship (unfriend).
-
-**Endpoint:** `POST /me/friends/:friendId/unfriend`
+**Endpoint:** `DELETE /files/:fileId`
 
 **Response:**
 ```json
 {
-  "ok": true
+  "success": true
 }
-```
-
-**Example:**
-```javascript
-const response = await fetch(`http://localhost:3007/me/friends/${friendId}/unfriend`, {
-  method: 'POST',
-  headers: {
-    'Authorization': `Bearer ${accessToken}`,
-    'Content-Type': 'application/json'
-  }
-});
 ```
 
 ---
 
-#### 8. Block a User
+## Error Handling
 
-Block a user (prevents future friend requests and interactions).
+### HTTP Status Codes
 
-**Endpoint:** `POST /me/friends/:friendId/block`
+- `200` - Success
+- `201` - Created
+- `400` - Bad Request (validation error)
+- `401` - Unauthorized (missing/invalid token)
+- `403` - Forbidden (insufficient permissions)
+- `404` - Not Found
+- `409` - Conflict (e.g., duplicate username)
+- `422` - Unprocessable Entity (business logic error)
+- `500` - Internal Server Error
+- `503` - Service Unavailable (external service down)
 
-**Response:**
-```json
-{
-  "ok": true
-}
-```
+### Error Response Format
 
-**Example:**
-```javascript
-const response = await fetch(`http://localhost:3007/me/friends/${friendId}/block`, {
-  method: 'POST',
-  headers: {
-    'Authorization': `Bearer ${accessToken}`,
-    'Content-Type': 'application/json'
-  }
-});
-```
-
----
-
-### Messaging
-
-#### 9. Send Message to Friend (Free)
-
-Send a message to an accepted friend. This is FREE - no coins deducted.
-
-**Endpoint:** `POST /me/friends/:friendId/messages`
-
-**Request:**
-```json
-{
-  "message": "Hello friend! How are you?"
-}
-```
-
-**Response:**
-```json
-{
-  "messageId": "string"
-}
-```
-
-**Example:**
-```javascript
-const response = await fetch(`http://localhost:3007/me/friends/${friendId}/messages`, {
-  method: 'POST',
-  headers: {
-    'Authorization': `Bearer ${accessToken}`,
-    'Content-Type': 'application/json'
-  },
-  body: JSON.stringify({
-    message: "Hello friend! How are you?"
-  })
-});
-const data = await response.json();
-```
-
-**Note:** Message must be 1-1000 characters.
-
----
-
-#### 10. Send Message to Non-Friend (10 Coins)
-
-Send a message to someone who sent you a friend request (nudge them to accept). This costs **10 coins** and will fail if you have insufficient balance.
-
-**Endpoint:** `POST /me/friends/requests/:requestId/messages`
-
-**Request:**
-```json
-{
-  "message": "Hey! Would love to connect with you."
-}
-```
-
-**Response:**
-```json
-{
-  "messageId": "string",
-  "newBalance": 90
-}
-```
-
-**Error Response (Insufficient Balance):**
 ```json
 {
   "statusCode": 400,
-  "message": "Insufficient coins to send message. Required: 10 coins"
+  "message": "Validation error message",
+  "error": "Bad Request"
 }
 ```
 
-**Example:**
-```javascript
-const response = await fetch(`http://localhost:3007/me/friends/requests/${requestId}/messages`, {
-  method: 'POST',
-  headers: {
-    'Authorization': `Bearer ${accessToken}`,
-    'Content-Type': 'application/json'
-  },
-  body: JSON.stringify({
-    message: "Hey! Would love to connect with you."
-  })
-});
+### Common Errors
 
-if (!response.ok) {
-  const error = await response.json();
-  if (error.message.includes('Insufficient coins')) {
-    // Show "Insufficient balance" message to user
-  }
-}
-
-const data = await response.json();
-// data.newBalance shows updated wallet balance
-```
-
-**Note:**
-- Message must be 1-1000 characters
-- Costs 10 coins (deducted automatically from wallet)
-- Can only send to users who have sent you a friend request
-- Each message costs 10 coins (no daily limits)
-
----
-
-#### 11. Get Message History
-
-Get message history with a friend.
-
-**Endpoint:** `GET /me/friends/:friendId/messages`
-
-**Query Parameters:**
-- `limit` (optional): Number of messages to return (default: 50, max: 100)
-- `cursor` (optional): Pagination cursor from previous response
-
-**Response:**
+**1. Missing Token**
 ```json
 {
-  "messages": [
-    {
-      "id": "string",
-      "fromUserId": "string",
-      "toUserId": "string",
-      "message": "string",
-      "isRead": false,
-      "readAt": "2024-01-01T00:00:00Z | null",
-      "transactionId": "string | null",
-      "createdAt": "2024-01-01T00:00:00Z"
-    }
-  ],
-  "nextCursor": "string | null",
-  "hasMore": false
+  "statusCode": 401,
+  "message": "Missing token",
+  "error": "Unauthorized"
 }
 ```
+**Solution:** Include `Authorization: Bearer {token}` header
 
-**Note:** Messages are returned in reverse chronological order (newest first). Use `cursor` for pagination.
-
-**Example (with pagination):**
-```javascript
-const response = await fetch(`http://localhost:3007/me/friends/${friendId}/messages?limit=50&cursor=abc123`, {
-  headers: {
-    'Authorization': `Bearer ${accessToken}`
-  }
-});
-const data = await response.json();
-// Use data.nextCursor for older messages if data.hasMore is true
-```
-
----
-
-#### 12. Mark Messages as Read
-
-Mark all unread messages from a friend as read.
-
-**Endpoint:** `POST /me/friends/:friendId/messages/read`
-
-**Response:**
+**2. Invalid Token**
 ```json
 {
-  "ok": true,
-  "markedCount": 5
+  "statusCode": 401,
+  "message": "Invalid token",
+  "error": "Unauthorized"
 }
 ```
+**Solution:** Refresh token or re-authenticate
 
-**Example:**
+**3. Validation Error**
+```json
+{
+  "statusCode": 400,
+  "message": "Username must be 3-30 characters",
+  "error": "Bad Request"
+}
+```
+**Solution:** Fix request data according to validation rules
+
+**4. User Not Found**
+```json
+{
+  "statusCode": 404,
+  "message": "User not found",
+  "error": "Not Found"
+}
+```
+**Solution:** Check user ID is correct
+
+### Retry Logic
+
+For transient errors (500, 503), implement exponential backoff:
+
 ```javascript
-const response = await fetch(`http://localhost:3007/me/friends/${friendId}/messages/read`, {
-  method: 'POST',
-  headers: {
-    'Authorization': `Bearer ${accessToken}`,
-    'Content-Type': 'application/json'
+const retryRequest = async (fn, retries = 3) => {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (i === retries - 1) throw error;
+      await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
+    }
   }
-});
-const data = await response.json();
-// data.markedCount shows how many messages were marked as read
+};
 ```
 
 ---
 
-### Complete Friend Flow Example
+## Best Practices
 
-**Frontend Implementation:**
+### 1. Token Management
 
-```javascript
-// 1. During video call - Send friend request via WebSocket
-// (Handled by streaming-service WebSocket, see STREAMING_SERVICE_FRONTEND.md)
+- Store `accessToken` and `refreshToken` securely
+- Refresh token before it expires
+- Handle token refresh automatically
+- Clear tokens on logout
 
-// 2. Get pending requests (show in "Pending Requests" tab)
-async function getPendingRequests(accessToken) {
-  const response = await fetch('http://localhost:3007/me/friends/requests/pending', {
-    headers: { 'Authorization': `Bearer ${accessToken}` }
-  });
-  return await response.json();
-}
+### 2. Error Handling
 
-// 3. Accept a friend request
-async function acceptFriendRequest(accessToken, requestId) {
-  const response = await fetch(`http://localhost:3007/me/friends/requests/${requestId}/accept`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${accessToken}`,
-      'Content-Type': 'application/json'
-    }
-  });
-  return await response.json();
-}
+- Always check response status
+- Display user-friendly error messages
+- Log errors for debugging
+- Implement retry logic for transient errors
 
-// 4. Get sent requests (show in "Sent Requests" tab)
-async function getSentRequests(accessToken, cursor) {
-  const url = cursor 
-    ? `http://localhost:3007/me/friends/requests/sent?cursor=${cursor}`
-    : 'http://localhost:3007/me/friends/requests/sent';
-  const response = await fetch(url, {
-    headers: { 'Authorization': `Bearer ${accessToken}` }
-  });
-  return await response.json();
-}
+### 3. File Uploads
 
-// 5. Send message to non-friend (nudge them - costs 10 coins)
-async function sendNudgeMessage(accessToken, requestId, message) {
-  const response = await fetch(`http://localhost:3007/me/friends/requests/${requestId}/messages`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${accessToken}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({ message })
-  });
-  
-  if (!response.ok) {
-    const error = await response.json();
-    if (error.message.includes('Insufficient coins')) {
-      throw new Error('Insufficient balance. You need 10 coins to send this message.');
-    }
-    throw error;
-  }
-  
-  return await response.json();
-}
+- Upload files before creating/updating profile
+- Show upload progress
+- Handle upload failures gracefully
+- Validate file size and type on frontend
 
-// 6. Get friends list
-async function getFriends(accessToken, cursor) {
-  const url = cursor
-    ? `http://localhost:3007/me/friends?cursor=${cursor}`
-    : 'http://localhost:3007/me/friends';
-  const response = await fetch(url, {
-    headers: { 'Authorization': `Bearer ${accessToken}` }
-  });
-  return await response.json();
-}
+### 4. State Management
 
-// 7. Send message to friend (free)
-async function sendMessageToFriend(accessToken, friendId, message) {
-  const response = await fetch(`http://localhost:3007/me/friends/${friendId}/messages`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${accessToken}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({ message })
-  });
-  return await response.json();
-}
+- Cache user profile data
+- Update local state after API calls
+- Sync state across components
+- Handle offline scenarios
 
-// 8. Get message history with friend
-async function getMessageHistory(accessToken, friendId, cursor) {
-  const url = cursor
-    ? `http://localhost:3007/me/friends/${friendId}/messages?cursor=${cursor}`
-    : `http://localhost:3007/me/friends/${friendId}/messages`;
-  const response = await fetch(url, {
-    headers: { 'Authorization': `Bearer ${accessToken}` }
-  });
-  return await response.json();
-}
+### 5. Performance
 
-// 9. Mark messages as read
-async function markMessagesAsRead(accessToken, friendId) {
-  const response = await fetch(`http://localhost:3007/me/friends/${friendId}/messages/read`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${accessToken}`,
-      'Content-Type': 'application/json'
-    }
-  });
-  return await response.json();
-}
-```
+- Use field selection for large objects
+- Implement pagination for lists
+- Cache frequently accessed data
+- Lazy load non-critical data
 
 ---
 
-### Friend Service UI Flow
+## Complete User Flows
 
-**Three Main Tabs in Friends Page:**
+### Flow 1: New User Onboarding
 
-1. **Pending Requests Tab** (Incoming)
-   - Show all pending friend requests received
-   - Display: User info, optional message, accept/reject buttons
-   - Show messages sent with request (nudging messages)
+1. **Sign Up** → `POST /v1/auth/google` (or other auth methods)
+2. **Get Tokens** → Store `accessToken` and `refreshToken`
+3. **Upload Photo** → `POST /files/upload`
+4. **Create Profile** → `POST /users/:userId/profile` (with photo URL)
+5. **Add More Photos** → `POST /me/photos` (repeat as needed)
+6. **Set Preferences** → Update music, brands, interests, values
+7. **Start Discovery** → `GET /discovery/card`
 
-2. **Sent Requests Tab** (Outgoing)
-   - Show all friend requests you've sent that are pending
-   - Display: User info, option to send nudge message (costs 10 coins)
-   - Show messages you've sent (nudging messages)
+### Flow 2: Discovery & Matching
 
-3. **Friends Tab**
-   - Show all accepted friends
-   - Display: User info, chat button
-   - Support unlimited friends (no limit)
+1. **Get Card** → `GET /discovery/card?sessionId={id}`
+2. **User Swipes**:
+   - **Left (Pass)** → `POST /discovery/raincheck`
+   - **Right (Like)** → `POST /discovery/proceed`
+3. **If Match** (both proceed):
+   - Both users' status → `IN_SQUAD`
+   - Create room → `POST /streaming/rooms`
+   - Start video call with Agora SDK
 
-**In-Call Friend Request Flow:**
+### Flow 3: Video Call
 
-1. User A and User B are in a video call
-2. User A clicks "+" button on User B's video/audio placeholder
-3. Frontend sends WebSocket message: `send-friend-request`
-4. If User B also sent request to User A:
-   - Both requests auto-accepted
-   - Both users become friends immediately
-   - WebSocket event: `friend-request-accepted` (mutual: true)
-5. If only User A sent request:
-   - Request is pending
-   - User B receives NO notification
-   - User B will see request in "Pending Requests" tab when they check
+1. **Create Room** → `POST /streaming/rooms` (after match)
+2. **Get Room Info** → `GET /streaming/rooms/:roomId`
+3. **Join Call** → Use Agora SDK with `token`, `channelName`, `appId`
+4. **Chat** → `GET /streaming/rooms/:roomId/chat` (optional)
+5. **End Call** → `POST /streaming/rooms/:roomId/end`
+6. **Update Status** → `PATCH /me/status` → `IDLE` or `DISCOVERING`
 
----
+### Flow 4: Purchase Coins
 
-## ⚠️ Test Endpoints (DO NOT USE IN PRODUCTION)
-
-**IMPORTANT:** The following endpoints are **FOR TESTING ONLY** and should **NEVER** be used by the frontend application. These endpoints bypass authentication and are only available for backend testing purposes.
-
-### Discovery Service Test Endpoints
-
-**⚠️ DO NOT USE THESE ENDPOINTS IN FRONTEND CODE**
-
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/discovery/test/card` | GET | Get discovery card (bypasses auth) |
-| `/discovery/test/raincheck` | POST | Raincheck a user (bypasses auth) |
-| `/discovery/test/reset-session` | POST | Reset session (bypasses auth) |
-| `/gender-filters/test` | GET | Get gender filters (bypasses auth) |
-| `/gender-filters/test/apply` | POST | Apply gender filter (bypasses auth) |
-| `/location/test/preference` | GET | Get preferred city (bypasses auth) |
-| `/location/test/preference` | PATCH | Update preferred city (bypasses auth) |
-
-**Why these exist:** These endpoints are used by automated test scripts to verify backend functionality without requiring authentication tokens. They accept `userId` as a query parameter or in the request body instead of requiring JWT tokens.
-
-**Frontend should use:** The authenticated endpoints documented above (e.g., `/discovery/card`, `/gender-filters`, `/location/preference`).
-
----
-
-### User Service Test Endpoints
-
-**⚠️ DO NOT USE THESE ENDPOINTS IN FRONTEND CODE**
-
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/users/test/:userId` | GET | Get user profile (bypasses auth) |
-| `/users/test/:userId/profile-completion` | GET | Get profile completion (bypasses auth) |
-| `/users/test/:userId/profile` | PATCH | Update profile (bypasses auth) |
-| `/users/test/:userId/photos` | GET | Get photos (bypasses auth) |
-| `/users/test/:userId/photos` | POST | Add photo (bypasses auth) |
-| `/users/test/:userId/photos/:photoId` | DELETE | Delete photo (bypasses auth) |
-| `/users/test/:userId/music-preference` | PATCH | Update music preference (bypasses auth) |
-| `/users/test/:userId/brand-preferences` | PATCH | Update brand preferences (bypasses auth) |
-| `/users/test/:userId/interests` | PATCH | Update interests (bypasses auth) |
-| `/users/test/:userId/values` | PATCH | Update values (bypasses auth) |
-| `/users/test/:userId/location` | PATCH | Update location (bypasses auth) |
-| `/users/test/:userId/preferred-city` | PATCH | Update preferred city (bypasses auth) |
-| `/users/test/:userId/status` | PATCH | Update status (bypasses auth) |
-
-**Why these exist:** These endpoints are used by automated test scripts to verify backend functionality without requiring authentication tokens. They accept `userId` directly instead of extracting it from JWT tokens.
-
-**Frontend should use:** The authenticated endpoints documented above (e.g., `/me`, `/me/profile`, `/me/photos`, etc.).
-
----
-
-### Wallet Service Test Endpoints
-
-**⚠️ DO NOT USE THESE ENDPOINTS IN FRONTEND CODE**
-
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/test/balance` | GET | Get balance (bypasses auth, requires `?userId=xxx`) |
-| `/test/transactions/gender-filter` | POST | Deduct coins (bypasses auth, requires `userId` in body) |
-| `/test/wallet` | GET | Get wallet with transactions (bypasses auth, requires `?userId=xxx`) |
-| `/test/wallet/add-coins` | POST | Add coins (bypasses auth, requires `userId` in body) |
-
-**Why these exist:** These endpoints are used by automated test scripts to verify wallet functionality without requiring authentication tokens. They accept `userId` as a query parameter or in the request body instead of requiring JWT tokens.
-
-**Frontend should use:** The authenticated endpoints documented above (e.g., `/me/balance`).
-
----
-
-### Moderation Service
-
-**Note:** Moderation service does not have test endpoints because it's already a public service (no authentication required). The `/moderation/check-image` endpoint is public and can be called directly, though in practice it's typically called by user-service automatically.
+1. **Get Balance** → `GET /me/balance`
+2. **Initiate Purchase** → `POST /v1/payments/purchase/initiate`
+3. **Complete Payment** → Use Razorpay SDK on frontend
+4. **Verify Purchase** → `POST /v1/payments/purchase/verify`
+5. **Update Balance** → Refresh balance display
 
 ---
 
 ## Support
 
-**Setup:** See `FRONTEND_SETUP.md` for local backend setup
+For questions or issues:
 
-**Questions:** Contact backend team with endpoint name, request payload, and error details
+1. Check this documentation
+2. Review API responses and error messages
+3. Check service logs
+4. Contact backend team
 
-**Key Notes:**
-- Username can be duplicate/common names (uniqueness not enforced)
-- Field selection (`?fields=`) can optimize API calls by fetching only needed data
-- Brand logos: `logoUrl` field is available but may be `null` until production CDN is set up
-- Photo moderation happens automatically - frontend just needs to handle error messages
-- Gender can only be changed once from `PREFER_NOT_TO_SAY` to any other value
-- **Services are independently deployable** - Frontend calls each service directly (auth-service, user-service, wallet-service, discovery-service, friend-service, etc.)
-- **Gender Filter:** Users with `PREFER_NOT_TO_SAY` gender can only use the "All Gender" option (default/unfiltered state)
-- **Wallet:** Wallet is automatically created with 0 balance when first accessed (lazy initialization)
-- **Live Meetings:** Count includes users with statuses: `AVAILABLE`, `IN_SQUAD`, `IN_SQUAD_AVAILABLE`, `IN_BROADCAST`, `IN_BROADCAST_AVAILABLE`
-- **Location Feature:**
-  - `null` preferred city = user can connect with anyone from anywhere (default state)
-  - Non-null preferred city = user prefers to connect with people from that city
-  - Single city only (users can set one preferred city at a time)
-  - City search and "locate me" use OpenStreetMap Nominatim API (public, no API key required)
-  - Popular cities list shows cities sorted by user count (from users who have set preferred city)
-- **Friend Requests:**
-  - Friend requests can ONLY be sent during video calls via "+" button (no public API endpoint)
-  - No notifications sent when friend request is received (user sees in "Pending Requests" tab)
-  - Mutual requests (both users send to each other) are auto-accepted
-  - Unlimited friends allowed (no maximum limit)
-  - Requests expire after 30 days
-  - Messages to friends are FREE (unlimited)
-  - Messages to non-friends cost 10 coins each (no daily limits)
-- **⚠️ Test Endpoints:** Do NOT use any endpoints under `/test/` or `/users/test/` or `/discovery/test/` in production frontend code. These are for backend testing only and bypass authentication.
+---
+
+**Happy Coding! 🚀**

@@ -62,3 +62,23 @@ export type AcceptInvitationRequest = z.infer<typeof AcceptInvitationRequestSche
 export type RejectInvitationRequest = z.infer<typeof RejectInvitationRequestSchema>;
 export type ToggleSoloRequest = z.infer<typeof ToggleSoloRequestSchema>;
 export type EnterCallRequest = z.infer<typeof EnterCallRequestSchema>;
+
+// Internal Service DTOs (for service-to-service communication)
+export const RoomCreatedRequestSchema = z.object({
+  roomId: z.string().min(1, "Room ID is required"),
+  userIds: z.array(z.string().min(1)).min(1, "At least one user ID is required")
+});
+
+export const BroadcastStartedRequestSchema = z.object({
+  roomId: z.string().min(1, "Room ID is required"),
+  userIds: z.array(z.string().min(1)).min(1, "At least one user ID is required")
+});
+
+export const CallEndedRequestSchema = z.object({
+  roomId: z.string().min(1, "Room ID is required"),
+  userIds: z.array(z.string().min(1)).min(1, "At least one user ID is required")
+});
+
+export type RoomCreatedRequest = z.infer<typeof RoomCreatedRequestSchema>;
+export type BroadcastStartedRequest = z.infer<typeof BroadcastStartedRequestSchema>;
+export type CallEndedRequest = z.infer<typeof CallEndedRequestSchema>;

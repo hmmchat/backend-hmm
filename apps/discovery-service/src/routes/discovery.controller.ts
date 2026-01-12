@@ -15,7 +15,10 @@ import {
   RaincheckRequestSchema,
   ResetSessionRequestSchema,
   SelectLocationRequestSchema,
-  ProceedRequestSchema
+  ProceedRequestSchema,
+  RoomCreatedRequestSchema,
+  BroadcastStartedRequestSchema,
+  CallEndedRequestSchema
 } from "../dtos/discovery.dto.js";
 
 @Controller("discovery")
@@ -363,6 +366,56 @@ export class DiscoveryController {
 
     return {
       success: true
+    };
+  }
+
+  /* ---------- Internal Service Endpoints (Service-to-Service) ---------- */
+
+  /**
+   * Internal endpoint: Notify that room was created (users enter IN_SQUAD)
+   * POST /discovery/internal/room-created
+   * Called by streaming-service when a room is created
+   */
+  @Post("internal/room-created")
+  async roomCreated(@Body() body: any) {
+    const dto = RoomCreatedRequestSchema.parse(body);
+    await this.discoveryService.handleRoomCreated(dto.roomId, dto.userIds);
+
+    return {
+      success: true,
+      message: `Updated ${dto.userIds.length} users to IN_SQUAD for room ${dto.roomId}`
+    };
+  }
+
+  /**
+   * Internal endpoint: Notify that broadcast started (users enter IN_BROADCAST)
+   * POST /discovery/internal/broadcast-started
+   * Called by streaming-service when broadcasting starts
+   */
+  @Post("internal/broadcast-started")
+  async broadcastStarted(@Body() body: any) {
+    const dto = BroadcastStartedRequestSchema.parse(body);
+    await this.discoveryService.handleBroadcastStarted(dto.roomId, dto.userIds);
+
+    return {
+      success: true,
+      message: `Updated ${dto.userIds.length} users to IN_BROADCAST for room ${dto.roomId}`
+    };
+  }
+
+  /**
+   * Internal endpoint: Notify that call ended (users return to AVAILABLE)
+   * POST /discovery/internal/call-ended
+   * Called by streaming-service when a call ends
+   */
+  @Post("internal/call-ended")
+  async callEnded(@Body() body: any) {
+    const dto = CallEndedRequestSchema.parse(body);
+    await this.discoveryService.handleCallEnded(dto.roomId, dto.userIds);
+
+    return {
+      success: true,
+      message: `Updated ${dto.userIds.length} users to AVAILABLE after call ended in room ${dto.roomId}`
     };
   }
 }

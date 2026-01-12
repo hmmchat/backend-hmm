@@ -5,9 +5,11 @@ import fetch from "node-fetch";
 export class DiscoveryClientService {
   private readonly logger = new Logger(DiscoveryClientService.name);
   private readonly userServiceUrl: string;
+  private readonly discoveryServiceUrl: string;
 
   constructor() {
     this.userServiceUrl = process.env.USER_SERVICE_URL || "http://localhost:3002";
+    this.discoveryServiceUrl = process.env.DISCOVERY_SERVICE_URL || "http://localhost:3004";
   }
 
   /**
@@ -15,18 +17,26 @@ export class DiscoveryClientService {
    */
   async notifyRoomCreated(roomId: string, userIds: string[]): Promise<void> {
     try {
-      // In a real implementation, this would call discovery-service to update user statuses
-      // For now, we'll just log it
-      this.logger.log(`Room ${roomId} created with users: ${userIds.join(", ")}`);
+      this.logger.log(`Room ${roomId} created with users: ${userIds.join(", ")} - notifying discovery-service`);
       
-      // TODO: Call discovery-service API to update user statuses to IN_SQUAD
-      // await fetch(`${this.discoveryServiceUrl}/discovery/room-created`, {
-      //   method: "POST",
-      //   headers: { "Content-Type": "application/json" },
-      //   body: JSON.stringify({ roomId, userIds }),
-      // });
+      const response = await fetch(`${this.discoveryServiceUrl}/discovery/internal/room-created`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ roomId, userIds }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        this.logger.warn(`Discovery-service returned ${response.status} for room-created: ${errorText}`);
+        // Don't throw - room creation should succeed even if discovery-service is unavailable
+        return;
+      }
+
+      const result = await response.json() as { success: boolean; message?: string };
+      this.logger.log(`Successfully notified discovery-service: ${result.message || "Room created"}`);
     } catch (error: any) {
       this.logger.error(`Error notifying discovery-service of room creation: ${error.message}`);
+      // Don't throw - room creation should succeed even if discovery-service is unavailable
     }
   }
 
@@ -35,16 +45,26 @@ export class DiscoveryClientService {
    */
   async notifyBroadcastStarted(roomId: string, userIds: string[]): Promise<void> {
     try {
-      this.logger.log(`Broadcast started for room ${roomId} with users: ${userIds.join(", ")}`);
+      this.logger.log(`Broadcast started for room ${roomId} with users: ${userIds.join(", ")} - notifying discovery-service`);
       
-      // TODO: Call discovery-service API to update user statuses to IN_BROADCAST
-      // await fetch(`${this.discoveryServiceUrl}/discovery/broadcast-started`, {
-      //   method: "POST",
-      //   headers: { "Content-Type": "application/json" },
-      //   body: JSON.stringify({ roomId, userIds }),
-      // });
+      const response = await fetch(`${this.discoveryServiceUrl}/discovery/internal/broadcast-started`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ roomId, userIds }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        this.logger.warn(`Discovery-service returned ${response.status} for broadcast-started: ${errorText}`);
+        // Don't throw - broadcast should succeed even if discovery-service is unavailable
+        return;
+      }
+
+      const result = await response.json() as { success: boolean; message?: string };
+      this.logger.log(`Successfully notified discovery-service: ${result.message || "Broadcast started"}`);
     } catch (error: any) {
       this.logger.error(`Error notifying discovery-service of broadcast start: ${error.message}`);
+      // Don't throw - broadcast should succeed even if discovery-service is unavailable
     }
   }
 
@@ -53,16 +73,26 @@ export class DiscoveryClientService {
    */
   async notifyCallEnded(roomId: string, userIds: string[]): Promise<void> {
     try {
-      this.logger.log(`Call ended for room ${roomId}, updating users to AVAILABLE: ${userIds.join(", ")}`);
+      this.logger.log(`Call ended for room ${roomId}, updating users to AVAILABLE: ${userIds.join(", ")} - notifying discovery-service`);
       
-      // TODO: Call discovery-service API to update user statuses to AVAILABLE
-      // await fetch(`${this.discoveryServiceUrl}/discovery/call-ended`, {
-      //   method: "POST",
-      //   headers: { "Content-Type": "application/json" },
-      //   body: JSON.stringify({ roomId, userIds }),
-      // });
+      const response = await fetch(`${this.discoveryServiceUrl}/discovery/internal/call-ended`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ roomId, userIds }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        this.logger.warn(`Discovery-service returned ${response.status} for call-ended: ${errorText}`);
+        // Don't throw - call ending should succeed even if discovery-service is unavailable
+        return;
+      }
+
+      const result = await response.json() as { success: boolean; message?: string };
+      this.logger.log(`Successfully notified discovery-service: ${result.message || "Call ended"}`);
     } catch (error: any) {
       this.logger.error(`Error notifying discovery-service of call end: ${error.message}`);
+      // Don't throw - call ending should succeed even if discovery-service is unavailable
     }
   }
 

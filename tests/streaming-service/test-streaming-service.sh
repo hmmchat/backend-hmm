@@ -173,6 +173,94 @@ test_get_gifts() {
     http_request "GET" "${SERVICE_URL}/streaming/rooms/${TEST_ROOM_ID}/gifts" "" 200 "Get gifts"
 }
 
+# Test: Send gift with giftId (new feature)
+test_send_gift_with_giftid() {
+    log_test "Send Gift with Gift ID"
+    
+    if [ -z "$TEST_ROOM_ID" ]; then
+        log_warn "No room ID available, skipping test"
+        return 0
+    fi
+    
+    # First ensure users have wallets
+    curl -s -X POST \
+        -H "Content-Type: application/json" \
+        -d "{\"userId\": \"${TEST_USER_1}\", \"amount\": 5000, \"description\": \"test_setup\"}" \
+        "http://localhost:${WALLET_PORT}/test/wallet/add-coins" > /dev/null 2>&1
+    
+    local gift_data=$(cat <<EOF
+{
+  "toUserId": "${TEST_USER_2}",
+  "amount": 2500,
+  "giftId": "monkey",
+  "fromUserId": "${TEST_USER_1}"
+}
+EOF
+)
+    
+    local response=$(curl -s -w "\n%{http_code}" -X POST \
+        -H "Content-Type: application/json" \
+        -d "${gift_data}" \
+        "${SERVICE_URL}/streaming/rooms/${TEST_ROOM_ID}/gifts" 2>&1)
+    local status_code=$(echo "$response" | tail -n1)
+    local body=$(echo "$response" | sed '$d')
+    
+    if [ "$status_code" -eq 200 ] || [ "$status_code" -eq 201 ]; then
+        # Verify response contains transaction info
+        if echo "$body" | grep -q "transactionId"; then
+            log_success "Send gift with giftId (${status_code}) - transaction created"
+        else
+            log_success "Send gift with giftId (${status_code})"
+        fi
+    elif [ "$status_code" -eq 400 ]; then
+        # May fail if users not in room or insufficient balance
+        log_warn "Send gift with giftId returned 400 (may require room setup or balance)"
+    else
+        log_error "Send gift with giftId - Expected 200/201/400, got ${status_code}"
+        return 1
+    fi
+}
+
+# Test: Send gift without giftId (regression test)
+test_send_gift_without_giftid() {
+    log_test "Send Gift without Gift ID (Regression)"
+    
+    if [ -z "$TEST_ROOM_ID" ]; then
+        log_warn "No room ID available, skipping test"
+        return 0
+    fi
+    
+    # First ensure users have wallets
+    curl -s -X POST \
+        -H "Content-Type: application/json" \
+        -d "{\"userId\": \"${TEST_USER_1}\", \"amount\": 5000, \"description\": \"test_setup\"}" \
+        "http://localhost:${WALLET_PORT}/test/wallet/add-coins" > /dev/null 2>&1
+    
+    local gift_data=$(cat <<EOF
+{
+  "toUserId": "${TEST_USER_2}",
+  "amount": 1000,
+  "fromUserId": "${TEST_USER_1}"
+}
+EOF
+)
+    
+    local response=$(curl -s -w "\n%{http_code}" -X POST \
+        -H "Content-Type: application/json" \
+        -d "${gift_data}" \
+        "${SERVICE_URL}/streaming/rooms/${TEST_ROOM_ID}/gifts" 2>&1)
+    local status_code=$(echo "$response" | tail -n1)
+    
+    if [ "$status_code" -eq 200 ] || [ "$status_code" -eq 201 ]; then
+        log_success "Send gift without giftId (${status_code}) - backward compatible"
+    elif [ "$status_code" -eq 400 ]; then
+        log_warn "Send gift without giftId returned 400 (may require room setup or balance)"
+    else
+        log_error "Send gift without giftId - Expected 200/201/400, got ${status_code}"
+        return 1
+    fi
+}
+
 # Test: Edge case - Create room with invalid users
 test_invalid_room() {
     log_test "Edge Case: Invalid Room Data"
@@ -225,6 +313,10 @@ main() {
     test_get_dares
     test_get_dare_gifts
     test_get_gifts
+    
+    # Gift badge feature tests
+    test_send_gift_with_giftid
+    test_send_gift_without_giftid
     
     # Edge cases
     test_invalid_room

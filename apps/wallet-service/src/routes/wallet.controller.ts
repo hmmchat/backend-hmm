@@ -150,18 +150,18 @@ export class WalletController {
   /**
    * Test endpoint: Add coins to wallet (for testing)
    * POST /test/wallet/add-coins
-   * Body: { userId: string, amount: number, description?: string }
+   * Body: { userId: string, amount: number, description?: string, giftId?: string }
    */
   @Post("test/wallet/add-coins")
   async addCoinsTest(@Body() body: any) {
-    const { userId, amount, description } = body;
+    const { userId, amount, description, giftId } = body;
     if (!userId || !amount) {
       throw new HttpException("userId and amount are required", HttpStatus.BAD_REQUEST);
     }
     if (amount <= 0) {
       throw new HttpException("Amount must be positive", HttpStatus.BAD_REQUEST);
     }
-    return this.walletService.addCoinsForUser(userId, amount, description);
+    return this.walletService.addCoinsForUser(userId, amount, description, giftId);
   }
 
   /**
@@ -190,6 +190,33 @@ export class WalletController {
         HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
+  }
+
+  /**
+   * Test endpoint: Get gift transactions for a user (bypasses auth)
+   * GET /test/wallet/gift-transactions?userId=xxx
+   */
+  @Get("test/wallet/gift-transactions")
+  async getGiftTransactionsTest(@Query("userId") userId: string) {
+    if (!userId) {
+      throw new HttpException("userId is required", HttpStatus.BAD_REQUEST);
+    }
+    return this.walletService.getGiftTransactions(userId);
+  }
+
+  /**
+   * Get gift transactions for current user
+   * GET /me/transactions/gifts
+   */
+  @Get("me/transactions/gifts")
+  async getMyGiftTransactions(@Headers("authorization") authz?: string) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+
+    const userId = await this.verifyTokenAndGetUserId(token);
+    return this.walletService.getGiftTransactions(userId);
   }
 }
 

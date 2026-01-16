@@ -131,6 +131,29 @@ export class UserService implements OnModuleInit {
       throw new HttpException("User profile not found", HttpStatus.NOT_FOUND);
     }
 
+    // Get active badge if user has one
+    let activeBadge = null;
+    if (user.activeBadgeId) {
+      const badge = await this.prisma.userBadge.findUnique({
+        where: {
+          userId_giftId: {
+            userId: user.id,
+            giftId: user.activeBadgeId
+          }
+        }
+      });
+      if (badge) {
+        activeBadge = {
+          giftId: badge.giftId,
+          giftName: badge.giftName,
+          giftEmoji: badge.giftEmoji
+        };
+      }
+    }
+    
+    // Add activeBadge to user object
+    (user as any).activeBadge = activeBadge;
+
     // If fields are specified, filter the response
     let filteredUser: any = user;
     if (fields && fields.length > 0) {
@@ -215,7 +238,9 @@ export class UserService implements OnModuleInit {
       musicPreference: "musicPreference",
       brandPreferences: "brandPreferences",
       interests: "interests",
-      values: "values"
+      values: "values",
+      activeBadge: "activeBadge",
+      activeBadgeId: "activeBadgeId"
     };
 
     for (const field of fields) {
@@ -290,6 +315,29 @@ export class UserService implements OnModuleInit {
         }
       }
     });
+
+    // Get active badge if user has one
+    let activeBadge = null;
+    if (user.activeBadgeId) {
+      const badge = await this.prisma.userBadge.findUnique({
+        where: {
+          userId_giftId: {
+            userId: user.id,
+            giftId: user.activeBadgeId
+          }
+        }
+      });
+      if (badge) {
+        activeBadge = {
+          giftId: badge.giftId,
+          giftName: badge.giftName,
+          giftEmoji: badge.giftEmoji
+        };
+      }
+    }
+    
+    // Add activeBadge to user object
+    (user as any).activeBadge = activeBadge;
 
     // Calculate profile completion percentage
     const completion = await this.profileCompletion.calculateCompletion(userId);
@@ -751,7 +799,32 @@ export class UserService implements OnModuleInit {
       } as any // Type assertion needed due to Prisma type generation issue
     });
 
-    return { users };
+    // Get active badges for all users
+    const usersWithBadges = await Promise.all(
+      users.map(async (user) => {
+        let activeBadge = null;
+        if (user.activeBadgeId) {
+          const badge = await this.prisma.userBadge.findUnique({
+            where: {
+              userId_giftId: {
+                userId: user.id,
+                giftId: user.activeBadgeId
+              }
+            }
+          });
+          if (badge) {
+            activeBadge = {
+              giftId: badge.giftId,
+              giftName: badge.giftName,
+              giftEmoji: badge.giftEmoji
+            };
+          }
+        }
+        return { ...user, activeBadge };
+      })
+    );
+
+    return { users: usersWithBadges };
   }
 
   async getProfileCompletion(userId: string) {

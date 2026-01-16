@@ -109,6 +109,10 @@ model User {
   // Profile Completion Tracking
   profileCompleted Boolean @default(false) // True when username, DOB, gender, displayPicture are set
 
+  // Badge system
+  activeBadgeId String?  // Currently selected badge ID
+  badges        UserBadge[]
+
   @@index([username])
   @@index([status])
   @@index([latitude, longitude]) // For location-based queries
@@ -267,4 +271,20 @@ enum TransactionType {
   DEBIT       // Coins spent (e.g., premium features, gifts)
   REFUND      // Refund for a previous transaction
   ADJUSTMENT  // Manual adjustment by admin
+}
+
+// User badges - gifts received that can be displayed as profile badges
+model UserBadge {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  giftId    String   // Gift sticker ID (monkey, pikachu, etc.)
+  giftName  String   // Gift name for display
+  giftEmoji String?  // Gift emoji for display
+  receivedAt DateTime @default(now()) // When the gift was received
+  createdAt DateTime @default(now())
+  
+  @@unique([userId, giftId]) // User can only have one of each gift type
+  @@index([userId])
+  @@map("user_badges")
 }

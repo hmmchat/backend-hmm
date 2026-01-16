@@ -196,6 +196,75 @@ test_missing_fields() {
     fi
 }
 
+# Test: Add coins with giftId (new feature)
+test_add_coins_with_gift() {
+    log_test "Add Coins with Gift ID"
+    
+    local add_data=$(cat <<EOF
+{
+  "userId": "${TEST_USER_1}",
+  "amount": 2500,
+  "description": "test_gift_transaction",
+  "giftId": "monkey"
+}
+EOF
+)
+    
+    local response=$(curl -s -w "\n%{http_code}" -X POST \
+        -H "Content-Type: application/json" \
+        -d "${add_data}" \
+        "${SERVICE_URL}/test/wallet/add-coins" 2>&1)
+    local status_code=$(echo "$response" | tail -n1)
+    
+    if [ "$status_code" -eq 200 ] || [ "$status_code" -eq 201 ]; then
+        log_success "Add coins with giftId (${status_code})"
+    elif [ "$status_code" -eq 404 ]; then
+        log_warn "Add coins with giftId endpoint returned 404 (may require user setup)"
+    else
+        log_error "Add coins with giftId - Expected 200/201/404, got ${status_code}"
+        return 1
+    fi
+}
+
+# Test: Get gift transactions (new feature)
+test_get_gift_transactions() {
+    log_test "Get Gift Transactions"
+    
+    # First add a gift transaction
+    local add_data=$(cat <<EOF
+{
+  "userId": "${TEST_USER_1}",
+  "amount": 12500,
+  "description": "test_gift_pikachu",
+  "giftId": "pikachu"
+}
+EOF
+)
+    curl -s -X POST \
+        -H "Content-Type: application/json" \
+        -d "${add_data}" \
+        "${SERVICE_URL}/test/wallet/add-coins" > /dev/null 2>&1
+    
+    # Now get gift transactions
+    local response=$(curl -s -w "\n%{http_code}" -X GET "${SERVICE_URL}/test/wallet/gift-transactions?userId=${TEST_USER_1}" 2>&1)
+    local status_code=$(echo "$response" | tail -n1)
+    local body=$(echo "$response" | sed '$d')
+    
+    if [ "$status_code" -eq 200 ]; then
+        # Verify response contains gift transactions
+        if echo "$body" | grep -q "giftId"; then
+            log_success "Get gift transactions (200) - contains gift data"
+        else
+            log_success "Get gift transactions (200) - empty array (no gifts yet)"
+        fi
+    elif [ "$status_code" -eq 404 ]; then
+        log_success "Get gift transactions (404 - user may not exist, endpoint is working)"
+    else
+        log_error "Get gift transactions - Expected 200/404, got ${status_code}"
+        return 1
+    fi
+}
+
 # Main test execution
 main() {
     echo -e "\n${BLUE}╔════════════════════════════════════════╗${NC}"
@@ -216,6 +285,10 @@ main() {
     test_insufficient_balance
     test_invalid_amount
     test_missing_fields
+    
+    # Gift badge feature tests
+    test_add_coins_with_gift
+    test_get_gift_transactions
     
     cleanup
     

@@ -77,10 +77,12 @@ model Transaction {
   amount    Int      // Positive for credits, negative for debits
   type      TransactionType
   description String?
+  giftId    String?  // Gift sticker ID (monkey, pikachu, etc.) - only for CREDIT transactions from gifts
   createdAt DateTime @default(now())
 
   @@index([walletId])
   @@index([createdAt])
+  @@index([giftId]) // Index for querying gifts received
   @@map("transactions")
 }
 

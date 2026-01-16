@@ -13,12 +13,14 @@ export class GiftService {
 
   /**
    * Send a gift (transfer coins) in a room
+   * @param giftId Optional gift sticker ID (monkey, pikachu, etc.)
    */
   async sendGift(
     roomId: string,
     fromUserId: string,
     toUserId: string,
-    amount: number
+    amount: number,
+    giftId?: string
   ): Promise<{ transactionId: string; newBalance: number }> {
     if (amount <= 0) {
       throw new BadRequestException("Gift amount must be positive");
@@ -59,7 +61,8 @@ export class GiftService {
       fromUserId,
       toUserId,
       amount,
-      `Gift to user ${toUserId} in room ${roomId}`
+      `Gift to user ${toUserId} in room ${roomId}`,
+      giftId // Pass giftId to wallet service
     );
 
     // Create gift record
@@ -69,6 +72,7 @@ export class GiftService {
         fromUserId,
         toUserId,
         amount,
+        giftId: giftId || null, // Store giftId in CallGift
         transactionId: result.transactionId
       }
     });

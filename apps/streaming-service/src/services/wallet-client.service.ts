@@ -36,17 +36,19 @@ export class WalletClientService {
   }
 
   /**
-   * Transfer coins between users (for dare payments)
+   * Transfer coins between users (for dare payments and gifts)
    * @param fromUserId User paying
    * @param toUserId User receiving
    * @param coins Amount in coins
    * @param description Transaction description
+   * @param giftId Optional gift sticker ID (for gift transactions)
    */
   async transferCoins(
     fromUserId: string,
     toUserId: string,
     coins: number,
-    description: string
+    description: string,
+    giftId?: string
   ): Promise<{ transactionId: string; newBalance: number }> {
     try {
       // First deduct from sender
@@ -69,14 +71,15 @@ export class WalletClientService {
 
       const deductResult = await deductResponse.json() as { transactionId: string; newBalance: number };
 
-      // Then credit to receiver
+      // Then credit to receiver with gift information
       const creditResponse = await fetch(`${this.walletServiceUrl}/test/wallet/add-coins`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           userId: toUserId,
           amount: coins,
-          description: `Dare payment (credit): ${description}`
+          description: `Gift payment (credit): ${description}`,
+          giftId: giftId // Pass giftId to wallet service
         })
       });
 

@@ -5,6 +5,7 @@ import { z } from "zod";
 const sendGiftSchema = z.object({
   toUserId: z.string(),
   amount: z.number().positive(),
+  giftId: z.string().optional(), // Gift sticker ID (monkey, pikachu, etc.)
   fromUserId: z.string().optional() // Optional in test mode
 });
 
@@ -26,7 +27,7 @@ export class GiftController {
     @Body() body: unknown
   ) {
     const parsed = sendGiftSchema.parse(body);
-    const { toUserId, amount, fromUserId } = parsed;
+    const { toUserId, amount, giftId, fromUserId } = parsed;
     
     // In test mode, allow fromUserId in body, otherwise extract from token
     let finalFromUserId = fromUserId;
@@ -46,7 +47,7 @@ export class GiftController {
       throw new Error("fromUserId is required");
     }
 
-    return await this.giftService.sendGift(roomId, finalFromUserId, toUserId, amount);
+    return await this.giftService.sendGift(roomId, finalFromUserId, toUserId, amount, giftId);
   }
 
   /**

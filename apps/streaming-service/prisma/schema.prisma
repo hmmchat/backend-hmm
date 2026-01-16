@@ -126,6 +126,7 @@ model CallGift {
   fromUserId    String
   toUserId      String
   amount        Int         // Coin amount
+  giftId        String?     // Gift sticker ID (monkey, pikachu, etc.)
   transactionId String?     // Reference to wallet transaction
   createdAt     DateTime    @default(now())
   

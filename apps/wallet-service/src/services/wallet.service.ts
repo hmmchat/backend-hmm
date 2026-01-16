@@ -139,11 +139,13 @@ export class WalletService {
 
   /**
    * Add coins to wallet (test method, bypasses auth)
+   * @param giftId Optional gift sticker ID for gift transactions
    */
   async addCoinsForUser(
     userId: string,
     amount: number,
-    description?: string
+    description?: string,
+    giftId?: string
   ): Promise<{ newBalance: number; transactionId: string }> {
     if (amount <= 0) {
       throw new Error("Amount must be positive");
@@ -178,7 +180,8 @@ export class WalletService {
         walletId: wallet.id,
         amount: amount, // Positive for credit
         type: "CREDIT",
-        description: description || `Test credit: ${amount} coins`
+        description: description || `Test credit: ${amount} coins`,
+        giftId: giftId || null // Store giftId in transaction
       }
     });
 
@@ -245,6 +248,43 @@ export class WalletService {
       newBalance: updatedWallet.balance,
       transactionId: transaction.id
     };
+  }
+
+  /**
+   * Get transactions with gift information for a user
+   */
+  async getGiftTransactions(userId: string): Promise<Array<{
+    id: string;
+    giftId: string | null;
+    amount: number;
+    description: string | null;
+    createdAt: Date;
+  }>> {
+    const wallet = await this.prisma.wallet.findUnique({
+      where: { id: userId },
+      include: {
+        transactions: {
+          where: {
+            giftId: { not: null }, // Only transactions with gifts
+            type: "CREDIT" // Only credits (received gifts)
+          },
+          orderBy: { createdAt: "desc" },
+          select: {
+            id: true,
+            giftId: true,
+            amount: true,
+            description: true,
+            createdAt: true
+          }
+        }
+      }
+    });
+
+    if (!wallet) {
+      return [];
+    }
+
+    return wallet.transactions;
   }
 }
 

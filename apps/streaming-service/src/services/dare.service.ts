@@ -259,12 +259,13 @@ export class DareService {
     // Convert diamonds to coins
     const totalCoins = this.walletClient.diamondsToCoins(gift.diamonds);
 
-    // Transfer 100% to assigned user immediately
+    // Transfer 100% to assigned user immediately with gift information
     const paymentResult = await this.walletClient.transferCoins(
       senderId,
       dareRecord.assignedTo,
       totalCoins,
-      `Dare ${dareId} with gift ${giftId}`
+      `Dare ${dareId} with gift ${giftId}`,
+      giftId // Pass giftId to wallet service
     );
 
     // Update dare record

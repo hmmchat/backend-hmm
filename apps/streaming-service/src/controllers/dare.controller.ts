@@ -126,4 +126,5 @@ export class DareController {
     // Legacy endpoint - just return success as dare is completed when sent
     return { success: true, message: "Dare already completed when sent" };
   }
+
 }

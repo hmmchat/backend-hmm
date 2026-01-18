@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Discovery Service Test Interface</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            opacity: 0.9;
+            font-size: 1.1em;
+        }
+        
+        .content {
+            padding: 30px;
+        }
+        
+        .section {
+            margin-bottom: 40px;
+            padding: 25px;
+            background: #f8f9fa;
+            border-radius: 15px;
+            border-left: 5px solid #667eea;
+        }
+        
+        .section h2 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 1.8em;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #555;
+            font-weight: 600;
+        }
+        
+        input, select, textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+        
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        button:active {
+            transform: translateY(0);
+        }
+        
+        .btn-secondary {
+            background: #6c757d;
+        }
+        
+        .btn-success {
+            background: #28a745;
+        }
+        
+        .btn-danger {
+            background: #dc3545;
+        }
+        
+        .response {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border: 1px solid #e0e0e0;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .response pre {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            color: #333;
+        }
+        
+        .status-success {
+            color: #28a745;
+            font-weight: 600;
+        }
+        
+        .status-error {
+            color: #dc3545;
+            font-weight: 600;
+        }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }
+        
+        .card-preview {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            margin-top: 15px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .card-preview img {
+            width: 100%;
+            max-width: 300px;
+            border-radius: 10px;
+            margin-bottom: 15px;
+        }
+        
+        .info-box {
+            background: #e7f3ff;
+            border-left: 4px solid #2196F3;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+        }
+        
+        .info-box strong {
+            color: #1976D2;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔍 Discovery Service Test Interface</h1>
+            <p>Interactive testing for discovery cards, rainchecks, and matching flows</p>
+            <p style="font-size: 0.9em; margin-top: 10px; opacity: 0.8;">Using API Gateway (v1) endpoints</p>
+        </div>
+        
+        <div class="content">
+            <!-- Setup Section -->
+            <div class="section">
+                <h2>📋 Setup & Configuration</h2>
+                <div class="info-box">
+                    <strong>API Gateway URL:</strong> <span id="serviceUrl">http://localhost:3000</span>
+                    <br><strong>Status:</strong> <span id="serviceStatus">Checking...</span>
+                </div>
+                <div class="form-group">
+                    <label>API Gateway URL:</label>
+                    <input type="text" id="baseUrl" value="http://localhost:3000" placeholder="http://localhost:3000">
+                </div>
+                <button onclick="checkService()">Check Service Health</button>
+                <button onclick="setupTestData()" class="btn-success">Setup Test Data</button>
+                <div id="setupResponse" class="response" style="display:none;"></div>
+            </div>
+            
+            <!-- Get Card Section -->
+            <div class="section">
+                <h2>🎴 Get Discovery Card</h2>
+                <div class="grid">
+                    <div class="form-group">
+                        <label>User ID:</label>
+                        <input type="text" id="cardUserId" value="test-discovery-1" placeholder="test-discovery-1">
+                    </div>
+                    <div class="form-group">
+                        <label>Session ID:</label>
+                        <input type="text" id="cardSessionId" value="test-session-1" placeholder="test-session-1">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="soloOnly"> Solo Only (show only users not in squads)
+                    </label>
+                </div>
+                <button onclick="getCard()">Get Next Card</button>
+                <div id="cardResponse" class="response" style="display:none;"></div>
+                <div id="cardPreview" class="card-preview" style="display:none;"></div>
+            </div>
+            
+            <!-- Raincheck Section -->
+            <div class="section">
+                <h2>☔ Raincheck User</h2>
+                <div class="grid">
+                    <div class="form-group">
+                        <label>User ID:</label>
+                        <input type="text" id="raincheckUserId" value="test-discovery-1" placeholder="test-discovery-1">
+                    </div>
+                    <div class="form-group">
+                        <label>Session ID:</label>
+                        <input type="text" id="raincheckSessionId" value="test-session-1" placeholder="test-session-1">
+                    </div>
+                    <div class="form-group">
+                        <label>Rainchecked User ID:</label>
+                        <input type="text" id="raincheckedUserId" value="test-discovery-2" placeholder="test-discovery-2">
+                    </div>
+                </div>
+                <button onclick="raincheck()">Raincheck User</button>
+                <div id="raincheckResponse" class="response" style="display:none;"></div>
+            </div>
+            
+            <!-- Proceed Section -->
+            <div class="section">
+                <h2>✅ Proceed with Match</h2>
+                <div class="grid">
+                    <div class="form-group">
+                        <label>User ID:</label>
+                        <input type="text" id="proceedUserId" value="test-discovery-1" placeholder="test-discovery-1">
+                    </div>
+                    <div class="form-group">
+                        <label>Matched User ID:</label>
+                        <input type="text" id="matchedUserId" value="test-discovery-2" placeholder="test-discovery-2">
+                    </div>
+                </div>
+                <button onclick="proceed()">Proceed with Match</button>
+                <div id="proceedResponse" class="response" style="display:none;"></div>
+            </div>
+            
+            <!-- Reset Session Section -->
+            <div class="section">
+                <h2>🔄 Reset Session</h2>
+                <div class="grid">
+                    <div class="form-group">
+                        <label>User ID:</label>
+                        <input type="text" id="resetUserId" value="test-discovery-1" placeholder="test-discovery-1">
+                    </div>
+                    <div class="form-group">
+                        <label>Session ID:</label>
+                        <input type="text" id="resetSessionId" value="test-session-1" placeholder="test-session-1">
+                    </div>
+                </div>
+                <button onclick="resetSession()">Reset Session</button>
+                <div id="resetResponse" class="response" style="display:none;"></div>
+            </div>
+            
+            <!-- Select Location Section -->
+            <div class="section">
+                <h2>📍 Select Location</h2>
+                <div class="grid">
+                    <div class="form-group">
+                        <label>User ID:</label>
+                        <input type="text" id="locationUserId" value="test-discovery-1" placeholder="test-discovery-1">
+                    </div>
+                    <div class="form-group">
+                        <label>Session ID:</label>
+                        <input type="text" id="locationSessionId" value="test-session-1" placeholder="test-session-1">
+                    </div>
+                    <div class="form-group">
+                        <label>City:</label>
+                        <input type="text" id="locationCity" value="Mumbai" placeholder="Mumbai">
+                    </div>
+                </div>
+                <button onclick="selectLocation()">Select Location</button>
+                <div id="locationResponse" class="response" style="display:none;"></div>
+            </div>
+            
+            <!-- Fallback Cities Section -->
+            <div class="section">
+                <h2>🌍 Get Fallback Cities</h2>
+                <div class="form-group">
+                    <label>Limit:</label>
+                    <input type="number" id="citiesLimit" value="10" min="1" max="50">
+                </div>
+                <button onclick="getFallbackCities()">Get Fallback Cities</button>
+                <div id="citiesResponse" class="response" style="display:none;"></div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        const BASE_URL = 'http://localhost:3000';
+        const API_VERSION = '/v1';
+        
+        // Update base URL when input changes
+        document.getElementById('baseUrl').addEventListener('change', function(e) {
+            window.BASE_URL = e.target.value;
+        });
+        
+        function getBaseUrl() {
+            return document.getElementById('baseUrl').value || BASE_URL;
+        }
+        
+        function getApiUrl(path) {
+            // Ensure path starts with / and includes /v1 prefix
+            const cleanPath = path.startsWith('/') ? path : '/' + path;
+            return `${getBaseUrl()}${API_VERSION}${cleanPath}`;
+        }
+        
+        function showResponse(elementId, data, isError = false) {
+            const element = document.getElementById(elementId);
+            element.style.display = 'block';
+            const statusClass = isError ? 'status-error' : 'status-success';
+            const status = isError ? '❌ Error' : '✅ Success';
+            element.innerHTML = `<div class="${statusClass}">${status}</div><pre>${JSON.stringify(data, null, 2)}</pre>`;
+        }
+        
+        async function checkService() {
+            const url = getBaseUrl();
+            try {
+                // Check API gateway health endpoint
+                const response = await fetch(`${url}/health`);
+                if (response.ok) {
+                    const data = await response.json().catch(() => ({}));
+                    document.getElementById('serviceStatus').textContent = '✅ Running';
+                    showResponse('setupResponse', { 
+                        status: response.status, 
+                        message: 'API Gateway is healthy',
+                        data: data
+                    }, false);
+                } else {
+                    // Try discovery endpoint as fallback
+                    const discResponse = await fetch(`${url}${API_VERSION}/discovery/fallback-cities?limit=1`);
+                    const status = discResponse.status < 500 ? '✅ Running' : '⚠️ Running (but dependencies may be down)';
+                    document.getElementById('serviceStatus').textContent = status;
+                    showResponse('setupResponse', { 
+                        status: discResponse.status, 
+                        message: status,
+                        note: discResponse.status === 503 ? 'Service is running but user-service may not be available' : 'Service is healthy'
+                    }, false);
+                }
+            } catch (error) {
+                document.getElementById('serviceStatus').textContent = '❌ Not Running';
+                showResponse('setupResponse', { error: error.message }, true);
+            }
+        }
+        
+        async function setupTestData() {
+            const gatewayUrl = getBaseUrl();
+            showResponse('setupResponse', { message: 'Setting up test data via API Gateway...' });
+            
+            const testUsers = [
+                { id: 'test-discovery-1', username: 'discovery_user_1', gender: 'MALE', city: 'Mumbai', lat: 19.0760, lng: 72.8777 },
+                { id: 'test-discovery-2', username: 'discovery_user_2', gender: 'FEMALE', city: 'Mumbai', lat: 19.0760, lng: 72.8777 },
+                { id: 'test-discovery-3', username: 'discovery_user_3', gender: 'MALE', city: 'Delhi', lat: 28.6139, lng: 77.2090 },
+                { id: 'test-discovery-4', username: 'discovery_user_4', gender: 'FEMALE', city: 'Bangalore', lat: 12.9716, lng: 77.5946 }
+            ];
+            
+            const results = [];
+            
+            for (const user of testUsers) {
+                try {
+                    // Create profile using test endpoint via API gateway
+                    const profileRes = await fetch(`${gatewayUrl}${API_VERSION}/users/test/${user.id}/profile`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            username: user.username,
+                            dateOfBirth: '1998-01-15T00:00:00.000Z',
+                            gender: user.gender,
+                            displayPictureUrl: 'https://via.placeholder.com/300',
+                            latitude: user.lat,
+                            longitude: user.lng,
+                            preferredCity: user.city
+                        })
+                    }).catch(() => ({ status: 0, ok: false }));
+                    
+                    // Try creating profile if update fails
+                    if (!profileRes.ok && profileRes.status !== 0) {
+                        const createRes = await fetch(`${gatewayUrl}${API_VERSION}/users/${user.id}/profile`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                username: user.username,
+                                dateOfBirth: '1998-01-15T00:00:00.000Z',
+                                gender: user.gender,
+                                displayPictureUrl: 'https://via.placeholder.com/300'
+                            })
+                        }).catch(() => ({ status: 0, ok: false }));
+                        results.push({ user: user.id, action: 'create', status: createRes.status || 'failed' });
+                    } else {
+                        results.push({ user: user.id, action: 'update', status: profileRes.status || 'success' });
+                    }
+                    
+                    // Add coins via API gateway (wallet service route: /test/wallet/add-coins)
+                    await fetch(`${gatewayUrl}${API_VERSION}/wallet/test/wallet/add-coins`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            userId: user.id,
+                            amount: 10000,
+                            description: 'test_setup'
+                        })
+                    }).catch(() => {});
+                } catch (error) {
+                    results.push({ user: user.id, error: error.message });
+                }
+            }
+            
+            showResponse('setupResponse', { 
+                message: 'Test data setup completed',
+                results: results,
+                note: 'Users created. You can now test discovery features!'
+            });
+        }
+        
+        async function getCard() {
+            const userId = encodeURIComponent(document.getElementById('cardUserId').value);
+            const sessionId = encodeURIComponent(document.getElementById('cardSessionId').value);
+            const soloOnly = document.getElementById('soloOnly').checked;
+            
+            try {
+                const response = await fetch(
+                    getApiUrl(`/discovery/test/card?userId=${userId}&sessionId=${sessionId}&soloOnly=${soloOnly}`)
+                );
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showResponse('cardResponse', data);
+                    if (data.card) {
+                        displayCardPreview(data.card);
+                    } else {
+                        document.getElementById('cardPreview').innerHTML = '<p>No card available (exhausted or no matches)</p>';
+                        document.getElementById('cardPreview').style.display = 'block';
+                    }
+                } else {
+                    showResponse('cardResponse', data, true);
+                    document.getElementById('cardPreview').style.display = 'none';
+                }
+            } catch (error) {
+                showResponse('cardResponse', { error: error.message }, true);
+                document.getElementById('cardPreview').style.display = 'none';
+            }
+        }
+        
+        function displayCardPreview(card) {
+            const preview = document.getElementById('cardPreview');
+            if (card.type === 'LOCATION') {
+                preview.innerHTML = `
+                    <h3>📍 Location Card</h3>
+                    <p><strong>City:</strong> ${card.city || 'Anywhere'}</p>
+                    <p><strong>Available Count:</strong> ${card.availableCount}</p>
+                `;
+            } else {
+                preview.innerHTML = `
+                    <h3>👤 User Card</h3>
+                    ${card.displayPictureUrl ? `<img src="${card.displayPictureUrl}" alt="Profile" onerror="this.style.display='none'">` : ''}
+                    <p><strong>Username:</strong> ${card.username}</p>
+                    <p><strong>Age:</strong> ${card.age}</p>
+                    <p><strong>City:</strong> ${card.city}, ${card.country}</p>
+                    ${card.intent ? `<p><strong>Intent:</strong> ${card.intent}</p>` : ''}
+                    ${card.brands && card.brands.length > 0 ? `<p><strong>Brands:</strong> ${card.brands.map(b => b.name).join(', ')}</p>` : ''}
+                    ${card.interests && card.interests.length > 0 ? `<p><strong>Interests:</strong> ${card.interests.map(i => i.name).join(', ')}</p>` : ''}
+                    ${card.musicPreference ? `<p><strong>Music:</strong> ${card.musicPreference.name} by ${card.musicPreference.artist}</p>` : ''}
+                `;
+            }
+            preview.style.display = 'block';
+        }
+        
+        async function raincheck() {
+            const userId = document.getElementById('raincheckUserId').value;
+            const sessionId = document.getElementById('raincheckSessionId').value;
+            const raincheckedUserId = document.getElementById('raincheckedUserId').value;
+            
+            try {
+                const response = await fetch(getApiUrl('/discovery/test/raincheck'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId, sessionId, raincheckedUserId })
+                });
+                const data = await response.json();
+                showResponse('raincheckResponse', data, !response.ok);
+            } catch (error) {
+                showResponse('raincheckResponse', { error: error.message }, true);
+            }
+        }
+        
+        async function proceed() {
+            const userId = document.getElementById('proceedUserId').value;
+            const matchedUserId = document.getElementById('matchedUserId').value;
+            
+            try {
+                const response = await fetch(getApiUrl('/discovery/test/proceed'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId, matchedUserId })
+                });
+                const data = await response.json();
+                showResponse('proceedResponse', data, !response.ok);
+            } catch (error) {
+                showResponse('proceedResponse', { error: error.message }, true);
+            }
+        }
+        
+        async function resetSession() {
+            const userId = document.getElementById('resetUserId').value;
+            const sessionId = document.getElementById('resetSessionId').value;
+            
+            try {
+                const response = await fetch(getApiUrl('/discovery/test/reset-session'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId, sessionId })
+                });
+                const data = await response.json();
+                showResponse('resetResponse', data, !response.ok);
+            } catch (error) {
+                showResponse('resetResponse', { error: error.message }, true);
+            }
+        }
+        
+        async function selectLocation() {
+            const userId = document.getElementById('locationUserId').value;
+            const sessionId = document.getElementById('locationSessionId').value;
+            const city = document.getElementById('locationCity').value;
+            
+            try {
+                const response = await fetch(getApiUrl('/discovery/test/select-location'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId, sessionId, city })
+                });
+                const data = await response.json();
+                showResponse('locationResponse', data, !response.ok);
+            } catch (error) {
+                showResponse('locationResponse', { error: error.message }, true);
+            }
+        }
+        
+        async function getFallbackCities() {
+            const limit = document.getElementById('citiesLimit').value;
+            
+            try {
+                const response = await fetch(getApiUrl(`/discovery/fallback-cities?limit=${limit}`));
+                const data = await response.json();
+                showResponse('citiesResponse', data, !response.ok);
+            } catch (error) {
+                showResponse('citiesResponse', { error: error.message }, true);
+            }
+        }
+        
+        // Check service on load
+        window.addEventListener('load', function() {
+            checkService();
+        });
+    </script>
+</body>
+</html>

@@ -355,17 +355,23 @@ export class DiscoveryController {
    */
   @Post("test/proceed")
   async proceedTest(@Body() body: any) {
-    const { userId, matchedUserId } = body;
+    const { userId, matchedUserId, timeoutSeconds } = body;
 
     if (!userId || !matchedUserId) {
       throw new HttpException("userId and matchedUserId are required", HttpStatus.BAD_REQUEST);
     }
 
-    // Proceed with match
-    await this.discoveryService.proceedWithMatch(userId, matchedUserId);
+    // Proceed with match (returns room info if both users accepted)
+    // timeoutSeconds is optional - defaults to 30 seconds for testing (or env var)
+    const result = await this.discoveryService.proceedWithMatch(
+      userId, 
+      matchedUserId,
+      timeoutSeconds ? parseInt(timeoutSeconds, 10) : undefined
+    );
 
     return {
-      success: true
+      success: true,
+      ...result
     };
   }
 

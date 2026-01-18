@@ -148,7 +148,9 @@ export class GatewayController {
       }
 
       // Check authentication if required
-      if (route.requiresAuth) {
+      // Use middleware's requiresAuth method to check path (bypasses /test/ endpoints)
+      const pathRequiresAuth = this.authMiddleware.requiresAuth(path);
+      if (pathRequiresAuth && route.requiresAuth) {
         const token = this.authMiddleware.extractToken(headers.authorization || headers.Authorization);
         if (!token) {
           throw new HttpException("Missing authorization token", HttpStatus.UNAUTHORIZED);

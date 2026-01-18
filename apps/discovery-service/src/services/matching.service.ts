@@ -229,9 +229,43 @@ export class MatchingService {
       limit: 500 // Get large pool (max allowed by user-service)
     });
 
-    // Filter out users who are already matched (use cached if not provided)
+    console.log(`[DEBUG] getPoolUsers - allUsers from user-service: ${allUsers.length}`);
+    if (allUsers.length > 0) {
+      console.log(`[DEBUG] getPoolUsers - Sample user statuses:`, allUsers.slice(0, 5).map(u => `${u.id}:${u.status}`).join(', '));
+    }
+
+    // Filter out users who are already matched
+    // IMPORTANT: Only exclude users who are BOTH in matchedUserIds AND have MATCHED status
+    // Users with AVAILABLE status should be available for matching even if they have an old match record
     const matched = matchedUserIds || await this.getMatchedUserIdsCached();
-    return allUsers.filter(user => !matched.has(user.id));
+    console.log(`[DEBUG] getPoolUsers - matchedUserIds count: ${matched.size}`);
+    
+    const filteredUsers = allUsers.filter(user => {
+      // Exclude if user is in exclude list
+      if (excludeUserIds.includes(user.id)) {
+        return false;
+      }
+      
+      // Only exclude if user is in matchedUserIds AND has MATCHED status
+      // If user is AVAILABLE (or IN_SQUAD_AVAILABLE, IN_BROADCAST_AVAILABLE), they should be available for matching
+      if (matched.has(user.id)) {
+        // User has a match record - only exclude if they're actually MATCHED
+        // If status is AVAILABLE, they should be available for matching (old match record should be cleaned up)
+        const shouldExclude = user.status === 'MATCHED';
+        if (shouldExclude) {
+          console.log(`[DEBUG] getPoolUsers - Excluding ${user.id} (status: ${user.status}, in matched set)`);
+        } else {
+          console.log(`[DEBUG] getPoolUsers - Including ${user.id} (status: ${user.status}, in matched set but not MATCHED - old match record)`);
+        }
+        return shouldExclude;
+      }
+      
+      // User is not in matched list, so they're available
+      return true;
+    });
+    
+    console.log(`[DEBUG] getPoolUsers - filteredUsers count: ${filteredUsers.length}`);
+    return filteredUsers;
   }
 
   /**
@@ -360,9 +394,17 @@ export class MatchingService {
     
     for (const pair of scoredPairs) {
       // Check if user is still available (may have been matched by another request)
-      if (!currentMatched.has(pair.user.id)) {
+      // Only exclude if user is in matchedUserIds AND has MATCHED status
+      // Users with AVAILABLE status should be available even if they have an old match record
+      const isMatched = currentMatched.has(pair.user.id) && pair.user.status === 'MATCHED';
+      if (!isMatched) {
         // Create match (no expiration - persists until raincheck)
-        await this.createMatch(userId, pair.user.id, pair.score);
+        const result = await this.createMatch(userId, pair.user.id, pair.score);
+        if (!result.success) {
+          console.error(`[ERROR] Failed to create match in findMatchForUser for ${userId} and ${pair.user.id}:`, result.error);
+          // Continue to next pair instead of failing completely
+          continue;
+        }
         // Update both users' status to MATCHED (parallelized for performance)
         await Promise.all([
           this.updateUserStatus(userId, "MATCHED"),
@@ -445,7 +487,12 @@ export class MatchingService {
     for (const pair of pairs) {
       if (!matchedUserIds.has(pair.user1.id) && !matchedUserIds.has(pair.user2.id)) {
         // Create match
-        await this.createMatch(pair.user1.id, pair.user2.id, pair.score);
+        const result = await this.createMatch(pair.user1.id, pair.user2.id, pair.score);
+        if (!result.success) {
+          console.error(`[ERROR] Failed to create match in findMutualMatches for ${pair.user1.id} and ${pair.user2.id}:`, result.error);
+          // Continue to next pair instead of failing completely
+          continue;
+        }
         // Update both users' status to MATCHED (parallelized for performance)
         await Promise.all([
           this.updateUserStatus(pair.user1.id, "MATCHED"),
@@ -479,11 +526,12 @@ export class MatchingService {
         return match;
       } else {
         // Fallback to raw SQL - get match (no expiration check)
+        // Use string interpolation for userId since it's already validated
+        const escapedUserId = userId.replace(/'/g, "''");
         const matches = await (this.prisma as any).$queryRawUnsafe(
           `SELECT "user1Id", "user2Id", score FROM active_matches 
-           WHERE "user1Id" = $1 OR "user2Id" = $1
-           LIMIT 1`,
-          userId
+           WHERE "user1Id" = '${escapedUserId}' OR "user2Id" = '${escapedUserId}'
+           LIMIT 1`
         );
         return matches && matches.length > 0 ? matches[0] : null;
       }
@@ -493,11 +541,11 @@ export class MatchingService {
       }
       // Try raw SQL fallback - get match (no expiration check)
       try {
+        const escapedUserId = userId.replace(/'/g, "''");
         const matches = await (this.prisma as any).$queryRawUnsafe(
           `SELECT "user1Id", "user2Id", score FROM active_matches 
-           WHERE "user1Id" = $1 OR "user2Id" = $1
-           LIMIT 1`,
-          userId
+           WHERE "user1Id" = '${escapedUserId}' OR "user2Id" = '${escapedUserId}'
+           LIMIT 1`
         );
         return matches && matches.length > 0 ? matches[0] : null;
       } catch (sqlError: any) {
@@ -510,8 +558,9 @@ export class MatchingService {
   /**
    * Create a match between two users
    * Matches do NOT expire - they persist until someone rainchecks
+   * Returns success status and error details if failed
    */
-  async createMatch(user1Id: string, user2Id: string, score: number): Promise<void> {
+  async createMatch(user1Id: string, user2Id: string, score: number): Promise<{ success: boolean; error?: any }> {
     try {
       // Ensure user1Id < user2Id for consistency
       const [id1, id2] = [user1Id, user2Id].sort();
@@ -521,21 +570,25 @@ export class MatchingService {
       const escapedId1 = id1.replace(/'/g, "''");
       const escapedId2 = id2.replace(/'/g, "''");
       
+      let rowsAffected = 0;
+      
       // Try with expiresAt first (if column exists)
       try {
-        await (this.prisma as any).$executeRawUnsafe(
+        const result = await (this.prisma as any).$executeRawUnsafe(
           `INSERT INTO active_matches (id, "user1Id", "user2Id", score, "expiresAt", "createdAt", "updatedAt") 
            VALUES (gen_random_uuid()::text, '${escapedId1}', '${escapedId2}', ${score}, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
            ON CONFLICT ("user1Id", "user2Id") DO NOTHING`
         );
+        rowsAffected = result || 0;
       } catch (expiresAtError: any) {
         // If expiresAt column doesn't exist, create match without it
         if (expiresAtError?.message?.includes('expiresAt') || expiresAtError?.code === '42703') {
-          await (this.prisma as any).$executeRawUnsafe(
+          const result = await (this.prisma as any).$executeRawUnsafe(
             `INSERT INTO active_matches (id, "user1Id", "user2Id", score, "createdAt", "updatedAt") 
              VALUES (gen_random_uuid()::text, '${escapedId1}', '${escapedId2}', ${score}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
              ON CONFLICT ("user1Id", "user2Id") DO NOTHING`
           );
+          rowsAffected = result || 0;
         } else {
           throw expiresAtError;
         }
@@ -543,7 +596,15 @@ export class MatchingService {
       
       // Invalidate matched user IDs cache
       await this.cacheService.del("matched:user:ids");
-      console.log(`[DEBUG] Created match between ${id1} and ${id2} (no expiration - persists until raincheck)`);
+      
+      if (rowsAffected > 0) {
+        console.log(`[DEBUG] Created match between ${id1} and ${id2} (no expiration - persists until raincheck)`);
+        return { success: true };
+      } else {
+        // Match already exists (ON CONFLICT DO NOTHING)
+        console.log(`[DEBUG] Match already exists between ${id1} and ${id2}`);
+        return { success: true }; // Still return success - match exists
+      }
     } catch (error: any) {
       // If template literal fails, try unsafe with proper escaping
       try {
@@ -551,21 +612,25 @@ export class MatchingService {
         const escapedId1 = id1.replace(/'/g, "''");
         const escapedId2 = id2.replace(/'/g, "''");
         
+        let rowsAffected = 0;
+        
         // Try with expiresAt as NULL (if column exists)
         try {
-          await (this.prisma as any).$executeRawUnsafe(
+          const result = await (this.prisma as any).$executeRawUnsafe(
             `INSERT INTO active_matches (id, "user1Id", "user2Id", score, "expiresAt", "createdAt", "updatedAt") 
              VALUES (gen_random_uuid()::text, '${escapedId1}', '${escapedId2}', ${score}, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
              ON CONFLICT ("user1Id", "user2Id") DO NOTHING`
           );
+          rowsAffected = result || 0;
         } catch (expiresAtError: any) {
           // If expiresAt column doesn't exist, create match without it
           if (expiresAtError?.message?.includes('expiresAt') || expiresAtError?.code === '42703') {
-            await (this.prisma as any).$executeRawUnsafe(
+            const result = await (this.prisma as any).$executeRawUnsafe(
               `INSERT INTO active_matches (id, "user1Id", "user2Id", score, "createdAt", "updatedAt") 
                VALUES (gen_random_uuid()::text, '${escapedId1}', '${escapedId2}', ${score}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                ON CONFLICT ("user1Id", "user2Id") DO NOTHING`
             );
+            rowsAffected = result || 0;
           } else {
             throw expiresAtError;
           }
@@ -573,10 +638,26 @@ export class MatchingService {
         
         // Invalidate matched user IDs cache
         await this.cacheService.del("matched:user:ids");
-        console.log(`[DEBUG] Created match between ${id1} and ${id2} (no expiration - persists until raincheck)`);
+        
+        if (rowsAffected > 0) {
+          console.log(`[DEBUG] Created match between ${id1} and ${id2} (no expiration - persists until raincheck)`);
+          return { success: true };
+        } else {
+          console.log(`[DEBUG] Match already exists between ${id1} and ${id2}`);
+          return { success: true }; // Still return success - match exists
+        }
       } catch (unsafeError: any) {
-        console.error(`Failed to create match between ${user1Id} and ${user2Id}:`, unsafeError?.message || unsafeError);
-        // Don't throw - match creation failure shouldn't break the flow
+        const errorDetails = {
+          code: unsafeError?.code,
+          message: unsafeError?.message,
+          detail: unsafeError?.detail,
+          hint: unsafeError?.hint,
+          stack: unsafeError?.stack
+        };
+        console.error(`[ERROR] Failed to create match between ${user1Id} and ${user2Id}:`, errorDetails);
+        console.error(`[ERROR] Full error object:`, JSON.stringify(errorDetails, null, 2));
+        // Return error details to help debugging
+        return { success: false, error: errorDetails };
       }
     }
   }
@@ -620,41 +701,28 @@ export class MatchingService {
    */
   async updateUserStatus(userId: string, status: string): Promise<void> {
     console.log(`[DEBUG] updateUserStatus called for user ${userId} to status ${status}`);
-    // Always use direct DB update for reliability
-    try {
-      await this.updateUserStatusDirect(userId, status);
-      // Verify the update worked
-      const escapedUserId = userId.replace(/'/g, "''");
-      const verifyStatus = await (this.prisma as any).$queryRawUnsafe(
-        `SELECT status FROM users WHERE id = '${escapedUserId}'`
-      );
-      console.log(`[DEBUG] Status verification after update for user ${userId}:`, verifyStatus?.[0]?.status || 'null');
-      if (verifyStatus && verifyStatus.length > 0 && verifyStatus[0].status !== status) {
-        console.warn(`[DEBUG] Status update verification failed for user ${userId}, retrying...`);
-        // Retry if status didn't update
-        await this.updateUserStatusDirect(userId, status);
-      }
-    } catch (dbError) {
+    // Fire-and-forget update for fast performance - don't wait for verification
+    // Status updates are critical but shouldn't block the main flow
+    this.updateUserStatusDirect(userId, status).catch((dbError) => {
       console.error(`[ERROR] Direct DB update failed for user ${userId}:`, dbError);
       // Fallback to API if direct DB update fails
-      try {
-        const response = await fetch(`${this.userServiceUrl}/users/test/${userId}/status`, {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({ status })
-        });
-
+      fetch(`${this.userServiceUrl}/users/test/${userId}/status`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ status })
+      }).then((response) => {
         if (!response.ok) {
-          const errorText = await response.text();
-          console.warn(`[WARN] Failed to update status via API for user ${userId}:`, errorText);
+          return response.text().then(errorText => {
+            console.warn(`[WARN] Failed to update status via API for user ${userId}:`, errorText);
+          });
         }
-      } catch (error) {
+      }).catch((error) => {
         console.error(`[ERROR] Error updating status via API for user ${userId}:`, error);
         // Don't throw - status update failure shouldn't break matching
-      }
-    }
+      });
+    });
   }
 
   /**

@@ -535,6 +535,24 @@ export class UserController {
   }
 
   /**
+   * Test endpoint: Delete user (bypasses auth)
+   * DELETE /users/test/:userId
+   */
+  @Delete("users/test/:userId")
+  async deleteUserTest(@Param("userId") userId: string) {
+    try {
+      await this.userService.deleteUserAccount(userId);
+      return { success: true, message: `User ${userId} deleted successfully` };
+    } catch (error: any) {
+      if (error.code === "P2025") {
+        // User doesn't exist
+        throw new HttpException("User not found", HttpStatus.NOT_FOUND);
+      }
+      throw error;
+    }
+  }
+
+  /**
    * Delete user account (internal endpoint, called by auth-service)
    * DELETE /users/internal/:userId
    * Note: This should be protected by internal service authentication

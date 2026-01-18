@@ -1,0 +1,2160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HMM Chat - Complete Test Interface</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #333;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            opacity: 0.9;
+            font-size: 1.1em;
+        }
+        
+        .tabs {
+            display: flex;
+            background: #f8f9fa;
+            border-bottom: 2px solid #e0e0e0;
+            overflow-x: auto;
+        }
+        
+        .tab {
+            padding: 15px 30px;
+            cursor: pointer;
+            border: none;
+            background: transparent;
+            font-size: 16px;
+            font-weight: 600;
+            color: #666;
+            transition: all 0.3s;
+            white-space: nowrap;
+        }
+        
+        .tab:hover {
+            background: #e9ecef;
+        }
+        
+        .tab.active {
+            color: #667eea;
+            border-bottom: 3px solid #667eea;
+            background: white;
+        }
+        
+        .tab-content {
+            display: none;
+            padding: 30px;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        .section {
+            margin-bottom: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 12px;
+            border-left: 4px solid #667eea;
+        }
+        
+        .section h3 {
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 1.4em;
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #555;
+            font-weight: 600;
+            font-size: 14px;
+        }
+        
+        input, select, textarea {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+        
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+        }
+        
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        button:active {
+            transform: translateY(0);
+        }
+        
+        .btn-secondary {
+            background: #6c757d;
+        }
+        
+        .btn-success {
+            background: #28a745;
+        }
+        
+        .btn-danger {
+            background: #dc3545;
+        }
+        
+        .btn-info {
+            background: #17a2b8;
+        }
+        
+        .response {
+            margin-top: 15px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border: 1px solid #e0e0e0;
+            max-height: 400px;
+            overflow-y: auto;
+            font-size: 12px;
+        }
+        
+        .response pre {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            font-family: 'Courier New', monospace;
+            color: #333;
+        }
+        
+        .status-success {
+            color: #28a745;
+            font-weight: 600;
+        }
+        
+        .status-error {
+            color: #dc3545;
+            font-weight: 600;
+        }
+        
+        .info-box {
+            background: #e7f3ff;
+            border-left: 4px solid #2196F3;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+        }
+        
+        .info-box strong {
+            color: #1976D2;
+        }
+        
+        .card-preview {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            margin-top: 15px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .card-preview img {
+            width: 100%;
+            max-width: 300px;
+            border-radius: 10px;
+            margin-bottom: 15px;
+        }
+        
+        .match-explanation {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 12px;
+            margin-top: 10px;
+            border-radius: 5px;
+            font-size: 13px;
+        }
+        
+        .user-status {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-left: 10px;
+        }
+        
+        .status-available {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .status-squad {
+            background: #cce5ff;
+            color: #004085;
+        }
+        
+        .status-broadcast {
+            background: #fff3cd;
+            color: #856404;
+        }
+        
+        .quick-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        
+        .quick-action-btn {
+            padding: 8px 16px;
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎯 HMM Chat - Complete Test Interface</h1>
+            <p>Test Discovery → Streaming → Wallet → Friends Flow</p>
+            <p style="font-size: 0.9em; margin-top: 10px; opacity: 0.8;">Using API Gateway (v1) with Test Endpoints</p>
+        </div>
+        
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab('setup', this)">📋 Setup</button>
+            <button class="tab" onclick="switchTab('discovery', this)">🔍 Discovery</button>
+            <button class="tab" onclick="switchTab('streaming', this)">📹 Streaming</button>
+            <button class="tab" onclick="switchTab('wallet', this)">💰 Wallet</button>
+            <button class="tab" onclick="switchTab('friends', this)">👥 Friends</button>
+        </div>
+        
+        <!-- Setup Tab -->
+        <div id="setup" class="tab-content active">
+            <div class="section">
+                <h3>🔧 Setup & Configuration</h3>
+                <div class="info-box">
+                    <strong>API Gateway:</strong> <span id="gatewayUrl">http://localhost:3000</span>
+                    <br><strong>Status:</strong> <span id="gatewayStatus">Checking...</span>
+                </div>
+                <div class="form-group">
+                    <label>API Gateway URL:</label>
+                    <input type="text" id="baseUrl" value="http://localhost:3000" placeholder="http://localhost:3000">
+                </div>
+                <button onclick="checkGateway()">Check Gateway Health</button>
+            </div>
+            
+            <div class="section">
+                <h3>📦 Create Test Data</h3>
+                <p style="margin-bottom: 15px; color: #666;">
+                    Creates 20+ diverse test users across multiple cities with proper profiles, locations, and wallets.
+                    Perfect for testing discovery cards and matching flows.
+                </p>
+                <button class="btn-success" onclick="createComprehensiveTestData()" style="width: 100%; padding: 15px; font-size: 16px; margin-bottom: 10px;">
+                    🚀 Create Comprehensive Test Data (20+ Users)
+                </button>
+                <div id="setupResponse" class="response" style="display:none;"></div>
+            </div>
+            
+            <div class="section">
+                <h3>🧹 Cleanup Test Data</h3>
+                <p style="margin-bottom: 15px; color: #666;">
+                    Resets all discovery sessions and clears rainchecked users. 
+                    This allows you to see all cards again from the beginning.
+                </p>
+                <button class="btn-danger" onclick="cleanupTestData()" style="width: 100%; padding: 15px; font-size: 16px;">
+                    🗑️ Cleanup & Reset All Sessions
+                </button>
+                <div id="cleanupResponse" class="response" style="display:none;"></div>
+            </div>
+        </div>
+        
+        <!-- Discovery Tab -->
+        <div id="discovery" class="tab-content">
+            <div class="section">
+                <h3>🔍 Discovery - Card Swiping</h3>
+                <p style="margin-bottom: 15px; color: #666; font-size: 13px;">
+                    Simulate the discovery flow: Get cards, swipe (proceed/raincheck), then enter streaming
+                </p>
+                
+                <div class="grid" style="grid-template-columns: 1fr 1fr; margin-bottom: 20px;">
+                    <div class="form-group">
+                        <label>Your User ID:</label>
+                        <input type="text" id="cardUserId" value="test-user-1" placeholder="test-user-1">
+                    </div>
+                    <div class="form-group">
+                        <label>Session ID:</label>
+                        <input type="text" id="cardSessionId" value="session-1" placeholder="session-1">
+                    </div>
+                </div>
+                
+                <!-- User Status Display -->
+                <div id="userStatusDisplay" style="margin-bottom: 15px; padding: 12px; background: #f0f7ff; border-left: 4px solid #4a90e2; border-radius: 6px; display: none;">
+                    <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <span style="font-weight: 600; color: #333;">👤 Current User Status:</span>
+                            <span id="userStatusValue" style="padding: 4px 12px; background: white; border-radius: 12px; font-weight: 600; font-size: 13px;"></span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 10px; margin-left: auto;">
+                            <span style="font-weight: 600; color: #333;">📍 Current City:</span>
+                            <span id="userCityValue" style="padding: 4px 12px; background: white; border-radius: 12px; font-weight: 600; font-size: 13px; color: #666;">Loading...</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <button onclick="getCard()" style="width: 100%; padding: 15px; font-size: 16px; margin-bottom: 20px;">
+                    🔄 Get Next Card
+                </button>
+                
+                <!-- Card Display (App-like) -->
+                <div id="cardDisplay" style="display: none; background: white; border-radius: 20px; padding: 30px; box-shadow: 0 10px 40px rgba(0,0,0,0.1); margin-bottom: 20px;">
+                    <div id="cardContent"></div>
+                    <div id="cardActionButtons" style="display: flex; gap: 15px; margin-top: 20px;">
+                        <button id="raincheckButton" onclick="handleRaincheck()" class="btn-secondary" style="flex: 1; padding: 15px; font-size: 16px;">
+                            ☔ Raincheck
+                        </button>
+                        <button id="proceedButton" onclick="handleProceed()" class="btn-success" style="flex: 1; padding: 15px; font-size: 16px;">
+                            ✅ Proceed
+                        </button>
+                    </div>
+                    <div id="cardApiInfo" style="margin-top: 15px; padding: 10px; background: #f8f9fa; border-radius: 8px; font-size: 12px; color: #666;"></div>
+                </div>
+                
+                <div id="cardResponse" class="response" style="display:none;"></div>
+                
+                <!-- Mutual Acceptance Testing -->
+                <div style="margin-top: 20px; padding: 15px; background: #fff3cd; border-left: 4px solid #ffc107; border-radius: 6px;">
+                    <h4 style="margin: 0 0 10px 0; font-size: 14px; color: #856404;">🧪 Test Mutual Acceptance Flow</h4>
+                    <p style="margin: 0 0 10px 0; font-size: 12px; color: #856404;">
+                        Test the flow where both users need to accept before entering streaming. 
+                        Open this page in two browser tabs/windows with different user IDs.
+                    </p>
+                    <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+                        <div class="form-group">
+                            <label>User 1 ID:</label>
+                            <input type="text" id="mutualUser1" value="test-user-1" placeholder="test-user-1">
+                        </div>
+                        <div class="form-group">
+                            <label>User 2 ID:</label>
+                            <input type="text" id="mutualUser2" value="test-user-2" placeholder="test-user-2">
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin-bottom: 10px;">
+                        <label>Acceptance Timeout (seconds):</label>
+                        <input type="number" id="mutualTimeout" value="30" min="1" max="300" placeholder="30">
+                        <small style="display: block; color: #666; font-size: 11px; margin-top: 3px;">
+                            ⏱️ Time window for both users to accept (default: 30s for testing)
+                        </small>
+                    </div>
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                        <button onclick="testMutualAcceptance()" class="btn-info" style="padding: 10px 15px; font-size: 13px;">
+                            🎯 Test Mutual Acceptance
+                        </button>
+                        <button onclick="checkAcceptanceStatus()" class="btn-secondary" style="padding: 10px 15px; font-size: 13px;">
+                            📊 Check Acceptance Status
+                        </button>
+                    </div>
+                    <div id="mutualAcceptanceResponse" class="response" style="display:none; margin-top: 10px;"></div>
+                </div>
+                
+                <!-- Quick Actions -->
+                <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
+                    <h4 style="margin-bottom: 10px; font-size: 14px; color: #666;">Quick Actions</h4>
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                        <button onclick="resetSession()" class="btn-secondary quick-action-btn">🔄 Reset Session</button>
+                        <button onclick="selectLocation()" class="btn-info quick-action-btn">📍 Change Location</button>
+                    </div>
+                    <div class="grid" style="grid-template-columns: 1fr 1fr; margin-top: 15px; display: none;" id="locationInputs">
+                        <div class="form-group">
+                            <label>City:</label>
+                            <input type="text" id="locationCity" value="Mumbai" placeholder="Mumbai">
+                        </div>
+                        <div class="form-group">
+                            <button onclick="applyLocation()" class="btn-info" style="margin-top: 25px;">Apply</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Streaming Tab -->
+        <div id="streaming" class="tab-content">
+            <div class="section">
+                <h3>🏠 Create Room</h3>
+                <p style="margin-bottom: 10px; color: #666; font-size: 13px;">
+                    Create a room when users match (both must be IN_SQUAD status). Room can have 2-4 participants.
+                </p>
+                <div class="form-group">
+                    <label>User IDs (comma-separated, 2-4 users):</label>
+                    <input type="text" id="roomUserIds" value="test-user-1,test-user-2" placeholder="test-user-1,test-user-2">
+                </div>
+                <div class="form-group">
+                    <label>Call Type:</label>
+                    <select id="callType">
+                        <option value="matched">Matched</option>
+                        <option value="squad">Squad</option>
+                    </select>
+                </div>
+                <button onclick="createRoom()">Create Room</button>
+                <div id="roomResponse" class="response" style="display:none;"></div>
+            </div>
+            
+            <div class="section">
+                <h3>📦 Get Room Info</h3>
+                <div class="form-group">
+                    <label>Room ID:</label>
+                    <input type="text" id="getRoomId" placeholder="Enter room ID">
+                </div>
+                <button onclick="getRoom()">Get Room Details</button>
+                <div id="getRoomResponse" class="response" style="display:none;"></div>
+            </div>
+            
+            <div class="section">
+                <h3>🎁 Send Gift</h3>
+                <div class="grid">
+                    <div class="form-group">
+                        <label>Room ID:</label>
+                        <input type="text" id="giftRoomId" placeholder="Enter room ID">
+                    </div>
+                    <div class="form-group">
+                        <label>From User ID:</label>
+                        <input type="text" id="giftFromUserId" value="test-user-1">
+                    </div>
+                    <div class="form-group">
+                        <label>To User ID:</label>
+                        <input type="text" id="giftToUserId" value="test-user-2">
+                    </div>
+                    <div class="form-group">
+                        <label>Amount (coins):</label>
+                        <input type="number" id="giftAmount" value="100" min="1">
+                    </div>
+                    <div class="form-group">
+                        <label>Gift ID (optional):</label>
+                        <input type="text" id="giftId" placeholder="monkey, pikachu, etc.">
+                    </div>
+                </div>
+                <button onclick="sendGift()">Send Gift</button>
+                <div id="giftResponse" class="response" style="display:none;"></div>
+            </div>
+            
+            <div class="section">
+                <h3>💎 Send Dare</h3>
+                <div class="grid">
+                    <div class="form-group">
+                        <label>Room ID:</label>
+                        <input type="text" id="dareRoomId" placeholder="Enter room ID">
+                    </div>
+                    <div class="form-group">
+                        <label>User ID (sender):</label>
+                        <input type="text" id="dareUserId" value="test-user-1">
+                    </div>
+                    <div class="form-group">
+                        <label>Dare ID:</label>
+                        <input type="text" id="dareId" value="dare-1" placeholder="dare-1, dare-2, etc.">
+                    </div>
+                    <div class="form-group">
+                        <label>Gift ID:</label>
+                        <input type="text" id="dareGiftId" value="monkey" placeholder="monkey, pikachu, etc.">
+                    </div>
+                </div>
+                <button onclick="getDareList()">Get Dare List</button>
+                <button onclick="sendDare()">Send Dare</button>
+                <div id="dareResponse" class="response" style="display:none;"></div>
+            </div>
+            
+            <div class="section">
+                <h3>💬 Get Chat History</h3>
+                <div class="form-group">
+                    <label>Room ID:</label>
+                    <input type="text" id="chatRoomId" placeholder="Enter room ID">
+                </div>
+                <button onclick="getChat()">Get Chat</button>
+                <div id="chatResponse" class="response" style="display:none;"></div>
+            </div>
+            
+            <div class="section">
+                <h3>🚪 Room Management</h3>
+                <p style="margin-bottom: 15px; color: #666; font-size: 13px;">
+                    Manage room participants: leave room, kick users, add participants, and more.
+                </p>
+                
+                <div class="grid" style="grid-template-columns: 1fr 1fr; margin-bottom: 15px;">
+                    <div class="form-group">
+                        <label>Room ID:</label>
+                        <input type="text" id="roomMgmtRoomId" placeholder="Enter room ID">
+                    </div>
+                    <div class="form-group">
+                        <label>Your User ID:</label>
+                        <input type="text" id="roomMgmtUserId" value="test-user-1" placeholder="test-user-1">
+                    </div>
+                </div>
+                
+                <div style="margin-bottom: 15px;">
+                    <button onclick="fetchRoomByUserId()" class="btn-info" style="width: 100%; padding: 10px; font-size: 14px;">
+                        🔍 Fetch Room ID by User ID
+                    </button>
+                    <small style="display: block; color: #666; font-size: 11px; margin-top: 5px; text-align: center;">
+                        Finds the active room for the user ID above and auto-fills the Room ID
+                    </small>
+                </div>
+                
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-bottom: 15px;">
+                    <button onclick="leaveRoom()" class="btn-secondary">🚪 Leave Room</button>
+                    <button onclick="refreshRoomInfo()" class="btn-info">🔄 Refresh Room Info</button>
+                </div>
+                
+                <div id="roomMgmtResponse" class="response" style="display:none;"></div>
+                
+                <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
+                    <h4 style="margin-bottom: 10px; font-size: 14px; color: #666;">👥 Participant Management</h4>
+                    
+                    <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+                        <div class="form-group">
+                            <label>Add User ID:</label>
+                            <input type="text" id="addParticipantUserId" placeholder="test-user-3">
+                        </div>
+                        <div class="form-group">
+                            <button onclick="addParticipant()" class="btn-success" style="margin-top: 25px;">➕ Add Participant</button>
+                        </div>
+                    </div>
+                    
+                    <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 10px;">
+                        <div class="form-group">
+                            <label>Kick User ID (HOST only):</label>
+                            <input type="text" id="kickUserId" placeholder="test-user-2">
+                        </div>
+                        <div class="form-group">
+                            <button onclick="kickUser()" class="btn-danger" style="margin-top: 25px;">👢 Kick User</button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
+                    <h4 style="margin-bottom: 10px; font-size: 14px; color: #666;">🔗 Pull Stranger Mode</h4>
+                    <p style="margin-bottom: 10px; color: #666; font-size: 12px;">
+                        Enable pull stranger mode to allow others to join your room. Then they can join via pull stranger.
+                    </p>
+                    
+                    <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+                        <button onclick="enablePullStranger()" class="btn-info">🔓 Enable Pull Stranger</button>
+                        <button onclick="getPullStrangerRoom()" class="btn-secondary">🔍 Check Pull Stranger Room</button>
+                    </div>
+                    
+                    <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 10px;">
+                        <div class="form-group">
+                            <label>Joining User ID:</label>
+                            <input type="text" id="joinPullStrangerUserId" placeholder="test-user-3">
+                        </div>
+                        <div class="form-group">
+                            <label>Target User ID:</label>
+                            <input type="text" id="joinPullStrangerTargetId" placeholder="test-user-1">
+                        </div>
+                    </div>
+                    <button onclick="joinViaPullStranger()" class="btn-success" style="width: 100%; margin-top: 10px;">🚪 Join Via Pull Stranger</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Wallet Tab -->
+        <div id="wallet" class="tab-content">
+            <div class="section">
+                <h3>💰 Get Balance</h3>
+                <div class="form-group">
+                    <label>User ID:</label>
+                    <input type="text" id="balanceUserId" value="test-user-1">
+                </div>
+                <button onclick="getBalance()">Get Balance</button>
+                <div id="balanceResponse" class="response" style="display:none;"></div>
+            </div>
+            
+            <div class="section">
+                <h3>➕ Add Coins</h3>
+                <div class="grid">
+                    <div class="form-group">
+                        <label>User ID:</label>
+                        <input type="text" id="addCoinsUserId" value="test-user-1">
+                    </div>
+                    <div class="form-group">
+                        <label>Amount:</label>
+                        <input type="number" id="addCoinsAmount" value="1000" min="1">
+                    </div>
+                    <div class="form-group">
+                        <label>Description:</label>
+                        <input type="text" id="addCoinsDesc" value="Test credit">
+                    </div>
+                    <div class="form-group">
+                        <label>Gift ID (optional):</label>
+                        <input type="text" id="addCoinsGiftId" placeholder="monkey, pikachu, etc.">
+                    </div>
+                </div>
+                <button onclick="addCoins()">Add Coins</button>
+                <div id="addCoinsResponse" class="response" style="display:none;"></div>
+            </div>
+            
+            <div class="section">
+                <h3>📜 Get Wallet & Transactions</h3>
+                <div class="form-group">
+                    <label>User ID:</label>
+                    <input type="text" id="walletUserId" value="test-user-1">
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="includeTransactions" checked> Include Transactions
+                    </label>
+                </div>
+                <button onclick="getWallet()">Get Wallet</button>
+                <div id="walletResponse" class="response" style="display:none;"></div>
+            </div>
+            
+            <div class="section">
+                <h3>🎁 Get Gift Transactions</h3>
+                <div class="form-group">
+                    <label>User ID:</label>
+                    <input type="text" id="giftTransactionsUserId" value="test-user-1">
+                </div>
+                <button onclick="getGiftTransactions()">Get Gift Transactions</button>
+                <div id="giftTransactionsResponse" class="response" style="display:none;"></div>
+            </div>
+        </div>
+        
+        <!-- Friends Tab -->
+        <div id="friends" class="tab-content">
+            <div class="section">
+                <h3>👥 Get Friends</h3>
+                <p style="margin-bottom: 10px; color: #666; font-size: 13px;">
+                    Note: Friend requests are sent during video calls. Use test endpoints to simulate.
+                </p>
+                <div class="form-group">
+                    <label>User ID:</label>
+                    <input type="text" id="friendsUserId" value="test-user-1">
+                </div>
+                <div class="grid">
+                    <div class="form-group">
+                        <label>Limit:</label>
+                        <input type="number" id="friendsLimit" value="50" min="1" max="100">
+                    </div>
+                    <div class="form-group">
+                        <label>Cursor (optional):</label>
+                        <input type="text" id="friendsCursor" placeholder="Pagination cursor">
+                    </div>
+                </div>
+                <button onclick="getFriends()">Get Friends</button>
+                <div id="friendsResponse" class="response" style="display:none;"></div>
+            </div>
+            
+            <div class="section">
+                <h3>📨 Get Friend Requests</h3>
+                <div class="grid">
+                    <div class="form-group">
+                        <label>User ID:</label>
+                        <input type="text" id="requestsUserId" value="test-user-1">
+                    </div>
+                    <div class="form-group">
+                        <label>Type:</label>
+                        <select id="requestType">
+                            <option value="pending">Pending (Incoming)</option>
+                            <option value="sent">Sent (Outgoing)</option>
+                        </select>
+                    </div>
+                </div>
+                <button onclick="getFriendRequests()">Get Requests</button>
+                <div id="requestsResponse" class="response" style="display:none;"></div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        const BASE_URL = 'http://localhost:3000';
+        const API_VERSION = '/v1';
+        
+        function getBaseUrl() {
+            return document.getElementById('baseUrl').value || BASE_URL;
+        }
+        
+        function getApiUrl(path) {
+            const cleanPath = path.startsWith('/') ? path : '/' + path;
+            return `${getBaseUrl()}${API_VERSION}${cleanPath}`;
+        }
+        
+        function switchTab(tabName, element) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            // Show selected tab
+            document.getElementById(tabName).classList.add('active');
+            if (element) {
+                element.classList.add('active');
+            } else {
+                // Find the tab button and activate it
+                const tabs = document.querySelectorAll('.tab');
+                tabs.forEach((tab, index) => {
+                    const tabNames = ['setup', 'discovery', 'streaming', 'wallet', 'friends'];
+                    if (tabNames[index] === tabName) {
+                        tab.classList.add('active');
+                    }
+                });
+            }
+        }
+        
+        function showResponse(elementId, data, isError = false) {
+            const element = document.getElementById(elementId);
+            element.style.display = 'block';
+            const statusClass = isError ? 'status-error' : 'status-success';
+            const status = isError ? '❌ Error' : '✅ Success';
+            element.innerHTML = `<div class="${statusClass}">${status}</div><pre>${JSON.stringify(data, null, 2)}</pre>`;
+        }
+        
+        async function checkGateway() {
+            try {
+                // Just check if gateway is reachable by trying a simple discovery endpoint
+                const response = await fetch(getApiUrl('/discovery/fallback-cities?limit=1'));
+                if (response.status < 500) {
+                    document.getElementById('gatewayStatus').textContent = '✅ Running';
+                    showResponse('setupResponse', { 
+                        status: 'Gateway is reachable',
+                        message: 'API Gateway is running and routing requests',
+                        note: 'Service health checks may show warnings, but endpoints are working'
+                    }, false);
+                } else {
+                    document.getElementById('gatewayStatus').textContent = '⚠️ Issues';
+                    showResponse('setupResponse', { 
+                        status: response.status,
+                        message: 'Gateway responded but may have issues'
+                    }, true);
+                }
+            } catch (error) {
+                document.getElementById('gatewayStatus').textContent = '❌ Not Running';
+                showResponse('setupResponse', { 
+                    error: error.message,
+                    note: 'Make sure API Gateway is running on port 3000'
+                }, true);
+            }
+        }
+        
+        async function createComprehensiveTestData() {
+            const responseEl = document.getElementById('setupResponse');
+            responseEl.style.display = 'block';
+            responseEl.innerHTML = '<div style="color: #667eea;">🔄 Creating comprehensive test data... This may take a moment.</div>';
+            
+            // Create 20+ diverse users across multiple cities
+            const users = [
+                // Mumbai - 6 users
+                { id: 'test-user-1', username: 'alice_mumbai', gender: 'FEMALE', city: 'Mumbai', lat: 19.0760, lng: 72.8777, age: 25 },
+                { id: 'test-user-2', username: 'bob_mumbai', gender: 'MALE', city: 'Mumbai', lat: 19.0760, lng: 72.8777, age: 28 },
+                { id: 'test-user-3', username: 'charlie_mumbai', gender: 'MALE', city: 'Mumbai', lat: 19.0760, lng: 72.8777, age: 26 },
+                { id: 'test-user-4', username: 'diana_mumbai', gender: 'FEMALE', city: 'Mumbai', lat: 19.0760, lng: 72.8777, age: 24 },
+                { id: 'test-user-5', username: 'eve_mumbai', gender: 'FEMALE', city: 'Mumbai', lat: 19.0760, lng: 72.8777, age: 27 },
+                { id: 'test-user-6', username: 'frank_mumbai', gender: 'MALE', city: 'Mumbai', lat: 19.0760, lng: 72.8777, age: 29 },
+                
+                // Delhi - 5 users
+                { id: 'test-user-7', username: 'grace_delhi', gender: 'FEMALE', city: 'Delhi', lat: 28.6139, lng: 77.2090, age: 25 },
+                { id: 'test-user-8', username: 'henry_delhi', gender: 'MALE', city: 'Delhi', lat: 28.6139, lng: 77.2090, age: 28 },
+                { id: 'test-user-9', username: 'ivy_delhi', gender: 'FEMALE', city: 'Delhi', lat: 28.6139, lng: 77.2090, age: 26 },
+                { id: 'test-user-10', username: 'jack_delhi', gender: 'MALE', city: 'Delhi', lat: 28.6139, lng: 77.2090, age: 27 },
+                { id: 'test-user-11', username: 'kate_delhi', gender: 'FEMALE', city: 'Delhi', lat: 28.6139, lng: 77.2090, age: 24 },
+                
+                // Bangalore - 4 users
+                { id: 'test-user-12', username: 'liam_bangalore', gender: 'MALE', city: 'Bangalore', lat: 12.9716, lng: 77.5946, age: 28 },
+                { id: 'test-user-13', username: 'mia_bangalore', gender: 'FEMALE', city: 'Bangalore', lat: 12.9716, lng: 77.5946, age: 25 },
+                { id: 'test-user-14', username: 'noah_bangalore', gender: 'MALE', city: 'Bangalore', lat: 12.9716, lng: 77.5946, age: 26 },
+                { id: 'test-user-15', username: 'olivia_bangalore', gender: 'FEMALE', city: 'Bangalore', lat: 12.9716, lng: 77.5946, age: 27 },
+                
+                // Pune - 3 users
+                { id: 'test-user-16', username: 'peter_pune', gender: 'MALE', city: 'Pune', lat: 18.5204, lng: 73.8567, age: 28 },
+                { id: 'test-user-17', username: 'quinn_pune', gender: 'FEMALE', city: 'Pune', lat: 18.5204, lng: 73.8567, age: 25 },
+                { id: 'test-user-18', username: 'ryan_pune', gender: 'MALE', city: 'Pune', lat: 18.5204, lng: 73.8567, age: 29 },
+                
+                // Chennai - 2 users
+                { id: 'test-user-19', username: 'sarah_chennai', gender: 'FEMALE', city: 'Chennai', lat: 13.0827, lng: 80.2707, age: 26 },
+                { id: 'test-user-20', username: 'tom_chennai', gender: 'MALE', city: 'Chennai', lat: 13.0827, lng: 80.2707, age: 28 },
+                
+                // Hyderabad - 2 users
+                { id: 'test-user-21', username: 'uma_hyderabad', gender: 'FEMALE', city: 'Hyderabad', lat: 17.3850, lng: 78.4867, age: 25 },
+                { id: 'test-user-22', username: 'vijay_hyderabad', gender: 'MALE', city: 'Hyderabad', lat: 17.3850, lng: 78.4867, age: 27 }
+            ];
+            
+            const results = [];
+            let successCount = 0;
+            let errorCount = 0;
+            
+            // Create users in batches to avoid overwhelming the server
+            for (let i = 0; i < users.length; i++) {
+                const user = users[i];
+                try {
+                    // Calculate date of birth from age
+                    const currentYear = new Date().getFullYear();
+                    const birthYear = currentYear - user.age;
+                    const dateOfBirth = `${birthYear}-01-15T00:00:00.000Z`;
+                    
+                    // Check if user exists first (404 is expected and should be handled silently)
+                    let userExists = false;
+                    try {
+                        const userCheckRes = await fetch(getApiUrl(`/users/test/${user.id}?fields=id`));
+                        userExists = userCheckRes.ok;
+                        // If response is not ok but not 404, log it (unexpected error)
+                        if (!userCheckRes.ok && userCheckRes.status !== 404) {
+                            const errorData = await userCheckRes.json().catch(() => ({}));
+                            console.warn(`[WARN] Unexpected error checking user ${user.id}:`, errorData);
+                        }
+                    } catch (error) {
+                        // Network error or other issue - assume user doesn't exist
+                        console.warn(`[WARN] Error checking user existence for ${user.id}:`, error.message);
+                    }
+                    let profileStatus = 'created';
+                    
+                    if (!userExists) {
+                        // User doesn't exist - create new profile
+                        let profileRes = await fetch(getApiUrl(`/users/${user.id}/profile`), {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                username: user.username,
+                                dateOfBirth: dateOfBirth,
+                                gender: user.gender,
+                                displayPictureUrl: 'https://via.placeholder.com/300',
+                                latitude: user.lat,
+                                longitude: user.lng,
+                                preferredCity: user.city
+                            })
+                        }).catch(() => ({ status: 0, ok: false }));
+                        
+                        if (!profileRes.ok && profileRes.status !== 0) {
+                            errorCount++;
+                            results.push({ user: user.id, city: user.city, status: 'creation_failed' });
+                            continue; // Skip to next user
+                        }
+                    } else {
+                        // User exists - only update location and status (NOT gender)
+                        profileStatus = 'updated';
+                        await fetch(getApiUrl(`/users/test/${user.id}/profile`), {
+                            method: 'PATCH',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                username: user.username, // Username can be updated
+                                // DO NOT include gender - skip it for existing users
+                                latitude: user.lat,
+                                longitude: user.lng,
+                                preferredCity: user.city
+                            })
+                        }).catch(() => {});
+                    }
+                    
+                    // CRITICAL: Ensure location is set - discovery service needs this!
+                    // Set location (latitude/longitude)
+                    await fetch(getApiUrl(`/users/test/${user.id}/location`), {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            latitude: user.lat,
+                            longitude: user.lng
+                        })
+                    }).catch(() => {});
+                    
+                    // Set preferred city (CRITICAL for discovery matching!)
+                    await fetch(getApiUrl(`/users/test/${user.id}/preferred-city`), {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            city: user.city
+                        })
+                    }).catch(() => {});
+                    
+                    // Wait a bit for DB to update
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    
+                    // Verify location was set (retry if needed)
+                    const verifyRes = await fetch(getApiUrl(`/users/test/${user.id}?fields=preferredCity`)).catch(() => ({ ok: false }));
+                    if (verifyRes.ok) {
+                        const verifyData = await verifyRes.json().catch(() => ({}));
+                        if (!verifyData.user?.preferredCity) {
+                            // Retry setting preferred city
+                            await fetch(getApiUrl(`/users/test/${user.id}/preferred-city`), {
+                                method: 'PATCH',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ city: user.city })
+                            }).catch(() => {});
+                        }
+                    }
+                    
+                    // Set status to AVAILABLE (important for discovery)
+                    await fetch(getApiUrl(`/users/test/${user.id}/status`), {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            status: 'AVAILABLE'
+                        })
+                    }).catch(() => {});
+                    
+                    // Add coins
+                    await fetch(getApiUrl('/wallet/test/wallet/add-coins'), {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            userId: user.id,
+                            amount: 10000,
+                            description: 'test_setup'
+                        })
+                    }).catch(() => {});
+                    
+                    successCount++;
+                    results.push({ user: user.id, city: user.city, status: profileStatus });
+                    
+                    // Update progress
+                    if ((i + 1) % 5 === 0) {
+                        responseEl.innerHTML = `<div style="color: #667eea;">🔄 Creating users... ${i + 1}/${users.length} done</div>`;
+                    }
+                } catch (error) {
+                    errorCount++;
+                    results.push({ user: user.id, error: error.message });
+                }
+            }
+            
+            // Reset all discovery sessions
+            responseEl.innerHTML = '<div style="color: #667eea;">🔄 Resetting discovery sessions...</div>';
+            const sessionIds = ['session-1', 'session-2', 'session-3'];
+            for (const userId of users.slice(0, 3).map(u => u.id)) {
+                for (const sessionId of sessionIds) {
+                    await fetch(getApiUrl('/discovery/test/reset-session'), {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ userId, sessionId })
+                    }).catch(() => {});
+                }
+            }
+            
+            // Group by city
+            const byCity = {};
+            results.forEach(r => {
+                if (r.city) {
+                    byCity[r.city] = (byCity[r.city] || 0) + 1;
+                }
+            });
+            
+            showResponse('setupResponse', {
+                message: `✅ Created ${successCount} test users successfully!`,
+                summary: {
+                    total: users.length,
+                    success: successCount,
+                    errors: errorCount,
+                    byCity: byCity
+                },
+                results: results.slice(0, 10), // Show first 10
+                note: `🎉 ${successCount} users ready for discovery! Go to Discovery tab to see cards.`
+            });
+        }
+        
+        async function cleanupTestData() {
+            const responseEl = document.getElementById('cleanupResponse');
+            responseEl.style.display = 'block';
+            responseEl.innerHTML = '<div style="color: #667eea;">🔄 Cleaning up test data...</div>';
+            
+            // Get all test user IDs
+            const testUserIds = [];
+            for (let i = 1; i <= 22; i++) {
+                testUserIds.push(`test-user-${i}`);
+            }
+            
+            let deletedCount = 0;
+            let resetCount = 0;
+            let statusResetCount = 0;
+            const errors = [];
+            
+            // First, reset all user statuses to AVAILABLE (before deleting)
+            responseEl.innerHTML = '<div style="color: #667eea;">🔄 Resetting user statuses to AVAILABLE...</div>';
+            for (const userId of testUserIds) {
+                try {
+                    const statusRes = await fetch(getApiUrl(`/users/test/${userId}/status`), {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ status: 'AVAILABLE' })
+                    });
+                    if (statusRes.ok) {
+                        statusResetCount++;
+                    }
+                } catch (error) {
+                    // Continue
+                }
+            }
+            
+            // Delete users from user-service
+            responseEl.innerHTML = '<div style="color: #667eea;">🔄 Deleting test users...</div>';
+            for (const userId of testUserIds) {
+                try {
+                    // Delete user account (this will cascade delete related data)
+                    const deleteRes = await fetch(getApiUrl(`/users/test/${userId}`), {
+                        method: 'DELETE',
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                    
+                    if (deleteRes.ok) {
+                        deletedCount++;
+                    } else {
+                        // User might not exist, that's OK
+                        const data = await deleteRes.json().catch(() => ({}));
+                        if (deleteRes.status !== 404) {
+                            errors.push({ userId, error: data.message || 'delete_failed' });
+                        }
+                    }
+                } catch (error) {
+                    // Continue
+                }
+            }
+            
+            // Reset discovery sessions
+            responseEl.innerHTML = '<div style="color: #667eea;">🔄 Resetting discovery sessions...</div>';
+            const sessionIds = ['session-1', 'session-2', 'session-3', 'session-4', 'session-5'];
+            for (const userId of testUserIds) {
+                for (const sessionId of sessionIds) {
+                    try {
+                        const response = await fetch(getApiUrl('/discovery/test/reset-session'), {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ userId, sessionId })
+                        });
+                        if (response.ok) {
+                            resetCount++;
+                        }
+                    } catch (error) {
+                        // Continue
+                    }
+                }
+            }
+            
+            showResponse('cleanupResponse', {
+                message: `✅ Cleanup complete!`,
+                summary: {
+                    statusesReset: statusResetCount,
+                    usersDeleted: deletedCount,
+                    sessionsReset: resetCount,
+                    usersProcessed: testUserIds.length,
+                    ...(errors.length > 0 && { errors: errors })
+                },
+                note: 'All test users deleted, statuses reset, and discovery sessions cleared. You can now create fresh users!'
+            });
+        }
+        
+        // Global state for current card
+        let currentCard = null;
+        let currentCardData = null;
+        
+        // Update user status display
+        async function updateUserStatusDisplay(userId) {
+            try {
+                // Fetch both status and preferredCity
+                const statusRes = await fetch(getApiUrl(`/users/test/${userId}?fields=status,preferredCity`));
+                if (statusRes.ok) {
+                    const statusData = await statusRes.json();
+                    const status = statusData.user?.status || 'UNKNOWN';
+                    const preferredCity = statusData.user?.preferredCity || null;
+                    const city = preferredCity || 'Anywhere';
+                    
+                    const statusDisplay = document.getElementById('userStatusDisplay');
+                    const statusValue = document.getElementById('userStatusValue');
+                    const cityValue = document.getElementById('userCityValue');
+                    
+                    if (statusDisplay && statusValue) {
+                        // Color coding for different statuses
+                        let statusColor = '#666';
+                        let statusBg = '#f0f0f0';
+                        if (status === 'AVAILABLE') {
+                            statusColor = '#28a745';
+                            statusBg = '#d4edda';
+                        } else if (status === 'MATCHED') {
+                            statusColor = '#ffc107';
+                            statusBg = '#fff3cd';
+                        } else if (status === 'IN_SQUAD') {
+                            statusColor = '#007bff';
+                            statusBg = '#cce5ff';
+                        } else if (status === 'IN_BROADCAST') {
+                            statusColor = '#dc3545';
+                            statusBg = '#f8d7da';
+                        } else if (status === 'ONLINE') {
+                            statusColor = '#17a2b8';
+                            statusBg = '#d1ecf1';
+                        } else if (status === 'OFFLINE') {
+                            statusColor = '#6c757d';
+                            statusBg = '#e2e3e5';
+                        }
+                        
+                        statusValue.textContent = status;
+                        statusValue.style.color = statusColor;
+                        statusValue.style.background = statusBg;
+                        
+                        // Update city display
+                        if (cityValue) {
+                            cityValue.textContent = city;
+                            cityValue.style.color = preferredCity ? '#333' : '#666';
+                        }
+                        
+                        statusDisplay.style.display = 'block';
+                    }
+                }
+            } catch (error) {
+                console.error('Error fetching user status:', error);
+            }
+        }
+        
+        // Discovery functions
+        async function getCard() {
+            const userId = document.getElementById('cardUserId').value.trim();
+            const sessionId = document.getElementById('cardSessionId').value.trim();
+            
+            if (!userId) {
+                alert('User ID is required');
+                return;
+            }
+            
+            // Hide card display initially
+            document.getElementById('cardDisplay').style.display = 'none';
+            
+            // First check if user exists, if not create a basic one
+            try {
+                const userCheck = await fetch(getApiUrl(`/users/test/${userId}?fields=username`));
+                if (!userCheck.ok) {
+                    const username = userId.replace('test-user-', 'user_').replace('squad-user-', 'squad_');
+                    const gender = userId.includes('squad') ? 'MALE' : (userId.includes('1') || userId.includes('3') || userId.includes('5') || userId.includes('7') ? 'MALE' : 'FEMALE');
+                    
+                    // Create profile using POST
+                    const createRes = await fetch(getApiUrl(`/users/${userId}/profile`), {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            username: username,
+                            dateOfBirth: '1998-01-15T00:00:00.000Z',
+                            gender: gender,
+                            displayPictureUrl: 'https://via.placeholder.com/300',
+                            latitude: 19.0760,
+                            longitude: 72.8777,
+                            preferredCity: 'Mumbai'
+                        })
+                    });
+                    
+                    // If creation fails, try updating location separately
+                    if (!createRes.ok) {
+                        await fetch(getApiUrl(`/users/test/${userId}/profile`), {
+                            method: 'PATCH',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                latitude: 19.0760,
+                                longitude: 72.8777,
+                                preferredCity: 'Mumbai'
+                            })
+                        });
+                    }
+                    
+                    // Add coins
+                    await fetch(getApiUrl('/wallet/test/wallet/add-coins'), {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            userId: userId,
+                            amount: 10000,
+                            description: 'auto_created'
+                        })
+                    });
+                }
+            } catch (error) {
+                console.error('Error creating user:', error);
+            }
+            
+            // Update user status display
+            await updateUserStatusDisplay(userId);
+            
+            // Get the card
+            try {
+                const apiUrl = getApiUrl(`/discovery/test/card?userId=${encodeURIComponent(userId)}&sessionId=${encodeURIComponent(sessionId)}&soloOnly=false`);
+                const response = await fetch(apiUrl);
+                const data = await response.json();
+                
+                if (response.ok) {
+                    currentCardData = data;
+                    
+                    if (data.card) {
+                        currentCard = data.card;
+                        displayCard(data.card, apiUrl);
+                    } else {
+                        // No card available
+                        let message = '<div style="text-align: center; padding: 40px;">';
+                        if (data.exhausted) {
+                            message += '<h3>🔄 All Cards Exhausted</h3>';
+                            message += '<p>You\'ve seen all available users in this session.</p>';
+                            message += '<p style="margin-top: 15px;">';
+                            message += '<button onclick="resetSession()" class="btn-secondary" style="margin-right: 10px;">Reset Session</button>';
+                            message += '<button onclick="cleanupTestData()" class="btn-danger">Cleanup All Sessions</button>';
+                            message += '</p>';
+                        } else {
+                            message += '<h3>👥 No Matches Found</h3>';
+                            message += '<p>No users available to show.</p>';
+                            message += '<p style="margin-top: 15px;"><strong>💡 Tip:</strong> Go to Setup tab → Create Comprehensive Test Data</p>';
+                        }
+                        if (data.suggestedCities && data.suggestedCities.length > 0) {
+                            message += '<p style="margin-top: 20px;"><strong>Suggested cities:</strong><br>' + 
+                                      data.suggestedCities.map(c => `${c.city} (${c.availableCount} users)`).join(', ') + '</p>';
+                            message += '<p style="margin-top: 10px; font-size: 12px; color: #666;">';
+                            message += '💡 Try selecting one of these cities to see users from there!';
+                            message += '</p>';
+                        }
+                        message += '</div>';
+                        document.getElementById('cardContent').innerHTML = message;
+                        document.getElementById('cardDisplay').style.display = 'block';
+                        document.getElementById('cardApiInfo').innerHTML = `<strong>API:</strong> GET ${apiUrl}`;
+                    }
+                } else {
+                    // Show detailed error information
+                    let errorMsg = '❌ Error: ' + (data.message || 'Unknown error');
+                    
+                    // Check if it's a user not found error
+                    if (data.statusCode === 404 || data.code === 'USER_NOT_FOUND' || data.message?.includes('not found')) {
+                        errorMsg += `\n\n👤 User doesn't exist!`;
+                        errorMsg += `\n\n💡 Solution: Go to Setup tab → Create Comprehensive Test Data`;
+                        errorMsg += `\n\nOr create this user manually using the Setup tab.`;
+                    } else {
+                        if (data.error) {
+                            errorMsg += `\n\nError: ${data.error}`;
+                        }
+                        if (data.code) {
+                            errorMsg += `\n\nError Code: ${data.code}`;
+                        }
+                        if (data.details) {
+                            if (data.details.firstError) {
+                                errorMsg += `\n\nFirst Error Details:\n${JSON.stringify(data.details.firstError, null, 2)}`;
+                            } else {
+                                errorMsg += `\n\nDetails: ${JSON.stringify(data.details, null, 2)}`;
+                            }
+                        }
+                        if (data.suggestion) {
+                            errorMsg += `\n\n💡 Suggestion: ${data.suggestion}`;
+                        }
+                    }
+                    
+                    alert(errorMsg);
+                    console.error('Card Error Details:', data);
+                }
+            } catch (error) {
+                let errorMsg = 'Error fetching card: ' + error.message;
+                if (error.response) {
+                    try {
+                        const errorData = await error.response.json();
+                        errorMsg += `\n\nError: ${errorData.error || errorData.message || 'Unknown'}`;
+                        if (errorData.code) {
+                            errorMsg += `\n\nError Code: ${errorData.code}`;
+                        }
+                        if (errorData.details) {
+                            errorMsg += `\n\nDetails: ${JSON.stringify(errorData.details, null, 2)}`;
+                        }
+                        if (errorData.suggestion) {
+                            errorMsg += `\n\n💡 Suggestion: ${errorData.suggestion}`;
+                        }
+                    } catch (e) {
+                        // If JSON parsing fails, just show the original error
+                    }
+                }
+                alert(errorMsg);
+                console.error('Card Error:', error);
+            }
+        }
+        
+        function displayCard(card, apiUrl) {
+            const cardDisplay = document.getElementById('cardDisplay');
+            const cardContent = document.getElementById('cardContent');
+            const raincheckButton = document.getElementById('raincheckButton');
+            const proceedButton = document.getElementById('proceedButton');
+            
+            if (card.type === 'LOCATION') {
+                cardContent.innerHTML = `
+                    <div style="text-align: center; padding: 40px;">
+                        <h2 style="font-size: 48px; margin-bottom: 20px;">📍</h2>
+                        <h3 style="margin-bottom: 10px;">${card.city || 'Anywhere'}</h3>
+                        <p style="color: #666; font-size: 14px;">${card.availableCount} users available</p>
+                        <p style="color: #999; font-size: 12px; margin-top: 10px;">Tap "Next Location" to see another city, or use "Change Location" to select a specific city</p>
+                    </div>
+                `;
+                // For location cards: Show "Next Location" button, hide "Proceed" button
+                raincheckButton.textContent = '📍 Next Location';
+                raincheckButton.style.display = 'block';
+                proceedButton.style.display = 'none';
+            } else {
+                const statusClass = card.status === 'AVAILABLE' ? 'status-available' : 
+                                   card.status === 'IN_SQUAD_AVAILABLE' ? 'status-squad' : 'status-broadcast';
+                const statusText = card.status === 'AVAILABLE' ? 'Available' : 
+                                  card.status === 'IN_SQUAD_AVAILABLE' ? 'In Squad' : 'Broadcasting';
+                
+                cardContent.innerHTML = `
+                    <div style="text-align: center;">
+                        ${card.displayPictureUrl ? 
+                            `<img src="${card.displayPictureUrl}" alt="Profile" 
+                                  style="width: 100%; max-width: 400px; border-radius: 20px; margin-bottom: 20px; box-shadow: 0 4px 20px rgba(0,0,0,0.1);"
+                                  onerror="this.src='https://via.placeholder.com/400'">` : 
+                            '<div style="width: 100%; max-width: 400px; height: 400px; background: #f0f0f0; border-radius: 20px; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center; font-size: 48px;">👤</div>'}
+                        <h2 style="margin-bottom: 5px;">${card.username || 'User'}</h2>
+                        <p style="color: #666; margin-bottom: 15px;">
+                            ${card.age ? card.age + ' years' : ''} ${card.age && card.city ? '•' : ''} ${card.city || ''}
+                            <span class="user-status ${statusClass}" style="margin-left: 10px;">${statusText}</span>
+                        </p>
+                        ${card.intent ? `<p style="font-style: italic; color: #555; margin-bottom: 15px;">"${card.intent}"</p>` : ''}
+                        ${card.brands && card.brands.length > 0 ? 
+                            `<p style="margin-bottom: 10px;"><strong>Brands:</strong> ${card.brands.map(b => b.name).join(', ')}</p>` : ''}
+                        ${card.interests && card.interests.length > 0 ? 
+                            `<p style="margin-bottom: 10px;"><strong>Interests:</strong> ${card.interests.map(i => i.name).join(', ')}</p>` : ''}
+                        ${card.matchExplanation ? `
+                            <div style="margin-top: 20px; padding: 15px; background: #f0f7ff; border-left: 4px solid #4a90e2; border-radius: 6px; text-align: left;">
+                                <h4 style="margin: 0 0 10px 0; color: #333; font-size: 14px;">💡 Why you matched (Score: ${card.matchExplanation.score})</h4>
+                                <ul style="margin: 0; padding-left: 20px; font-size: 13px; color: #555;">
+                                    ${card.matchExplanation.reasons.map(r => `<li>${r}</li>`).join('')}
+                                </ul>
+                            </div>
+                        ` : ''}
+                    </div>
+                `;
+                // For user cards: Show both buttons
+                raincheckButton.textContent = '☔ Raincheck';
+                raincheckButton.style.display = 'block';
+                proceedButton.style.display = 'block';
+            }
+            
+            cardDisplay.style.display = 'block';
+            document.getElementById('cardApiInfo').innerHTML = `<strong>API:</strong> GET ${apiUrl}`;
+        }
+        
+        async function handleRaincheck() {
+            if (!currentCard) {
+                alert('No card to raincheck');
+                return;
+            }
+            
+            const userId = document.getElementById('cardUserId').value.trim();
+            const sessionId = document.getElementById('cardSessionId').value.trim();
+            
+            // If it's a location card, just get the next card (no need to call raincheck endpoint)
+            if (currentCard.type === 'LOCATION') {
+                try {
+                    await updateUserStatusDisplay(userId);
+                    // Get next card (this will show another location or a user)
+                    await getCard();
+                } catch (error) {
+                    alert('Error: ' + error.message);
+                    await updateUserStatusDisplay(userId);
+                }
+                return;
+            }
+            
+            // For user cards, call the raincheck endpoint
+            const raincheckedUserId = currentCard.userId;
+            
+            try {
+                // Update user status before raincheck
+                await updateUserStatusDisplay(userId);
+                
+                const apiUrl = getApiUrl('/discovery/test/raincheck');
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId, sessionId, raincheckedUserId })
+                });
+                const data = await response.json();
+                
+                if (response.ok) {
+                    // Update status after raincheck
+                    await updateUserStatusDisplay(userId);
+                    // Get next card
+                    await getCard();
+                } else {
+                    alert('Error: ' + (data.message || JSON.stringify(data)));
+                    await updateUserStatusDisplay(userId);
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+                await updateUserStatusDisplay(userId);
+            }
+        }
+        
+        async function handleProceed() {
+            if (!currentCard || currentCard.type === 'LOCATION') {
+                alert('No user card to proceed with');
+                return;
+            }
+            
+            const userId = document.getElementById('cardUserId').value.trim();
+            const matchedUserId = currentCard.userId;
+            
+            try {
+                // Update user status before proceeding
+                await updateUserStatusDisplay(userId);
+                
+                // Get timeout from mutual acceptance section (default 30 seconds)
+                const timeoutInput = document.getElementById('mutualTimeout');
+                const timeoutSeconds = timeoutInput ? parseInt(timeoutInput.value, 10) || 30 : 30;
+                
+                // Proceed with match
+                const proceedApiUrl = getApiUrl('/discovery/test/proceed');
+                const proceedResponse = await fetch(proceedApiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId, matchedUserId, timeoutSeconds })
+                });
+                const proceedData = await proceedResponse.json();
+                
+                if (proceedResponse.ok) {
+                    // Update user status after proceeding (should be MATCHED or IN_SQUAD)
+                    await updateUserStatusDisplay(userId);
+                    
+                    // Check if both users accepted (room created) or waiting
+                    if (proceedData.waiting) {
+                        // Waiting for other user to accept
+                        alert(`✅ You accepted! ${proceedData.message || `Waiting for ${currentCard.username} to accept. When both accept, you'll enter streaming.`}`);
+                        // Don't clear card - user can see they're waiting
+                        // User should refresh or get new card to see if other user accepted
+                    } else if (proceedData.roomId) {
+                        // Both users accepted - room created automatically
+                        alert(`✅ Both users accepted! Room created. Opening Streaming tab...`);
+                        
+                        // Switch to streaming tab
+                        const streamingTab = document.querySelectorAll('.tab')[2]; // Streaming is 3rd tab
+                        switchTab('streaming', streamingTab);
+                        
+                        // Pre-fill room details
+                        document.getElementById('getRoomId').value = proceedData.roomId;
+                        
+                        // Auto-fetch room details
+                        setTimeout(() => {
+                            const getRoomBtn = document.querySelector('button[onclick*="getRoom"]');
+                            if (getRoomBtn) getRoomBtn.click();
+                        }, 500);
+                        
+                        // Clear current card
+                        currentCard = null;
+                        document.getElementById('cardDisplay').style.display = 'none';
+                    } else {
+                        // Unexpected state
+                        alert(`✅ Match accepted! Status: ${proceedData.message || 'Processing...'}`);
+                    }
+                } else {
+                    // Show detailed error information
+                    let errorMsg = 'Error: ';
+                    if (proceedData.message) {
+                        errorMsg += proceedData.message;
+                    }
+                    if (proceedData.error) {
+                        errorMsg += `\n\nError Details: ${proceedData.error}`;
+                    }
+                    if (proceedData.code) {
+                        errorMsg += `\n\nError Code: ${proceedData.code}`;
+                    }
+                    if (proceedData.details) {
+                        errorMsg += `\n\nDetails: ${proceedData.details}`;
+                    }
+                    if (proceedData.suggestion) {
+                        errorMsg += `\n\nSuggestion: ${proceedData.suggestion}`;
+                    }
+                    if (!proceedData.message && !proceedData.error) {
+                        errorMsg += JSON.stringify(proceedData, null, 2);
+                    }
+                    alert(errorMsg);
+                    console.error('Proceed Error Details:', proceedData);
+                    // Update status even on error
+                    await updateUserStatusDisplay(userId);
+                }
+            } catch (error) {
+                let errorMsg = 'Error: ' + error.message;
+                if (error.response) {
+                    errorMsg += `\n\nResponse: ${JSON.stringify(error.response, null, 2)}`;
+                }
+                alert(errorMsg);
+                console.error('Proceed Exception:', error);
+                await updateUserStatusDisplay(userId);
+            }
+        }
+        
+        function selectLocation() {
+            const inputs = document.getElementById('locationInputs');
+            inputs.style.display = inputs.style.display === 'none' ? 'grid' : 'none';
+        }
+        
+        async function applyLocation() {
+            const userId = document.getElementById('cardUserId').value.trim();
+            const sessionId = document.getElementById('cardSessionId').value.trim();
+            const city = document.getElementById('locationCity').value.trim();
+            
+            try {
+                // Update user status before location change
+                await updateUserStatusDisplay(userId);
+                
+                const apiUrl = getApiUrl('/discovery/test/select-location');
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId, sessionId, city })
+                });
+                const data = await response.json();
+                
+                if (response.ok) {
+                    // Update status after location change
+                    await updateUserStatusDisplay(userId);
+                    alert(`✅ Location changed to ${city}. Getting next card...`);
+                    await getCard();
+                    document.getElementById('locationInputs').style.display = 'none';
+                } else {
+                    alert('Error: ' + (data.message || JSON.stringify(data)));
+                    await updateUserStatusDisplay(userId);
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+                await updateUserStatusDisplay(userId);
+            }
+        }
+        
+        async function resetSession() {
+            const userId = document.getElementById('cardUserId').value.trim();
+            const sessionId = document.getElementById('cardSessionId').value.trim();
+            
+            if (!userId || !sessionId) {
+                alert('User ID and Session ID are required');
+                return;
+            }
+            
+            try {
+                // Update user status before reset
+                await updateUserStatusDisplay(userId);
+                
+                const apiUrl = getApiUrl('/discovery/test/reset-session');
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId, sessionId })
+                });
+                const data = await response.json();
+                
+                if (response.ok) {
+                    // Update status after reset
+                    await updateUserStatusDisplay(userId);
+                    alert('✅ Session reset! You can now see all cards again.');
+                    currentCard = null;
+                    document.getElementById('cardDisplay').style.display = 'none';
+                } else {
+                    alert('Error: ' + (data.message || JSON.stringify(data)));
+                    await updateUserStatusDisplay(userId);
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+                await updateUserStatusDisplay(userId);
+            }
+        }
+        
+        /**
+         * Test mutual acceptance flow
+         * Simulates both users accepting within the timeout
+         */
+        async function testMutualAcceptance() {
+            const user1Id = document.getElementById('mutualUser1').value.trim();
+            const user2Id = document.getElementById('mutualUser2').value.trim();
+            const responseEl = document.getElementById('mutualAcceptanceResponse');
+            
+            if (!user1Id || !user2Id) {
+                alert('Please enter both User 1 and User 2 IDs');
+                return;
+            }
+            
+            if (user1Id === user2Id) {
+                alert('User 1 and User 2 must be different');
+                return;
+            }
+            
+            responseEl.style.display = 'block';
+            responseEl.innerHTML = '<div style="color: #667eea;">🔄 Testing mutual acceptance flow...</div>';
+            
+            try {
+                // Step 1: User1 gets card for User2 (creates match)
+                responseEl.innerHTML += '<div style="margin-top: 10px; color: #666;">Step 1: User1 getting card for User2...</div>';
+                const cardRes1 = await fetch(getApiUrl(`/discovery/test/card?userId=${encodeURIComponent(user1Id)}&sessionId=session-1`));
+                const cardData1 = await cardRes1.json();
+                
+                if (!cardRes1.ok || !cardData1.card || cardData1.card.userId !== user2Id) {
+                    // Try to get a card that matches user2
+                    responseEl.innerHTML += '<div style="color: #dc3545;">⚠️ User1 did not get User2\'s card. Trying to create match directly...</div>';
+                    // We'll proceed anyway - match will be created in proceedWithMatch
+                } else {
+                    responseEl.innerHTML += `<div style="color: #28a745;">✅ User1 got User2's card (match created)</div>`;
+                }
+                
+                await new Promise(resolve => setTimeout(resolve, 500));
+                
+                // Step 2: User1 clicks Proceed (records acceptance)
+                responseEl.innerHTML += '<div style="margin-top: 10px; color: #666;">Step 2: User1 clicking Proceed...</div>';
+                const proceedRes1 = await fetch(getApiUrl('/discovery/test/proceed'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId: user1Id, matchedUserId: user2Id })
+                });
+                const proceedData1 = await proceedRes1.json();
+                
+                if (!proceedRes1.ok) {
+                    responseEl.innerHTML += `<div style="color: #dc3545;">❌ User1 proceed failed: ${proceedData1.message || JSON.stringify(proceedData1)}</div>`;
+                    showResponse('mutualAcceptanceResponse', proceedData1, true);
+                    return;
+                }
+                
+                if (proceedData1.waiting) {
+                    responseEl.innerHTML += `<div style="color: #ffc107;">⏳ User1 accepted! Waiting for User2... (timeout: ${timeoutSeconds} seconds)</div>`;
+                } else if (proceedData1.roomId) {
+                    responseEl.innerHTML += `<div style="color: #28a745;">✅ Both users already accepted! Room created: ${proceedData1.roomId}</div>`;
+                    showResponse('mutualAcceptanceResponse', proceedData1, false);
+                    return;
+                }
+                
+                await new Promise(resolve => setTimeout(resolve, 500));
+                
+                // Step 3: User2 gets card for User1 (match should exist)
+                responseEl.innerHTML += '<div style="margin-top: 10px; color: #666;">Step 3: User2 getting card for User1...</div>';
+                const cardRes2 = await fetch(getApiUrl(`/discovery/test/card?userId=${encodeURIComponent(user2Id)}&sessionId=session-1`));
+                const cardData2 = await cardRes2.json();
+                
+                if (cardData2.card && cardData2.card.userId === user1Id) {
+                    responseEl.innerHTML += `<div style="color: #28a745;">✅ User2 got User1's card (match exists)</div>`;
+                } else {
+                    responseEl.innerHTML += `<div style="color: #ffc107;">⚠️ User2 got different card, but match should exist</div>`;
+                }
+                
+                await new Promise(resolve => setTimeout(resolve, 500));
+                
+                // Step 4: User2 clicks Proceed (should complete mutual acceptance)
+                responseEl.innerHTML += `<div style="margin-top: 10px; color: #666;">Step 4: User2 clicking Proceed (within ${timeoutSeconds}s timeout)...</div>`;
+                const proceedRes2 = await fetch(getApiUrl('/discovery/test/proceed'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId: user2Id, matchedUserId: user1Id, timeoutSeconds })
+                });
+                const proceedData2 = await proceedRes2.json();
+                
+                if (!proceedRes2.ok) {
+                    responseEl.innerHTML += `<div style="color: #dc3545;">❌ User2 proceed failed: ${proceedData2.message || JSON.stringify(proceedData2)}</div>`;
+                    showResponse('mutualAcceptanceResponse', proceedData2, true);
+                    return;
+                }
+                
+                if (proceedData2.roomId) {
+                    responseEl.innerHTML += `<div style="color: #28a745; font-weight: 600; margin-top: 10px;">🎉 SUCCESS! Both users accepted! Room created: ${proceedData2.roomId}</div>`;
+                    responseEl.innerHTML += `<div style="color: #666; margin-top: 5px;">Both users are now IN_SQUAD and ready for streaming!</div>`;
+                    showResponse('mutualAcceptanceResponse', proceedData2, false);
+                } else if (proceedData2.waiting) {
+                    responseEl.innerHTML += `<div style="color: #ffc107;">⏳ User2 accepted, but still waiting... This shouldn't happen if User1 already accepted</div>`;
+                    showResponse('mutualAcceptanceResponse', proceedData2, false);
+                } else {
+                    responseEl.innerHTML += `<div style="color: #666;">Status: ${proceedData2.message || 'Processing...'}</div>`;
+                    showResponse('mutualAcceptanceResponse', proceedData2, false);
+                }
+                
+                // Update status displays
+                await updateUserStatusDisplay(user1Id);
+                await updateUserStatusDisplay(user2Id);
+                
+            } catch (error) {
+                responseEl.innerHTML += `<div style="color: #dc3545; margin-top: 10px;">❌ Error: ${error.message}</div>`;
+                showResponse('mutualAcceptanceResponse', { error: error.message }, true);
+            }
+        }
+        
+        /**
+         * Check acceptance status for a match
+         */
+        async function checkAcceptanceStatus() {
+            const user1Id = document.getElementById('mutualUser1').value.trim();
+            const user2Id = document.getElementById('mutualUser2').value.trim();
+            
+            if (!user1Id || !user2Id) {
+                alert('Please enter both User 1 and User 2 IDs');
+                return;
+            }
+            
+            try {
+                // Check user statuses
+                const status1Res = await fetch(getApiUrl(`/users/test/${user1Id}?fields=status`));
+                const status2Res = await fetch(getApiUrl(`/users/test/${user2Id}?fields=status`));
+                
+                const status1 = status1Res.ok ? (await status1Res.json()).user?.status : 'UNKNOWN';
+                const status2 = status2Res.ok ? (await status2Res.json()).user?.status : 'UNKNOWN';
+                
+                let message = `<div style="margin-top: 10px;"><strong>Current Status:</strong></div>`;
+                message += `<div style="margin-top: 5px;">User1 (${user1Id}): <strong>${status1}</strong></div>`;
+                message += `<div style="margin-top: 5px;">User2 (${user2Id}): <strong>${status2}</strong></div>`;
+                
+                if (status1 === 'MATCHED' && status2 === 'MATCHED') {
+                    message += `<div style="margin-top: 10px; color: #28a745;">✅ Both users are MATCHED - ready for mutual acceptance!</div>`;
+                    message += `<div style="margin-top: 5px; color: #666; font-size: 12px;">💡 Click "Test Mutual Acceptance" to simulate both users accepting</div>`;
+                } else if (status1 === 'IN_SQUAD' && status2 === 'IN_SQUAD') {
+                    message += `<div style="margin-top: 10px; color: #007bff;">✅ Both users are IN_SQUAD - match completed!</div>`;
+                } else {
+                    message += `<div style="margin-top: 10px; color: #ffc107;">⚠️ Users are not both MATCHED. Get cards first to create match.</div>`;
+                }
+                
+                document.getElementById('mutualAcceptanceResponse').innerHTML = message;
+                document.getElementById('mutualAcceptanceResponse').style.display = 'block';
+            } catch (error) {
+                showResponse('mutualAcceptanceResponse', { error: error.message }, true);
+            }
+        }
+        
+        // Streaming functions - using test endpoints
+        async function createRoom() {
+            const userIdsStr = document.getElementById('roomUserIds').value;
+            const callType = document.getElementById('callType').value;
+            const userIds = userIdsStr.split(',').map(id => id.trim()).filter(Boolean);
+            
+            if (userIds.length < 2 || userIds.length > 4) {
+                showResponse('roomResponse', { error: 'Room must have 2-4 users' }, true);
+                return;
+            }
+            
+            try {
+                const response = await fetch(getApiUrl('/streaming/test/rooms'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userIds, callType })
+                });
+                const data = await response.json();
+                showResponse('roomResponse', data, !response.ok);
+            } catch (error) {
+                showResponse('roomResponse', { error: error.message }, true);
+            }
+        }
+        
+        async function getRoom() {
+            const roomId = document.getElementById('getRoomId').value;
+            
+            try {
+                const response = await fetch(getApiUrl(`/streaming/test/rooms/${roomId}`));
+                const data = await response.json();
+                showResponse('getRoomResponse', data, !response.ok);
+            } catch (error) {
+                showResponse('getRoomResponse', { error: error.message }, true);
+            }
+        }
+        
+        async function sendGift() {
+            const roomId = document.getElementById('giftRoomId').value;
+            const fromUserId = document.getElementById('giftFromUserId').value;
+            const toUserId = document.getElementById('giftToUserId').value;
+            const amount = parseInt(document.getElementById('giftAmount').value);
+            const giftId = document.getElementById('giftId').value || undefined;
+            
+            try {
+                // Gift controller has test mode enabled, so regular endpoint works without auth
+                const response = await fetch(getApiUrl(`/streaming/rooms/${roomId}/gifts`), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ fromUserId, toUserId, amount, giftId })
+                });
+                const data = await response.json();
+                showResponse('giftResponse', data, !response.ok);
+            } catch (error) {
+                showResponse('giftResponse', { error: error.message }, true);
+            }
+        }
+        
+        async function getDareList() {
+            const roomId = document.getElementById('dareRoomId').value;
+            
+            try {
+                const response = await fetch(getApiUrl(`/streaming/rooms/${roomId}/dares`));
+                const data = await response.json();
+                showResponse('dareResponse', { dares: data.dares || [] }, false);
+            } catch (error) {
+                showResponse('dareResponse', { error: error.message }, true);
+            }
+        }
+        
+        async function sendDare() {
+            const roomId = document.getElementById('dareRoomId').value;
+            const userId = document.getElementById('dareUserId').value;
+            const dareId = document.getElementById('dareId').value;
+            const giftId = document.getElementById('dareGiftId').value;
+            
+            try {
+                const response = await fetch(getApiUrl(`/streaming/rooms/${roomId}/dares/send`), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId, dareId, giftId })
+                });
+                const data = await response.json();
+                showResponse('dareResponse', data, !response.ok);
+            } catch (error) {
+                showResponse('dareResponse', { error: error.message }, true);
+            }
+        }
+        
+        async function getChat() {
+            const roomId = document.getElementById('chatRoomId').value;
+            
+            try {
+                const response = await fetch(getApiUrl(`/streaming/test/rooms/${roomId}/chat`));
+                const data = await response.json();
+                showResponse('chatResponse', data, !response.ok);
+            } catch (error) {
+                showResponse('chatResponse', { error: error.message }, true);
+            }
+        }
+        
+        // Room Management functions
+        async function fetchRoomByUserId() {
+            const userId = document.getElementById('roomMgmtUserId').value.trim();
+            
+            if (!userId) {
+                showResponse('roomMgmtResponse', { error: 'User ID is required' }, true);
+                return;
+            }
+            
+            try {
+                const response = await fetch(getApiUrl(`/streaming/test/users/${userId}/room`));
+                const data = await response.json();
+                
+                if (response.ok && data.exists && data.roomId) {
+                    // Auto-fill room ID if found
+                    document.getElementById('roomMgmtRoomId').value = data.roomId;
+                    showResponse('roomMgmtResponse', {
+                        success: true,
+                        message: `Room found for user ${userId}`,
+                        roomId: data.roomId,
+                        role: data.role,
+                        userRole: data.userRole,
+                        participants: data.participants?.length || 0,
+                        note: 'Room ID has been auto-filled above'
+                    }, false);
+                } else {
+                    showResponse('roomMgmtResponse', {
+                        exists: false,
+                        message: `No active room found for user ${userId}`,
+                        note: 'User might not be in any room, or room might have ended'
+                    }, false);
+                }
+            } catch (error) {
+                showResponse('roomMgmtResponse', { error: error.message }, true);
+            }
+        }
+        
+        async function leaveRoom() {
+            const roomId = document.getElementById('roomMgmtRoomId').value;
+            const userId = document.getElementById('roomMgmtUserId').value;
+            
+            if (!roomId || !userId) {
+                showResponse('roomMgmtResponse', { error: 'Room ID and User ID are required' }, true);
+                return;
+            }
+            
+            try {
+                const response = await fetch(getApiUrl(`/streaming/test/rooms/${roomId}/leave`), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId })
+                });
+                const data = await response.json();
+                showResponse('roomMgmtResponse', data, !response.ok);
+                if (response.ok) {
+                    // Refresh room info after leaving
+                    setTimeout(() => refreshRoomInfo(), 1000);
+                }
+            } catch (error) {
+                showResponse('roomMgmtResponse', { error: error.message }, true);
+            }
+        }
+        
+        async function refreshRoomInfo() {
+            const roomId = document.getElementById('roomMgmtRoomId').value;
+            
+            if (!roomId) {
+                showResponse('roomMgmtResponse', { error: 'Room ID is required' }, true);
+                return;
+            }
+            
+            try {
+                const response = await fetch(getApiUrl(`/streaming/test/rooms/${roomId}`));
+                const data = await response.json();
+                showResponse('roomMgmtResponse', data, !response.ok);
+            } catch (error) {
+                showResponse('roomMgmtResponse', { error: error.message }, true);
+            }
+        }
+        
+        async function addParticipant() {
+            const roomId = document.getElementById('roomMgmtRoomId').value;
+            const userId = document.getElementById('addParticipantUserId').value;
+            
+            if (!roomId || !userId) {
+                showResponse('roomMgmtResponse', { error: 'Room ID and User ID are required' }, true);
+                return;
+            }
+            
+            try {
+                const response = await fetch(getApiUrl(`/streaming/test/rooms/${roomId}/add-participant`), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId })
+                });
+                const data = await response.json();
+                showResponse('roomMgmtResponse', data, !response.ok);
+                if (response.ok) {
+                    // Refresh room info after adding
+                    setTimeout(() => refreshRoomInfo(), 1000);
+                }
+            } catch (error) {
+                showResponse('roomMgmtResponse', { error: error.message }, true);
+            }
+        }
+        
+        async function kickUser() {
+            const roomId = document.getElementById('roomMgmtRoomId').value;
+            const kickerUserId = document.getElementById('roomMgmtUserId').value;
+            const targetUserId = document.getElementById('kickUserId').value;
+            
+            if (!roomId || !kickerUserId || !targetUserId) {
+                showResponse('roomMgmtResponse', { error: 'Room ID, Kicker User ID, and Target User ID are required' }, true);
+                return;
+            }
+            
+            if (!confirm(`Are you sure you want to kick ${targetUserId} from room ${roomId}?`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(getApiUrl(`/streaming/test/rooms/${roomId}/kick`), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ kickerUserId, targetUserId })
+                });
+                const data = await response.json();
+                showResponse('roomMgmtResponse', data, !response.ok);
+                if (response.ok) {
+                    // Refresh room info after kicking
+                    setTimeout(() => refreshRoomInfo(), 1000);
+                }
+            } catch (error) {
+                showResponse('roomMgmtResponse', { error: error.message }, true);
+            }
+        }
+        
+        async function enablePullStranger() {
+            const roomId = document.getElementById('roomMgmtRoomId').value;
+            const userId = document.getElementById('roomMgmtUserId').value;
+            
+            if (!roomId || !userId) {
+                showResponse('roomMgmtResponse', { error: 'Room ID and User ID are required' }, true);
+                return;
+            }
+            
+            try {
+                const response = await fetch(getApiUrl(`/streaming/test/rooms/${roomId}/enable-pull-stranger`), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId })
+                });
+                const data = await response.json();
+                showResponse('roomMgmtResponse', data, !response.ok);
+            } catch (error) {
+                showResponse('roomMgmtResponse', { error: error.message }, true);
+            }
+        }
+        
+        async function getPullStrangerRoom() {
+            const userId = document.getElementById('roomMgmtUserId').value;
+            
+            if (!userId) {
+                showResponse('roomMgmtResponse', { error: 'User ID is required' }, true);
+                return;
+            }
+            
+            try {
+                const response = await fetch(getApiUrl(`/streaming/pull-stranger/room/${userId}`));
+                const data = await response.json();
+                showResponse('roomMgmtResponse', data, !response.ok);
+                if (data.exists && data.roomId) {
+                    // Auto-fill room ID if found
+                    document.getElementById('roomMgmtRoomId').value = data.roomId;
+                }
+            } catch (error) {
+                showResponse('roomMgmtResponse', { error: error.message }, true);
+            }
+        }
+        
+        async function joinViaPullStranger() {
+            const roomId = document.getElementById('roomMgmtRoomId').value;
+            const joiningUserId = document.getElementById('joinPullStrangerUserId').value;
+            const targetUserId = document.getElementById('joinPullStrangerTargetId').value;
+            
+            if (!roomId || !joiningUserId || !targetUserId) {
+                showResponse('roomMgmtResponse', { error: 'Room ID, Joining User ID, and Target User ID are required' }, true);
+                return;
+            }
+            
+            try {
+                const response = await fetch(getApiUrl(`/streaming/test/rooms/${roomId}/join-via-pull-stranger`), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ joiningUserId, targetUserId })
+                });
+                const data = await response.json();
+                showResponse('roomMgmtResponse', data, !response.ok);
+                if (response.ok) {
+                    // Refresh room info after joining
+                    setTimeout(() => refreshRoomInfo(), 1000);
+                }
+            } catch (error) {
+                showResponse('roomMgmtResponse', { error: error.message }, true);
+            }
+        }
+        
+        // Wallet functions
+        async function getBalance() {
+            const userId = document.getElementById('balanceUserId').value;
+            
+            try {
+                const response = await fetch(getApiUrl(`/wallet/test/balance?userId=${userId}`));
+                const data = await response.json();
+                showResponse('balanceResponse', data, !response.ok);
+            } catch (error) {
+                showResponse('balanceResponse', { error: error.message }, true);
+            }
+        }
+        
+        async function addCoins() {
+            const userId = document.getElementById('addCoinsUserId').value;
+            const amount = parseInt(document.getElementById('addCoinsAmount').value);
+            const description = document.getElementById('addCoinsDesc').value;
+            const giftId = document.getElementById('addCoinsGiftId').value || undefined;
+            
+            try {
+                const response = await fetch(getApiUrl('/wallet/test/wallet/add-coins'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId, amount, description, giftId })
+                });
+                const data = await response.json();
+                showResponse('addCoinsResponse', data, !response.ok);
+            } catch (error) {
+                showResponse('addCoinsResponse', { error: error.message }, true);
+            }
+        }
+        
+        async function getWallet() {
+            const userId = document.getElementById('walletUserId').value;
+            const includeTransactions = document.getElementById('includeTransactions').checked;
+            
+            try {
+                const response = await fetch(getApiUrl(`/wallet/test/wallet?userId=${userId}&includeTransactions=${includeTransactions}`));
+                const data = await response.json();
+                showResponse('walletResponse', data, !response.ok);
+            } catch (error) {
+                showResponse('walletResponse', { error: error.message }, true);
+            }
+        }
+        
+        async function getGiftTransactions() {
+            const userId = document.getElementById('giftTransactionsUserId').value;
+            
+            try {
+                const response = await fetch(getApiUrl(`/wallet/test/wallet/gift-transactions?userId=${userId}`));
+                const data = await response.json();
+                showResponse('giftTransactionsResponse', data, !response.ok);
+            } catch (error) {
+                showResponse('giftTransactionsResponse', { error: error.message }, true);
+            }
+        }
+        
+        // Friends functions - using test endpoints
+        async function getFriends() {
+            const userId = document.getElementById('friendsUserId').value;
+            const limit = document.getElementById('friendsLimit').value;
+            const cursor = document.getElementById('friendsCursor').value || undefined;
+            
+            try {
+                let url = getApiUrl(`/friends/test/friends?userId=${userId}&limit=${limit}`);
+                if (cursor) {
+                    url += `&cursor=${cursor}`;
+                }
+                const response = await fetch(url);
+                const data = await response.json();
+                showResponse('friendsResponse', data, !response.ok);
+            } catch (error) {
+                showResponse('friendsResponse', { error: error.message }, true);
+            }
+        }
+        
+        async function getFriendRequests() {
+            const userId = document.getElementById('requestsUserId').value;
+            const type = document.getElementById('requestType').value;
+            
+            try {
+                const endpoint = type === 'pending' ? 'pending' : 'sent';
+                const response = await fetch(getApiUrl(`/friends/test/friends/requests/${endpoint}?userId=${userId}`));
+                const data = await response.json();
+                showResponse('requestsResponse', data, !response.ok);
+            } catch (error) {
+                showResponse('requestsResponse', { error: error.message }, true);
+            }
+        }
+        
+        // Initialize
+        window.addEventListener('load', function() {
+            checkGateway();
+        });
+    </script>
+</body>
+</html>

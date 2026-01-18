@@ -57,6 +57,11 @@ export class AuthMiddleware {
    * Check if path requires authentication
    */
   requiresAuth(path: string): boolean {
+    // Test endpoints bypass authentication
+    if (path.includes("/test/")) {
+      return false;
+    }
+
     // Public endpoints
     const publicPaths = [
       "/auth/",

@@ -202,11 +202,25 @@ export class RoutingService implements OnModuleInit {
     }
 
     // Remove the route prefix from the path to get the service-specific path
-    // Example: /v1/users/123 → /users/123 (route: /users)
-    // Example: /v1/me/profile → /me/profile (route: /me)
+    // Most services expect the route prefix (e.g., /users/123, /discovery/card)
+    // But wallet service expects NO route prefix (e.g., /test/wallet/add-coins, not /wallet/test/wallet/add-coins)
     let servicePath = cleanPath;
-    if (cleanPath.startsWith(route.path)) {
-      // Path already starts with route path, use as-is
+    
+    // Special case: wallet service doesn't use /wallet prefix in its routes
+    if (route.path === "/wallet" && cleanPath.startsWith("/wallet/")) {
+      // Strip /wallet prefix for wallet service
+      servicePath = cleanPath.substring("/wallet".length);
+      if (!servicePath) {
+        servicePath = "/";
+      }
+    } else if (cleanPath.startsWith(route.path + "/")) {
+      // Path starts with route path + /, keep route prefix (most services expect it)
+      servicePath = cleanPath;
+    } else if (cleanPath === route.path) {
+      // Path exactly matches route path, use root
+      servicePath = "/";
+    } else if (cleanPath.startsWith(route.path)) {
+      // Path starts with route path (but no trailing /), use as-is (for routes like /me where service expects /me prefix)
       servicePath = cleanPath;
     } else {
       // Remove first segment if it doesn't match route path

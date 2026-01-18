@@ -239,8 +239,29 @@ export class UserClientService implements OnModuleInit {
       );
 
       if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`User service error: ${error}`);
+        const errorText = await response.text();
+        let errorData: any;
+        try {
+          errorData = JSON.parse(errorText);
+        } catch {
+          errorData = { message: errorText };
+        }
+        
+        // If user not found (404), throw NOT_FOUND instead of SERVICE_UNAVAILABLE
+        if (response.status === 404 || errorData.statusCode === 404 || errorData.message?.includes('not found')) {
+          throw new HttpException(
+            {
+              message: `User profile not found for userId: ${userId}`,
+              error: errorData.message || 'User not found',
+              code: 'USER_NOT_FOUND',
+              suggestion: `Please create the user profile first using the Setup tab in the test interface, or use POST /users/${userId}/profile`
+            },
+            HttpStatus.NOT_FOUND
+          );
+        }
+        
+        // For other errors, include the actual error details
+        throw new Error(`User service error (${response.status}): ${errorText}`);
       }
 
       const result = await response.json() as { user: UserProfileResponse } | UserProfileResponse;
@@ -249,9 +270,47 @@ export class UserClientService implements OnModuleInit {
       }
       return result;
     } catch (error: any) {
+      // If it's already an HttpException (like NOT_FOUND), re-throw it
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      
       console.error("Failed to get user full profile by ID from user-service:", error);
+      
+      // Check if it's a timeout error
+      if (error.message?.includes('timeout') || error.message?.includes('Request timeout')) {
+        throw new HttpException(
+          {
+            message: `Request to user-service timed out after ${this.requestTimeoutMs}ms`,
+            error: error.message,
+            code: 'USER_SERVICE_TIMEOUT',
+            suggestion: 'Check if user-service is running and accessible. Try increasing USER_SERVICE_TIMEOUT_MS if needed.'
+          },
+          HttpStatus.SERVICE_UNAVAILABLE
+        );
+      }
+      
+      // Check if it's a connection error
+      if (error.message?.includes('ECONNREFUSED') || error.message?.includes('fetch failed')) {
+        throw new HttpException(
+          {
+            message: 'Unable to connect to user-service',
+            error: error.message,
+            code: 'USER_SERVICE_CONNECTION_ERROR',
+            suggestion: `Check if user-service is running at ${this.userServiceUrl}`
+          },
+          HttpStatus.SERVICE_UNAVAILABLE
+        );
+      }
+      
       throw new HttpException(
-        "Unable to fetch user profile by ID. Please try again later.",
+        {
+          message: "Unable to fetch user profile by ID. Please try again later.",
+          error: error.message || 'Unknown error',
+          code: 'USER_SERVICE_ERROR',
+          details: error,
+          suggestion: `Check: 1) User exists in database, 2) User-service is running at ${this.userServiceUrl}, 3) Check user-service logs for details`
+        },
         HttpStatus.SERVICE_UNAVAILABLE
       );
     }

@@ -1325,22 +1325,32 @@ export class RoomService {
     // Log broadcast stop if it was active
     if (session.isBroadcasting) {
       this.logger.log(`Broadcasting stopped automatically due to room ending: ${roomId}`);
+      try {
+        await this.prisma.callEvent.create({
+          data: {
+            sessionId: session.id,
+            eventType: "broadcast_stopped",
+            metadata: JSON.stringify({ roomId, reason: "room_ended" })
+          }
+        });
+      } catch (error: any) {
+        this.logger.warn(`Failed to create broadcast_stopped event: ${error?.message || error}`);
+        // Continue - event logging is not critical
+      }
+    }
+
+    try {
       await this.prisma.callEvent.create({
         data: {
           sessionId: session.id,
-          eventType: "broadcast_stopped",
-          metadata: JSON.stringify({ roomId, reason: "room_ended" })
+          eventType: "call_ended",
+          metadata: JSON.stringify({ roomId })
         }
       });
+    } catch (error: any) {
+      this.logger.warn(`Failed to create call_ended event: ${error?.message || error}`);
+      // Continue - event logging is not critical
     }
-
-    await this.prisma.callEvent.create({
-      data: {
-        sessionId: session.id,
-        eventType: "call_ended",
-        metadata: JSON.stringify({ roomId })
-      }
-    });
 
     // Get all user IDs (active participants + active viewers) at time of room end
     // This includes any remaining participants and the user who just left
@@ -1414,18 +1424,18 @@ export class RoomService {
     });
 
     // BUSINESS RULE: When entire room ends:
-    // - Participants (IN_SQUAD/IN_BROADCAST) → ONLINE (back to app home)
-    // - Viewers (WATCHING_HMM_TV) → ONLINE (back to app home)
+    // - Participants (IN_SQUAD/IN_BROADCAST) → AVAILABLE (back to matching pool for fast re-matching)
+    // - Viewers (WATCHING_HMM_TV) → AVAILABLE (back to matching pool for fast re-matching)
     if (participantUserIds.length > 0) {
-      this.logger.log(`Updating ${participantUserIds.length} participant(s) to ONLINE status: ${participantUserIds.join(", ")}`);
-      this.discoveryClient.updateUserStatuses(participantUserIds, "ONLINE").catch((err) => {
+      this.logger.log(`Updating ${participantUserIds.length} participant(s) to AVAILABLE status: ${participantUserIds.join(", ")}`);
+      this.discoveryClient.updateUserStatuses(participantUserIds, "AVAILABLE").catch((err) => {
         this.logger.error(`Failed to update participant statuses: ${err.message}`);
       });
     }
 
     if (viewerUserIds.length > 0) {
-      this.logger.log(`Updating ${viewerUserIds.length} viewer(s) to ONLINE status: ${viewerUserIds.join(", ")}`);
-      this.discoveryClient.updateUserStatuses(viewerUserIds, "ONLINE").catch((err) => {
+      this.logger.log(`Updating ${viewerUserIds.length} viewer(s) to AVAILABLE status: ${viewerUserIds.join(", ")}`);
+      this.discoveryClient.updateUserStatuses(viewerUserIds, "AVAILABLE").catch((err) => {
         this.logger.error(`Failed to update viewer statuses: ${err.message}`);
       });
     }

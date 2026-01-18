@@ -44,8 +44,11 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleInit() {
+    // Re-check test mode here (env vars might not be loaded in constructor)
+    const testMode = process.env.TEST_MODE === "true" || process.env.NODE_ENV === "test";
+    
     // Initialize JWT verification only if not in test mode
-    if (!this.testMode) {
+    if (!testMode) {
       const jwkStr = process.env.JWT_PUBLIC_JWK;
       if (!jwkStr || jwkStr === "undefined") {
         throw new Error("JWT_PUBLIC_JWK environment variable is not set or is invalid");

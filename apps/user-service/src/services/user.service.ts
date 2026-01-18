@@ -131,27 +131,36 @@ export class UserService implements OnModuleInit {
       throw new HttpException("User profile not found", HttpStatus.NOT_FOUND);
     }
 
-    // Get active badge if user has one
+    // Get active badge if user has one (optional - don't break if badge fetch fails)
     let activeBadge = null;
     if (user.activeBadgeId) {
-      const badge = await this.prisma.userBadge.findUnique({
-        where: {
-          userId_giftId: {
-            userId: user.id,
-            giftId: user.activeBadgeId
+      try {
+        const badge = await this.prisma.userBadge.findUnique({
+          where: {
+            userId_giftId: {
+              userId: user.id,
+              giftId: user.activeBadgeId
+            }
           }
+        });
+        if (badge) {
+          activeBadge = {
+            giftId: badge.giftId,
+            giftName: badge.giftName,
+            giftEmoji: badge.giftEmoji
+          };
         }
-      });
-      if (badge) {
-        activeBadge = {
-          giftId: badge.giftId,
-          giftName: badge.giftName,
-          giftEmoji: badge.giftEmoji
-        };
+        // If badge not found (activeBadgeId set but badge doesn't exist), activeBadge stays null
+      } catch (error: any) {
+        // Badge fetch failed - log but don't break user profile fetch
+        // Badges are optional, so we continue without badge
+        console.warn(`[WARN] Failed to fetch badge for user ${user.id}:`, error?.message || error);
+        // activeBadge remains null - user will have no badge
       }
     }
+    // If user has no activeBadgeId, activeBadge is already null
     
-    // Add activeBadge to user object
+    // Add activeBadge to user object (null if no badge or fetch failed)
     (user as any).activeBadge = activeBadge;
 
     // If fields are specified, filter the response
@@ -316,27 +325,36 @@ export class UserService implements OnModuleInit {
       }
     });
 
-    // Get active badge if user has one
+    // Get active badge if user has one (optional - don't break if badge fetch fails)
     let activeBadge = null;
     if (user.activeBadgeId) {
-      const badge = await this.prisma.userBadge.findUnique({
-        where: {
-          userId_giftId: {
-            userId: user.id,
-            giftId: user.activeBadgeId
+      try {
+        const badge = await this.prisma.userBadge.findUnique({
+          where: {
+            userId_giftId: {
+              userId: user.id,
+              giftId: user.activeBadgeId
+            }
           }
+        });
+        if (badge) {
+          activeBadge = {
+            giftId: badge.giftId,
+            giftName: badge.giftName,
+            giftEmoji: badge.giftEmoji
+          };
         }
-      });
-      if (badge) {
-        activeBadge = {
-          giftId: badge.giftId,
-          giftName: badge.giftName,
-          giftEmoji: badge.giftEmoji
-        };
+        // If badge not found (activeBadgeId set but badge doesn't exist), activeBadge stays null
+      } catch (error: any) {
+        // Badge fetch failed - log but don't break user profile fetch
+        // Badges are optional, so we continue without badge
+        console.warn(`[WARN] Failed to fetch badge for user ${user.id}:`, error?.message || error);
+        // activeBadge remains null - user will have no badge
       }
     }
+    // If user has no activeBadgeId, activeBadge is already null
     
-    // Add activeBadge to user object
+    // Add activeBadge to user object (null if no badge or fetch failed)
     (user as any).activeBadge = activeBadge;
 
     // Calculate profile completion percentage
@@ -799,27 +817,36 @@ export class UserService implements OnModuleInit {
       } as any // Type assertion needed due to Prisma type generation issue
     });
 
-    // Get active badges for all users
+    // Get active badges for all users (optional - don't break if badge fetch fails)
     const usersWithBadges = await Promise.all(
       users.map(async (user) => {
         let activeBadge = null;
         if (user.activeBadgeId) {
-          const badge = await this.prisma.userBadge.findUnique({
-            where: {
-              userId_giftId: {
-                userId: user.id,
-                giftId: user.activeBadgeId
+          try {
+            const badge = await this.prisma.userBadge.findUnique({
+              where: {
+                userId_giftId: {
+                  userId: user.id,
+                  giftId: user.activeBadgeId
+                }
               }
+            });
+            if (badge) {
+              activeBadge = {
+                giftId: badge.giftId,
+                giftName: badge.giftName,
+                giftEmoji: badge.giftEmoji
+              };
             }
-          });
-          if (badge) {
-            activeBadge = {
-              giftId: badge.giftId,
-              giftName: badge.giftName,
-              giftEmoji: badge.giftEmoji
-            };
+            // If badge not found (activeBadgeId set but badge doesn't exist), activeBadge stays null
+          } catch (error: any) {
+            // Badge fetch failed - log but don't break user profile fetch
+            // Badges are optional, so we continue without badge
+            console.warn(`[WARN] Failed to fetch badge for user ${user.id}:`, error?.message || error);
+            // activeBadge remains null - user will have no badge
           }
         }
+        // If user has no activeBadgeId, activeBadge is already null
         return { ...user, activeBadge };
       })
     );
@@ -961,9 +988,9 @@ export class UserService implements OnModuleInit {
     // City filter
     if (filters.city !== undefined) {
       if (filters.city === null) {
-        // Anywhere - only match with other "anywhere" users (bidirectional)
-        // Users with preferredCity = null should only see other users with preferredCity = null
-        where.preferredCity = null;
+        // Anywhere - show users from ALL cities (don't filter by preferredCity)
+        // Users in "Anywhere" mode can see users from any city
+        // Don't set where.preferredCity - this means no city filter, show all users
       } else {
         // Specific city - only match with users in that city (bidirectional)
         // Users with preferredCity = "Mumbai" should only see other users with preferredCity = "Mumbai"

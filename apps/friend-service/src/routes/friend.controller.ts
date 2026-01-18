@@ -337,6 +337,91 @@ export class FriendController {
     };
   }
 
+  /* ---------- Test Endpoints (No Auth Required) ---------- */
+
+  /**
+   * Test endpoint: Get friends (bypasses auth)
+   * GET /test/friends?userId=xxx&limit=50&cursor=xxx
+   */
+  @Get("test/friends")
+  async getFriendsTest(@Query() query: any) {
+    const userId = query.userId;
+    if (!userId) {
+      throw new HttpException("userId is required", HttpStatus.BAD_REQUEST);
+    }
+    const limit = query.limit ? parseInt(query.limit, 10) : 50;
+    const cursor = query.cursor;
+    return this.friendService.getFriends(userId, limit, cursor);
+  }
+
+  /**
+   * Test endpoint: Get pending requests (bypasses auth)
+   * GET /test/friends/requests/pending?userId=xxx
+   */
+  @Get("test/friends/requests/pending")
+  async getPendingRequestsTest(@Query("userId") userId: string) {
+    if (!userId) {
+      throw new HttpException("userId is required", HttpStatus.BAD_REQUEST);
+    }
+    return this.friendService.getPendingRequests(userId);
+  }
+
+  /**
+   * Test endpoint: Get sent requests (bypasses auth)
+   * GET /test/friends/requests/sent?userId=xxx
+   */
+  @Get("test/friends/requests/sent")
+  async getSentRequestsTest(@Query("userId") userId: string) {
+    if (!userId) {
+      throw new HttpException("userId is required", HttpStatus.BAD_REQUEST);
+    }
+    return this.friendService.getSentRequests(userId);
+  }
+
+  /**
+   * Test endpoint: Send friend request (bypasses auth)
+   * POST /test/friends/requests
+   */
+  @Post("test/friends/requests")
+  async sendFriendRequestTest(@Body() body: any) {
+    const { fromUserId, toUserId } = z.object({
+      fromUserId: z.string(),
+      toUserId: z.string()
+    }).parse(body);
+    const result = await this.friendService.sendFriendRequest(fromUserId, toUserId);
+    return {
+      ok: true,
+      requestId: result.requestId,
+      autoAccepted: result.autoAccepted
+    };
+  }
+
+  /**
+   * Test endpoint: Accept friend request (bypasses auth)
+   * POST /test/friends/requests/:requestId/accept
+   */
+  @Post("test/friends/requests/:requestId/accept")
+  async acceptRequestTest(@Param("requestId") requestId: string, @Query("userId") userId: string) {
+    if (!userId) {
+      throw new HttpException("userId is required", HttpStatus.BAD_REQUEST);
+    }
+    await this.friendService.acceptFriendRequest(requestId, userId);
+    return { ok: true };
+  }
+
+  /**
+   * Test endpoint: Reject friend request (bypasses auth)
+   * POST /test/friends/requests/:requestId/reject
+   */
+  @Post("test/friends/requests/:requestId/reject")
+  async rejectRequestTest(@Param("requestId") requestId: string, @Query("userId") userId: string) {
+    if (!userId) {
+      throw new HttpException("userId is required", HttpStatus.BAD_REQUEST);
+    }
+    await this.friendService.rejectFriendRequest(requestId, userId);
+    return { ok: true };
+  }
+
   /**
    * Auto-create friendship (internal endpoint - for external users accepting squad invites)
    * POST /internal/friends/auto-create

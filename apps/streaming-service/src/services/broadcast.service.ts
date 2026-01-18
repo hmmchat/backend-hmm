@@ -116,8 +116,8 @@ export class BroadcastService {
 
     await this.roomService.addViewer(roomId, userId);
 
-    // Update user status to IN_BROADCAST
-    await this.discoveryClient.updateUserStatus(userId, "IN_BROADCAST");
+    // Update user status to VIEWER
+    await this.discoveryClient.updateUserStatus(userId, "VIEWER");
 
     this.logger.log(`Viewer ${userId} added to broadcast ${roomId}`);
   }

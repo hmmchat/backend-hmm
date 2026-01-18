@@ -1425,7 +1425,7 @@ export class RoomService {
 
     // BUSINESS RULE: When entire room ends:
     // - Participants (IN_SQUAD/IN_BROADCAST) → AVAILABLE (back to matching pool for fast re-matching)
-    // - Viewers (WATCHING_HMM_TV) → AVAILABLE (back to matching pool for fast re-matching)
+    // - Viewers (VIEWER) → AVAILABLE (back to matching pool for fast re-matching)
     if (participantUserIds.length > 0) {
       this.logger.log(`Updating ${participantUserIds.length} participant(s) to AVAILABLE status: ${participantUserIds.join(", ")}`);
       this.discoveryClient.updateUserStatuses(participantUserIds, "AVAILABLE").catch((err) => {

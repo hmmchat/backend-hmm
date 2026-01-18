@@ -10,7 +10,8 @@ export const UserStatusEnum = z.enum([
   "IN_SQUAD",
   "IN_SQUAD_AVAILABLE",
   "IN_BROADCAST",
-  "IN_BROADCAST_AVAILABLE"
+  "IN_BROADCAST_AVAILABLE",
+  "VIEWER"
 ]);
 
 // Profile Creation/Update DTO

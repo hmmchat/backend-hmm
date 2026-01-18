@@ -54,6 +54,7 @@ enum UserStatus {
   IN_SQUAD_AVAILABLE
   IN_BROADCAST
   IN_BROADCAST_AVAILABLE
+  VIEWER
 }
 
 model User {

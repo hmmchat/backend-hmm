@@ -1627,23 +1627,26 @@ export class DiscoveryService implements OnModuleInit {
       await this.matchingService.removeMatch(match.user1Id, match.user2Id);
       await this.matchingService.removeMatchAcceptances(match.user1Id, match.user2Id);
       
-      // Update both users' status to IN_SQUAD
+      // IMPORTANT: Create room FIRST while users are still MATCHED status
+      // Room service expects users to be MATCHED when creating rooms
+      let roomResult: { roomId?: string; sessionId?: string } = {};
+      try {
+        roomResult = await this.streamingClient.createMatchedRoom([match.user1Id, match.user2Id]);
+        console.log(`[INFO] Created streaming room ${roomResult.roomId} for matched users`);
+      } catch (error: any) {
+        console.error(`[ERROR] Failed to create streaming room:`, error?.message || error);
+        // Don't throw - room creation failure shouldn't block the match
+        // Frontend can create room separately if needed
+      }
+      
+      // THEN update both users' status to IN_SQUAD (after room is created)
+      // Note: Room service will also update statuses, but we do it here too for consistency
       await this.matchingService.updateUserStatus(match.user1Id, "IN_SQUAD");
       await this.matchingService.updateUserStatus(match.user2Id, "IN_SQUAD");
       
       console.log(`[INFO] Both users accepted match - ${match.user1Id} and ${match.user2Id} moved to IN_SQUAD`);
       
-      // Create streaming room for matched users
-      try {
-        const roomResult = await this.streamingClient.createSquadRoom([match.user1Id, match.user2Id]);
-        console.log(`[INFO] Created streaming room ${roomResult.roomId} for matched users`);
-        return { roomId: roomResult.roomId, sessionId: roomResult.sessionId };
-      } catch (error: any) {
-        console.error(`[ERROR] Failed to create streaming room:`, error?.message || error);
-        // Don't throw - room creation failure shouldn't block the match
-        // Frontend can create room separately if needed
-        return {};
-      }
+      return roomResult;
     } else {
       // Only one user has accepted - wait for the other user
       console.log(`[INFO] User ${userId} accepted match, waiting for ${matchedUserId} to accept`);

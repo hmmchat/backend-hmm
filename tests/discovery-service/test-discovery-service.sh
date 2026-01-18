@@ -153,7 +153,7 @@ test_proceed() {
 EOF
 )
     
-    # May return 400 if users don't have proper setup or 503 if external service not configured
+    # May return 201 when room is created, 400 if users don't have proper setup or 503 if external service not configured
     local response=$(curl -s -w "\n%{http_code}" -X POST \
         -H "Content-Type: application/json" \
         -d "${proceed_data}" \
@@ -161,13 +161,16 @@ EOF
     local status_code=$(echo "$response" | tail -n1)
     if [ "$status_code" -eq 200 ]; then
         log_success "Proceed with user (200)"
+    elif [ "$status_code" -eq 201 ]; then
+        # Room was created successfully
+        log_success "Proceed with user (201 - Room created successfully)"
     elif [ "$status_code" -eq 400 ]; then
         # May fail if users don't have proper setup (expected in some cases)
         log_success "Proceed with user (400 - users may not be properly set up, expected)"
     elif [ "$status_code" -eq 503 ]; then
         log_success "Proceed with user (503 - External API not configured, expected in local testing)"
     else
-        log_error "Proceed with user - Expected 200/400/503, got ${status_code}"
+        log_error "Proceed with user - Expected 200/201/400/503, got ${status_code}"
         return 1
     fi
 }

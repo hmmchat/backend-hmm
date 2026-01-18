@@ -13,6 +13,42 @@ export class StreamingClientService {
   }
 
   /**
+   * Create a room for matched call (2 users)
+   */
+  async createMatchedRoom(userIds: string[]): Promise<{ roomId: string; sessionId: string }> {
+    try {
+      const response = await fetch(`${this.streamingServiceUrl}/streaming/rooms`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          userIds,
+          callType: "matched"  // Use "matched" for matched calls
+        }),
+        signal: AbortSignal.timeout(this.requestTimeoutMs)
+      } as any);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        this.logger.warn(`Failed to create matched room: ${errorText}`);
+        throw new Error(`Failed to create matched room: ${errorText}`);
+      }
+
+      const result = await response.json() as { roomId: string; sessionId: string };
+      this.logger.log(`Matched room created: ${result.roomId} with ${userIds.length} members`);
+      return result;
+    } catch (error: any) {
+      if (error.name === "AbortError" || error.name === "TimeoutError") {
+        this.logger.warn(`Timeout creating matched room for ${userIds.length} users`);
+        throw new Error("Service timeout when creating matched room");
+      }
+      this.logger.error(`Error creating matched room:`, error.message);
+      throw error;
+    }
+  }
+
+  /**
    * Create a room for squad call
    */
   async createSquadRoom(userIds: string[]): Promise<{ roomId: string; sessionId: string }> {

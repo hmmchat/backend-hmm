@@ -124,6 +124,88 @@ test_batch_moderation() {
     log_success "Batch moderation (endpoint may not be available, skipping)"
 }
 
+# Test: Submit custom dare for moderation
+test_submit_dare_submission() {
+    log_test "Submit Dare Submission"
+    
+    local submission_data=$(cat <<EOF
+{
+  "userId": "test-user-1",
+  "dareText": "Sing your favorite song in a funny voice"
+}
+EOF
+)
+    
+    # Accept both 200 and 201 as valid (201 Created is correct for POST)
+    local response=$(curl -s -w "\n%{http_code}" -X POST \
+        -H "Content-Type: application/json" \
+        -d "${submission_data}" \
+        "${SERVICE_URL}/moderation/dare-submissions" 2>&1)
+    local status_code=$(echo "$response" | tail -n1)
+    if [ "$status_code" -eq 200 ] || [ "$status_code" -eq 201 ]; then
+        log_success "Submit dare for moderation (${status_code})"
+    else
+        log_error "Submit dare for moderation - Expected 200/201, got ${status_code}"
+        return 1
+    fi
+}
+
+# Test: Get pending dare submissions
+test_get_pending_submissions() {
+    log_test "Get Pending Dare Submissions"
+    
+    http_request "GET" "${SERVICE_URL}/moderation/dare-submissions/pending" "" 200 "Get pending dare submissions"
+}
+
+# Test: Get all dare submissions
+test_get_all_submissions() {
+    log_test "Get All Dare Submissions"
+    
+    http_request "GET" "${SERVICE_URL}/moderation/dare-submissions" "" 200 "Get all dare submissions"
+}
+
+# Test: Review dare submission (approve)
+test_review_submission_approve() {
+    log_test "Review Dare Submission (Approve)"
+    
+    # First submit a dare
+    local submission_data=$(cat <<EOF
+{
+  "userId": "test-user-2",
+  "dareText": "Tell your funniest joke"
+}
+EOF
+)
+    
+    local response=$(curl -s -w "\n%{http_code}" -X POST \
+        -H "Content-Type: application/json" \
+        -d "${submission_data}" \
+        "${SERVICE_URL}/moderation/dare-submissions" 2>&1)
+    local status_code=$(echo "$response" | tail -n1)
+    local body=$(echo "$response" | sed '$d')
+    
+    if [ "$status_code" -eq 200 ]; then
+        # Extract submission ID
+        local submission_id=$(echo "$body" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4 || echo "")
+        if [ -n "$submission_id" ]; then
+            # Review the submission
+            local review_data=$(cat <<EOF
+{
+  "reviewerId": "moderator-1",
+  "status": "APPROVED",
+  "notes": "Great dare, approved for use"
+}
+EOF
+)
+            http_request "PUT" "${SERVICE_URL}/moderation/dare-submissions/${submission_id}/review" "${review_data}" 200 "Review and approve submission"
+        else
+            log_warn "Could not extract submission ID, skipping review test"
+        fi
+    else
+        log_warn "Could not create submission for review test (status: ${status_code})"
+    fi
+}
+
 # Main test execution
 main() {
     echo -e "\n${BLUE}╔════════════════════════════════════════╗${NC}"
@@ -140,6 +222,12 @@ main() {
     # Edge cases
     test_moderate_invalid_image
     test_moderate_missing_fields
+    
+    # Dare submission tests
+    test_submit_dare_submission
+    test_get_pending_submissions
+    test_get_all_submissions
+    test_review_submission_approve
     
     cleanup
     

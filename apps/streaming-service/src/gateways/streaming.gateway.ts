@@ -863,7 +863,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Handle get icebreaker (returns random icebreaker to the user)
+   * Handle get icebreaker (returns random icebreaker and broadcasts to all participants)
    */
   private async handleGetIcebreaker(
     _connectionId: string,
@@ -885,19 +885,29 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
         return;
       }
 
-      // Get random icebreaker
-      const icebreaker = this.icebreakerService.getRandomIcebreaker();
+      // Get random icebreaker (now async)
+      const icebreaker = await this.icebreakerService.getRandomIcebreaker();
 
-      // Send only to the requesting user (not broadcasted)
-      this.send(ws, {
+      // Broadcast to all participants in the room (so everyone sees the same icebreaker)
+      await this.broadcastToRoom(roomId, {
         type: "icebreaker",
+        data: {
+          roomId,
+          question: icebreaker,
+          requestedBy: userId
+        }
+      });
+
+      // Send success confirmation to requester
+      this.send(ws, {
+        type: "icebreaker-success",
         data: {
           roomId,
           question: icebreaker
         }
       });
 
-      this.logger.log(`User ${userId} requested icebreaker in room ${roomId}: ${icebreaker}`);
+      this.logger.log(`User ${userId} requested icebreaker in room ${roomId}: ${icebreaker} (broadcasted to all)`);
     } catch (error: any) {
       this.sendError(ws, error.message || "Failed to get icebreaker");
     }

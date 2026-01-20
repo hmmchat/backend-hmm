@@ -18,6 +18,7 @@ SERVICE_PORT=${STREAMING_PORT}
 TEST_USER_1="test-streaming-1"
 TEST_USER_2="test-streaming-2"
 TEST_ROOM_ID=""
+ADMIN_ICEBREAKER_ID=""
 
 # Setup function
 setup() {
@@ -161,6 +162,56 @@ test_get_dare_gifts() {
     http_request "GET" "${SERVICE_URL}/streaming/rooms/${TEST_ROOM_ID}/dares/gifts" "" 200 "Get dare gifts"
 }
 
+# Test: Save custom dare for personal use
+test_save_custom_dare() {
+    log_test "Save Custom Dare"
+    
+    # Use dummy room ID since custom dares don't require a real room
+    local dummy_room_id="${TEST_ROOM_ID:-test-room-dummy}"
+    
+    local custom_dare_data=$(cat <<EOF
+{
+  "userId": "${TEST_USER_1}",
+  "dareText": "Do 20 jumping jacks",
+  "category": "physical"
+}
+EOF
+)
+    
+    # Accept both 200 and 201 as valid (201 Created is correct for POST)
+    local response=$(curl -s -w "\n%{http_code}" -X POST \
+        -H "Content-Type: application/json" \
+        -d "${custom_dare_data}" \
+        "${SERVICE_URL}/streaming/rooms/${dummy_room_id}/dares/custom/save" 2>&1)
+    local status_code=$(echo "$response" | tail -n1)
+    if [ "$status_code" -eq 200 ] || [ "$status_code" -eq 201 ]; then
+        log_success "Save custom dare (${status_code})"
+    else
+        log_error "Save custom dare - Expected 200/201, got ${status_code}"
+        return 1
+    fi
+}
+
+# Test: Get user's custom dares
+test_get_user_custom_dares() {
+    log_test "Get User Custom Dares"
+    
+    # Use dummy room ID since custom dares don't require a real room
+    local dummy_room_id="${TEST_ROOM_ID:-test-room-dummy}"
+    
+    http_request "GET" "${SERVICE_URL}/streaming/rooms/${dummy_room_id}/dares/custom?userId=${TEST_USER_1}" "" 200 "Get user custom dares"
+}
+
+# Test: Get random dares with custom dares mixed in
+test_get_random_dares() {
+    log_test "Get Random Dares with Custom Dares"
+    
+    # Use dummy room ID since custom dares don't require a real room
+    local dummy_room_id="${TEST_ROOM_ID:-test-room-dummy}"
+    
+    http_request "GET" "${SERVICE_URL}/streaming/rooms/${dummy_room_id}/dares/random?userId=${TEST_USER_1}&count=7&interval=3" "" 200 "Get random dares with custom dares"
+}
+
 # Test: Get gifts
 test_get_gifts() {
     log_test "Get Gifts"
@@ -296,6 +347,105 @@ test_nonexistent_room() {
     http_request "GET" "${SERVICE_URL}/streaming/rooms/non-existent-room-id" "" 404 "Get non-existent room (should fail)"
 }
 
+# Test: Admin - Get all icebreakers
+test_admin_get_icebreakers() {
+    log_test "Admin: Get All Icebreakers"
+    
+    http_request "GET" "${SERVICE_URL}/streaming/admin/icebreakers" "" 200 "Get all icebreakers"
+}
+
+# Test: Admin - Get active icebreakers
+test_admin_get_active_icebreakers() {
+    log_test "Admin: Get Active Icebreakers"
+    
+    http_request "GET" "${SERVICE_URL}/streaming/admin/icebreakers/active" "" 200 "Get active icebreakers"
+}
+
+# Test: Admin - Create icebreaker
+test_admin_create_icebreaker() {
+    log_test "Admin: Create Icebreaker"
+    
+    local icebreaker_data=$(cat <<EOF
+{
+  "question": "What's your favorite testing framework?",
+  "category": "technical"
+}
+EOF
+)
+    
+    local response=$(curl -s -w "\n%{http_code}" -X POST \
+        -H "Content-Type: application/json" \
+        -d "${icebreaker_data}" \
+        "${SERVICE_URL}/streaming/admin/icebreakers" 2>&1)
+    local status_code=$(echo "$response" | tail -n1)
+    local body=$(echo "$response" | sed '$d')
+    
+    if [ "$status_code" -eq 201 ]; then
+        # Extract icebreaker ID for later tests
+        ADMIN_ICEBREAKER_ID=$(echo "$body" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4 || echo "")
+        if [ -n "$ADMIN_ICEBREAKER_ID" ]; then
+            log_success "Create icebreaker (201) - ID: ${ADMIN_ICEBREAKER_ID}"
+        else
+            log_success "Create icebreaker (201)"
+        fi
+    else
+        log_error "Create icebreaker - Expected 201, got ${status_code}"
+        return 1
+    fi
+}
+
+# Test: Admin - Update icebreaker
+test_admin_update_icebreaker() {
+    log_test "Admin: Update Icebreaker"
+    
+    if [ -z "$ADMIN_ICEBREAKER_ID" ]; then
+        log_warn "No icebreaker ID available from create test, skipping update test"
+        return 0
+    fi
+    
+    local update_data=$(cat <<EOF
+{
+  "category": "updated-technical",
+  "isActive": true
+}
+EOF
+)
+    
+    local response=$(curl -s -w "\n%{http_code}" -X PATCH \
+        -H "Content-Type: application/json" \
+        -d "${update_data}" \
+        "${SERVICE_URL}/streaming/admin/icebreakers/${ADMIN_ICEBREAKER_ID}" 2>&1)
+    local status_code=$(echo "$response" | tail -n1)
+    
+    if [ "$status_code" -eq 200 ]; then
+        log_success "Update icebreaker (200)"
+    else
+        log_error "Update icebreaker - Expected 200, got ${status_code}"
+        return 1
+    fi
+}
+
+# Test: Admin - Delete icebreaker (soft delete)
+test_admin_delete_icebreaker() {
+    log_test "Admin: Delete Icebreaker (Soft Delete)"
+    
+    if [ -z "$ADMIN_ICEBREAKER_ID" ]; then
+        log_warn "No icebreaker ID available, skipping delete test"
+        return 0
+    fi
+    
+    local response=$(curl -s -w "\n%{http_code}" -X DELETE \
+        "${SERVICE_URL}/streaming/admin/icebreakers/${ADMIN_ICEBREAKER_ID}" 2>&1)
+    local status_code=$(echo "$response" | tail -n1)
+    
+    if [ "$status_code" -eq 204 ] || [ "$status_code" -eq 200 ]; then
+        log_success "Delete icebreaker (${status_code})"
+    else
+        log_error "Delete icebreaker - Expected 204/200, got ${status_code}"
+        return 1
+    fi
+}
+
 # Main test execution
 main() {
     echo -e "\n${BLUE}╔════════════════════════════════════════╗${NC}"
@@ -314,6 +464,11 @@ main() {
     test_get_dare_gifts
     test_get_gifts
     
+    # Custom dare tests
+    test_save_custom_dare
+    test_get_user_custom_dares
+    test_get_random_dares
+    
     # Gift badge feature tests
     test_send_gift_with_giftid
     test_send_gift_without_giftid
@@ -321,6 +476,13 @@ main() {
     # Edge cases
     test_invalid_room
     test_nonexistent_room
+    
+    # Admin icebreaker tests
+    test_admin_get_icebreakers
+    test_admin_get_active_icebreakers
+    test_admin_create_icebreaker
+    test_admin_update_icebreaker
+    test_admin_delete_icebreaker
     
     cleanup
     

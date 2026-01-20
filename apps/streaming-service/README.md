@@ -71,7 +71,7 @@ JWT_PUBLIC_JWK='{"kty":"RSA",...}'
 
 # Service URLs
 DISCOVERY_SERVICE_URL=http://localhost:3004
-WALLET_SERVICE_URL=http://localhost:3005
+WALLET_SERVICE_URL=http://localhost:3006
 DISCOVERY_SERVICE_TIMEOUT_MS=5000
 ```
 

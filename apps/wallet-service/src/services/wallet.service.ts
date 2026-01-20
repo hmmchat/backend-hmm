@@ -175,19 +175,65 @@ export class WalletService {
       }
     });
 
-    const transaction = await this.prisma.transaction.create({
-      data: {
-        walletId: wallet.id,
-        amount: amount, // Positive for credit
-        type: "CREDIT",
-        description: description || `Test credit: ${amount} coins`,
-        giftId: giftId || null // Store giftId in transaction
+    // Use raw SQL if giftId is provided (due to Prisma client sync issues)
+    // Otherwise use Prisma client for normal transactions
+    let transactionId: string;
+    
+    if (giftId) {
+      // First ensure giftId column exists (add if not present)
+      try {
+        await this.prisma.$executeRawUnsafe(
+          `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS "giftId" TEXT;`
+        );
+      } catch (error: any) {
+        // Column might already exist or other error - continue anyway
+        // Ignore errors about column already existing
+        if (!error.message?.includes("already exists") && !error.message?.includes("duplicate")) {
+          console.warn("Warning: Could not ensure giftId column exists:", error.message);
+        }
       }
-    });
+
+      // Use raw SQL to insert transaction with giftId
+      const { Prisma } = await import("@prisma/client");
+      const result = await this.prisma.$queryRaw<Array<{ id: string }>>(
+        Prisma.sql`
+        INSERT INTO transactions (
+          id,
+          "walletId",
+          amount,
+          type,
+          description,
+          "giftId",
+          "createdAt"
+        ) VALUES (
+          gen_random_uuid()::text,
+          ${wallet.id},
+          ${amount},
+          'CREDIT',
+          ${description || `Test credit: ${amount} coins`},
+          ${giftId},
+          NOW()
+        )
+        RETURNING id
+        `
+      );
+      transactionId = result[0].id;
+    } else {
+      // Use Prisma client for transactions without giftId
+      const transaction = await this.prisma.transaction.create({
+        data: {
+          walletId: wallet.id,
+          amount: amount, // Positive for credit
+          type: "CREDIT",
+          description: description || `Test credit: ${amount} coins`
+        }
+      });
+      transactionId = transaction.id;
+    }
 
     return {
       newBalance: updatedWallet.balance,
-      transactionId: transaction.id
+      transactionId: transactionId
     };
   }
 
@@ -252,39 +298,65 @@ export class WalletService {
 
   /**
    * Get transactions with gift information for a user
+   * All gifts are sent with giftId, so we only return transactions with giftId
    */
   async getGiftTransactions(userId: string): Promise<Array<{
     id: string;
-    giftId: string | null;
+    giftId: string;
     amount: number;
     description: string | null;
     createdAt: Date;
   }>> {
+    // Check if wallet exists
     const wallet = await this.prisma.wallet.findUnique({
-      where: { id: userId },
-      include: {
-        transactions: {
-          where: {
-            giftId: { not: null }, // Only transactions with gifts
-            type: "CREDIT" // Only credits (received gifts)
-          },
-          orderBy: { createdAt: "desc" },
-          select: {
-            id: true,
-            giftId: true,
-            amount: true,
-            description: true,
-            createdAt: true
-          }
-        }
-      }
+      where: { id: userId }
     });
 
     if (!wallet) {
       return [];
     }
 
-    return wallet.transactions;
+    // Ensure giftId column exists
+    try {
+      await this.prisma.$executeRawUnsafe(
+        `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS "giftId" TEXT;`
+      );
+    } catch (error: any) {
+      // Column might already exist - ignore
+    }
+
+    // Use raw SQL to get gift transactions (bypasses Prisma client type checking issues)
+    const { Prisma } = await import("@prisma/client");
+    const transactions = await this.prisma.$queryRaw<Array<{
+      id: string;
+      giftId: string;
+      amount: number;
+      description: string | null;
+      createdAt: Date;
+    }>>(
+      Prisma.sql`
+        SELECT
+          t.id,
+          t."giftId",
+          t.amount,
+          t.description,
+          t."createdAt"
+        FROM transactions t
+        WHERE t."walletId" = ${userId}
+          AND t.type = 'CREDIT'
+          AND t."giftId" IS NOT NULL
+          AND t."giftId" != ''
+        ORDER BY t."createdAt" DESC
+      `
+    );
+
+    return transactions.map(t => ({
+      id: t.id,
+      giftId: t.giftId,
+      amount: t.amount,
+      description: t.description,
+      createdAt: t.createdAt
+    }));
   }
 }
 

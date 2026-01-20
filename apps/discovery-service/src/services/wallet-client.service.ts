@@ -16,7 +16,7 @@ export class WalletClientService {
   private readonly walletServiceUrl: string;
 
   constructor() {
-    this.walletServiceUrl = process.env.WALLET_SERVICE_URL || "http://localhost:3005";
+    this.walletServiceUrl = process.env.WALLET_SERVICE_URL || "http://localhost:3006";
   }
 
   /**

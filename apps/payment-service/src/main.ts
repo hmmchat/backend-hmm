@@ -11,7 +11,7 @@ async function bootstrap() {
   );
 
   const config = app.get(ConfigService);
-  const port = config.get<number>("PORT") || 3008;
+  const port = config.get<number>("PORT") || 3007;
 
   const origins = (process.env.ALLOWED_ORIGINS ?? "").split(",").filter(Boolean);
   app.enableCors({

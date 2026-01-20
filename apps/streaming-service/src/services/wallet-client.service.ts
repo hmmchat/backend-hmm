@@ -41,14 +41,14 @@ export class WalletClientService {
    * @param toUserId User receiving
    * @param coins Amount in coins
    * @param description Transaction description
-   * @param giftId Optional gift sticker ID (for gift transactions)
+   * @param giftId Gift sticker ID (required for gift transactions)
    */
   async transferCoins(
     fromUserId: string,
     toUserId: string,
     coins: number,
     description: string,
-    giftId?: string
+    giftId: string
   ): Promise<{ transactionId: string; newBalance: number }> {
     try {
       // First deduct from sender

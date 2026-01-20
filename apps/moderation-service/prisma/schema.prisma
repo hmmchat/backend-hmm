@@ -1,8 +1,34 @@
-// Prisma schema for moderation-service (add models when needed).
-// datasource db {
-//   provider = "postgresql"
-//   url      = env("DATABASE_URL")
-// }
-// generator client {
-//   provider = "prisma-client-js"
-// }
+// Prisma schema for moderation-service
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+// User-submitted dares for moderation team review
+model DareSubmission {
+  id          String   @id @default(cuid())
+  userId      String   // User who submitted the dare
+  dareText    String   // The custom dare text
+  status      DareSubmissionStatus @default(PENDING)
+  reviewedBy  String?  // Admin/moderation team member who reviewed
+  reviewedAt  DateTime?
+  notes       String?  // Internal notes from moderation team
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("dare_submissions")
+}
+
+enum DareSubmissionStatus {
+  PENDING     // Awaiting moderation review
+  APPROVED    // Approved by moderation team
+  REJECTED    // Rejected by moderation team
+}

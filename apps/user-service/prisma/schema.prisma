@@ -38,6 +38,86 @@ model RaincheckSession {
   @@map("raincheck_sessions")
 }
 
+// Track active matches between users (managed by discovery-service)
+model ActiveMatch {
+  id        String    @id @default(cuid())
+  user1Id   String // First user in the match
+  user2Id   String // Second user in the match
+  score     Float // Mutual compatibility score
+  expiresAt DateTime? // Optional - not used (matches don't expire until raincheck)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([user1Id, user2Id])
+  @@index([user1Id])
+  @@index([user2Id])
+  @@index([expiresAt])
+  @@map("active_matches")
+}
+
+// Track match acceptances for two-phase proceed (managed by discovery-service)
+model MatchAcceptance {
+  id         String   @id @default(cuid())
+  user1Id    String // First user in the match
+  user2Id    String // Second user in the match
+  acceptedBy String // User who accepted (user1Id or user2Id)
+  createdAt  DateTime @default(now())
+  expiresAt  DateTime // When the match expires if not both accepted
+
+  @@unique([user1Id, user2Id, acceptedBy])
+  @@index([user1Id, user2Id])
+  @@index([expiresAt])
+  @@map("match_acceptances")
+}
+
+// Squad invitation system (managed by discovery-service)
+enum SquadInvitationStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  EXPIRED
+}
+
+model SquadInvitation {
+  id          String                @id @default(cuid())
+  inviterId   String                // User who sent the invitation
+  inviteeId   String?               // User who was invited (null for external invites)
+  inviteToken String?               @unique // Token for external links (unique)
+  status      SquadInvitationStatus @default(PENDING)
+  expiresAt   DateTime              // 10-minute timeout
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+  acceptedAt  DateTime?
+  rejectedAt  DateTime?
+
+  @@index([inviterId, status])
+  @@index([inviteeId, status])
+  @@index([inviteToken])
+  @@index([expiresAt])
+  @@index([status])
+  @@map("squad_invitations")
+}
+
+enum SquadLobbyStatus {
+  WAITING  // Waiting for more members
+  READY    // Has at least 2 members, ready to enter call
+  IN_CALL  // Squad has entered the call
+}
+
+model SquadLobby {
+  id        String           @id @default(cuid())
+  inviterId String           @unique // One lobby per inviter
+  memberIds Json             // Array of member user IDs (includes inviter as first element)
+  status    SquadLobbyStatus @default(WAITING)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  enteredCallAt DateTime?
+
+  @@index([inviterId])
+  @@index([status])
+  @@map("squad_lobbies")
+}
+
 enum Gender {
   MALE
   FEMALE

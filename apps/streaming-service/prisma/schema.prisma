@@ -151,3 +151,31 @@ model CallMessage {
   @@index([sessionId])
   @@index([createdAt])
 }
+
+model Icebreaker {
+  id          String   @id @default(cuid())
+  question    String
+  category    String?  // optional: "general", "fun", "personal", etc.
+  isActive    Boolean  @default(true)
+  order       Int?     // optional: for ordering/prioritizing
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdBy   String?  // optional: track who added it (admin userId)
+  
+  @@map("icebreakers")
+  @@index([isActive])
+  @@index([category])
+}
+
+// User's personal custom dares collection
+model UserCustomDare {
+  id          String   @id @default(cuid())
+  userId      String   // User who created/saved this dare
+  dareText    String   // The custom dare text
+  category    String?  // Optional category
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@index([userId])
+  @@map("user_custom_dares")
+}

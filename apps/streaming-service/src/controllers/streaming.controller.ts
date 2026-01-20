@@ -2,6 +2,7 @@ import { Controller, Get, Post, Param, Body, BadRequestException, Headers } from
 import { RoomService } from "../services/room.service.js";
 import { ChatService } from "../services/chat.service.js";
 import { DiscoveryClientService } from "../services/discovery-client.service.js";
+import { GiftService } from "../services/gift.service.js";
 import { z } from "zod";
 
 // Simple auth guard (you can enhance this later)
@@ -15,7 +16,8 @@ export class StreamingController {
   constructor(
     private roomService: RoomService,
     private chatService: ChatService,
-    private discoveryClient: DiscoveryClientService
+    private discoveryClient: DiscoveryClientService,
+    private giftService: GiftService
   ) {}
 
   /**
@@ -376,6 +378,30 @@ export class StreamingController {
       sessionId: result.sessionId,
       message: "Successfully joined room via pull stranger"
     };
+  }
+
+  /**
+   * Test endpoint: Send a gift (bypasses auth)
+   * POST /streaming/test/rooms/:roomId/gifts
+   */
+  @Post("test/rooms/:roomId/gifts")
+  async sendGiftTest(
+    @Param("roomId") roomId: string,
+    @Body() body: { fromUserId: string; toUserId: string; amount: number; giftId: string }
+  ) {
+    if (!body.fromUserId || !body.toUserId || !body.amount || !body.giftId) {
+      throw new BadRequestException("fromUserId, toUserId, amount, and giftId are required");
+    }
+    return await this.giftService.sendGift(roomId, body.fromUserId, body.toUserId, body.amount, body.giftId);
+  }
+
+  /**
+   * Test endpoint: Get gifts for a room (bypasses auth)
+   * GET /streaming/test/rooms/:roomId/gifts
+   */
+  @Get("test/rooms/:roomId/gifts")
+  async getRoomGiftsTest(@Param("roomId") roomId: string) {
+    return await this.giftService.getRoomGifts(roomId);
   }
 
   /**

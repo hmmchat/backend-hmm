@@ -3,6 +3,7 @@ import { ConfigModule } from "@nestjs/config";
 import { StreamingController } from "../controllers/streaming.controller.js";
 import { DareController } from "../controllers/dare.controller.js";
 import { GiftController } from "../controllers/gift.controller.js";
+import { IcebreakerAdminController } from "../controllers/icebreaker-admin.controller.js";
 import { StreamingGateway } from "../gateways/streaming.gateway.js";
 import { MediasoupService } from "../services/mediasoup.service.js";
 import { RoomService } from "../services/room.service.js";
@@ -22,7 +23,8 @@ import { PrismaService } from "../prisma/prisma.service.js";
   controllers: [
     StreamingController,
     DareController,
-    GiftController
+    GiftController,
+    IcebreakerAdminController
   ],
   providers: [
     PrismaService,

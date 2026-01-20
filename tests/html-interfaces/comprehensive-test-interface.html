@@ -639,6 +639,93 @@
                 <div id="giftResponse" class="response" style="display:none;"></div>
                 <div id="chatResponse" class="response" style="display:none;"></div>
             </div>
+
+            <!-- Icebreaker Section -->
+            <div class="section">
+                <h3>❄️ Icebreakers</h3>
+                
+                <div style="margin-bottom: 15px; padding: 15px; background: #f0f8ff; border-radius: 8px; border-left: 4px solid #007bff;">
+                    <div style="font-weight: 600; color: #333; margin-bottom: 10px;">💡 How it works:</div>
+                    <div style="font-size: 12px; color: #666; line-height: 1.6;">
+                        When a user clicks "Get Icebreaker", a random question is broadcast to ALL participants in the room. 
+                        Perfect for starting conversations!
+                    </div>
+                </div>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
+                    <div class="form-group">
+                        <label>Room ID:</label>
+                        <input type="text" id="icebreakerRoomId" placeholder="Room ID">
+                    </div>
+                    <div class="form-group">
+                        <label>User ID (who requests):</label>
+                        <input type="text" id="icebreakerUserId" value="test-user-1" placeholder="test-user-1">
+                    </div>
+                </div>
+                
+                <button onclick="getIcebreaker()" class="btn-primary" style="width: 100%; margin-bottom: 15px;">
+                    ❄️ Get Icebreaker (Broadcast to All)
+                </button>
+                
+                <div id="currentIcebreaker" style="display: none; padding: 15px; background: #e8f5e9; border-radius: 8px; margin-bottom: 15px; border-left: 4px solid #28a745;">
+                    <div style="font-weight: 600; color: #333; margin-bottom: 5px;">Current Icebreaker:</div>
+                    <div id="icebreakerQuestion" style="color: #2e7d32; font-size: 14px; font-style: italic;"></div>
+                    <div style="font-size: 11px; color: #666; margin-top: 5px;" id="icebreakerRequestedBy"></div>
+                </div>
+                
+                <div id="icebreakerResponse" class="response" style="display:none;"></div>
+            </div>
+
+            <!-- Admin Icebreaker Management -->
+            <div class="section" style="background: #fff3cd; border-left: 4px solid #ffc107;">
+                <h3>⚙️ Admin: Icebreaker Management</h3>
+                
+                <div style="margin-bottom: 15px;">
+                    <button onclick="loadAllIcebreakers()" class="btn-info" style="width: 100%; margin-bottom: 10px;">
+                        📋 Load All Icebreakers
+                    </button>
+                    <button onclick="loadActiveIcebreakers()" class="btn-info" style="width: 100%; margin-bottom: 15px;">
+                        ✅ Load Active Icebreakers Only
+                    </button>
+                </div>
+                
+                <div class="form-group">
+                    <label>Question:</label>
+                    <textarea id="newIcebreakerQuestion" rows="2" placeholder="What's your favorite...?" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;"></textarea>
+                </div>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
+                    <div class="form-group">
+                        <label>Category (optional):</label>
+                        <input type="text" id="newIcebreakerCategory" placeholder="fun, personal, etc.">
+                    </div>
+                    <div class="form-group">
+                        <label>Order (optional):</label>
+                        <input type="number" id="newIcebreakerOrder" placeholder="1, 2, 3...">
+                    </div>
+                </div>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
+                    <button onclick="createIcebreaker()" class="btn-success">➕ Create Icebreaker</button>
+                    <button onclick="updateIcebreaker()" class="btn-warning">✏️ Update Selected</button>
+                </div>
+                
+                <div class="form-group">
+                    <label>Icebreaker ID (for update/delete):</label>
+                    <input type="text" id="icebreakerIdForEdit" placeholder="Enter ID from list above">
+                </div>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                    <button onclick="deactivateIcebreaker()" class="btn-secondary">🚫 Deactivate</button>
+                    <button onclick="hardDeleteIcebreaker()" class="btn-danger">🗑️ Hard Delete</button>
+                </div>
+                
+                <div id="adminIcebreakerResponse" class="response" style="display:none; margin-top: 15px;"></div>
+                
+                <div id="icebreakerList" style="margin-top: 20px; max-height: 400px; overflow-y: auto;">
+                    <!-- Icebreaker list will be populated here -->
+                </div>
+            </div>
         </div>
         
         <!-- Wallet Tab -->
@@ -2313,6 +2400,292 @@
             } catch (error) {
                 showResponse('chatResponse', { error: error.message }, true);
             }
+        }
+        
+        // Icebreaker functions
+        let icebreakerWs = null;
+        let icebreakerRoomId = null;
+        
+        async function getIcebreaker() {
+            const roomId = document.getElementById('icebreakerRoomId').value;
+            const userId = document.getElementById('icebreakerUserId').value;
+            
+            if (!roomId || !userId) {
+                showResponse('icebreakerResponse', { error: 'Room ID and User ID are required' }, true);
+                return;
+            }
+            
+            try {
+                // Connect WebSocket if not connected or room changed
+                const wsUrl = getWsUrl(`/streaming/ws?token=${userId}`);
+                if (!icebreakerWs || icebreakerRoomId !== roomId || icebreakerWs.readyState !== WebSocket.OPEN) {
+                    if (icebreakerWs) {
+                        icebreakerWs.close();
+                    }
+                    
+                    icebreakerWs = new WebSocket(wsUrl);
+                    icebreakerRoomId = roomId;
+                    
+                    icebreakerWs.onopen = () => {
+                        addActionLog(`✅ WebSocket connected for icebreaker (User: ${userId})`, null, 'success');
+                        
+                        // Join room first
+                        icebreakerWs.send(JSON.stringify({
+                            type: 'join-room',
+                            data: { roomId }
+                        }));
+                    };
+                    
+                    icebreakerWs.onmessage = (event) => {
+                        const message = JSON.parse(event.data);
+                        
+                        if (message.type === 'icebreaker') {
+                            const { question, requestedBy } = message.data;
+                            
+                            // Display the icebreaker
+                            document.getElementById('currentIcebreaker').style.display = 'block';
+                            document.getElementById('icebreakerQuestion').textContent = question;
+                            document.getElementById('icebreakerRequestedBy').textContent = 
+                                requestedBy ? `Requested by: ${requestedBy}` : '';
+                            
+                            addActionLog(`❄️ Icebreaker received: "${question}"`, null, 'info');
+                            showResponse('icebreakerResponse', { 
+                                type: 'icebreaker', 
+                                question,
+                                requestedBy 
+                            }, false);
+                        } else if (message.type === 'icebreaker-success') {
+                            addActionLog(`✅ Icebreaker request successful`, null, 'success');
+                        } else if (message.type === 'error') {
+                            addActionLog(`❌ Error: ${message.message}`, null, 'error');
+                            showResponse('icebreakerResponse', { error: message.message }, true);
+                        }
+                    };
+                    
+                    icebreakerWs.onerror = (error) => {
+                        addActionLog(`❌ WebSocket error: ${error}`, null, 'error');
+                        showResponse('icebreakerResponse', { error: 'WebSocket connection error' }, true);
+                    };
+                    
+                    icebreakerWs.onclose = () => {
+                        addActionLog('🔌 WebSocket disconnected', null, 'info');
+                    };
+                    
+                    // Wait for connection to open
+                    await new Promise((resolve, reject) => {
+                        const timeout = setTimeout(() => reject(new Error('Connection timeout')), 5000);
+                        icebreakerWs.onopen = () => {
+                            clearTimeout(timeout);
+                            resolve();
+                        };
+                    });
+                    
+                    // Join room
+                    icebreakerWs.send(JSON.stringify({
+                        type: 'join-room',
+                        data: { roomId }
+                    }));
+                }
+                
+                // Request icebreaker
+                icebreakerWs.send(JSON.stringify({
+                    type: 'get-icebreaker',
+                    data: { roomId }
+                }));
+                
+                addActionLog(`❄️ Requesting icebreaker for room ${roomId} (User: ${userId})`, null, 'info');
+                
+            } catch (error) {
+                addActionLog(`❌ Error getting icebreaker: ${error.message}`, null, 'error');
+                showResponse('icebreakerResponse', { error: error.message }, true);
+            }
+        }
+        
+        // Admin icebreaker functions
+        async function loadAllIcebreakers() {
+            try {
+                const response = await fetch(getApiUrl('/streaming/admin/icebreakers'));
+                const data = await response.json();
+                displayIcebreakerList(data.icebreakers || []);
+                showResponse('adminIcebreakerResponse', data, !response.ok);
+            } catch (error) {
+                showResponse('adminIcebreakerResponse', { error: error.message }, true);
+            }
+        }
+        
+        async function loadActiveIcebreakers() {
+            try {
+                const response = await fetch(getApiUrl('/streaming/admin/icebreakers/active'));
+                const data = await response.json();
+                displayIcebreakerList(data.icebreakers || []);
+                showResponse('adminIcebreakerResponse', data, !response.ok);
+            } catch (error) {
+                showResponse('adminIcebreakerResponse', { error: error.message }, true);
+            }
+        }
+        
+        function displayIcebreakerList(icebreakers) {
+            const listDiv = document.getElementById('icebreakerList');
+            if (!icebreakers || icebreakers.length === 0) {
+                listDiv.innerHTML = '<div style="color: #666; text-align: center; padding: 20px;">No icebreakers found</div>';
+                return;
+            }
+            
+            listDiv.innerHTML = icebreakers.map(ib => `
+                <div style="padding: 12px; margin-bottom: 10px; background: ${ib.isActive ? '#f0f8ff' : '#f5f5f5'}; 
+                            border-radius: 6px; border-left: 4px solid ${ib.isActive ? '#28a745' : '#dc3545'}; 
+                            cursor: pointer;" onclick="selectIcebreaker('${ib.id}')"
+                    data-icebreaker-id="${ib.id}">
+                    <div style="font-weight: 600; color: #333; margin-bottom: 5px;">${ib.question}</div>
+                    <div style="font-size: 11px; color: #666;">
+                        ${ib.category ? `Category: ${ib.category} • ` : ''}
+                        ${ib.order ? `Order: ${ib.order} • ` : ''}
+                        Status: ${ib.isActive ? '✅ Active' : '❌ Inactive'}
+                        ${ib.createdAt ? ` • Created: ${new Date(ib.createdAt).toLocaleDateString()}` : ''}
+                    </div>
+                </div>
+            `).join('');
+        }
+        
+        function selectIcebreaker(id) {
+            document.getElementById('icebreakerIdForEdit').value = id;
+            
+            // Highlight selected
+            document.querySelectorAll('[data-icebreaker-id]').forEach(el => {
+                el.style.background = el.dataset.icebreakerId === id ? '#e3f2fd' : '';
+            });
+        }
+        
+        async function createIcebreaker() {
+            const question = document.getElementById('newIcebreakerQuestion').value.trim();
+            const category = document.getElementById('newIcebreakerCategory').value.trim() || undefined;
+            const orderStr = document.getElementById('newIcebreakerOrder').value.trim();
+            const order = orderStr ? parseInt(orderStr) : undefined;
+            
+            if (!question) {
+                showResponse('adminIcebreakerResponse', { error: 'Question is required' }, true);
+                return;
+            }
+            
+            try {
+                const response = await fetch(getApiUrl('/streaming/admin/icebreakers'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ question, category, order })
+                });
+                const data = await response.json();
+                
+                if (response.ok) {
+                    // Clear form
+                    document.getElementById('newIcebreakerQuestion').value = '';
+                    document.getElementById('newIcebreakerCategory').value = '';
+                    document.getElementById('newIcebreakerOrder').value = '';
+                    // Reload list
+                    loadAllIcebreakers();
+                }
+                
+                showResponse('adminIcebreakerResponse', data, !response.ok);
+            } catch (error) {
+                showResponse('adminIcebreakerResponse', { error: error.message }, true);
+            }
+        }
+        
+        async function updateIcebreaker() {
+            const id = document.getElementById('icebreakerIdForEdit').value.trim();
+            if (!id) {
+                showResponse('adminIcebreakerResponse', { error: 'Please select an icebreaker to update' }, true);
+                return;
+            }
+            
+            const question = document.getElementById('newIcebreakerQuestion').value.trim() || undefined;
+            const category = document.getElementById('newIcebreakerCategory').value.trim() || undefined;
+            const orderStr = document.getElementById('newIcebreakerOrder').value.trim();
+            const order = orderStr ? parseInt(orderStr) : undefined;
+            
+            const updateData = {};
+            if (question) updateData.question = question;
+            if (category !== undefined) updateData.category = category;
+            if (order !== undefined) updateData.order = order;
+            
+            try {
+                const response = await fetch(getApiUrl(`/streaming/admin/icebreakers/${id}`), {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(updateData)
+                });
+                const data = await response.json();
+                
+                if (response.ok) {
+                    loadAllIcebreakers();
+                }
+                
+                showResponse('adminIcebreakerResponse', data, !response.ok);
+            } catch (error) {
+                showResponse('adminIcebreakerResponse', { error: error.message }, true);
+            }
+        }
+        
+        async function deactivateIcebreaker() {
+            const id = document.getElementById('icebreakerIdForEdit').value.trim();
+            if (!id) {
+                showResponse('adminIcebreakerResponse', { error: 'Please select an icebreaker' }, true);
+                return;
+            }
+            
+            if (!confirm(`Are you sure you want to deactivate this icebreaker?`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(getApiUrl(`/streaming/admin/icebreakers/${id}`), {
+                    method: 'DELETE'
+                });
+                
+                if (response.ok || response.status === 204) {
+                    loadAllIcebreakers();
+                    showResponse('adminIcebreakerResponse', { ok: true, message: 'Icebreaker deactivated' }, false);
+                } else {
+                    const data = await response.json();
+                    showResponse('adminIcebreakerResponse', data, true);
+                }
+            } catch (error) {
+                showResponse('adminIcebreakerResponse', { error: error.message }, true);
+            }
+        }
+        
+        async function hardDeleteIcebreaker() {
+            const id = document.getElementById('icebreakerIdForEdit').value.trim();
+            if (!id) {
+                showResponse('adminIcebreakerResponse', { error: 'Please select an icebreaker' }, true);
+                return;
+            }
+            
+            if (!confirm(`Are you sure you want to PERMANENTLY DELETE this icebreaker? This cannot be undone!`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(getApiUrl(`/streaming/admin/icebreakers/${id}/hard`), {
+                    method: 'DELETE'
+                });
+                
+                if (response.ok || response.status === 204) {
+                    loadAllIcebreakers();
+                    showResponse('adminIcebreakerResponse', { ok: true, message: 'Icebreaker permanently deleted' }, false);
+                } else {
+                    const data = await response.json();
+                    showResponse('adminIcebreakerResponse', data, true);
+                }
+            } catch (error) {
+                showResponse('adminIcebreakerResponse', { error: error.message }, true);
+            }
+        }
+        
+        // Helper function to get WebSocket URL
+        function getWsUrl(path) {
+            const apiBase = getApiUrl('');
+            // Convert http:// to ws:// or https:// to wss://
+            return apiBase.replace(/^http/, 'ws') + path.replace(/^\//, '');
         }
         
         // Room Management functions

@@ -416,4 +416,114 @@ export class DareService {
       dareText: dareInfo?.text || "Unknown dare"
     };
   }
+
+  /**
+   * Create and save a custom dare for personal use
+   */
+  async saveCustomDare(userId: string, dareText: string, category?: string): Promise<{ id: string }> {
+    const customDare = await this.prisma.userCustomDare.create({
+      data: {
+        userId,
+        dareText,
+        category: category || null
+      }
+    });
+    
+    this.logger.log(`User ${userId} saved custom dare: ${customDare.id}`);
+    return { id: customDare.id };
+  }
+
+  /**
+   * Get user's saved custom dares
+   */
+  async getUserCustomDares(userId: string): Promise<Array<{
+    id: string;
+    dareText: string;
+    category: string | null;
+    createdAt: Date;
+  }>> {
+    return await this.prisma.userCustomDare.findMany({
+      where: { userId },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        dareText: true,
+        category: true,
+        createdAt: true
+      }
+    });
+  }
+
+  /**
+   * Delete a user's custom dare
+   */
+  async deleteCustomDare(userId: string, dareId: string): Promise<void> {
+    const deleted = await this.prisma.userCustomDare.deleteMany({
+      where: {
+        id: dareId,
+        userId // Ensure user can only delete their own dares
+      }
+    });
+    
+    if (deleted.count === 0) {
+      throw new NotFoundException(`Custom dare ${dareId} not found or access denied`);
+    }
+  }
+
+  /**
+   * Get random dares for UI (6-7 dares, with custom dare every 3-4)
+   */
+  async getRandomDaresForUI(
+    userId: string, 
+    count: number = 7,
+    customDareInterval: number = 3
+  ): Promise<Array<{
+    id: string;
+    text: string;
+    category: string;
+    isCustom: boolean;
+    customDareId?: string;
+  }>> {
+    // Get random dares from predefined list
+    const shuffled = [...DARE_LIST].sort(() => Math.random() - 0.5);
+    const selectedDares = shuffled.slice(0, count);
+    
+    // Get user's custom dares
+    const userCustomDares = await this.getUserCustomDares(userId);
+    
+    // Insert custom dare every customDareInterval dares
+    const result: Array<{
+      id: string;
+      text: string;
+      category: string;
+      isCustom: boolean;
+      customDareId?: string;
+    }> = [];
+    
+    let customDareIndex = 0;
+    
+    for (let i = 0; i < selectedDares.length; i++) {
+      result.push({
+        id: selectedDares[i].id,
+        text: selectedDares[i].text,
+        category: selectedDares[i].category,
+        isCustom: false
+      });
+      
+      // Insert custom dare every customDareInterval
+      if ((i + 1) % customDareInterval === 0 && customDareIndex < userCustomDares.length) {
+        const customDare = userCustomDares[customDareIndex];
+        result.push({
+          id: `custom-${customDare.id}`,
+          text: customDare.dareText,
+          category: customDare.category || "custom",
+          isCustom: true,
+          customDareId: customDare.id
+        });
+        customDareIndex++;
+      }
+    }
+    
+    return result;
+  }
 }

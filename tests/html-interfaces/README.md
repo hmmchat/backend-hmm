@@ -190,6 +190,29 @@ All interfaces use API Gateway endpoints with the `/v1` prefix and `/test/` for 
 
 ## Prerequisites
 
+### Quick Setup (Recommended)
+
+**Run the prerequisites script first to ensure all databases are migrated:**
+
+```bash
+# From the project root directory
+bash scripts/setup-prerequisites.sh
+```
+
+This script will:
+- ✅ Check PostgreSQL and Redis are running
+- ✅ Generate Prisma clients for all services
+- ✅ Sync all database schemas
+- ✅ Verify critical tables exist
+- ✅ Handle failed migrations automatically
+
+**Important:** Run this script before testing, especially if you:
+- Cloned the repo fresh
+- Pulled new migrations
+- See database-related errors
+
+### Manual Prerequisites
+
 1. **API Gateway** must be running on port 3000 (default)
 2. **Backend Services** must be running:
    - Discovery Service (port 3004)
@@ -197,7 +220,7 @@ All interfaces use API Gateway endpoints with the `/v1` prefix and `/test/` for 
    - Wallet Service (port 3006)
    - Streaming Service (port 3005) - **Must have `NODE_ENV=test` set**
    - Friend Service (port 3007)
-3. **Database** must be set up and migrated
+3. **Database** must be set up and migrated (use `scripts/setup-prerequisites.sh`)
 4. **Redis** (optional, for rate limiting)
 
 ### Starting Services

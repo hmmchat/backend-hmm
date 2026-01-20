@@ -13,17 +13,21 @@ export class GiftService {
 
   /**
    * Send a gift (transfer coins) in a room
-   * @param giftId Optional gift sticker ID (monkey, pikachu, etc.)
+   * @param giftId Gift sticker ID (monkey, pikachu, etc.) - required
    */
   async sendGift(
     roomId: string,
     fromUserId: string,
     toUserId: string,
     amount: number,
-    giftId?: string
+    giftId: string
   ): Promise<{ transactionId: string; newBalance: number }> {
     if (amount <= 0) {
       throw new BadRequestException("Gift amount must be positive");
+    }
+
+    if (!giftId || giftId.trim() === "") {
+      throw new BadRequestException("giftId is required");
     }
 
     if (fromUserId === toUserId) {
@@ -72,7 +76,7 @@ export class GiftService {
         fromUserId,
         toUserId,
         amount,
-        giftId: giftId || null, // Store giftId in CallGift
+        giftId: giftId, // Store giftId in CallGift
         transactionId: result.transactionId
       }
     });

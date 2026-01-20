@@ -16,6 +16,7 @@ import {
   UpdateLocationDto,
   UpdatePreferredCityDto,
   UpdateStatusDto,
+  UpdateIntentDto,
   CreateMusicPreferenceDto
 } from "../dtos/profile.dto.js";
 import { Gender, UserStatus } from "@prisma/client";
@@ -768,6 +769,49 @@ export class UserService implements OnModuleInit {
     return { user };
   }
 
+  /* ---------- Intent ---------- */
+
+  /**
+   * Get intent for a user by user ID (public endpoint, can be called from other services)
+   */
+  async getIntent(userId: string): Promise<{ intent: string | null }> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { intent: true }
+    });
+
+    if (!user) {
+      throw new HttpException("User not found", HttpStatus.NOT_FOUND);
+    }
+
+    return { intent: user.intent || null };
+  }
+
+  /**
+   * Update intent for authenticated user
+   */
+  async updateIntent(accessToken: string, data: UpdateIntentDto) {
+    const userId = await this.verifyAccessToken(accessToken);
+
+    // Check if user exists
+    const existingUser = await this.prisma.user.findUnique({
+      where: { id: userId }
+    });
+
+    if (!existingUser) {
+      throw new HttpException("User profile not found", HttpStatus.NOT_FOUND);
+    }
+
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        intent: data.intent
+      }
+    });
+
+    return { intent: user.intent || null };
+  }
+
   /* ---------- Reporting ---------- */
 
   async reportUser(accessToken: string, reportedUserId: string) {
@@ -1034,6 +1078,64 @@ export class UserService implements OnModuleInit {
     });
 
     return { users };
+  }
+
+  /* ---------- Horoscope ---------- */
+
+  /**
+   * Calculate horoscope (zodiac sign) from date of birth
+   * Returns horoscope name and image URL
+   */
+  private calculateHoroscope(dateOfBirth: Date): { name: string; imageUrl: string } {
+    const month = dateOfBirth.getMonth() + 1; // 1-12
+    const day = dateOfBirth.getDate();
+
+    let horoscope: string;
+    
+    // Determine zodiac sign based on month and day
+    if ((month === 3 && day >= 21) || (month === 4 && day <= 19)) horoscope = "Aries";
+    else if ((month === 4 && day >= 20) || (month === 5 && day <= 20)) horoscope = "Taurus";
+    else if ((month === 5 && day >= 21) || (month === 6 && day <= 20)) horoscope = "Gemini";
+    else if ((month === 6 && day >= 21) || (month === 7 && day <= 22)) horoscope = "Cancer";
+    else if ((month === 7 && day >= 23) || (month === 8 && day <= 22)) horoscope = "Leo";
+    else if ((month === 8 && day >= 23) || (month === 9 && day <= 22)) horoscope = "Virgo";
+    else if ((month === 9 && day >= 23) || (month === 10 && day <= 22)) horoscope = "Libra";
+    else if ((month === 10 && day >= 23) || (month === 11 && day <= 21)) horoscope = "Scorpio";
+    else if ((month === 11 && day >= 22) || (month === 12 && day <= 21)) horoscope = "Sagittarius";
+    else if ((month === 12 && day >= 22) || (month === 1 && day <= 19)) horoscope = "Capricorn";
+    else if ((month === 1 && day >= 20) || (month === 2 && day <= 18)) horoscope = "Aquarius";
+    else horoscope = "Pisces"; // (month === 2 && day >= 19) || (month === 3 && day <= 20)
+
+    // Get base URL for horoscope images from environment variable
+    // Images should be uploaded via files-service and stored in Cloudflare R2
+    // The base URL should point to your CDN/files-service public URL
+    const baseUrl = process.env.HOROSCOPE_IMAGES_BASE_URL || process.env.FILES_SERVICE_PUBLIC_URL || "https://cdn.hmmchat.live/horoscopes";
+    const imageUrl = `${baseUrl}/${horoscope.toLowerCase()}.png`;
+
+    return { name: horoscope, imageUrl };
+  }
+
+  /**
+   * Get horoscope for a user by userId
+   * Returns horoscope name and image URL
+   * Other services can call this via the API endpoint
+   */
+  async getHoroscope(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { dateOfBirth: true }
+    });
+
+    if (!user) {
+      throw new HttpException("User profile not found", HttpStatus.NOT_FOUND);
+    }
+
+    if (!user.dateOfBirth) {
+      throw new HttpException("User date of birth is required to calculate horoscope", HttpStatus.BAD_REQUEST);
+    }
+
+    const horoscope = this.calculateHoroscope(user.dateOfBirth);
+    return { horoscope };
   }
 
   /* ---------- Test Methods (No Auth Required) ---------- */

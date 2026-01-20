@@ -23,6 +23,7 @@ import {
   UpdateLocationSchema,
   UpdatePreferredCitySchema,
   UpdateStatusSchema,
+  UpdateIntentSchema,
   CreateMusicPreferenceSchema
 } from "../dtos/profile.dto.js";
 import { UserStatus } from "@prisma/client";
@@ -271,6 +272,64 @@ export class UserController {
     return this.userService.updateStatus(token, dto);
   }
 
+  /* ---------- Intent ---------- */
+
+  /**
+   * Get intent for a user by user ID (public endpoint, can be called from other services)
+   * GET /users/:userId/intent
+   */
+  @Get("users/:userId/intent")
+  async getIntent(@Param("userId") userId: string) {
+    return this.userService.getIntent(userId);
+  }
+
+  /**
+   * Update intent for authenticated user
+   * PATCH /me/intent
+   */
+  @Patch("me/intent")
+  async updateIntent(@Headers("authorization") authz: string, @Body() body: any) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    const dto = UpdateIntentSchema.parse(body);
+    return this.userService.updateIntent(token, dto);
+  }
+
+  /* ---------- Horoscope ---------- */
+
+  /**
+   * Get horoscope for a user (public endpoint)
+   * Other services (discovery, etc.) and frontend can call this
+   * GET /users/:userId/horoscope
+   */
+  @Get("users/:userId/horoscope")
+  async getHoroscope(@Param("userId") userId: string) {
+    return this.userService.getHoroscope(userId);
+  }
+
+  /**
+   * Get own horoscope (authenticated endpoint)
+   * GET /me/horoscope
+   */
+  @Get("me/horoscope")
+  async getMyHoroscope(@Headers("authorization") authz?: string) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+
+    // Verify token and get userId
+    const { verifyToken } = await import("@hmm/common");
+    const jwkStr = process.env.JWT_PUBLIC_JWK;
+    if (!jwkStr || jwkStr === "undefined") {
+      throw new HttpException("Server configuration error", HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+    const cleanedJwk = jwkStr.trim().replace(/^['"]|['"]$/g, "");
+    const publicJwk = JSON.parse(cleanedJwk);
+    const verifyAccess = await verifyToken(publicJwk);
+    const payload = await verifyAccess(token);
+
+    return this.userService.getHoroscope(payload.sub);
+  }
+
   /* ---------- Reporting ---------- */
 
   @Post("users/report")
@@ -507,6 +566,15 @@ export class UserController {
   async updateStatusTest(@Param("userId") userId: string, @Body() body: any) {
     const dto = UpdateStatusSchema.parse(body);
     return this.userService.updateStatusForUser(userId, dto);
+  }
+
+  /**
+   * Test endpoint: Get horoscope (bypasses auth)
+   * GET /users/test/:userId/horoscope
+   */
+  @Get("users/test/:userId/horoscope")
+  async getHoroscopeTest(@Param("userId") userId: string) {
+    return this.userService.getHoroscope(userId);
   }
 
   /* ---------- Account Management Endpoints ---------- */

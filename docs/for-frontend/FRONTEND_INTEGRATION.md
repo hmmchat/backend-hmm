@@ -610,6 +610,21 @@ GET /users/{userId}?fields=username,photos,brandPreferences
 }
 ```
 
+#### Get Intent by User ID
+
+**Endpoint:** `GET /users/:userId/intent`
+
+**Description:** Get intent for a specific user. This is a public endpoint that can be called from other services.
+
+**Response:**
+```json
+{
+  "intent": "Here to meet new people" | null  // Max 50 chars, null if not set
+}
+```
+
+**Use Case:** Other services (like discovery-service) can call this to get a user's intent by user ID.
+
 #### Update Intent
 
 **Endpoint:** `PATCH /me/intent`
@@ -617,9 +632,18 @@ GET /users/{userId}?fields=username,photos,brandPreferences
 **Request:**
 ```json
 {
-  "intent": "Here to meet new people"  // Max 50 chars
+  "intent": "Here to meet new people"  // Max 50 chars, or null to clear intent
 }
 ```
+
+**Response:**
+```json
+{
+  "intent": "Here to meet new people" | null
+}
+```
+
+**Note:** You can also update intent via `PATCH /me/profile` with `{ "intent": "..." }`, but this dedicated endpoint is more focused.
 
 ---
 
@@ -637,29 +661,66 @@ GET /users/{userId}?fields=username,photos,brandPreferences
 ```json
 {
   "card": {
-    "user": {
-      "id": "string",
-      "username": "string",
-      "displayPictureUrl": "string",
-      "photos": [...],
-      "age": 25,
-      "gender": "MALE",
-      "intent": "string",
-      "location": {
-        "city": "Mumbai",
-        "distance": 5.2  // km
+    "userId": "string",
+    "username": "string",
+    "age": 25,
+    "displayPictureUrl": "string",
+    "city": "Mumbai",
+    "country": "string",
+    "intent": "Here to meet new people" | null,  // User's intent (max 50 chars)
+    "brands": [
+      {
+        "name": "string",
+        "logoUrl": "string" | undefined
       }
-    },
-    "match": {
-      "id": "string",
-      "status": "PENDING",  // PENDING | MATCHED | RAINCHECKED
-      "createdAt": "string"
-    }
+    ],
+    "interests": [
+      {
+        "name": "string"
+      }
+    ],
+    "values": [
+      {
+        "name": "string"
+      }
+    ],
+    "musicPreference": {
+      "name": "string",
+      "artist": "string",
+      "albumArtUrl": "string" | undefined
+    } | undefined,
+    "pages": [
+      {
+        "photoUrl": "string",
+        "order": 0
+      }
+    ],
+    "status": "AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE",
+    "reported": false,
+    "matchExplanation": {
+      "reasons": ["string"],
+      "score": 85,
+      "commonBrands": ["string"],
+      "commonInterests": ["string"],
+      "commonValues": ["string"],
+      "sameMusic": true,
+      "sameCity": false,
+      "sameVideoPreference": true
+    } | undefined
   },
-  "sessionId": "string",
-  "hasMore": true
+  "exhausted": false,
+  "suggestedCities": [
+    {
+      "city": "Mumbai",
+      "country": "India",
+      "availableCount": 25
+    }
+  ] | undefined,
+  "isLocationCard": false
 }
 ```
+
+**Note:** The `intent` field is directly on the `card` object, not nested under a `user` object. This makes it easy to display on the face card.
 
 **Use Case:** Swipe through potential matches. Call this repeatedly to get next cards.
 

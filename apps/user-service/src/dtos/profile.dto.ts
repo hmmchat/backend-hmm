@@ -65,6 +65,11 @@ export const UpdateStatusSchema = z.object({
   status: UserStatusEnum
 });
 
+// Intent DTO
+export const UpdateIntentSchema = z.object({
+  intent: z.string().max(50).nullable() // Allow null to clear intent
+});
+
 // Music Preference DTO
 export const CreateMusicPreferenceSchema = z.object({
   songName: z.string().min(1),
@@ -82,5 +87,6 @@ export type UpdateValuesDto = z.infer<typeof UpdateValuesSchema>;
 export type UpdateLocationDto = z.infer<typeof UpdateLocationSchema>;
 export type UpdatePreferredCityDto = z.infer<typeof UpdatePreferredCitySchema>;
 export type UpdateStatusDto = z.infer<typeof UpdateStatusSchema>;
+export type UpdateIntentDto = z.infer<typeof UpdateIntentSchema>;
 export type CreateMusicPreferenceDto = z.infer<typeof CreateMusicPreferenceSchema>;
 

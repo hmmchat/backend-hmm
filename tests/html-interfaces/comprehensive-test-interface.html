@@ -287,6 +287,28 @@
         
         <!-- Setup Tab -->
         <div id="setup" class="tab-content active">
+            <div class="section" style="background: #fff3cd; border-left-color: #ffc107; margin-bottom: 20px;">
+                <h3>⚠️ Important: Run Setup Script First!</h3>
+                <p style="margin-bottom: 15px; color: #856404;">
+                    <strong>Before using this interface, you must run the setup script to ensure all services are running and Prisma is up-to-date:</strong>
+                </p>
+                <div style="background: white; padding: 15px; border-radius: 8px; margin-bottom: 10px; font-family: 'Courier New', monospace; font-size: 14px;">
+                    <code style="color: #d63384;">cd scripts</code><br>
+                    <code style="color: #d63384;">./setup-and-start-services.sh</code>
+                </div>
+                <p style="color: #856404; font-size: 0.95em; margin-top: 10px;">
+                    This script will:
+                    <br>✓ Check PostgreSQL and Redis
+                    <br>✓ Setup and sync all Prisma schemas
+                    <br>✓ Build all services
+                    <br>✓ Start all services on their correct ports
+                    <br>✓ Verify all services are healthy
+                </p>
+                <p style="color: #856404; font-size: 0.9em; margin-top: 10px; font-style: italic;">
+                    If services fail to start, check the logs in <code>/tmp/&lt;service-name&gt;.log</code>
+                </p>
+            </div>
+            
             <div class="section">
                 <h3>🔧 Setup & Configuration</h3>
                 <div class="info-box">
@@ -332,6 +354,18 @@
                 <p style="margin-bottom: 15px; color: #666; font-size: 13px;">
                     Simulate the discovery flow: Get cards, swipe (proceed/raincheck), then enter streaming
                 </p>
+                
+                <!-- Quick Status Checker -->
+                <div style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; border-radius: 6px; margin-bottom: 20px;">
+                    <h4 style="margin-bottom: 10px; font-size: 14px; color: #333;">⚡ Quick Status Check</h4>
+                    <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 10px;">
+                        <input type="text" id="discoveryQuickStatusCheckUserId" placeholder="Enter User ID (e.g., test-user-1)" style="padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                        <button onclick="quickCheckStatusDiscovery()" class="btn-warning" style="padding: 8px;">🔍 Check Status</button>
+                    </div>
+                    <div id="discoveryQuickStatusResult" style="display: none; padding: 10px; background: white; border-radius: 6px; margin-top: 10px;">
+                        <div id="discoveryQuickStatusResultContent"></div>
+                    </div>
+                </div>
                 
                 <div class="grid" style="grid-template-columns: 1fr 1fr; margin-bottom: 20px;">
                     <div class="form-group">
@@ -435,192 +469,204 @@
         
         <!-- Streaming Tab -->
         <div id="streaming" class="tab-content">
-            <div class="section">
-                <h3>🏠 Create Room</h3>
-                <p style="margin-bottom: 10px; color: #666; font-size: 13px;">
-                    Create a room when users match (both must be IN_SQUAD status). Room can have 2-4 participants.
+            <!-- Quick Status Checker -->
+            <div class="section" style="background: #fff3cd; border-left: 4px solid #ffc107;">
+                <h3>⚡ Quick Status Check</h3>
+                <p style="margin-bottom: 10px; color: #666; font-size: 12px;">
+                    Check user status instantly - useful for monitoring status changes
                 </p>
-                <div class="form-group">
-                    <label>User IDs (comma-separated, 2-4 users):</label>
-                    <input type="text" id="roomUserIds" value="test-user-1,test-user-2" placeholder="test-user-1,test-user-2">
+                <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 10px; margin-bottom: 10px;">
+                    <input type="text" id="quickStatusCheckUserId" placeholder="Enter User ID (e.g., test-user-1)" style="padding: 10px;">
+                    <button onclick="quickCheckStatus()" class="btn-warning" style="padding: 10px;">🔍 Check Status</button>
                 </div>
-                <div class="form-group">
-                    <label>Call Type:</label>
-                    <select id="callType">
-                        <option value="matched">Matched</option>
-                        <option value="squad">Squad</option>
-                    </select>
+                <div id="quickStatusResult" style="display: none; padding: 10px; background: white; border-radius: 6px; margin-top: 10px;">
+                    <div id="quickStatusResultContent"></div>
                 </div>
-                <button onclick="createRoom()">Create Room</button>
-                <div id="roomResponse" class="response" style="display:none;"></div>
             </div>
-            
+
+            <!-- User Status Monitor -->
+            <div class="section" style="background: #f8f9fa; border-left: 4px solid #007bff;">
+                <h3>👥 User Status Monitor</h3>
+                <p style="margin-bottom: 15px; color: #666; font-size: 13px;">
+                    Real-time status for users involved in streaming operations
+                </p>
+                <div id="userStatusMonitor" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-bottom: 15px;">
+                    <!-- Status cards will be populated here -->
+                </div>
+                <button onclick="refreshAllUserStatuses()" class="btn-info" style="width: 100%;">🔄 Refresh All Statuses</button>
+            </div>
+
+            <!-- Action Log -->
+            <div class="section" style="background: #fff; max-height: 200px; overflow-y: auto;">
+                <h3>📋 Action Log</h3>
+                <div id="actionLog" style="font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.6;">
+                    <div style="color: #666;">No actions yet. Start using streaming features to see logs.</div>
+                </div>
+            </div>
+
+            <!-- Room Operations -->
             <div class="section">
-                <h3>📦 Get Room Info</h3>
+                <h3>🏠 Room Operations</h3>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+                    <div>
+                        <label>User IDs (comma-separated, 2-4):</label>
+                        <input type="text" id="roomUserIds" value="test-user-1,test-user-2" placeholder="test-user-1,test-user-2">
+                    </div>
+                    <div>
+                        <label>Call Type:</label>
+                        <select id="callType" style="width: 100%;">
+                            <option value="matched">Matched</option>
+                            <option value="squad">Squad</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
+                    <button onclick="createRoom()" class="btn-primary">➕ Create Room</button>
+                    <button onclick="getRoom()" class="btn-secondary">📦 Get Room Info</button>
+                </div>
+                
                 <div class="form-group">
                     <label>Room ID:</label>
                     <input type="text" id="getRoomId" placeholder="Enter room ID">
                 </div>
-                <button onclick="getRoom()">Get Room Details</button>
+                
+                <div id="roomResponse" class="response" style="display:none;"></div>
                 <div id="getRoomResponse" class="response" style="display:none;"></div>
             </div>
-            
-            <div class="section">
-                <h3>🎁 Send Gift</h3>
-                <div class="grid">
-                    <div class="form-group">
-                        <label>Room ID:</label>
-                        <input type="text" id="giftRoomId" placeholder="Enter room ID">
-                    </div>
-                    <div class="form-group">
-                        <label>From User ID:</label>
-                        <input type="text" id="giftFromUserId" value="test-user-1">
-                    </div>
-                    <div class="form-group">
-                        <label>To User ID:</label>
-                        <input type="text" id="giftToUserId" value="test-user-2">
-                    </div>
-                    <div class="form-group">
-                        <label>Amount (coins):</label>
-                        <input type="number" id="giftAmount" value="100" min="1">
-                    </div>
-                    <div class="form-group">
-                        <label>Gift ID (optional):</label>
-                        <input type="text" id="giftId" placeholder="monkey, pikachu, etc.">
-                    </div>
-                </div>
-                <button onclick="sendGift()">Send Gift</button>
-                <div id="giftResponse" class="response" style="display:none;"></div>
-            </div>
-            
-            <div class="section">
-                <h3>💎 Send Dare</h3>
-                <div class="grid">
-                    <div class="form-group">
-                        <label>Room ID:</label>
-                        <input type="text" id="dareRoomId" placeholder="Enter room ID">
-                    </div>
-                    <div class="form-group">
-                        <label>User ID (sender):</label>
-                        <input type="text" id="dareUserId" value="test-user-1">
-                    </div>
-                    <div class="form-group">
-                        <label>Dare ID:</label>
-                        <input type="text" id="dareId" value="dare-1" placeholder="dare-1, dare-2, etc.">
-                    </div>
-                    <div class="form-group">
-                        <label>Gift ID:</label>
-                        <input type="text" id="dareGiftId" value="monkey" placeholder="monkey, pikachu, etc.">
-                    </div>
-                </div>
-                <button onclick="getDareList()">Get Dare List</button>
-                <button onclick="sendDare()">Send Dare</button>
-                <div id="dareResponse" class="response" style="display:none;"></div>
-            </div>
-            
-            <div class="section">
-                <h3>💬 Get Chat History</h3>
-                <div class="form-group">
-                    <label>Room ID:</label>
-                    <input type="text" id="chatRoomId" placeholder="Enter room ID">
-                </div>
-                <button onclick="getChat()">Get Chat</button>
-                <div id="chatResponse" class="response" style="display:none;"></div>
-            </div>
-            
+
+            <!-- Room Management -->
             <div class="section">
                 <h3>🚪 Room Management</h3>
-                <p style="margin-bottom: 15px; color: #666; font-size: 13px;">
-                    Manage room participants: leave room, kick users, add participants, and more.
-                </p>
                 
-                <div class="grid" style="grid-template-columns: 1fr 1fr; margin-bottom: 15px;">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
                     <div class="form-group">
                         <label>Room ID:</label>
                         <input type="text" id="roomMgmtRoomId" placeholder="Enter room ID">
                     </div>
                     <div class="form-group">
                         <label>Your User ID:</label>
-                        <input type="text" id="roomMgmtUserId" value="test-user-1" placeholder="test-user-1">
+                        <input type="text" id="roomMgmtUserId" value="test-user-1">
                     </div>
                 </div>
                 
-                <div style="margin-bottom: 15px;">
-                    <button onclick="fetchRoomByUserId()" class="btn-info" style="width: 100%; padding: 10px; font-size: 14px;">
-                        🔍 Fetch Room ID by User ID
-                    </button>
-                    <small style="display: block; color: #666; font-size: 11px; margin-top: 5px; text-align: center;">
-                        Finds the active room for the user ID above and auto-fills the Room ID
-                    </small>
-                </div>
+                <button onclick="fetchRoomByUserId()" class="btn-info" style="width: 100%; margin-bottom: 10px;">
+                    🔍 Find Room by User ID
+                </button>
                 
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-bottom: 15px;">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
+                    <button onclick="refreshRoomInfo()" class="btn-info">🔄 Refresh Info</button>
                     <button onclick="leaveRoom()" class="btn-secondary">🚪 Leave Room</button>
-                    <button onclick="refreshRoomInfo()" class="btn-info">🔄 Refresh Room Info</button>
                 </div>
-                
-                <div id="roomMgmtResponse" class="response" style="display:none;"></div>
-                
-                <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
-                    <h4 style="margin-bottom: 10px; font-size: 14px; color: #666;">👥 Participant Management</h4>
+
+                <!-- Participant Management -->
+                <div style="margin-top: 20px; padding-top: 20px; border-top: 2px solid #e0e0e0;">
+                    <h4 style="margin-bottom: 15px; color: #333;">👥 Participants</h4>
                     
-                    <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
-                        <div class="form-group">
-                            <label>Add User ID:</label>
-                            <input type="text" id="addParticipantUserId" placeholder="test-user-3">
-                        </div>
-                        <div class="form-group">
-                            <button onclick="addParticipant()" class="btn-success" style="margin-top: 25px;">➕ Add Participant</button>
-                        </div>
+                    <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 10px; margin-bottom: 10px;">
+                        <input type="text" id="addParticipantUserId" placeholder="User ID to add (test-user-3)">
+                        <button onclick="addParticipant()" class="btn-success">➕ Add</button>
                     </div>
                     
-                    <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 10px;">
-                        <div class="form-group">
-                            <label>Kick User ID (HOST only):</label>
-                            <input type="text" id="kickUserId" placeholder="test-user-2">
-                        </div>
-                        <div class="form-group">
-                            <button onclick="kickUser()" class="btn-danger" style="margin-top: 25px;">👢 Kick User</button>
-                        </div>
+                    <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 10px;">
+                        <input type="text" id="kickUserId" placeholder="User ID to kick">
+                        <button onclick="kickUser()" class="btn-danger">👢 Kick</button>
                     </div>
                 </div>
-                
-                <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
-                    <h4 style="margin-bottom: 10px; font-size: 14px; color: #666;">🔗 Pull Stranger Mode</h4>
+
+                <!-- Pull Stranger Mode -->
+                <div style="margin-top: 20px; padding-top: 20px; border-top: 2px solid #e0e0e0;">
+                    <h4 style="margin-bottom: 15px; color: #333;">🔗 Pull Stranger Mode</h4>
                     <p style="margin-bottom: 10px; color: #666; font-size: 12px;">
-                        Enable pull stranger mode to allow others to join your room. Then they can join via pull stranger.
+                        HOST can enable pull stranger mode. Then others can join via pull stranger.
                     </p>
                     
-                    <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
-                        <button onclick="enablePullStranger()" class="btn-info">🔓 Enable Pull Stranger</button>
-                        <button onclick="getPullStrangerRoom()" class="btn-secondary">🔍 Check Pull Stranger Room</button>
+                    <button onclick="enablePullStranger()" class="btn-info" style="width: 100%; margin-bottom: 10px;">
+                        🔓 Enable Pull Stranger (as User Above)
+                    </button>
+                    
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+                        <input type="text" id="joinPullStrangerUserId" placeholder="Joining User ID">
+                        <input type="text" id="joinPullStrangerTargetId" placeholder="Target User ID">
                     </div>
                     
-                    <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 10px;">
-                        <div class="form-group">
-                            <label>Joining User ID:</label>
-                            <input type="text" id="joinPullStrangerUserId" placeholder="test-user-3">
-                        </div>
-                        <div class="form-group">
-                            <label>Target User ID:</label>
-                            <input type="text" id="joinPullStrangerTargetId" placeholder="test-user-1">
-                        </div>
-                    </div>
-                    <button onclick="joinViaPullStranger()" class="btn-success" style="width: 100%; margin-top: 10px;">🚪 Join Via Pull Stranger</button>
+                    <button onclick="joinViaPullStranger()" class="btn-success" style="width: 100%;">
+                        🚪 Join Via Pull Stranger
+                    </button>
                 </div>
+
+                <div id="roomMgmtResponse" class="response" style="display:none;"></div>
+            </div>
+
+            <!-- Additional Features -->
+            <div class="section">
+                <h3>🎁 Room Features</h3>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
+                    <div class="form-group">
+                        <label>Room ID:</label>
+                        <input type="text" id="giftRoomId" placeholder="Room ID">
+                    </div>
+                    <div class="form-group">
+                        <label>From User:</label>
+                        <input type="text" id="giftFromUserId" value="test-user-1">
+                    </div>
+                </div>
+                
+                <div class="form-group" style="margin-bottom: 15px;">
+                    <label>To User:</label>
+                    <input type="text" id="giftToUserId" value="test-user-2">
+                </div>
+                
+                <div class="form-group" style="margin-bottom: 15px;">
+                    <label>Select Gift:</label>
+                    <div id="giftSelector" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-top: 10px;">
+                        <!-- Gift cards will be populated by JavaScript -->
+                    </div>
+                    <input type="hidden" id="selectedGiftId" value="">
+                    <input type="hidden" id="selectedGiftAmount" value="0">
+                </div>
+                
+                <button onclick="sendGift()" class="btn-primary" style="width: 100%; margin-bottom: 15px;">🎁 Send Gift</button>
+                
+                <div class="form-group">
+                    <label>Room ID (Chat):</label>
+                    <input type="text" id="chatRoomId" placeholder="Room ID">
+                </div>
+                <button onclick="getChat()" class="btn-secondary" style="width: 100%;">💬 Get Chat History</button>
+                
+                <div id="giftResponse" class="response" style="display:none;"></div>
+                <div id="chatResponse" class="response" style="display:none;"></div>
             </div>
         </div>
         
         <!-- Wallet Tab -->
         <div id="wallet" class="tab-content">
-            <div class="section">
-                <h3>💰 Get Balance</h3>
-                <div class="form-group">
+            <!-- User Wallet Overview -->
+            <div class="section" style="background: #f8f9fa; border-left: 4px solid #28a745;">
+                <h3>💰 Wallet Overview</h3>
+                <div class="form-group" style="margin-bottom: 15px;">
                     <label>User ID:</label>
-                    <input type="text" id="balanceUserId" value="test-user-1">
+                    <input type="text" id="walletOverviewUserId" value="test-user-1" style="width: 100%;">
                 </div>
-                <button onclick="getBalance()">Get Balance</button>
-                <div id="balanceResponse" class="response" style="display:none;"></div>
+                <button onclick="loadWalletOverview()" class="btn-success" style="width: 100%; margin-bottom: 15px;">📊 Load Wallet Overview</button>
+                
+                <div id="walletOverview" style="display: none;">
+                    <div style="background: white; padding: 20px; border-radius: 8px; margin-bottom: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                        <h4 style="margin-bottom: 15px; color: #333;">💵 Total Coins</h4>
+                        <div id="walletBalance" style="font-size: 32px; font-weight: bold; color: #28a745; margin-bottom: 20px;">
+                            Loading...
+                        </div>
+                    </div>
+                    
+                    <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                        <h4 style="margin-bottom: 15px; color: #333;">🎁 Received Gifts (Badges)</h4>
+                        <div id="receivedGiftsList" style="min-height: 50px;">
+                            <div style="color: #666; text-align: center; padding: 20px;">Loading gifts...</div>
+                        </div>
+                    </div>
+                </div>
             </div>
             
             <div class="section">
@@ -660,16 +706,6 @@
                 </div>
                 <button onclick="getWallet()">Get Wallet</button>
                 <div id="walletResponse" class="response" style="display:none;"></div>
-            </div>
-            
-            <div class="section">
-                <h3>🎁 Get Gift Transactions</h3>
-                <div class="form-group">
-                    <label>User ID:</label>
-                    <input type="text" id="giftTransactionsUserId" value="test-user-1">
-                </div>
-                <button onclick="getGiftTransactions()">Get Gift Transactions</button>
-                <div id="giftTransactionsResponse" class="response" style="display:none;"></div>
             </div>
         </div>
         
@@ -754,6 +790,11 @@
                         tab.classList.add('active');
                     }
                 });
+            }
+            
+            // Initialize gift selector when streaming tab is opened
+            if (tabName === 'streaming') {
+                setTimeout(() => initializeGiftSelector(), 100);
             }
         }
         
@@ -865,6 +906,7 @@
                     
                     if (!userExists) {
                         // User doesn't exist - create new profile
+                        // Step 1: Create profile (only with required fields)
                         let profileRes = await fetch(getApiUrl(`/users/${user.id}/profile`), {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
@@ -872,10 +914,7 @@
                                 username: user.username,
                                 dateOfBirth: dateOfBirth,
                                 gender: user.gender,
-                                displayPictureUrl: 'https://via.placeholder.com/300',
-                                latitude: user.lat,
-                                longitude: user.lng,
-                                preferredCity: user.city
+                                displayPictureUrl: 'https://via.placeholder.com/300'
                             })
                         }).catch(() => ({ status: 0, ok: false }));
                         
@@ -883,6 +922,30 @@
                             errorCount++;
                             results.push({ user: user.id, city: user.city, status: 'creation_failed' });
                             continue; // Skip to next user
+                        }
+                        
+                        // Step 2: Update location separately (if profile creation succeeded)
+                        if (profileRes.ok) {
+                            // Update location
+                            await fetch(getApiUrl(`/users/test/${user.id}/location`), {
+                                method: 'PATCH',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    latitude: user.lat,
+                                    longitude: user.lng
+                                })
+                            }).catch(() => {});
+                            
+                            // Update preferred city
+                            if (user.city) {
+                                await fetch(getApiUrl(`/users/test/${user.id}/preferred-city`), {
+                                    method: 'PATCH',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({
+                                        city: user.city
+                                    })
+                                }).catch(() => {});
+                            }
                         }
                     } else {
                         // User exists - only update location and status (NOT gender)
@@ -1100,9 +1163,35 @@
         
         // Update user status display
         async function updateUserStatusDisplay(userId) {
+            if (!userId || userId.trim() === '') {
+                return; // Skip if no user ID
+            }
+            
             try {
                 // Fetch both status and preferredCity
                 const statusRes = await fetch(getApiUrl(`/users/test/${userId}?fields=status,preferredCity`));
+                
+                // Handle 404 - user profile doesn't exist
+                if (statusRes.status === 404) {
+                    const errorData = await statusRes.json().catch(() => ({ message: 'User profile not found' }));
+                    const statusDisplay = document.getElementById('userStatusDisplay');
+                    const statusValue = document.getElementById('userStatusValue');
+                    const cityValue = document.getElementById('userCityValue');
+                    
+                    if (statusDisplay && statusValue) {
+                        statusValue.textContent = 'ERROR: Profile Not Found';
+                        statusValue.style.color = '#dc3545';
+                        statusValue.style.backgroundColor = '#f8d7da';
+                        if (statusDisplay) statusDisplay.textContent = 'ERROR: Profile Not Found';
+                    }
+                    if (cityValue) {
+                        cityValue.textContent = 'N/A';
+                    }
+                    // Log error but don't spam console
+                    console.warn(`User profile not found: ${userId}. Create user profile first using Setup tab.`);
+                    return; // Exit early
+                }
+                
                 if (statusRes.ok) {
                     const statusData = await statusRes.json();
                     const status = statusData.user?.status || 'UNKNOWN';
@@ -1135,6 +1224,9 @@
                         } else if (status === 'OFFLINE') {
                             statusColor = '#6c757d';
                             statusBg = '#e2e3e5';
+                        } else if (status === 'NOT_CREATED') {
+                            statusColor = '#999';
+                            statusBg = '#f0f0f0';
                         }
                         
                         statusValue.textContent = status;
@@ -1754,6 +1846,283 @@
             }
         }
         
+        // Enhanced streaming functions with status tracking
+        const userStatusCache = {};
+        
+        async function getUserStatus(userId) {
+            if (!userId || userId.trim() === '') {
+                return 'UNKNOWN';
+            }
+            
+            // Don't cache if explicitly refreshing (cache cleared)
+            if (userStatusCache[userId] && Date.now() - userStatusCache[userId].timestamp < 5000) {
+                return userStatusCache[userId].status;
+            }
+            try {
+                // Use fields parameter to get just the status
+                const response = await fetch(getApiUrl(`/users/test/${userId}?fields=status`));
+                
+                // Handle 404 gracefully - user profile doesn't exist
+                if (response.status === 404) {
+                    return 'NOT_CREATED'; // User profile not created yet
+                }
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    // Response format: { user: { status: '...' } } or { status: '...' }
+                    const status = data.user?.status || data.status || null;
+                    
+                    if (status && status !== 'UNKNOWN') {
+                        userStatusCache[userId] = { status, timestamp: Date.now() };
+                        return status;
+                    } else {
+                        // Try full profile if fields didn't work
+                        const fullResponse = await fetch(getApiUrl(`/users/test/${userId}`));
+                        
+                        // Handle 404 in full profile fetch too
+                        if (fullResponse.status === 404) {
+                            console.warn(`User profile not found: ${userId}. Create user profile first using Setup tab.`);
+                            return 'NOT_CREATED';
+                        }
+                        
+                        if (fullResponse.ok) {
+                            const fullData = await fullResponse.json();
+                            const fullStatus = fullData.status || fullData.user?.status || 'UNKNOWN';
+                            if (fullStatus !== 'UNKNOWN') {
+                                userStatusCache[userId] = { status: fullStatus, timestamp: Date.now() };
+                            }
+                            return fullStatus;
+                        }
+                    }
+                } else if (response.status === 404) {
+                    // User profile doesn't exist - log warning
+                    console.warn(`User profile not found: ${userId}. Create user profile first using Setup tab.`);
+                    return 'NOT_CREATED';
+                } else {
+                    // Other errors - log but don't spam console
+                    if (response.status !== 404) {
+                        console.error(`Failed to get status for ${userId}:`, response.status, response.statusText);
+                    }
+                }
+            } catch (error) {
+                // Handle 404 errors
+                if (error.message && (error.message.includes('404') || error.message.includes('not found'))) {
+                    console.warn(`User profile not found: ${userId}. Create user profile first using Setup tab.`);
+                    return 'NOT_CREATED';
+                }
+                console.error(`Failed to get status for ${userId}:`, error);
+            }
+            // Don't cache failures - return UNKNOWN but don't store it
+            return 'UNKNOWN';
+        }
+        
+        async function checkUserStatusQuick(userId) {
+            if (!userId || !userId.trim()) {
+                return { error: 'User ID is required' };
+            }
+            
+            try {
+                const response = await fetch(getApiUrl(`/users/test/${userId.trim()}?fields=status`));
+                
+                // Handle 404 - user profile doesn't exist
+                if (response.status === 404) {
+                    delete userStatusCache[userId.trim()];
+                    return { error: 'User profile not found. Create user profile first using Setup tab.' };
+                }
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    const status = data.user?.status || data.status || 'UNKNOWN';
+                    // Clear cache to force fresh fetch
+                    delete userStatusCache[userId.trim()];
+                    return { userId: userId.trim(), status };
+                } else {
+                    const errorData = await response.json().catch(() => ({}));
+                    return { error: errorData.message || 'Failed to fetch status' };
+                }
+            } catch (error) {
+                // Handle 404 in catch block too
+                if (error.message && (error.message.includes('404') || error.message.includes('not found'))) {
+                    return { error: 'User profile not found. Create user profile first using Setup tab.' };
+                }
+                return { error: error.message || 'Network error' };
+            }
+        }
+        
+        async function quickCheckStatus() {
+            const userId = document.getElementById('quickStatusCheckUserId').value.trim();
+            const resultEl = document.getElementById('quickStatusResult');
+            const contentEl = document.getElementById('quickStatusResultContent');
+            
+            if (!userId) {
+                resultEl.style.display = 'block';
+                contentEl.innerHTML = '<div style="color: #dc3545;">❌ Please enter a User ID</div>';
+                return;
+            }
+            
+            resultEl.style.display = 'block';
+            contentEl.innerHTML = '<div style="color: #666;">⏳ Checking status...</div>';
+            
+            const result = await checkUserStatusQuick(userId);
+            
+            if (result.error) {
+                contentEl.innerHTML = `<div style="color: #dc3545;">❌ Error: ${result.error}</div>`;
+            } else {
+                const statusColor = getStatusColor(result.status);
+                const timestamp = new Date().toLocaleTimeString();
+                contentEl.innerHTML = `
+                    <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                        <div>
+                            <strong>User:</strong> ${result.userId}
+                        </div>
+                        <div style="flex: 1; min-width: 150px;">
+                            <strong>Status:</strong> 
+                            <span style="color: ${statusColor}; font-weight: 600; padding: 4px 10px; background: #f8f9fa; border-radius: 4px; display: inline-block;">
+                                ${result.status}
+                            </span>
+                        </div>
+                        <div style="color: #666; font-size: 12px;">
+                            ${timestamp}
+                        </div>
+                    </div>
+                `;
+                
+                // Also refresh the status monitor
+                setTimeout(() => refreshAllUserStatuses(), 500);
+            }
+        }
+        
+        async function quickCheckStatusDiscovery() {
+            const userId = document.getElementById('discoveryQuickStatusCheckUserId').value.trim();
+            const resultEl = document.getElementById('discoveryQuickStatusResult');
+            const contentEl = document.getElementById('discoveryQuickStatusResultContent');
+            
+            if (!userId) {
+                resultEl.style.display = 'block';
+                contentEl.innerHTML = '<div style="color: #dc3545;">❌ Please enter a User ID</div>';
+                return;
+            }
+            
+            resultEl.style.display = 'block';
+            contentEl.innerHTML = '<div style="color: #666;">⏳ Checking status...</div>';
+            
+            const result = await checkUserStatusQuick(userId);
+            
+            if (result.error) {
+                contentEl.innerHTML = `<div style="color: #dc3545;">❌ Error: ${result.error}</div>`;
+            } else {
+                const statusColor = getStatusColor(result.status);
+                const timestamp = new Date().toLocaleTimeString();
+                contentEl.innerHTML = `
+                    <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                        <div>
+                            <strong>User:</strong> ${result.userId}
+                        </div>
+                        <div style="flex: 1; min-width: 150px;">
+                            <strong>Status:</strong> 
+                            <span style="color: ${statusColor}; font-weight: 600; padding: 4px 10px; background: #f8f9fa; border-radius: 4px; display: inline-block;">
+                                ${result.status}
+                            </span>
+                        </div>
+                        <div style="color: #666; font-size: 12px;">
+                            ${timestamp}
+                        </div>
+                    </div>
+                `;
+            }
+        }
+        
+        async function refreshAllUserStatuses() {
+            const monitorEl = document.getElementById('userStatusMonitor');
+            monitorEl.innerHTML = '<div style="grid-column: 1/-1; color: #666;">Loading statuses...</div>';
+            
+            // Get all user IDs from inputs
+            const userIds = new Set();
+            const inputs = ['roomMgmtUserId', 'addParticipantUserId', 'kickUserId', 
+                          'joinPullStrangerUserId', 'joinPullStrangerTargetId', 
+                          'giftFromUserId', 'giftToUserId'];
+            inputs.forEach(id => {
+                const el = document.getElementById(id);
+                if (el && el.value) userIds.add(el.value.trim());
+            });
+            
+            // Get user IDs from roomUserIds input (comma-separated)
+            const roomUserIdsEl = document.getElementById('roomUserIds');
+            if (roomUserIdsEl && roomUserIdsEl.value) {
+                roomUserIdsEl.value.split(',').forEach(id => userIds.add(id.trim()));
+            }
+            
+            // Get participants from room info if available
+            const roomId = document.getElementById('roomMgmtRoomId').value || document.getElementById('getRoomId').value;
+            if (roomId) {
+                try {
+                    const response = await fetch(getApiUrl(`/streaming/test/rooms/${roomId}`));
+                    if (response.ok) {
+                        const roomData = await response.json();
+                        if (roomData.participants) {
+                            roomData.participants.forEach(p => userIds.add(p.userId));
+                        }
+                    }
+                } catch (e) {}
+            }
+            
+            if (userIds.size === 0) {
+                monitorEl.innerHTML = '<div style="grid-column: 1/-1; color: #999;">No users to monitor. Enter user IDs in the form fields above.</div>';
+                return;
+            }
+            
+            const statusPromises = Array.from(userIds).map(async (userId) => {
+                const status = await getUserStatus(userId);
+                return { userId, status };
+            });
+            
+            const statuses = await Promise.all(statusPromises);
+            
+            monitorEl.innerHTML = statuses.map(({ userId, status }) => {
+                const statusColor = getStatusColor(status);
+                return `
+                    <div style="background: white; padding: 12px; border-radius: 8px; border-left: 4px solid ${statusColor}; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                        <div style="font-weight: 600; color: #333; margin-bottom: 5px;">${userId}</div>
+                        <div style="color: ${statusColor}; font-size: 13px; font-weight: 500;">${status}</div>
+                    </div>
+                `;
+            }).join('');
+        }
+        
+        function getStatusColor(status) {
+            const colors = {
+                'NOT_CREATED': '#999', // Gray for users that don't exist yet
+                'AVAILABLE': '#28a745',
+                'ONLINE': '#17a2b8',
+                'OFFLINE': '#6c757d',
+                'MATCHED': '#ffc107',
+                'IN_SQUAD': '#007bff',
+                'IN_SQUAD_AVAILABLE': '#20c997',
+                'IN_BROADCAST': '#6610f2',
+                'IN_BROADCAST_AVAILABLE': '#e83e8c',
+                'VIEWER': '#fd7e14',
+                'UNKNOWN': '#999'
+            };
+            return colors[status] || '#999';
+        }
+        
+        function addActionLog(message, userId = null, type = 'info') {
+            const logEl = document.getElementById('actionLog');
+            const timestamp = new Date().toLocaleTimeString();
+            const userInfo = userId ? ` [User: ${userId}]` : '';
+            const color = type === 'success' ? '#28a745' : type === 'error' ? '#dc3545' : '#007bff';
+            const logEntry = document.createElement('div');
+            logEntry.style.marginBottom = '5px';
+            logEntry.style.color = color;
+            logEntry.innerHTML = `<span style="color: #666;">[${timestamp}]</span>${userInfo} ${message}`;
+            logEl.insertBefore(logEntry, logEl.firstChild);
+            
+            // Keep only last 50 entries
+            while (logEl.children.length > 50) {
+                logEl.removeChild(logEl.lastChild);
+            }
+        }
+
         // Streaming functions - using test endpoints
         async function createRoom() {
             const userIdsStr = document.getElementById('roomUserIds').value;
@@ -1761,9 +2130,12 @@
             const userIds = userIdsStr.split(',').map(id => id.trim()).filter(Boolean);
             
             if (userIds.length < 2 || userIds.length > 4) {
+                addActionLog('❌ Room must have 2-4 users', null, 'error');
                 showResponse('roomResponse', { error: 'Room must have 2-4 users' }, true);
                 return;
             }
+            
+            addActionLog(`Creating room with users: ${userIds.join(', ')}`, null, 'info');
             
             try {
                 const response = await fetch(getApiUrl('/streaming/test/rooms'), {
@@ -1772,8 +2144,19 @@
                     body: JSON.stringify({ userIds, callType })
                 });
                 const data = await response.json();
+                
+                if (response.ok) {
+                    addActionLog(`✅ Room created: ${data.roomId}`, null, 'success');
+                    document.getElementById('getRoomId').value = data.roomId;
+                    document.getElementById('roomMgmtRoomId').value = data.roomId;
+                    setTimeout(() => refreshAllUserStatuses(), 1000);
+                } else {
+                    addActionLog(`❌ Failed: ${data.message || JSON.stringify(data)}`, null, 'error');
+                }
+                
                 showResponse('roomResponse', data, !response.ok);
             } catch (error) {
+                addActionLog(`❌ Error: ${error.message}`, null, 'error');
                 showResponse('roomResponse', { error: error.message }, true);
             }
         }
@@ -1781,32 +2164,110 @@
         async function getRoom() {
             const roomId = document.getElementById('getRoomId').value;
             
+            if (!roomId) {
+                showResponse('getRoomResponse', { error: 'Room ID is required' }, true);
+                return;
+            }
+            
+            addActionLog(`📦 Fetching room info: ${roomId}`, null, 'info');
+            
             try {
                 const response = await fetch(getApiUrl(`/streaming/test/rooms/${roomId}`));
                 const data = await response.json();
+                
+                if (response.ok && data.participants) {
+                    addActionLog(`✅ Room info retrieved - ${data.participants.length} participants`, null, 'success');
+                    setTimeout(() => refreshAllUserStatuses(), 500);
+                }
+                
                 showResponse('getRoomResponse', data, !response.ok);
             } catch (error) {
+                addActionLog(`❌ Error: ${error.message}`, null, 'error');
                 showResponse('getRoomResponse', { error: error.message }, true);
             }
+        }
+        
+        // Gift list matching backend
+        const GIFT_LIST = [
+            { id: "monkey", name: "Monkey", emoji: "🐵", coins: 50 },
+            { id: "pikachu", name: "Pikachu", emoji: "⚡", coins: 250 },
+            { id: "superman", name: "Superman", emoji: "🦸", coins: 2000 },
+            { id: "ironman", name: "Iron Man", emoji: "🤖", coins: 25000 }
+        ];
+        
+        // Initialize gift selector on page load
+        function initializeGiftSelector() {
+            const selector = document.getElementById('giftSelector');
+            if (!selector) return;
+            
+            selector.innerHTML = GIFT_LIST.map(gift => `
+                <div class="gift-card" data-gift-id="${gift.id}" data-gift-amount="${gift.coins}" 
+                     style="padding: 15px; border: 2px solid #e0e0e0; border-radius: 8px; cursor: pointer; text-align: center; transition: all 0.2s; background: white;"
+                     onclick="selectGift('${gift.id}', ${gift.coins})">
+                    <div style="font-size: 32px; margin-bottom: 8px;">${gift.emoji}</div>
+                    <div style="font-weight: 600; color: #333; margin-bottom: 5px; font-size: 14px;">${gift.name}</div>
+                    <div style="color: #28a745; font-size: 12px; font-weight: 500;">${gift.coins.toLocaleString()} coins</div>
+                </div>
+            `).join('');
+        }
+        
+        function selectGift(giftId, amount) {
+            // Update hidden fields
+            document.getElementById('selectedGiftId').value = giftId;
+            document.getElementById('selectedGiftAmount').value = amount;
+            
+            // Update visual selection
+            document.querySelectorAll('.gift-card').forEach(card => {
+                if (card.dataset.giftId === giftId) {
+                    card.style.borderColor = '#007bff';
+                    card.style.background = '#f0f7ff';
+                    card.style.transform = 'scale(1.05)';
+                } else {
+                    card.style.borderColor = '#e0e0e0';
+                    card.style.background = 'white';
+                    card.style.transform = 'scale(1)';
+                }
+            });
         }
         
         async function sendGift() {
             const roomId = document.getElementById('giftRoomId').value;
             const fromUserId = document.getElementById('giftFromUserId').value;
             const toUserId = document.getElementById('giftToUserId').value;
-            const amount = parseInt(document.getElementById('giftAmount').value);
-            const giftId = document.getElementById('giftId').value || undefined;
+            const giftId = document.getElementById('selectedGiftId').value;
+            const amount = parseInt(document.getElementById('selectedGiftAmount').value);
+            
+            if (!giftId || !amount) {
+                showResponse('giftResponse', { error: 'Please select a gift' }, true);
+                return;
+            }
+            
+            if (!roomId || !fromUserId || !toUserId) {
+                showResponse('giftResponse', { error: 'Room ID, From User, and To User are required' }, true);
+                return;
+            }
             
             try {
-                // Gift controller has test mode enabled, so regular endpoint works without auth
-                const response = await fetch(getApiUrl(`/streaming/rooms/${roomId}/gifts`), {
+                // Use test endpoint that bypasses auth
+                const response = await fetch(getApiUrl(`/streaming/test/rooms/${roomId}/gifts`), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ fromUserId, toUserId, amount, giftId })
                 });
                 const data = await response.json();
+                
+                if (response.ok) {
+                    const selectedGift = GIFT_LIST.find(g => g.id === giftId);
+                    addActionLog(`🎁 ${selectedGift.emoji} ${selectedGift.name} (${amount} coins) sent from ${fromUserId} to ${toUserId}`, fromUserId, 'success');
+                    // Refresh wallet overview if same user
+                    if (document.getElementById('walletOverviewUserId').value === toUserId) {
+                        setTimeout(() => loadWalletOverview(), 1000);
+                    }
+                }
+                
                 showResponse('giftResponse', data, !response.ok);
             } catch (error) {
+                addActionLog(`❌ Error sending gift: ${error.message}`, null, 'error');
                 showResponse('giftResponse', { error: error.message }, true);
             }
         }
@@ -1863,6 +2324,8 @@
                 return;
             }
             
+            addActionLog(`🔍 Finding room for user ${userId}...`, userId, 'info');
+            
             try {
                 const response = await fetch(getApiUrl(`/streaming/test/users/${userId}/room`));
                 const data = await response.json();
@@ -1870,6 +2333,8 @@
                 if (response.ok && data.exists && data.roomId) {
                     // Auto-fill room ID if found
                     document.getElementById('roomMgmtRoomId').value = data.roomId;
+                    addActionLog(`✅ Room found: ${data.roomId} for user ${userId}`, userId, 'success');
+                    setTimeout(() => refreshAllUserStatuses(), 500);
                     showResponse('roomMgmtResponse', {
                         success: true,
                         message: `Room found for user ${userId}`,
@@ -1880,6 +2345,7 @@
                         note: 'Room ID has been auto-filled above'
                     }, false);
                 } else {
+                    addActionLog(`ℹ️ No active room found for user ${userId}`, userId, 'info');
                     showResponse('roomMgmtResponse', {
                         exists: false,
                         message: `No active room found for user ${userId}`,
@@ -1887,6 +2353,7 @@
                     }, false);
                 }
             } catch (error) {
+                addActionLog(`❌ Error: ${error.message}`, userId, 'error');
                 showResponse('roomMgmtResponse', { error: error.message }, true);
             }
         }
@@ -1896,9 +2363,12 @@
             const userId = document.getElementById('roomMgmtUserId').value;
             
             if (!roomId || !userId) {
+                addActionLog('❌ Room ID and User ID required', null, 'error');
                 showResponse('roomMgmtResponse', { error: 'Room ID and User ID are required' }, true);
                 return;
             }
+            
+            addActionLog(`🚪 User ${userId} leaving room ${roomId}...`, userId, 'info');
             
             try {
                 const response = await fetch(getApiUrl(`/streaming/test/rooms/${roomId}/leave`), {
@@ -1907,12 +2377,20 @@
                     body: JSON.stringify({ userId })
                 });
                 const data = await response.json();
-                showResponse('roomMgmtResponse', data, !response.ok);
+                
                 if (response.ok) {
-                    // Refresh room info after leaving
-                    setTimeout(() => refreshRoomInfo(), 1000);
+                    addActionLog(`✅ User ${userId} left room`, userId, 'success');
+                    setTimeout(() => {
+                        refreshRoomInfo();
+                        refreshAllUserStatuses();
+                    }, 1000);
+                } else {
+                    addActionLog(`❌ Failed: ${data.message || JSON.stringify(data)}`, userId, 'error');
                 }
+                
+                showResponse('roomMgmtResponse', data, !response.ok);
             } catch (error) {
+                addActionLog(`❌ Error: ${error.message}`, userId, 'error');
                 showResponse('roomMgmtResponse', { error: error.message }, true);
             }
         }
@@ -1928,6 +2406,12 @@
             try {
                 const response = await fetch(getApiUrl(`/streaming/test/rooms/${roomId}`));
                 const data = await response.json();
+                
+                if (response.ok && data.participants) {
+                    addActionLog(`🔄 Room info refreshed - ${data.participants.length} participants`, null, 'info');
+                    setTimeout(() => refreshAllUserStatuses(), 500);
+                }
+                
                 showResponse('roomMgmtResponse', data, !response.ok);
             } catch (error) {
                 showResponse('roomMgmtResponse', { error: error.message }, true);
@@ -1939,9 +2423,12 @@
             const userId = document.getElementById('addParticipantUserId').value;
             
             if (!roomId || !userId) {
+                addActionLog('❌ Room ID and User ID required', null, 'error');
                 showResponse('roomMgmtResponse', { error: 'Room ID and User ID are required' }, true);
                 return;
             }
+            
+            addActionLog(`➕ Adding participant ${userId} to room ${roomId}...`, userId, 'info');
             
             try {
                 const response = await fetch(getApiUrl(`/streaming/test/rooms/${roomId}/add-participant`), {
@@ -1950,12 +2437,20 @@
                     body: JSON.stringify({ userId })
                 });
                 const data = await response.json();
-                showResponse('roomMgmtResponse', data, !response.ok);
+                
                 if (response.ok) {
-                    // Refresh room info after adding
-                    setTimeout(() => refreshRoomInfo(), 1000);
+                    addActionLog(`✅ User ${userId} added to room`, userId, 'success');
+                    setTimeout(() => {
+                        refreshRoomInfo();
+                        refreshAllUserStatuses();
+                    }, 1000);
+                } else {
+                    addActionLog(`❌ Failed: ${data.message || JSON.stringify(data)}`, userId, 'error');
                 }
+                
+                showResponse('roomMgmtResponse', data, !response.ok);
             } catch (error) {
+                addActionLog(`❌ Error: ${error.message}`, userId, 'error');
                 showResponse('roomMgmtResponse', { error: error.message }, true);
             }
         }
@@ -1966,6 +2461,7 @@
             const targetUserId = document.getElementById('kickUserId').value;
             
             if (!roomId || !kickerUserId || !targetUserId) {
+                addActionLog('❌ Room ID, Kicker User ID, and Target User ID required', null, 'error');
                 showResponse('roomMgmtResponse', { error: 'Room ID, Kicker User ID, and Target User ID are required' }, true);
                 return;
             }
@@ -1974,6 +2470,8 @@
                 return;
             }
             
+            addActionLog(`👢 User ${kickerUserId} kicking ${targetUserId} from room ${roomId}...`, kickerUserId, 'info');
+            
             try {
                 const response = await fetch(getApiUrl(`/streaming/test/rooms/${roomId}/kick`), {
                     method: 'POST',
@@ -1981,12 +2479,20 @@
                     body: JSON.stringify({ kickerUserId, targetUserId })
                 });
                 const data = await response.json();
-                showResponse('roomMgmtResponse', data, !response.ok);
+                
                 if (response.ok) {
-                    // Refresh room info after kicking
-                    setTimeout(() => refreshRoomInfo(), 1000);
+                    addActionLog(`✅ User ${targetUserId} kicked by ${kickerUserId}`, kickerUserId, 'success');
+                    setTimeout(() => {
+                        refreshRoomInfo();
+                        refreshAllUserStatuses();
+                    }, 1000);
+                } else {
+                    addActionLog(`❌ Failed: ${data.message || JSON.stringify(data)}`, kickerUserId, 'error');
                 }
+                
+                showResponse('roomMgmtResponse', data, !response.ok);
             } catch (error) {
+                addActionLog(`❌ Error: ${error.message}`, kickerUserId, 'error');
                 showResponse('roomMgmtResponse', { error: error.message }, true);
             }
         }
@@ -1996,9 +2502,12 @@
             const userId = document.getElementById('roomMgmtUserId').value;
             
             if (!roomId || !userId) {
+                addActionLog('❌ Room ID and User ID required', null, 'error');
                 showResponse('roomMgmtResponse', { error: 'Room ID and User ID are required' }, true);
                 return;
             }
+            
+            addActionLog(`🔓 Enabling pull stranger mode...`, userId, 'info');
             
             try {
                 const response = await fetch(getApiUrl(`/streaming/test/rooms/${roomId}/enable-pull-stranger`), {
@@ -2007,8 +2516,17 @@
                     body: JSON.stringify({ userId })
                 });
                 const data = await response.json();
+                
+                if (response.ok) {
+                    addActionLog(`✅ Pull stranger mode enabled by ${userId}`, userId, 'success');
+                    setTimeout(() => refreshAllUserStatuses(), 1000);
+                } else {
+                    addActionLog(`❌ Failed: ${data.message || JSON.stringify(data)}`, userId, 'error');
+                }
+                
                 showResponse('roomMgmtResponse', data, !response.ok);
             } catch (error) {
+                addActionLog(`❌ Error: ${error.message}`, userId, 'error');
                 showResponse('roomMgmtResponse', { error: error.message }, true);
             }
         }
@@ -2040,9 +2558,12 @@
             const targetUserId = document.getElementById('joinPullStrangerTargetId').value;
             
             if (!roomId || !joiningUserId || !targetUserId) {
+                addActionLog('❌ Room ID, Joining User ID, and Target User ID required', null, 'error');
                 showResponse('roomMgmtResponse', { error: 'Room ID, Joining User ID, and Target User ID are required' }, true);
                 return;
             }
+            
+            addActionLog(`🚪 User ${joiningUserId} joining room ${roomId} via pull stranger (target: ${targetUserId})`, joiningUserId, 'info');
             
             try {
                 const response = await fetch(getApiUrl(`/streaming/test/rooms/${roomId}/join-via-pull-stranger`), {
@@ -2051,12 +2572,20 @@
                     body: JSON.stringify({ joiningUserId, targetUserId })
                 });
                 const data = await response.json();
-                showResponse('roomMgmtResponse', data, !response.ok);
+                
                 if (response.ok) {
-                    // Refresh room info after joining
-                    setTimeout(() => refreshRoomInfo(), 1000);
+                    addActionLog(`✅ User ${joiningUserId} successfully joined via pull stranger`, joiningUserId, 'success');
+                    setTimeout(() => {
+                        refreshRoomInfo();
+                        refreshAllUserStatuses();
+                    }, 1000);
+                } else {
+                    addActionLog(`❌ Failed: ${data.message || JSON.stringify(data)}`, joiningUserId, 'error');
                 }
+                
+                showResponse('roomMgmtResponse', data, !response.ok);
             } catch (error) {
+                addActionLog(`❌ Error: ${error.message}`, joiningUserId, 'error');
                 showResponse('roomMgmtResponse', { error: error.message }, true);
             }
         }
@@ -2106,15 +2635,81 @@
             }
         }
         
-        async function getGiftTransactions() {
-            const userId = document.getElementById('giftTransactionsUserId').value;
+        async function loadWalletOverview() {
+            const userId = document.getElementById('walletOverviewUserId').value.trim();
+            const overviewDiv = document.getElementById('walletOverview');
+            const balanceDiv = document.getElementById('walletBalance');
+            const giftsDiv = document.getElementById('receivedGiftsList');
+            
+            if (!userId) {
+                alert('Please enter a User ID');
+                return;
+            }
+            
+            overviewDiv.style.display = 'block';
+            balanceDiv.innerHTML = 'Loading...';
+            giftsDiv.innerHTML = '<div style="color: #666; text-align: center; padding: 20px;">Loading gifts...</div>';
             
             try {
-                const response = await fetch(getApiUrl(`/wallet/test/wallet/gift-transactions?userId=${userId}`));
-                const data = await response.json();
-                showResponse('giftTransactionsResponse', data, !response.ok);
+                // Get balance
+                const balanceResponse = await fetch(getApiUrl(`/wallet/test/balance?userId=${userId}`));
+                if (balanceResponse.ok) {
+                    const balanceData = await balanceResponse.json();
+                    const balance = balanceData.balance || balanceData.coins || 0;
+                    balanceDiv.innerHTML = `${balance.toLocaleString()} <span style="font-size: 18px; color: #666;">coins</span>`;
+                } else {
+                    balanceDiv.innerHTML = '<span style="color: #dc3545;">Failed to load</span>';
+                }
+                
+                // Get gift transactions (received gifts)
+                const giftsResponse = await fetch(getApiUrl(`/wallet/test/wallet/gift-transactions?userId=${userId}`));
+                if (giftsResponse.ok) {
+                    const giftsData = await giftsResponse.json();
+                    // API returns array directly
+                    const transactions = Array.isArray(giftsData) ? giftsData : (giftsData.transactions || []);
+                    
+                    // Filter only transactions with giftId (all gifts are sent with giftId)
+                    // All transactions returned are for this user (they're credits to this user's wallet)
+                    const receivedGifts = transactions.filter(t => {
+                        return t && t.giftId && t.giftId.trim() !== '';
+                    });
+                    
+                    if (receivedGifts.length === 0) {
+                        giftsDiv.innerHTML = '<div style="color: #999; text-align: center; padding: 20px;">No gifts received yet</div>';
+                    } else {
+                        // Group by gift ID and count
+                        const giftCounts = {};
+                        receivedGifts.forEach(gift => {
+                            const giftId = gift.giftId;
+                            
+                            if (!giftCounts[giftId]) {
+                                giftCounts[giftId] = {
+                                    count: 0,
+                                    giftId: giftId
+                                };
+                            }
+                            giftCounts[giftId].count++;
+                        });
+                        
+                        // Display gifts as badges
+                        giftsDiv.innerHTML = Object.entries(giftCounts).map(([giftId, data]) => {
+                            const gift = GIFT_LIST.find(g => g.id === giftId) || { emoji: '🎁', name: giftId, coins: 0 };
+                            return `
+                                <div style="display: inline-block; margin: 8px; padding: 15px; background: #f8f9fa; border-radius: 12px; text-align: center; min-width: 120px; border: 2px solid #e0e0e0;">
+                                    <div style="font-size: 36px; margin-bottom: 8px;">${gift.emoji}</div>
+                                    <div style="font-weight: 600; color: #333; margin-bottom: 5px; font-size: 14px;">${gift.name}</div>
+                                    <div style="color: #007bff; font-size: 18px; font-weight: bold;">× ${data.count}</div>
+                                    <div style="color: #666; font-size: 11px; margin-top: 5px;">Received</div>
+                                </div>
+                            `;
+                        }).join('');
+                    }
+                } else {
+                    giftsDiv.innerHTML = '<div style="color: #dc3545; text-align: center; padding: 20px;">Failed to load gifts</div>';
+                }
             } catch (error) {
-                showResponse('giftTransactionsResponse', { error: error.message }, true);
+                balanceDiv.innerHTML = '<span style="color: #dc3545;">Error loading balance</span>';
+                giftsDiv.innerHTML = `<div style="color: #dc3545; text-align: center; padding: 20px;">Error: ${error.message}</div>`;
             }
         }
         

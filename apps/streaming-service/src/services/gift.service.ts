@@ -120,4 +120,49 @@ export class GiftService {
       createdAt: gift.createdAt
     }));
   }
+
+  /**
+   * Send a gift without room context (for OFFLINE cards)
+   * Transfers coins and creates badge, but does NOT create CallGift record
+   * @param giftId Gift sticker ID (monkey, pikachu, etc.) - required
+   */
+  async sendGiftDirect(
+    fromUserId: string,
+    toUserId: string,
+    amount: number,
+    giftId: string
+  ): Promise<{ transactionId: string; newBalance: number }> {
+    if (amount <= 0) {
+      throw new BadRequestException("Gift amount must be positive");
+    }
+
+    if (!giftId || giftId.trim() === "") {
+      throw new BadRequestException("giftId is required");
+    }
+
+    if (fromUserId === toUserId) {
+      throw new BadRequestException("Cannot send gift to yourself");
+    }
+
+    // Transfer coins from sender to receiver via wallet-service
+    // This will create the badge automatically when giftId is passed
+    const result = await this.walletClient.transferCoins(
+      fromUserId,
+      toUserId,
+      amount,
+      `Gift to user ${toUserId} (from OFFLINE cards)`,
+      giftId // Pass giftId to wallet service - this creates the badge
+    );
+
+    // NOTE: We do NOT create a CallGift record here because there's no room/session
+    // The badge is created by wallet-service when giftId is passed
+    // This is intentional - OFFLINE cards gifts don't need room tracking
+
+    this.logger.log(`Direct gift sent: ${fromUserId} -> ${toUserId} (${amount} coins, giftId: ${giftId}) from OFFLINE cards`);
+
+    return {
+      transactionId: result.transactionId,
+      newBalance: result.newBalance
+    };
+  }
 }

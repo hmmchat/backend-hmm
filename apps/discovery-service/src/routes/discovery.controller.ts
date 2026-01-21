@@ -18,7 +18,9 @@ import {
   ProceedRequestSchema,
   RoomCreatedRequestSchema,
   BroadcastStartedRequestSchema,
-  CallEndedRequestSchema
+  CallEndedRequestSchema,
+  GetOfflineCardQuerySchema,
+  OfflineRaincheckRequestSchema
 } from "../dtos/discovery.dto.js";
 
 @Controller("discovery")
@@ -422,6 +424,130 @@ export class DiscoveryController {
     return {
       success: true,
       message: `Updated ${dto.userIds.length} users to AVAILABLE after call ended in room ${dto.roomId}`
+    };
+  }
+
+  /* ---------- OFFLINE Cards Endpoints ---------- */
+
+  /**
+   * Get next OFFLINE card (users with ONLINE/OFFLINE/VIEWER status)
+   * GET /discovery/offline-cards/card?sessionId=xxx&soloOnly=false
+   */
+  @Get("offline-cards/card")
+  async getOfflineCard(
+    @Headers("authorization") authz?: string,
+    @Query() query?: any
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+
+    const dto = GetOfflineCardQuerySchema.parse(query || {});
+    const soloOnly = dto.soloOnly || false;
+
+    return this.discoveryService.getNextOfflineCard(token, dto.sessionId, soloOnly);
+  }
+
+  /**
+   * Mark current OFFLINE card as rainchecked
+   * POST /discovery/offline-cards/raincheck
+   */
+  @Post("offline-cards/raincheck")
+  async offlineRaincheck(
+    @Headers("authorization") authz: string,
+    @Body() body: any
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+
+    const dto = OfflineRaincheckRequestSchema.parse(body);
+
+    // Get user ID from token
+    const { verifyToken } = await import("@hmm/common");
+    const jwkStr = process.env.JWT_PUBLIC_JWK;
+    if (!jwkStr || jwkStr === "undefined") {
+      throw new HttpException("Server configuration error", HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+    const cleanedJwk = jwkStr.trim().replace(/^['"]|['"]$/g, "");
+    const publicJwk = JSON.parse(cleanedJwk);
+    const verifyAccess = await verifyToken(publicJwk);
+    const payload = await verifyAccess(token);
+    const userId = payload.sub;
+
+    // Get user's preferred city
+    const cityResponse = await this.locationService.getPreferredCity(token);
+    const city = cityResponse.city;
+
+    // Mark as rainchecked (uses prefixed sessionId to avoid conflicts)
+    await this.discoveryService.markOfflineRaincheck(
+      userId,
+      dto.sessionId,
+      dto.raincheckedUserId,
+      city
+    );
+
+    // Return next card
+    const soloOnly = false;
+    const nextCard = await this.discoveryService.getNextOfflineCard(
+      token,
+      dto.sessionId,
+      soloOnly
+    );
+
+    return {
+      success: true,
+      nextCard: nextCard.card
+    };
+  }
+
+  /* ---------- Test Endpoints for OFFLINE Cards (No Auth Required) ---------- */
+
+  /**
+   * Test endpoint: Get next OFFLINE card (bypasses auth)
+   * GET /discovery/test/offline-cards/card?userId=xxx&sessionId=xxx&soloOnly=false
+   */
+  @Get("test/offline-cards/card")
+  async getOfflineCardTest(
+    @Query("userId") userId: string,
+    @Query("sessionId") sessionId: string,
+    @Query("soloOnly") soloOnly?: string
+  ) {
+    if (!userId || !sessionId) {
+      throw new HttpException("userId and sessionId are required", HttpStatus.BAD_REQUEST);
+    }
+
+    const soloOnlyBool = soloOnly === "true" || soloOnly === "1";
+    return this.discoveryService.getNextOfflineCardForUser(userId, sessionId, soloOnlyBool);
+  }
+
+  /**
+   * Test endpoint: OFFLINE Raincheck (bypasses auth)
+   * POST /discovery/test/offline-cards/raincheck
+   */
+  @Post("test/offline-cards/raincheck")
+  async offlineRaincheckTest(@Body() body: any) {
+    const { userId, sessionId, raincheckedUserId } = body;
+
+    if (!userId || !sessionId || !raincheckedUserId) {
+      throw new HttpException("userId, sessionId, and raincheckedUserId are required", HttpStatus.BAD_REQUEST);
+    }
+
+    // Get user's preferred city directly from user service
+    const cityResponse = await this.locationService.getPreferredCityForUser(userId);
+    const city = cityResponse.city;
+
+    // Mark as rainchecked (uses prefixed sessionId)
+    await this.discoveryService.markOfflineRaincheck(userId, sessionId, raincheckedUserId, city);
+
+    // Return next card
+    const nextCard = await this.discoveryService.getNextOfflineCardForUser(userId, sessionId, false);
+
+    return {
+      success: true,
+      nextCard: nextCard.card
     };
   }
 }

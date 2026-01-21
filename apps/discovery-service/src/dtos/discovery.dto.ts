@@ -82,3 +82,29 @@ export const CallEndedRequestSchema = z.object({
 export type RoomCreatedRequest = z.infer<typeof RoomCreatedRequestSchema>;
 export type BroadcastStartedRequest = z.infer<typeof BroadcastStartedRequestSchema>;
 export type CallEndedRequest = z.infer<typeof CallEndedRequestSchema>;
+
+// OFFLINE Cards DTOs
+export const GetOfflineCardQuerySchema = z.object({
+  sessionId: z.string().min(1, "Session ID is required"),
+  soloOnly: z.string().optional().transform((val) => val === "true" || val === "1")
+});
+
+export const OfflineRaincheckRequestSchema = z.object({
+  sessionId: z.string().min(1, "Session ID is required"),
+  raincheckedUserId: z.string().min(1, "Rainchecked user ID is required")
+});
+
+export const SendFriendRequestFromOfflineCardSchema = z.object({
+  toUserId: z.string().min(1, "To user ID is required")
+});
+
+export const SendGiftFromOfflineCardSchema = z.object({
+  toUserId: z.string().min(1, "To user ID is required"),
+  amount: z.number().positive("Amount must be positive"),
+  giftId: z.string().min(1, "Gift ID is required")
+});
+
+export type GetOfflineCardQuery = z.infer<typeof GetOfflineCardQuerySchema>;
+export type OfflineRaincheckRequest = z.infer<typeof OfflineRaincheckRequestSchema>;
+export type SendFriendRequestFromOfflineCard = z.infer<typeof SendFriendRequestFromOfflineCardSchema>;
+export type SendGiftFromOfflineCard = z.infer<typeof SendGiftFromOfflineCardSchema>;

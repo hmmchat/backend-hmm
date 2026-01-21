@@ -412,7 +412,10 @@ export class UserController {
     const validStatuses = [
       "AVAILABLE",
       "IN_SQUAD_AVAILABLE",
-      "IN_BROADCAST_AVAILABLE"
+      "IN_BROADCAST_AVAILABLE",
+      "ONLINE",
+      "OFFLINE",
+      "VIEWER"
     ];
     const invalidStatuses = statuses.filter((s: string) => !validStatuses.includes(s));
     if (invalidStatuses.length > 0) {

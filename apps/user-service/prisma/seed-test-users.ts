@@ -342,6 +342,139 @@ const testUsers = [
     music: { name: "Watermelon Sugar", artist: "Harry Styles" },
     intent: "Exploring new connections",
     age: 25
+  },
+  // OFFLINE Cards Users - ONLINE status
+  {
+    id: `test-user-offline-online-1`,
+    username: "OnlineUser1",
+    gender: Gender.MALE,
+    city: "Mumbai",
+    status: UserStatus.ONLINE,
+    brands: ["Nike", "Apple", "JBL"],
+    interests: ["Music", "Sports", "Travel"],
+    values: ["Adventure", "Honesty", "Friendship"],
+    music: { name: "Shape of You", artist: "Ed Sheeran" },
+    intent: "Browsing profiles",
+    age: 26
+  },
+  {
+    id: `test-user-offline-online-2`,
+    username: "OnlineUser2",
+    gender: Gender.FEMALE,
+    city: "Mumbai",
+    status: UserStatus.ONLINE,
+    brands: ["Adidas", "Samsung", "Puma"],
+    interests: ["Cooking", "Reading", "Yoga"],
+    values: ["Kindness", "Empathy", "Compassion"],
+    music: { name: "Blinding Lights", artist: "The Weeknd" },
+    intent: "Just browsing",
+    age: 24
+  },
+  {
+    id: `test-user-offline-online-3`,
+    username: "OnlineUser3",
+    gender: Gender.MALE,
+    city: "Delhi",
+    status: UserStatus.ONLINE,
+    brands: ["Nike", "Apple"],
+    interests: ["Sports", "Gaming"],
+    values: ["Loyalty", "Respect"],
+    music: { name: "Shape of You", artist: "Ed Sheeran" },
+    intent: "Looking around",
+    age: 27
+  },
+  // OFFLINE Cards Users - OFFLINE status
+  {
+    id: `test-user-offline-offline-1`,
+    username: "OfflineUser1",
+    gender: Gender.FEMALE,
+    city: "Mumbai",
+    status: UserStatus.OFFLINE,
+    brands: ["Nike", "Apple", "JBL", "Chanel"],
+    interests: ["Music", "Travel", "Fitness"],
+    values: ["Adventure", "Honesty", "Friendship", "Positivity"],
+    music: { name: "Shape of You", artist: "Ed Sheeran" },
+    intent: "Not available for calls",
+    age: 25
+  },
+  {
+    id: `test-user-offline-offline-2`,
+    username: "OfflineUser2",
+    gender: Gender.MALE,
+    city: "Delhi",
+    status: UserStatus.OFFLINE,
+    brands: ["Adidas", "Samsung", "Sony", "Microsoft"],
+    interests: ["Technology", "Gaming", "Movies", "Fitness"],
+    values: ["Growth", "Ambition", "Excellence", "Optimism"],
+    music: { name: "Blinding Lights", artist: "The Weeknd" },
+    intent: "Away right now",
+    age: 29
+  },
+  {
+    id: `test-user-offline-offline-3`,
+    username: "OfflineUser3",
+    gender: Gender.FEMALE,
+    city: "Bangalore",
+    status: UserStatus.OFFLINE,
+    brands: ["Apple", "Nike", "Bose"],
+    interests: ["Music", "Fitness", "Yoga", "Reading"],
+    values: ["Balance", "Kindness", "Empathy", "Compassion"],
+    music: { name: "Shape of You", artist: "Ed Sheeran" },
+    intent: "Currently offline",
+    age: 28
+  },
+  // OFFLINE Cards Users - VIEWER status
+  {
+    id: `test-user-offline-viewer-1`,
+    username: "ViewerUser1",
+    gender: Gender.MALE,
+    city: "Mumbai",
+    status: UserStatus.VIEWER,
+    brands: ["Tesla", "BMW", "Google"],
+    interests: ["Technology", "Cycling", "Nature"],
+    values: ["Independence", "Freedom", "Growth"],
+    music: { name: "Blinding Lights", artist: "The Weeknd" },
+    intent: "Watching broadcasts",
+    age: 31
+  },
+  {
+    id: `test-user-offline-viewer-2`,
+    username: "ViewerUser2",
+    gender: Gender.FEMALE,
+    city: "Delhi",
+    status: UserStatus.VIEWER,
+    brands: ["Chanel", "Gucci"],
+    interests: ["Fashion", "Art", "Photography", "Dancing"],
+    values: ["Creativity", "Authenticity", "Balance", "Positivity"],
+    music: { name: "Watermelon Sugar", artist: "Harry Styles" },
+    intent: "Viewing content",
+    age: 26
+  },
+  {
+    id: `test-user-offline-viewer-3`,
+    username: "ViewerUser3",
+    gender: Gender.MALE,
+    city: "Bangalore",
+    status: UserStatus.VIEWER,
+    brands: ["Nike", "Apple", "JBL"],
+    interests: ["Music", "Sports", "Travel"],
+    values: ["Adventure", "Honesty", "Friendship"],
+    music: { name: "Shape of You", artist: "Ed Sheeran" },
+    intent: "Just viewing",
+    age: 30
+  },
+  {
+    id: `test-user-offline-viewer-4`,
+    username: "ViewerUser4",
+    gender: Gender.FEMALE,
+    city: null, // Anywhere user
+    status: UserStatus.VIEWER,
+    brands: ["Adidas", "Chanel"],
+    interests: ["Travel", "Art", "Photography"],
+    values: ["Adventure", "Freedom", "Authenticity"],
+    music: { name: "Watermelon Sugar", artist: "Harry Styles" },
+    intent: "Exploring",
+    age: 27
   }
 ];
 

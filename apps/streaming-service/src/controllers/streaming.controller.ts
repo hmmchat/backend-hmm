@@ -446,5 +446,73 @@ export class StreamingController {
       reportCount: result.reportCount
     };
   }
+
+  /**
+   * Send gift from OFFLINE cards (without room context)
+   * POST /streaming/offline-cards/gifts
+   */
+  @Post("offline-cards/gifts")
+  async sendGiftFromOfflineCard(
+    @Body() body: any,
+    @Headers("authorization") authz?: string
+  ) {
+    const sendGiftDirectSchema = z.object({
+      toUserId: z.string().min(1, "toUserId is required"),
+      amount: z.number().positive("Amount must be positive"),
+      giftId: z.string().min(1, "giftId is required"),
+      fromUserId: z.string().optional() // Optional in test mode
+    });
+
+    const parsed = sendGiftDirectSchema.parse(body);
+    const { toUserId, amount, giftId, fromUserId } = parsed;
+
+    // In test mode, allow fromUserId in body, otherwise extract from token
+    let finalFromUserId = fromUserId;
+
+    if (!authz && !fromUserId) {
+      throw new BadRequestException("Missing authorization header or fromUserId");
+    }
+
+    if (authz) {
+      // Extract from token
+      const token = authz.replace("Bearer ", "");
+      const { verifyToken } = await import("@hmm/common");
+      const jwkStr = process.env.JWT_PUBLIC_JWK;
+      if (!jwkStr || jwkStr === "undefined") {
+        throw new BadRequestException("Server configuration error");
+      }
+      const cleanedJwk = jwkStr.trim().replace(/^['"]|['"]$/g, "");
+      const publicJwk = JSON.parse(cleanedJwk);
+      const verifyAccess = await verifyToken(publicJwk);
+      const payload = await verifyAccess(token);
+      finalFromUserId = payload.sub;
+    } else if (fromUserId) {
+      // Test mode: use fromUserId from body
+      finalFromUserId = fromUserId;
+    }
+
+    if (!finalFromUserId) {
+      throw new BadRequestException("fromUserId is required");
+    }
+
+    return await this.giftService.sendGiftDirect(finalFromUserId, toUserId, amount, giftId);
+  }
+
+  /**
+   * Test endpoint: Send gift from OFFLINE cards (bypasses auth)
+   * POST /streaming/test/offline-cards/gifts
+   */
+  @Post("test/offline-cards/gifts")
+  async sendGiftFromOfflineCardTest(@Body() body: any) {
+    const sendGiftDirectSchema = z.object({
+      fromUserId: z.string().min(1, "fromUserId is required"),
+      toUserId: z.string().min(1, "toUserId is required"),
+      amount: z.number().positive("Amount must be positive"),
+      giftId: z.string().min(1, "giftId is required")
+    });
+
+    const { fromUserId, toUserId, amount, giftId } = sendGiftDirectSchema.parse(body);
+    return await this.giftService.sendGiftDirect(fromUserId, toUserId, amount, giftId);
+  }
 }
 

@@ -43,7 +43,7 @@ interface Card {
   values: Array<{ name: string }>;
   musicPreference?: { name: string; artist: string; albumArtUrl?: string };
   pages: CardPage[];
-  status: "AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE";
+  status: "AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE" | "ONLINE" | "OFFLINE" | "VIEWER";
   reported?: boolean;
   matchExplanation?: {
     reasons: string[];
@@ -878,7 +878,7 @@ export class DiscoveryService implements OnModuleInit {
           }
         : undefined,
       pages,
-      status: user.status as "AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE",
+      status: user.status as "AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE" | "ONLINE" | "OFFLINE" | "VIEWER",
       reported: isReported,
       matchExplanation
     };
@@ -2118,6 +2118,371 @@ export class DiscoveryService implements OnModuleInit {
       console.error(`[ERROR] Failed to handle call ended for room ${roomId}:`, error.message);
       throw error;
     }
+  }
+
+  /**
+   * Get next OFFLINE card for user (users with ONLINE/OFFLINE/VIEWER status)
+   * IMPORTANT: Does NOT create matches - this is for browsing only
+   * Uses "offline-" prefix for sessionId to avoid conflicts with video call rainchecks
+   */
+  async getNextOfflineCard(
+    token: string,
+    sessionId: string,
+    soloOnly: boolean = false
+  ): Promise<CardResponse> {
+    // Get current user profile
+    const userProfileResponse = await this.userClient.getUserFullProfile(token);
+    const userId = userProfileResponse.id;
+
+    // Get user's preferred city
+    const cityResponse = await this.locationService.getPreferredCity(token);
+    const preferredCity = cityResponse.city;
+    
+    // Get viewer's actual city from location if in "anywhere" mode
+    let actualCity: string | null = null;
+    if (preferredCity === null && (userProfileResponse as any).latitude && (userProfileResponse as any).longitude) {
+      try {
+        const locationResult = await this.locationService.locateMe(
+          (userProfileResponse as any).latitude,
+          (userProfileResponse as any).longitude
+        );
+        actualCity = locationResult.city;
+      } catch (error) {
+        console.warn("Failed to get actual city from location:", error);
+      }
+    }
+    
+    // Convert to UserProfile interface
+    const currentUser: UserProfile = {
+      id: userProfileResponse.id,
+      preferredCity: preferredCity,
+      brandPreferences: (userProfileResponse as any).brandPreferences,
+      interests: (userProfileResponse as any).interests,
+      values: (userProfileResponse as any).values,
+      musicPreference: (userProfileResponse as any).musicPreference,
+      videoEnabled: (userProfileResponse as any).videoEnabled,
+      actualCity: actualCity
+    };
+
+    // Get gender filter preference
+    const genderFilter = await this.genderFilterService.getCurrentPreference(userId);
+    const hasActiveGenderFilter = genderFilter && genderFilter.screensRemaining > 0;
+
+    // Determine gender filter - ONLY apply when screensRemaining > 0
+    let genders: ("MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY")[] | undefined;
+    if (hasActiveGenderFilter) {
+      const gendersJson = genderFilter.genders;
+      if (typeof gendersJson === "string") {
+        genders = JSON.parse(gendersJson);
+      } else if (Array.isArray(gendersJson)) {
+        genders = gendersJson as ("MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY")[];
+      }
+    }
+
+    // Use prefixed sessionId to avoid conflicts with video call rainchecks
+    const offlineSessionId = `offline-${sessionId}`;
+
+    // Get rainchecked user IDs for this OFFLINE session and city
+    const raincheckedUserIds = await this.getOfflineRaincheckedUserIds(userId, offlineSessionId, preferredCity);
+
+    // Determine statuses to filter - OFFLINE cards show ONLINE, OFFLINE, VIEWER
+    const statuses: ("ONLINE" | "OFFLINE" | "VIEWER")[] = ["ONLINE", "OFFLINE", "VIEWER"];
+
+    // Find matching users (same scoring system, but no match creation)
+    const matchingUsers = await this.findOfflineMatchingUsers(
+      token,
+      userId,
+      preferredCity,
+      statuses,
+      genders,
+      soloOnly,
+      raincheckedUserIds
+    );
+
+    // If matches found, return the best match (using same scoring)
+    if (matchingUsers.length > 0) {
+      const selectedUser = this.selectBestMatch(matchingUsers, currentUser);
+      const card = await this.buildCard(selectedUser, preferredCity, currentUser);
+      
+      if (hasActiveGenderFilter) {
+        await this.genderFilterService.decrementScreen(userId);
+      }
+
+      return {
+        card,
+        exhausted: false
+      };
+    }
+
+    // No matches found - return exhausted
+    return {
+      card: null,
+      exhausted: true
+    };
+  }
+
+  /**
+   * Find matching users for OFFLINE cards (ONLINE/OFFLINE/VIEWER statuses)
+   */
+  private async findOfflineMatchingUsers(
+    token: string,
+    userId: string,
+    city: string | null,
+    statuses: ("ONLINE" | "OFFLINE" | "VIEWER")[],
+    genders: ("MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY")[] | undefined,
+    _soloOnly: boolean,
+    excludeUserIds: string[]
+  ): Promise<DiscoveryUser[]> {
+    // Add current user to exclude list
+    const excludeIds = [...excludeUserIds, userId];
+
+    const users = await this.userClient.getUsersForDiscovery(token, {
+      city,
+      statuses: statuses as ("AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE" | "ONLINE" | "OFFLINE" | "VIEWER" | "MATCHED")[],
+      genders,
+      excludeUserIds: excludeIds,
+      limit: 500 // Get a large pool
+    });
+
+    return users;
+  }
+
+  /**
+   * Get rainchecked user IDs for OFFLINE cards session (uses prefixed sessionId)
+   */
+  private async getOfflineRaincheckedUserIds(
+    userId: string,
+    offlineSessionId: string,
+    city: string | null
+  ): Promise<string[]> {
+    try {
+      const rainchecks = await (this.prisma as any).raincheckSession.findMany({
+        where: {
+          userId,
+          sessionId: offlineSessionId, // Uses "offline-" prefixed sessionId
+          city: city || null,
+          raincheckedUserId: {
+            not: {
+              startsWith: "LOCATION:"
+            }
+          }
+        },
+        select: {
+          raincheckedUserId: true
+        }
+      });
+
+      return rainchecks.map((r: { raincheckedUserId: string }) => r.raincheckedUserId);
+    } catch (error: any) {
+      if (error?.code === 'P2021' || error?.message?.includes('does not exist')) {
+        console.warn("Raincheck table not found, returning empty array:", error.message);
+        return [];
+      }
+      console.error("Error fetching OFFLINE rainchecked users:", error);
+      return [];
+    }
+  }
+
+  /**
+   * Mark user as rainchecked in OFFLINE cards (uses prefixed sessionId)
+   * IMPORTANT: Does NOT create or remove matches - this is for browsing only
+   */
+  async markOfflineRaincheck(
+    userId: string,
+    sessionId: string,
+    raincheckedUserId: string,
+    city: string | null
+  ): Promise<void> {
+    try {
+      // Use prefixed sessionId to avoid conflicts with video call rainchecks
+      const offlineSessionId = `offline-${sessionId}`;
+
+      // IMPORTANT: Do NOT check for matches or reset statuses - OFFLINE cards don't create matches
+      // Just mark as rainchecked in session (bidirectionally - both users should exclude each other)
+      const existing1 = await (this.prisma as any).raincheckSession.findFirst({
+        where: {
+          userId,
+          sessionId: offlineSessionId,
+          raincheckedUserId,
+          city: city || null
+        }
+      });
+
+      if (!existing1) {
+        await (this.prisma as any).raincheckSession.create({
+          data: {
+            userId,
+            sessionId: offlineSessionId,
+            raincheckedUserId,
+            city: city || null
+          }
+        });
+      }
+
+      // Also record the reverse raincheck (User B should also exclude User A)
+      const existing2 = await (this.prisma as any).raincheckSession.findFirst({
+        where: {
+          userId: raincheckedUserId,
+          sessionId: offlineSessionId,
+          raincheckedUserId: userId,
+          city: city || null
+        }
+      });
+
+      if (!existing2) {
+        await (this.prisma as any).raincheckSession.create({
+          data: {
+            userId: raincheckedUserId,
+            sessionId: offlineSessionId,
+            raincheckedUserId: userId,
+            city: city || null
+          }
+        });
+      }
+
+      console.log(`[INFO] OFFLINE card raincheck recorded: ${userId} rainchecked ${raincheckedUserId} (session: ${offlineSessionId})`);
+    } catch (error: any) {
+      if (error?.code === 'P2021' || error?.message?.includes('does not exist')) {
+        console.warn("Raincheck table not found, skipping OFFLINE raincheck:", error.message);
+        return;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Get next OFFLINE card for user (test mode - bypasses auth)
+   */
+  async getNextOfflineCardForUser(
+    userId: string,
+    sessionId: string,
+    soloOnly: boolean = false
+  ): Promise<CardResponse> {
+    // Get current user profile directly by userId
+    const userProfileResponse = await this.userClient.getUserFullProfileById(userId);
+    
+    // Get user's preferred city directly
+    const preferredCity = await this.userClient.getPreferredCityById(userId);
+    
+    // Get viewer's actual city from location if in "anywhere" mode
+    let actualCity: string | null = null;
+    if (preferredCity === null && (userProfileResponse as any).latitude && (userProfileResponse as any).longitude) {
+      try {
+        const locationResult = await this.locationService.locateMe(
+          (userProfileResponse as any).latitude,
+          (userProfileResponse as any).longitude
+        );
+        actualCity = locationResult.city;
+      } catch (error) {
+        console.warn("Failed to get actual city from location:", error);
+      }
+    }
+    
+    // Convert to UserProfile interface
+    const currentUser: UserProfile = {
+      id: userProfileResponse.id,
+      preferredCity: preferredCity,
+      brandPreferences: (userProfileResponse as any).brandPreferences,
+      interests: (userProfileResponse as any).interests,
+      values: (userProfileResponse as any).values,
+      musicPreference: (userProfileResponse as any).musicPreference,
+      videoEnabled: (userProfileResponse as any).videoEnabled,
+      actualCity: actualCity
+    };
+
+    // Get gender filter preference
+    const genderFilter = await this.genderFilterService.getCurrentPreference(userId);
+    const hasActiveGenderFilter = genderFilter && genderFilter.screensRemaining > 0;
+
+    // Determine gender filter
+    let genders: ("MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY")[] | undefined;
+    if (hasActiveGenderFilter) {
+      const gendersJson = genderFilter.genders;
+      if (typeof gendersJson === "string") {
+        genders = JSON.parse(gendersJson);
+      } else if (Array.isArray(gendersJson)) {
+        genders = gendersJson as ("MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY")[];
+      }
+    }
+
+    // Use prefixed sessionId to avoid conflicts
+    const offlineSessionId = `offline-${sessionId}`;
+
+    // Get rainchecked user IDs for this OFFLINE session
+    const raincheckedUserIds = await this.getOfflineRaincheckedUserIds(userId, offlineSessionId, preferredCity);
+
+    // Determine statuses - OFFLINE cards show ONLINE, OFFLINE, VIEWER
+    const statuses: ("ONLINE" | "OFFLINE" | "VIEWER")[] = ["ONLINE", "OFFLINE", "VIEWER"];
+
+    // Find matching users (no match creation)
+    const matchingUsers = await this.findOfflineMatchingUsersForUser(
+      userId,
+      preferredCity,
+      statuses,
+      genders,
+      soloOnly,
+      raincheckedUserIds
+    );
+
+    // If matches found, return the best match
+    if (matchingUsers.length > 0) {
+      const selectedUser = this.selectBestMatch(matchingUsers, currentUser);
+      const card = await this.buildCard(selectedUser, preferredCity, currentUser);
+      
+      if (hasActiveGenderFilter) {
+        await this.genderFilterService.decrementScreen(userId);
+      }
+
+      return {
+        card,
+        exhausted: false
+      };
+    }
+
+    // No matches found - return exhausted
+    return {
+      card: null,
+      exhausted: true
+    };
+  }
+
+  /**
+   * Find matching users for OFFLINE cards (test mode - bypasses auth)
+   */
+  private async findOfflineMatchingUsersForUser(
+    userId: string,
+    city: string | null,
+    statuses: ("ONLINE" | "OFFLINE" | "VIEWER")[],
+    genders: ("MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY")[] | undefined,
+    _soloOnly: boolean,
+    excludeUserIds: string[]
+  ): Promise<DiscoveryUser[]> {
+    // Add current user to exclude list
+    const excludeIds = [...excludeUserIds, userId];
+
+    const users = await this.userClient.getUsersForDiscoveryById(
+      userId,
+      {
+        city,
+        statuses: statuses as ("AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE" | "ONLINE" | "OFFLINE" | "VIEWER" | "MATCHED")[],
+        genders,
+        excludeUserIds: excludeIds,
+        limit: 500
+      }
+    );
+
+    // Filter out users who are matched (they shouldn't appear in OFFLINE cards)
+    const matchedUserIds = await this.matchingService.getMatchedUserIdsCached();
+    const filteredUsers = users.filter(user => {
+      // Exclude if user is in matchedUserIds AND has MATCHED status
+      if (matchedUserIds.has(user.id)) {
+        return user.status === 'MATCHED';
+      }
+      return true;
+    });
+
+    console.log(`[DEBUG] findOfflineMatchingUsersForUser - users from service: ${users.length}, after filtering: ${filteredUsers.length}`);
+    return filteredUsers;
   }
 }
 

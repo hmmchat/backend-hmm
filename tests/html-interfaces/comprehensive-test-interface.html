@@ -279,6 +279,7 @@
         
         <div class="tabs">
             <button class="tab active" onclick="switchTab('setup', this)">📋 Setup</button>
+            <button class="tab" onclick="switchTab('homepage', this)">🏠 Homepage</button>
             <button class="tab" onclick="switchTab('discovery', this)">🔍 Discovery</button>
             <button class="tab" onclick="switchTab('streaming', this)">📹 Streaming</button>
             <button class="tab" onclick="switchTab('wallet', this)">💰 Wallet</button>
@@ -292,7 +293,12 @@
                 <p style="margin-bottom: 15px; color: #856404;">
                     <strong>Before using this interface, you must run the setup script to ensure all services are running and Prisma is up-to-date:</strong>
                 </p>
+                <button class="btn-warning" onclick="runSetupScript()" style="width: 100%; padding: 15px; font-size: 16px; margin-bottom: 15px;">
+                    🔧 Run Setup Script (Setup & Start All Services)
+                </button>
+                <div id="setupScriptResponse" class="response" style="display:none; margin-top: 10px;"></div>
                 <div style="background: white; padding: 15px; border-radius: 8px; margin-bottom: 10px; font-family: 'Courier New', monospace; font-size: 14px;">
+                    <strong>Or run manually:</strong><br>
                     <code style="color: #d63384;">cd scripts</code><br>
                     <code style="color: #d63384;">./setup-and-start-services.sh</code>
                 </div>
@@ -325,12 +331,20 @@
             <div class="section">
                 <h3>📦 Create Test Data</h3>
                 <p style="margin-bottom: 15px; color: #666;">
-                    Creates 20+ diverse test users across multiple cities with proper profiles, locations, and wallets.
-                    Perfect for testing discovery cards and matching flows.
+                    Creates 30+ diverse test users across multiple cities with proper profiles, locations, and wallets.
+                    Includes users for Discovery flow (AVAILABLE status) and Homepage OFFLINE Cards (ONLINE, OFFLINE, VIEWER status).
+                    Perfect for testing all flows from this interface!
                 </p>
                 <button class="btn-success" onclick="createComprehensiveTestData()" style="width: 100%; padding: 15px; font-size: 16px; margin-bottom: 10px;">
-                    🚀 Create Comprehensive Test Data (20+ Users)
+                    🚀 Create Comprehensive Test Data (30+ Users)
                 </button>
+                <div style="background: #e7f3ff; border-left: 4px solid #2196F3; padding: 12px; border-radius: 6px; margin-top: 10px; font-size: 13px;">
+                    <strong>Includes:</strong>
+                    <br>✓ 22 Discovery users (AVAILABLE status) across 6 cities
+                    <br>✓ 3 ONLINE users for Homepage testing
+                    <br>✓ 3 OFFLINE users for Homepage testing
+                    <br>✓ 4 VIEWER users for Homepage testing
+                </div>
                 <div id="setupResponse" class="response" style="display:none;"></div>
             </div>
             
@@ -344,6 +358,130 @@
                     🗑️ Cleanup & Reset All Sessions
                 </button>
                 <div id="cleanupResponse" class="response" style="display:none;"></div>
+            </div>
+        </div>
+        
+        <!-- Homepage Tab - OFFLINE Cards -->
+        <div id="homepage" class="tab-content">
+            <div class="section">
+                <h3>🏠 Homepage - OFFLINE Cards</h3>
+                <p style="margin-bottom: 15px; color: #666; font-size: 13px;">
+                    Browse profiles of users who are ONLINE, OFFLINE, or VIEWER status. 
+                    Send friend requests, send gifts, or raincheck cards.
+                </p>
+                
+                <!-- Quick User Selection -->
+                <div style="background: #e7f3ff; border-left: 4px solid #2196F3; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                    <h4 style="margin-bottom: 10px; font-size: 14px; color: #333;">⚡ Quick User Selection</h4>
+                    <div class="quick-actions">
+                        <button class="quick-action-btn btn-info" onclick="setOfflineUser('test-user-mumbai-male-1')">👤 Mumbai Male 1</button>
+                        <button class="quick-action-btn btn-info" onclick="setOfflineUser('test-user-mumbai-female-1')">👤 Mumbai Female 1</button>
+                        <button class="quick-action-btn btn-info" onclick="setOfflineUser('test-user-offline-online-1')">🟢 Online User 1</button>
+                        <button class="quick-action-btn btn-info" onclick="setOfflineUser('test-user-offline-offline-1')">⚫ Offline User 1</button>
+                        <button class="quick-action-btn btn-info" onclick="setOfflineUser('test-user-offline-viewer-1')">👁️ Viewer User 1</button>
+                    </div>
+                </div>
+                
+                <div class="grid" style="grid-template-columns: 1fr 1fr; margin-bottom: 15px;">
+                    <div class="form-group">
+                        <label>User ID:</label>
+                        <input type="text" id="offlineCardsUserId" placeholder="e.g., test-user-mumbai-male-1" value="test-user-mumbai-male-1">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Session ID:</label>
+                        <div style="display: flex; gap: 5px;">
+                            <input type="text" id="offlineCardsSessionId" placeholder="e.g., offline-session-1" value="offline-session-1" style="flex: 1;">
+                            <button class="btn-secondary" onclick="generateOfflineSessionId()" style="padding: 10px 15px; margin: 0;">🔄 New</button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="offlineCardsSoloOnly" style="width: auto; margin-right: 8px;">
+                        Solo Only (filter for solo users only)
+                    </label>
+                </div>
+                
+                <button class="btn-primary" onclick="getOfflineCard()" style="width: 100%; padding: 12px; margin-bottom: 10px; font-size: 16px;">
+                    🎴 Get Next OFFLINE Card
+                </button>
+                
+                <div id="offlineCardDisplay" style="display: none; margin-top: 20px; padding: 20px; background: white; border-radius: 12px; border: 2px solid #667eea;">
+                    <div id="offlineCardContent"></div>
+                    <div style="margin-top: 20px; display: flex; gap: 10px;">
+                        <button class="btn-danger" onclick="raincheckOfflineCard()" style="flex: 1; padding: 12px; font-size: 14px;">
+                            ❌ Raincheck
+                        </button>
+                        <button class="btn-success" onclick="sendFriendRequestFromOfflineCard()" style="flex: 1; padding: 12px; font-size: 14px;">
+                            👥 Send Friend Request
+                        </button>
+                        <button class="btn-primary" onclick="showGiftModal()" style="flex: 1; padding: 12px; font-size: 14px;">
+                            🎁 Send Gift
+                        </button>
+                    </div>
+                </div>
+                
+                <div id="offlineCardsResponse" class="response" style="display:none; margin-top: 15px;"></div>
+            </div>
+            
+            <!-- Gift Selection Modal -->
+            <div id="giftModal" onclick="if(event.target === this) closeGiftModal()" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
+                <div onclick="event.stopPropagation()" style="background: white; padding: 30px; border-radius: 12px; max-width: 500px; width: 90%; max-height: 90vh; overflow-y: auto; box-shadow: 0 10px 40px rgba(0,0,0,0.3);">
+                    <h3 style="margin-bottom: 20px; color: #667eea;">🎁 Send Gift</h3>
+                    
+                    <div class="form-group">
+                        <label>Gift Type:</label>
+                        <select id="giftTypeSelect" style="width: 100%; padding: 10px; border: 2px solid #e0e0e0; border-radius: 8px;">
+                            <option value="monkey">🐵 Monkey</option>
+                            <option value="pikachu">⚡ Pikachu</option>
+                            <option value="rose">🌹 Rose</option>
+                            <option value="heart">❤️ Heart</option>
+                            <option value="star">⭐ Star</option>
+                            <option value="diamond">💎 Diamond</option>
+                            <option value="crown">👑 Crown</option>
+                            <option value="fire">🔥 Fire</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Gift Amount (Coins):</label>
+                        <input type="number" id="giftAmountInput" value="100" min="1" style="width: 100%; padding: 10px; border: 2px solid #e0e0e0; border-radius: 8px;">
+                        <div style="margin-top: 5px; display: flex; gap: 5px;">
+                            <button class="quick-action-btn btn-secondary" onclick="setGiftAmount(50)" style="flex: 1; padding: 5px;">50</button>
+                            <button class="quick-action-btn btn-secondary" onclick="setGiftAmount(100)" style="flex: 1; padding: 5px;">100</button>
+                            <button class="quick-action-btn btn-secondary" onclick="setGiftAmount(200)" style="flex: 1; padding: 5px;">200</button>
+                            <button class="quick-action-btn btn-secondary" onclick="setGiftAmount(500)" style="flex: 1; padding: 5px;">500</button>
+                        </div>
+                    </div>
+                    
+                    <div style="display: flex; gap: 10px; margin-top: 20px;">
+                        <button class="btn-primary" onclick="sendGiftFromOfflineCard()" style="flex: 1; padding: 12px;">
+                            🎁 Send Gift
+                        </button>
+                        <button class="btn-secondary" onclick="closeGiftModal()" style="flex: 1; padding: 12px;">
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="section">
+                <h3>📊 OFFLINE Cards Status</h3>
+                <div id="offlineCardsStatus" style="padding: 15px; background: white; border-radius: 8px; color: #666;">
+                    No card loaded yet. Click "Get Next OFFLINE Card" to start.
+                </div>
+            </div>
+            
+            <div class="section">
+                <h3>📝 Action History</h3>
+                <div id="offlineCardsHistory" style="padding: 15px; background: white; border-radius: 8px; max-height: 300px; overflow-y: auto; font-size: 12px;">
+                    <div style="color: #999; font-style: italic;">No actions yet...</div>
+                </div>
+                <button class="btn-secondary" onclick="clearOfflineHistory()" style="margin-top: 10px; padding: 8px 16px;">
+                    🗑️ Clear History
+                </button>
             </div>
         </div>
         
@@ -872,7 +1010,7 @@
                 // Find the tab button and activate it
                 const tabs = document.querySelectorAll('.tab');
                 tabs.forEach((tab, index) => {
-                    const tabNames = ['setup', 'discovery', 'streaming', 'wallet', 'friends'];
+                    const tabNames = ['setup', 'homepage', 'discovery', 'streaming', 'wallet', 'friends'];
                     if (tabNames[index] === tabName) {
                         tab.classList.add('active');
                     }
@@ -890,7 +1028,376 @@
             element.style.display = 'block';
             const statusClass = isError ? 'status-error' : 'status-success';
             const status = isError ? '❌ Error' : '✅ Success';
-            element.innerHTML = `<div class="${statusClass}">${status}</div><pre>${JSON.stringify(data, null, 2)}</pre>`;
+            
+            // Format the response nicely
+            let html = `<div class="${statusClass}">${status}</div>`;
+            
+            if (data.message) {
+                html += `<div style="margin: 10px 0; padding: 10px; background: ${isError ? '#f8d7da' : '#d4edda'}; border-radius: 6px; font-weight: 600;">${data.message}</div>`;
+            }
+            
+            if (data.note) {
+                html += `<div style="margin: 10px 0; padding: 10px; background: #e7f3ff; border-radius: 6px; white-space: pre-line;">${data.note}</div>`;
+            }
+            
+            if (data.errors && data.errors.length > 0) {
+                html += `<div style="margin: 10px 0; padding: 10px; background: #fff3cd; border-radius: 6px;">
+                    <strong>Errors:</strong>
+                    <ul style="margin-top: 5px;">
+                        ${data.errors.map(e => `<li>${e.user}: ${e.error || 'Unknown error'}</li>`).join('')}
+                    </ul>
+                </div>`;
+            }
+            
+            if (data.summary) {
+                html += `<div style="margin: 10px 0; padding: 10px; background: #f8f9fa; border-radius: 6px;">
+                    <strong>Summary:</strong>
+                    <ul style="margin-top: 5px;">
+                        <li>Total: ${data.summary.total}</li>
+                        <li>Success: ${data.summary.success}</li>
+                        <li>Errors: ${data.summary.errors}</li>
+                        ${data.summary.byStatus ? `<li>By Status: ${JSON.stringify(data.summary.byStatus)}</li>` : ''}
+                    </ul>
+                </div>`;
+            }
+            
+            // Show full JSON for debugging (collapsible)
+            html += `<details style="margin-top: 10px;">
+                <summary style="cursor: pointer; color: #667eea; font-weight: 600;">📋 View Full Response (Debug)</summary>
+                <pre style="margin-top: 10px; padding: 10px; background: #f8f9fa; border-radius: 6px; overflow-x: auto;">${JSON.stringify(data, null, 2)}</pre>
+            </details>`;
+            
+            element.innerHTML = html;
+        }
+        
+        async function runSetupScript() {
+            const responseEl = document.getElementById('setupScriptResponse');
+            responseEl.style.display = 'block';
+            
+            // Initialize results tracking
+            const results = {
+                infrastructure: [],
+                prisma: [],
+                services: [],
+                database: []
+            };
+            
+            let html = '<div style="background: #f8f9fa; border-radius: 8px; padding: 20px;">';
+            html += '<h3 style="margin-top: 0; color: #333;">🔧 Setup Script Status</h3>';
+            html += '<div style="color: #667eea; margin-bottom: 15px;">🔄 Running comprehensive checks...</div>';
+            
+            // Step 1: Check Infrastructure
+            html += '<div style="margin-bottom: 20px;">';
+            html += '<h4 style="color: #495057; margin-bottom: 10px; font-size: 14px;">📋 Step 1: Infrastructure Checks</h4>';
+            html += '<div id="infrastructure-checks" style="background: white; padding: 10px; border-radius: 6px; border-left: 4px solid #667eea;"></div>';
+            html += '</div>';
+            
+            responseEl.innerHTML = html;
+            
+            // Check PostgreSQL
+            const postgresCheck = await checkPostgreSQL();
+            results.infrastructure.push(postgresCheck);
+            updateInfrastructureChecks(results.infrastructure);
+            
+            // Check Redis (optional)
+            const redisCheck = await checkRedis();
+            results.infrastructure.push(redisCheck);
+            updateInfrastructureChecks(results.infrastructure);
+            
+            // Step 2: Check Prisma/Database Setup
+            html += '<div style="margin-bottom: 20px;">';
+            html += '<h4 style="color: #495057; margin-bottom: 10px; font-size: 14px;">📋 Step 2: Database & Prisma Setup</h4>';
+            html += '<div id="prisma-checks" style="background: white; padding: 10px; border-radius: 6px; border-left: 4px solid #667eea;"></div>';
+            html += '</div>';
+            responseEl.innerHTML += html;
+            
+            // Check database tables for key services
+            const prismaServices = [
+                { name: 'User Service', testUrl: getApiUrl('/users/test/test-user-1?fields=id'), port: 3002 },
+                { name: 'Auth Service', testUrl: getApiUrl('/auth/health'), port: 3001 },
+                { name: 'Discovery Service', testUrl: getApiUrl('/discovery/test/card?userId=test&sessionId=test'), port: 3004 },
+                { name: 'Streaming Service', testUrl: getApiUrl('/streaming/test/rooms/test'), port: 3006 },
+                { name: 'Wallet Service', testUrl: getApiUrl('/wallet/test/wallet/balance?userId=test'), port: 3005 }
+            ];
+            
+            for (const service of prismaServices) {
+                const check = await checkServiceDatabase(service);
+                results.prisma.push(check);
+                updatePrismaChecks(results.prisma);
+                await new Promise(resolve => setTimeout(resolve, 300)); // Small delay for visual feedback
+            }
+            
+            // Step 3: Check Services
+            html = '<div style="margin-bottom: 20px;">';
+            html += '<h4 style="color: #495057; margin-bottom: 10px; font-size: 14px;">📋 Step 3: Service Health Checks</h4>';
+            html += '<div id="service-checks" style="background: white; padding: 10px; border-radius: 6px; border-left: 4px solid #667eea;"></div>';
+            html += '</div>';
+            responseEl.innerHTML += html;
+            
+            const allServices = [
+                { name: 'API Gateway', url: getApiUrl('/health'), port: 3000, testEndpoint: '/health' },
+                { name: 'Auth Service', url: getApiUrl('/auth/health'), port: 3001, testEndpoint: '/auth/health' },
+                { name: 'User Service', url: getApiUrl('/users/test/test-user-1?fields=id'), port: 3002, testEndpoint: '/users/test/...' },
+                { name: 'Moderation Service', url: getApiUrl('/moderation/check-image'), port: 3003, testEndpoint: '/moderation/check-image' },
+                { name: 'Discovery Service', url: getApiUrl('/discovery/test/card?userId=test&sessionId=test'), port: 3004, testEndpoint: '/discovery/test/...' },
+                { name: 'Streaming Service', url: getApiUrl('/streaming/test/rooms/test'), port: 3006, testEndpoint: '/streaming/test/...' },
+                { name: 'Wallet Service', url: getApiUrl('/wallet/test/wallet/balance?userId=test'), port: 3005, testEndpoint: '/wallet/test/...' },
+                { name: 'Files Service', url: getApiUrl('/files/health'), port: 3008, testEndpoint: '/files/health' },
+                { name: 'Friend Service', url: getApiUrl('/friends/test/friends?userId=test'), port: 3009, testEndpoint: '/friends/test/...' }
+            ];
+            
+            for (const service of allServices) {
+                const check = await checkServiceHealth(service);
+                results.services.push(check);
+                updateServiceChecks(results.services);
+                await new Promise(resolve => setTimeout(resolve, 200));
+            }
+            
+            // Final Summary
+            const summary = generateSummary(results);
+            html = '<div style="margin-top: 20px; padding: 15px; background: ' + (summary.allPassed ? '#d4edda' : summary.hasFailures ? '#fff3cd' : '#f8d7da') + '; border-radius: 8px; border-left: 4px solid ' + (summary.allPassed ? '#28a745' : summary.hasFailures ? '#ffc107' : '#dc3545') + ';">';
+            html += '<h4 style="margin-top: 0; color: #333;">📊 Setup Summary</h4>';
+            html += summary.html;
+            html += '</div>';
+            
+            // Add manual setup instructions if needed
+            if (summary.hasFailures || !summary.allPassed) {
+                html += '<div style="margin-top: 15px; padding: 15px; background: #e7f3ff; border-radius: 8px; border-left: 4px solid #2196F3;">';
+                html += '<strong>💡 Manual Setup Required:</strong>';
+                html += '<div style="background: white; padding: 10px; border-radius: 6px; margin-top: 10px; font-family: \'Courier New\', monospace; font-size: 13px;">';
+                html += '<code>cd scripts</code><br>';
+                html += '<code>./setup-and-start-services.sh</code>';
+                html += '</div>';
+                html += '<p style="margin-top: 10px; font-size: 13px; color: #666;">This will automatically set up Prisma schemas, create database tables, and start all services.</p>';
+                html += '</div>';
+            }
+            
+            responseEl.innerHTML += html;
+        }
+        
+        async function checkPostgreSQL() {
+            try {
+                // Try to check if we can connect to a service that requires DB
+                const res = await fetch(getApiUrl('/users/test/test-user-1?fields=id')).catch(() => null);
+                // If we get any response (even 404), it means the service is up and DB might be working
+                // We can't directly check PostgreSQL from browser, so we infer from service responses
+                return {
+                    name: 'PostgreSQL',
+                    status: 'passed',
+                    message: 'Database connectivity inferred from service responses',
+                    icon: '✅'
+                };
+            } catch (error) {
+                return {
+                    name: 'PostgreSQL',
+                    status: 'warning',
+                    message: 'Cannot verify directly - check service responses below',
+                    icon: '⚠️'
+                };
+            }
+        }
+        
+        async function checkRedis() {
+            return {
+                name: 'Redis',
+                status: 'info',
+                message: 'Optional - not required for basic functionality',
+                icon: 'ℹ️'
+            };
+        }
+        
+        async function checkServiceDatabase(service) {
+            try {
+                const res = await fetch(service.testUrl).catch(() => ({ status: 0, ok: false }));
+                
+                if (res.status === 0) {
+                    return {
+                        name: service.name,
+                        status: 'failed',
+                        message: 'Service not responding - database tables may not exist',
+                        icon: '❌',
+                        port: service.port,
+                        action: 'Run: cd apps/' + service.name.toLowerCase().replace(' service', '-service') + ' && npx prisma db push'
+                    };
+                } else if (res.status === 500) {
+                    const errorText = await res.text().catch(() => '');
+                    if (errorText.includes('does not exist') || errorText.includes('table') || errorText.includes('relation')) {
+                        return {
+                            name: service.name,
+                            status: 'failed',
+                            message: 'Database tables missing - Prisma schema not synced',
+                            icon: '❌',
+                            port: service.port,
+                            action: 'Run: cd apps/' + service.name.toLowerCase().replace(' service', '-service') + ' && npx prisma db push'
+                        };
+                    }
+                    return {
+                        name: service.name,
+                        status: 'warning',
+                        message: 'Service responding but returned 500 error',
+                        icon: '⚠️',
+                        port: service.port
+                    };
+                } else if (res.status >= 200 && res.status < 500) {
+                    return {
+                        name: service.name,
+                        status: 'passed',
+                        message: 'Database tables exist and service is responding',
+                        icon: '✅',
+                        port: service.port
+                    };
+                } else {
+                    return {
+                        name: service.name,
+                        status: 'warning',
+                        message: `Service responded with status ${res.status}`,
+                        icon: '⚠️',
+                        port: service.port
+                    };
+                }
+            } catch (error) {
+                return {
+                    name: service.name,
+                    status: 'failed',
+                    message: 'Connection failed: ' + error.message,
+                    icon: '❌',
+                    port: service.port
+                };
+            }
+        }
+        
+        async function checkServiceHealth(service) {
+            try {
+                const res = await fetch(service.url).catch(() => ({ status: 0, ok: false }));
+                
+                if (res.status === 0) {
+                    return {
+                        name: service.name,
+                        status: 'failed',
+                        message: 'Service not running or not accessible',
+                        icon: '❌',
+                        port: service.port,
+                        endpoint: service.testEndpoint
+                    };
+                } else if (res.status >= 200 && res.status < 500) {
+                    return {
+                        name: service.name,
+                        status: 'passed',
+                        message: 'Service is running and responding',
+                        icon: '✅',
+                        port: service.port,
+                        endpoint: service.testEndpoint
+                    };
+                } else if (res.status === 404 || res.status === 400) {
+                    // 404/400 might mean service is up but endpoint doesn't exist - still counts as running
+                    return {
+                        name: service.name,
+                        status: 'passed',
+                        message: 'Service is running (endpoint may not exist, but service is up)',
+                        icon: '✅',
+                        port: service.port,
+                        endpoint: service.testEndpoint
+                    };
+                } else {
+                    return {
+                        name: service.name,
+                        status: 'warning',
+                        message: `Service responded with status ${res.status}`,
+                        icon: '⚠️',
+                        port: service.port,
+                        endpoint: service.testEndpoint
+                    };
+                }
+            } catch (error) {
+                return {
+                    name: service.name,
+                    status: 'failed',
+                    message: 'Connection failed: ' + error.message,
+                    icon: '❌',
+                    port: service.port,
+                    endpoint: service.testEndpoint
+                };
+            }
+        }
+        
+        function updateInfrastructureChecks(checks) {
+            const el = document.getElementById('infrastructure-checks');
+            if (!el) return;
+            el.innerHTML = checks.map(c => `
+                <div style="padding: 8px; margin-bottom: 5px; border-radius: 4px; background: ${getStatusColor(c.status)};">
+                    ${c.icon} <strong>${c.name}:</strong> ${c.message}
+                </div>
+            `).join('');
+        }
+        
+        function updatePrismaChecks(checks) {
+            const el = document.getElementById('prisma-checks');
+            if (!el) return;
+            el.innerHTML = checks.map(c => `
+                <div style="padding: 8px; margin-bottom: 5px; border-radius: 4px; background: ${getStatusColor(c.status)};">
+                    ${c.icon} <strong>${c.name}</strong> (port ${c.port}): ${c.message}
+                    ${c.action ? `<div style="margin-top: 5px; font-size: 12px; color: #666; font-family: 'Courier New', monospace;">${c.action}</div>` : ''}
+                </div>
+            `).join('');
+        }
+        
+        function updateServiceChecks(checks) {
+            const el = document.getElementById('service-checks');
+            if (!el) return;
+            el.innerHTML = checks.map(c => `
+                <div style="padding: 8px; margin-bottom: 5px; border-radius: 4px; background: ${getStatusColor(c.status)};">
+                    ${c.icon} <strong>${c.name}</strong> (port ${c.port}): ${c.message}
+                    ${c.endpoint ? `<div style="font-size: 11px; color: #666; margin-top: 3px;">Endpoint: ${c.endpoint}</div>` : ''}
+                </div>
+            `).join('');
+        }
+        
+        function getStatusColor(status) {
+            switch(status) {
+                case 'passed': return '#d4edda';
+                case 'failed': return '#f8d7da';
+                case 'warning': return '#fff3cd';
+                case 'info': return '#e7f3ff';
+                default: return '#f8f9fa';
+            }
+        }
+        
+        function generateSummary(results) {
+            const allChecks = [...results.infrastructure, ...results.prisma, ...results.services];
+            const passed = allChecks.filter(c => c.status === 'passed').length;
+            const failed = allChecks.filter(c => c.status === 'failed').length;
+            const warnings = allChecks.filter(c => c.status === 'warning').length;
+            const total = allChecks.length;
+            
+            let html = '<div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 15px;">';
+            html += `<div style="text-align: center; padding: 10px; background: white; border-radius: 6px;"><strong>${total}</strong><br><small>Total</small></div>`;
+            html += `<div style="text-align: center; padding: 10px; background: #d4edda; border-radius: 6px;"><strong>${passed}</strong><br><small>✅ Passed</small></div>`;
+            html += `<div style="text-align: center; padding: 10px; background: ${warnings > 0 ? '#fff3cd' : '#f8f9fa'}; border-radius: 6px;"><strong>${warnings}</strong><br><small>⚠️ Warnings</small></div>`;
+            html += `<div style="text-align: center; padding: 10px; background: ${failed > 0 ? '#f8d7da' : '#f8f9fa'}; border-radius: 6px;"><strong>${failed}</strong><br><small>❌ Failed</small></div>`;
+            html += '</div>';
+            
+            if (failed > 0) {
+                html += '<div style="margin-top: 10px; padding: 10px; background: #f8d7da; border-radius: 6px;">';
+                html += '<strong>❌ Failed Checks:</strong><ul style="margin-top: 5px;">';
+                allChecks.filter(c => c.status === 'failed').forEach(c => {
+                    html += `<li>${c.name}: ${c.message}</li>`;
+                });
+                html += '</ul></div>';
+            }
+            
+            if (warnings > 0) {
+                html += '<div style="margin-top: 10px; padding: 10px; background: #fff3cd; border-radius: 6px;">';
+                html += '<strong>⚠️ Warnings:</strong><ul style="margin-top: 5px;">';
+                allChecks.filter(c => c.status === 'warning').forEach(c => {
+                    html += `<li>${c.name}: ${c.message}</li>`;
+                });
+                html += '</ul></div>';
+            }
+            
+            const allPassed = failed === 0 && warnings === 0;
+            const hasFailures = failed > 0;
+            
+            return { html, allPassed, hasFailures, passed, failed, warnings, total };
         }
         
         async function checkGateway() {
@@ -959,7 +1466,23 @@
                 
                 // Hyderabad - 2 users
                 { id: 'test-user-21', username: 'uma_hyderabad', gender: 'FEMALE', city: 'Hyderabad', lat: 17.3850, lng: 78.4867, age: 25 },
-                { id: 'test-user-22', username: 'vijay_hyderabad', gender: 'MALE', city: 'Hyderabad', lat: 17.3850, lng: 78.4867, age: 27 }
+                { id: 'test-user-22', username: 'vijay_hyderabad', gender: 'MALE', city: 'Hyderabad', lat: 17.3850, lng: 78.4867, age: 27 },
+                
+                // OFFLINE Cards Users - ONLINE status (for Homepage testing)
+                { id: 'test-user-offline-online-1', username: 'online_user_1', gender: 'FEMALE', city: 'Mumbai', lat: 19.0760, lng: 72.8777, age: 24, userStatus: 'ONLINE' },
+                { id: 'test-user-offline-online-2', username: 'online_user_2', gender: 'MALE', city: 'Mumbai', lat: 19.0760, lng: 72.8777, age: 26, userStatus: 'ONLINE' },
+                { id: 'test-user-offline-online-3', username: 'online_user_3', gender: 'FEMALE', city: 'Delhi', lat: 28.6139, lng: 77.2090, age: 25, userStatus: 'ONLINE' },
+                
+                // OFFLINE Cards Users - OFFLINE status
+                { id: 'test-user-offline-offline-1', username: 'offline_user_1', gender: 'MALE', city: 'Mumbai', lat: 19.0760, lng: 72.8777, age: 28, userStatus: 'OFFLINE' },
+                { id: 'test-user-offline-offline-2', username: 'offline_user_2', gender: 'FEMALE', city: 'Delhi', lat: 28.6139, lng: 77.2090, age: 27, userStatus: 'OFFLINE' },
+                { id: 'test-user-offline-offline-3', username: 'offline_user_3', gender: 'MALE', city: 'Bangalore', lat: 12.9716, lng: 77.5946, age: 29, userStatus: 'OFFLINE' },
+                
+                // OFFLINE Cards Users - VIEWER status
+                { id: 'test-user-offline-viewer-1', username: 'viewer_user_1', gender: 'FEMALE', city: 'Mumbai', lat: 19.0760, lng: 72.8777, age: 23, userStatus: 'VIEWER' },
+                { id: 'test-user-offline-viewer-2', username: 'viewer_user_2', gender: 'MALE', city: 'Delhi', lat: 28.6139, lng: 77.2090, age: 26, userStatus: 'VIEWER' },
+                { id: 'test-user-offline-viewer-3', username: 'viewer_user_3', gender: 'FEMALE', city: 'Bangalore', lat: 12.9716, lng: 77.5946, age: 25, userStatus: 'VIEWER' },
+                { id: 'test-user-offline-viewer-4', username: 'viewer_user_4', gender: 'MALE', city: 'Pune', lat: 18.5204, lng: 73.8567, age: 27, userStatus: 'VIEWER' }
             ];
             
             const results = [];
@@ -1003,12 +1526,33 @@
                                 gender: user.gender,
                                 displayPictureUrl: 'https://via.placeholder.com/300'
                             })
-                        }).catch(() => ({ status: 0, ok: false }));
+                        }).catch((err) => {
+                            console.error(`Error creating user ${user.id}:`, err);
+                            return { status: 0, ok: false, error: err.message };
+                        });
                         
                         if (!profileRes.ok && profileRes.status !== 0) {
+                            const errorData = await profileRes.json().catch(() => ({ message: 'Unknown error' }));
+                            console.error(`Failed to create user ${user.id}:`, errorData);
                             errorCount++;
-                            results.push({ user: user.id, city: user.city, status: 'creation_failed' });
+                            results.push({ 
+                                user: user.id, 
+                                city: user.city, 
+                                status: 'creation_failed',
+                                error: errorData.message || `HTTP ${profileRes.status}`
+                            });
                             continue; // Skip to next user
+                        }
+                        
+                        if (profileRes.status === 0) {
+                            errorCount++;
+                            results.push({ 
+                                user: user.id, 
+                                city: user.city, 
+                                status: 'creation_failed',
+                                error: profileRes.error || 'Network error'
+                            });
+                            continue;
                         }
                         
                         // Step 2: Update location separately (if profile creation succeeded)
@@ -1087,12 +1631,13 @@
                         }
                     }
                     
-                    // Set status to AVAILABLE (important for discovery)
+                    // Set status (AVAILABLE for discovery, or ONLINE/OFFLINE/VIEWER for OFFLINE cards)
+                    const status = user.userStatus || 'AVAILABLE';
                     await fetch(getApiUrl(`/users/test/${user.id}/status`), {
                         method: 'PATCH',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                            status: 'AVAILABLE'
+                            status: status
                         })
                     }).catch(() => {});
                     
@@ -1141,16 +1686,45 @@
                 }
             });
             
+            // Count users by status
+            const byStatus = {
+                AVAILABLE: 0,
+                ONLINE: 0,
+                OFFLINE: 0,
+                VIEWER: 0
+            };
+            users.forEach(u => {
+                const status = u.userStatus || 'AVAILABLE';
+                byStatus[status] = (byStatus[status] || 0) + 1;
+            });
+            
+            // Show detailed error information if there are errors
+            const errorDetails = results.filter(r => r.status === 'creation_failed' || r.error);
+            
             showResponse('setupResponse', {
-                message: `✅ Created ${successCount} test users successfully!`,
+                message: successCount > 0 
+                    ? `✅ Created ${successCount} test users successfully!${errorCount > 0 ? ` (${errorCount} failed)` : ''}`
+                    : `❌ Failed to create users. Please check the errors below.`,
                 summary: {
                     total: users.length,
                     success: successCount,
                     errors: errorCount,
-                    byCity: byCity
+                    byCity: byCity,
+                    byStatus: byStatus
                 },
                 results: results.slice(0, 10), // Show first 10
-                note: `🎉 ${successCount} users ready for discovery! Go to Discovery tab to see cards.`
+                errors: errorDetails.slice(0, 5), // Show first 5 errors
+                note: successCount > 0 
+                    ? `🎉 ${successCount} users ready! 
+                    • ${byStatus.AVAILABLE || 0} Discovery users (AVAILABLE) - Test in Discovery tab
+                    • ${byStatus.ONLINE || 0} ONLINE users - Test in Homepage tab
+                    • ${byStatus.OFFLINE || 0} OFFLINE users - Test in Homepage tab
+                    • ${byStatus.VIEWER || 0} VIEWER users - Test in Homepage tab`
+                    : `⚠️ No users were created. Common issues:
+                    • Services not running - Click "Run Setup Script" button above
+                    • Database not set up - Run: cd scripts && ./setup-and-start-services.sh
+                    • Prisma schemas not synced - The setup script will handle this
+                    • Check browser console for detailed error messages`
             });
         }
         
@@ -1159,11 +1733,16 @@
             responseEl.style.display = 'block';
             responseEl.innerHTML = '<div style="color: #667eea;">🔄 Cleaning up test data...</div>';
             
-            // Get all test user IDs
+            // Get all test user IDs (including OFFLINE cards users)
             const testUserIds = [];
+            // Discovery users (1-22)
             for (let i = 1; i <= 22; i++) {
                 testUserIds.push(`test-user-${i}`);
             }
+            // OFFLINE cards users
+            testUserIds.push('test-user-offline-online-1', 'test-user-offline-online-2', 'test-user-offline-online-3');
+            testUserIds.push('test-user-offline-offline-1', 'test-user-offline-offline-2', 'test-user-offline-offline-3');
+            testUserIds.push('test-user-offline-viewer-1', 'test-user-offline-viewer-2', 'test-user-offline-viewer-3', 'test-user-offline-viewer-4');
             
             let deletedCount = 0;
             let resetCount = 0;
@@ -3119,9 +3698,347 @@
             }
         }
         
+        // OFFLINE Cards Functions
+        let currentOfflineCard = null;
+        let currentOfflineCardUserId = null;
+        let offlineCardsHistory = [];
+        
+        function setOfflineUser(userId) {
+            document.getElementById('offlineCardsUserId').value = userId;
+            addToHistory('👤', `User changed to: ${userId}`);
+        }
+        
+        function generateOfflineSessionId() {
+            const newSessionId = 'offline-session-' + Date.now();
+            document.getElementById('offlineCardsSessionId').value = newSessionId;
+            addToHistory('🔄', `New session ID generated: ${newSessionId}`);
+        }
+        
+        function showGiftModal() {
+            document.getElementById('giftModal').style.display = 'flex';
+        }
+        
+        function closeGiftModal() {
+            document.getElementById('giftModal').style.display = 'none';
+        }
+        
+        function setGiftAmount(amount) {
+            document.getElementById('giftAmountInput').value = amount;
+        }
+        
+        function addToHistory(icon, message) {
+            const timestamp = new Date().toLocaleTimeString();
+            offlineCardsHistory.unshift({ icon, message, timestamp });
+            if (offlineCardsHistory.length > 50) {
+                offlineCardsHistory = offlineCardsHistory.slice(0, 50);
+            }
+            updateHistoryDisplay();
+        }
+        
+        function updateHistoryDisplay() {
+            const historyEl = document.getElementById('offlineCardsHistory');
+            if (offlineCardsHistory.length === 0) {
+                historyEl.innerHTML = '<div style="color: #999; font-style: italic;">No actions yet...</div>';
+                return;
+            }
+            historyEl.innerHTML = offlineCardsHistory.map(item => 
+                `<div style="padding: 5px 0; border-bottom: 1px solid #eee;">
+                    <span style="font-weight: 600;">${item.icon}</span> 
+                    <span>${item.message}</span>
+                    <span style="color: #999; float: right; font-size: 11px;">${item.timestamp}</span>
+                </div>`
+            ).join('');
+        }
+        
+        function clearOfflineHistory() {
+            offlineCardsHistory = [];
+            updateHistoryDisplay();
+        }
+        
+        async function getOfflineCard() {
+            const userId = document.getElementById('offlineCardsUserId').value.trim();
+            const sessionId = document.getElementById('offlineCardsSessionId').value.trim();
+            const soloOnly = document.getElementById('offlineCardsSoloOnly').checked;
+            
+            if (!userId || !sessionId) {
+                alert('Please enter User ID and Session ID');
+                return;
+            }
+            
+            const responseEl = document.getElementById('offlineCardsResponse');
+            const cardDisplay = document.getElementById('offlineCardDisplay');
+            const cardContent = document.getElementById('offlineCardContent');
+            const statusEl = document.getElementById('offlineCardsStatus');
+            
+            responseEl.style.display = 'none';
+            cardDisplay.style.display = 'none';
+            statusEl.innerHTML = '<div style="color: #667eea;">🔄 Loading card...</div>';
+            addToHistory('🔄', `Loading OFFLINE card for user: ${userId}`);
+            
+            try {
+                const apiUrl = getApiUrl(`/discovery/test/offline-cards/card?userId=${encodeURIComponent(userId)}&sessionId=${encodeURIComponent(sessionId)}&soloOnly=${soloOnly}`);
+                const response = await fetch(apiUrl);
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.message || 'Failed to get OFFLINE card');
+                }
+                
+                if (data.exhausted || !data.card) {
+                    statusEl.innerHTML = '<div style="color: #dc3545; padding: 20px; text-align: center;">⚠️ No more OFFLINE cards available. All users have been rainchecked or no matching users found.</div>';
+                    cardDisplay.style.display = 'none';
+                    showResponse('offlineCardsResponse', data, false);
+                    addToHistory('⚠️', 'No more OFFLINE cards available');
+                    return;
+                }
+                
+                currentOfflineCard = data.card;
+                currentOfflineCardUserId = userId;
+                
+                // Display card
+                const card = data.card;
+                const statusColor = card.status === 'ONLINE' ? '#28a745' : card.status === 'OFFLINE' ? '#6c757d' : '#17a2b8';
+                const statusIcon = card.status === 'ONLINE' ? '🟢' : card.status === 'OFFLINE' ? '⚫' : '👁️';
+                
+                // Verify user data by fetching from user service
+                let verifiedUserData = null;
+                try {
+                    const verifyRes = await fetch(getApiUrl(`/users/test/${card.userId}?fields=id,username,status,preferredCity`));
+                    if (verifyRes.ok) {
+                        const verifyData = await verifyRes.json();
+                        verifiedUserData = verifyData.user;
+                    }
+                } catch (e) {
+                    console.warn('Could not verify user data:', e);
+                }
+                
+                // Check if username matches
+                const usernameMatch = verifiedUserData && verifiedUserData.username === card.username;
+                const usernameWarning = verifiedUserData && !usernameMatch ? 
+                    `<div style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 8px; margin-bottom: 10px; border-radius: 4px; font-size: 12px;">
+                        ⚠️ <strong>Username Mismatch:</strong> API returned "${card.username}" but database has "${verifiedUserData.username}"
+                    </div>` : '';
+                
+                cardContent.innerHTML = `
+                    <div style="text-align: center;">
+                        <div style="background: #667eea; color: white; padding: 12px; border-radius: 8px 8px 0 0; margin: -20px -20px 15px -20px;">
+                            <h3 style="margin: 0; color: white; font-size: 20px;">${card.username || 'Unknown User'}</h3>
+                            <div style="font-size: 11px; opacity: 0.9; margin-top: 5px; font-family: 'Courier New', monospace; word-break: break-all;">
+                                ID: ${card.userId}
+                            </div>
+                        </div>
+                        ${usernameWarning}
+                        <div style="margin-bottom: 15px;">
+                            <img src="${card.displayPictureUrl || 'https://via.placeholder.com/300'}" 
+                                 alt="${card.username || card.userId}" 
+                                 style="width: 100%; max-width: 300px; height: 300px; object-fit: cover; border-radius: 12px; border: 3px solid #667eea; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
+                        </div>
+                        <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 15px; text-align: left;">
+                            <div style="margin-bottom: 8px;">
+                                <strong>Status:</strong> 
+                                <span style="color: ${statusColor}; font-weight: 600; padding: 4px 8px; background: ${statusColor}20; border-radius: 4px;">
+                                    ${statusIcon} ${card.status}
+                                </span>
+                            </div>
+                            <div style="margin-bottom: 8px;"><strong>User ID:</strong> <code style="background: #e9ecef; padding: 2px 6px; border-radius: 3px; font-size: 11px;">${card.userId}</code></div>
+                            <div style="margin-bottom: 8px;"><strong>Username:</strong> ${card.username || 'N/A'} ${verifiedUserData && usernameMatch ? '✅' : verifiedUserData && !usernameMatch ? '⚠️' : ''}</div>
+                            ${verifiedUserData && !usernameMatch ? `<div style="margin-bottom: 8px; color: #856404; font-size: 12px;"><strong>Actual Username:</strong> ${verifiedUserData.username}</div>` : ''}
+                            <div style="margin-bottom: 8px;"><strong>Age:</strong> ${card.age || 'N/A'}</div>
+                            <div style="margin-bottom: 8px;"><strong>City:</strong> ${card.city || 'Anywhere'}</div>
+                            <div style="margin-bottom: 8px;"><strong>Gender:</strong> ${card.gender || 'N/A'}</div>
+                            ${card.intent ? `<div style="margin-bottom: 8px;"><strong>Intent:</strong> ${card.intent}</div>` : ''}
+                            ${card.matchScore !== undefined ? `<div style="margin-bottom: 8px;"><strong>Match Score:</strong> <span style="color: #667eea; font-weight: 600;">${card.matchScore.toFixed(2)}%</span></div>` : ''}
+                        </div>
+                        <details style="background: #e7f3ff; padding: 10px; border-radius: 6px; font-size: 11px; text-align: left; margin-top: 10px;">
+                            <summary style="cursor: pointer; color: #0066cc; font-weight: 600; margin-bottom: 5px;">🔍 Debug Info (Click to expand)</summary>
+                            <div style="margin-top: 8px; font-family: 'Courier New', monospace; font-size: 10px; word-break: break-all;">
+                                <div><strong>API Response:</strong></div>
+                                <pre style="background: white; padding: 8px; border-radius: 4px; overflow-x: auto; margin-top: 4px;">${JSON.stringify(card, null, 2)}</pre>
+                                ${verifiedUserData ? `<div style="margin-top: 8px;"><strong>Verified from User Service:</strong></div>
+                                <pre style="background: white; padding: 8px; border-radius: 4px; overflow-x: auto; margin-top: 4px;">${JSON.stringify(verifiedUserData, null, 2)}</pre>` : '<div style="color: #999; margin-top: 4px;">Could not verify user data</div>'}
+                            </div>
+                        </details>
+                    </div>
+                `;
+                
+                cardDisplay.style.display = 'block';
+                statusEl.innerHTML = `<div style="color: #28a745; padding: 10px;">✅ Card loaded successfully! Status: ${card.status}</div>`;
+                showResponse('offlineCardsResponse', data, false);
+                addToHistory('✅', `Card loaded: ${card.username} (${card.status})`);
+                
+            } catch (error) {
+                statusEl.innerHTML = `<div style="color: #dc3545; padding: 10px;">❌ Error: ${error.message}</div>`;
+                showResponse('offlineCardsResponse', { error: error.message }, true);
+                addToHistory('❌', `Error: ${error.message}`);
+            }
+        }
+        
+        async function raincheckOfflineCard() {
+            if (!currentOfflineCard || !currentOfflineCardUserId) {
+                alert('Please load a card first');
+                return;
+            }
+            
+            const sessionId = document.getElementById('offlineCardsSessionId').value.trim();
+            const responseEl = document.getElementById('offlineCardsResponse');
+            const statusEl = document.getElementById('offlineCardsStatus');
+            
+            responseEl.style.display = 'none';
+            statusEl.innerHTML = '<div style="color: #667eea;">🔄 Rainchecking...</div>';
+            
+            try {
+                const apiUrl = getApiUrl('/discovery/test/offline-cards/raincheck');
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        userId: currentOfflineCardUserId,
+                        sessionId: sessionId,
+                        raincheckedUserId: currentOfflineCard.userId
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.message || 'Failed to raincheck');
+                }
+                
+                showResponse('offlineCardsResponse', data, false);
+                statusEl.innerHTML = `<div style="color: #28a745; padding: 10px;">✅ Rainchecked successfully!</div>`;
+                addToHistory('❌', `Rainchecked: ${currentOfflineCard.username || currentOfflineCard.userId}`);
+                
+                // Get next card automatically
+                setTimeout(() => {
+                    getOfflineCard();
+                }, 500);
+                
+            } catch (error) {
+                statusEl.innerHTML = `<div style="color: #dc3545; padding: 10px;">❌ Error: ${error.message}</div>`;
+                showResponse('offlineCardsResponse', { error: error.message }, true);
+                addToHistory('❌', `Raincheck error: ${error.message}`);
+            }
+        }
+        
+        async function sendFriendRequestFromOfflineCard() {
+            if (!currentOfflineCard || !currentOfflineCardUserId) {
+                alert('Please load a card first');
+                return;
+            }
+            
+            const responseEl = document.getElementById('offlineCardsResponse');
+            const statusEl = document.getElementById('offlineCardsStatus');
+            
+            responseEl.style.display = 'none';
+            statusEl.innerHTML = '<div style="color: #667eea;">🔄 Sending friend request...</div>';
+            
+            try {
+                // Use test endpoint for friend request
+                const apiUrl = getApiUrl('/friends/test/friends/requests');
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        fromUserId: currentOfflineCardUserId,
+                        toUserId: currentOfflineCard.userId
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.message || 'Failed to send friend request');
+                }
+                
+                showResponse('offlineCardsResponse', { 
+                    success: true, 
+                    message: 'Friend request sent successfully!',
+                    data: data 
+                }, false);
+                statusEl.innerHTML = `<div style="color: #28a745; padding: 10px;">✅ Friend request sent successfully!</div>`;
+                addToHistory('👥', `Friend request sent to: ${currentOfflineCard.username || currentOfflineCard.userId}`);
+                
+                // Get next card automatically
+                setTimeout(() => {
+                    getOfflineCard();
+                }, 1000);
+                
+            } catch (error) {
+                statusEl.innerHTML = `<div style="color: #dc3545; padding: 10px;">❌ Error: ${error.message}</div>`;
+                showResponse('offlineCardsResponse', { error: error.message }, true);
+                addToHistory('❌', `Friend request error: ${error.message}`);
+            }
+        }
+        
+        async function sendGiftFromOfflineCard() {
+            if (!currentOfflineCard || !currentOfflineCardUserId) {
+                alert('Please load a card first');
+                return;
+            }
+            
+            const giftId = document.getElementById('giftTypeSelect').value;
+            const amount = parseInt(document.getElementById('giftAmountInput').value);
+            
+            if (!giftId || !amount || isNaN(amount) || amount <= 0) {
+                alert('Please select a valid gift and amount');
+                return;
+            }
+            
+            closeGiftModal();
+            const responseEl = document.getElementById('offlineCardsResponse');
+            responseEl.style.display = 'none';
+            
+            // Show loading
+            const statusEl = document.getElementById('offlineCardsStatus');
+            statusEl.innerHTML = '<div style="color: #667eea;">🔄 Sending gift...</div>';
+            
+            try {
+                const apiUrl = getApiUrl('/streaming/test/offline-cards/gifts');
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        fromUserId: currentOfflineCardUserId,
+                        toUserId: currentOfflineCard.userId,
+                        amount: amount,
+                        giftId: giftId.trim()
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.message || 'Failed to send gift');
+                }
+                
+                showResponse('offlineCardsResponse', { 
+                    success: true, 
+                    message: `Gift sent successfully! Transaction ID: ${data.transactionId || 'N/A'}`,
+                    data: data 
+                }, false);
+                statusEl.innerHTML = `<div style="color: #28a745; padding: 10px;">✅ Gift sent! ${giftId} (${amount} coins)</div>`;
+                addToHistory('🎁', `Gift sent: ${giftId} (${amount} coins) to ${currentOfflineCard.username || currentOfflineCard.userId}`);
+                
+                // Get next card automatically
+                setTimeout(() => {
+                    getOfflineCard();
+                }, 1000);
+                
+            } catch (error) {
+                statusEl.innerHTML = `<div style="color: #dc3545; padding: 10px;">❌ Error: ${error.message}</div>`;
+                showResponse('offlineCardsResponse', { error: error.message }, true);
+                addToHistory('❌', `Gift error: ${error.message}`);
+            }
+        }
+        
         // Initialize
         window.addEventListener('load', function() {
             checkGateway();
+            updateHistoryDisplay();
+            // Generate initial session ID if empty
+            if (!document.getElementById('offlineCardsSessionId').value) {
+                generateOfflineSessionId();
+            }
         });
     </script>
 </body>

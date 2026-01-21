@@ -128,6 +128,7 @@ setup_service_prisma() {
         return 0  # No schema, skip silently
     fi
     
+    echo -e "    ${BLUE}→${NC} Setting up Prisma for $service_name..."
     cd "$service_dir"
     
     # Check if .env exists
@@ -143,12 +144,27 @@ setup_service_prisma() {
     fi
     
     # Generate Prisma client
-    npx prisma generate >/dev/null 2>&1 || true
+    echo -e "    ${BLUE}  →${NC} Generating Prisma client..."
+    if npx prisma generate >/dev/null 2>&1; then
+        echo -e "    ${GREEN}  ✓${NC} Prisma client generated for $service_name"
+    else
+        echo -e "    ${YELLOW}  ⚠${NC} Prisma generate had warnings for $service_name (continuing anyway)"
+    fi
     
-    # Sync database schema
-    npx prisma db push --accept-data-loss >/dev/null 2>&1 || true
+    # Sync database schema - CRITICAL: This creates the tables
+    echo -e "    ${BLUE}  →${NC} Syncing database schema (db push)..."
+    if npx prisma db push --accept-data-loss 2>&1; then
+        echo -e "    ${GREEN}  ✓${NC} Database schema synced for $service_name"
+    else
+        echo -e "    ${RED}  ✗${NC} Failed to sync database schema for $service_name"
+        echo -e "    ${YELLOW}  ${NC}This may be due to:"
+        echo -e "    ${YELLOW}    ${NC}- Database connection issues"
+        echo -e "    ${YELLOW}    ${NC}- Missing DATABASE_URL in .env"
+        echo -e "    ${YELLOW}    ${NC}- Database server not running"
+        return 1
+    fi
     
-    # Regenerate client after sync
+    # Regenerate client after sync to ensure it's up to date
     npx prisma generate >/dev/null 2>&1 || true
     
     return 0
@@ -242,23 +258,34 @@ main() {
     
     # Step 2: Setup Prisma
     echo -e "\n${BLUE}[3/6]${NC} Setting up Prisma for all services..."
+    echo -e "${CYAN}This will create/update database tables for each service${NC}\n"
     
     services_with_prisma=(
         "auth-service"
-        "discovery-service"
         "user-service"
+        "discovery-service"
         "streaming-service"
         "wallet-service"
         "files-service"
         "payment-service"
         "friend-service"
+        "moderation-service"
     )
     
+    local prisma_failed=0
     for service in "${services_with_prisma[@]}"; do
-        setup_service_prisma "$service" || true
+        if ! setup_service_prisma "$service"; then
+            prisma_failed=$((prisma_failed + 1))
+        fi
     done
     
-    echo -e "${GREEN}✓${NC} Prisma setup complete"
+    if [ $prisma_failed -eq 0 ]; then
+        echo -e "\n${GREEN}✓${NC} Prisma setup complete for all services"
+    else
+        echo -e "\n${YELLOW}⚠${NC} Prisma setup completed with $prisma_failed error(s)"
+        echo -e "${YELLOW}  ${NC}Some services may not have database tables created."
+        echo -e "${YELLOW}  ${NC}Please check the errors above and fix them."
+    fi
     
     # Step 3: Check and start services
     echo -e "\n${BLUE}[4/6]${NC} Checking and starting services..."

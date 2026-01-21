@@ -55,8 +55,8 @@ export class FriendController {
   }
 
   // NOTE: Friend requests can ONLY be sent during video calls via the "+" button
-  // There is no public endpoint for users to send friend requests directly
-  // All friend requests must go through the streaming-service WebSocket handler
+  // OR from OFFLINE cards section (new feature)
+  // All other friend requests must go through the streaming-service WebSocket handler
   // See: /internal/friends/requests (internal endpoint called by streaming-service)
 
   /**
@@ -123,6 +123,32 @@ export class FriendController {
     const userId = await this.verifyTokenAndGetUserId(token!);
     await this.friendService.rejectFriendRequest(requestId, userId);
     return { ok: true };
+  }
+
+  /**
+   * Send friend request from OFFLINE cards section
+   * POST /me/friends/offline-cards/request
+   * This is the ONLY public endpoint for sending friend requests (besides video calls)
+   */
+  @Post("me/friends/offline-cards/request")
+  async sendFriendRequestFromOfflineCard(
+    @Headers("authorization") authz: string,
+    @Body() body: any
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    const fromUserId = await this.verifyTokenAndGetUserId(token!);
+
+    const schema = z.object({
+      toUserId: z.string().min(1, "toUserId is required")
+    });
+    const { toUserId } = schema.parse(body);
+
+    const result = await this.friendService.sendFriendRequest(fromUserId, toUserId);
+    return {
+      ok: true,
+      requestId: result.requestId,
+      autoAccepted: result.autoAccepted
+    };
   }
 
   /**
@@ -285,7 +311,7 @@ export class FriendController {
       );
     }
 
-    const { fromUserId, toUserId, roomId } = z.object({
+    const { fromUserId, toUserId } = z.object({
       fromUserId: z.string(),
       toUserId: z.string(),
       roomId: z.string().optional()

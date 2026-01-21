@@ -325,7 +325,7 @@ export class UserClientService implements OnModuleInit {
     token: string,
     filters: {
       city?: string | null;
-      statuses: ("AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE")[];
+      statuses: ("AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE" | "ONLINE" | "OFFLINE" | "VIEWER" | "MATCHED")[];
       genders?: ("MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY")[];
       excludeUserIds?: string[];
       limit?: number;
@@ -369,7 +369,7 @@ export class UserClientService implements OnModuleInit {
     _userId: string,
     filters: {
       city?: string | null;
-      statuses: ("AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE")[];
+      statuses: ("AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE" | "ONLINE" | "OFFLINE" | "VIEWER" | "MATCHED")[];
       genders?: ("MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY")[];
       excludeUserIds?: string[];
       limit?: number;

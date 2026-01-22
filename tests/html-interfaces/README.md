@@ -219,7 +219,7 @@ This script will:
    - User Service (port 3002)
    - Wallet Service (port 3006)
    - Streaming Service (port 3005) - **Must have `NODE_ENV=test` set**
-   - Friend Service (port 3007)
+   - Friend Service (port 3009)
 3. **Database** must be set up and migrated (use `scripts/setup-prerequisites.sh`)
 4. **Redis** (optional, for rate limiting)
 

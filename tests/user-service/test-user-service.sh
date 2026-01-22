@@ -31,6 +31,13 @@ setup() {
     # Setup database
     setup_database "${SERVICE_DIR}" "${SERVICE_NAME}"
     
+    # Start wallet-service (dependency for badge tests)
+    if ! check_service_health "${WALLET_URL}" "wallet-service" 3; then
+        log_info "Starting wallet-service dependency..."
+        setup_database "${ROOT_DIR}/apps/wallet-service" "wallet-service"
+        start_service "${ROOT_DIR}/apps/wallet-service" "wallet-service" "${WALLET_PORT}" "${WALLET_URL}"
+    fi
+    
     # Start service
     start_service "${SERVICE_DIR}" "${SERVICE_NAME}" "${SERVICE_PORT}" "${SERVICE_URL}"
     
@@ -45,7 +52,7 @@ setup() {
 # Cleanup function
 cleanup() {
     log_info "Cleaning up ${SERVICE_NAME} tests..."
-    cleanup_test_data "${SERVICE_DIR}" "${SERVICE_NAME}"
+    cleanup_test_data "${SERVICE_DIR}" "${SERVICE_NAME}" || true
 }
 
 # Test: Create profile
@@ -397,13 +404,18 @@ test_get_badges() {
     log_test "Get User Badges"
     
     # First create a gift transaction in wallet service
-    curl -s -X POST \
+    local wallet_response=$(curl -s -w "\n%{http_code}" -X POST \
         -H "Content-Type: application/json" \
         -d "{\"userId\": \"${TEST_USER_1}\", \"amount\": 2500, \"description\": \"test_gift\", \"giftId\": \"monkey\"}" \
-        "http://localhost:${WALLET_PORT}/test/wallet/add-coins" > /dev/null 2>&1
+        "http://localhost:${WALLET_PORT}/test/wallet/add-coins" 2>&1)
+    local wallet_status=$(echo "$wallet_response" | tail -n1)
+    if [ "$wallet_status" != "200" ] && [ "$wallet_status" != "201" ]; then
+        log_error "Failed to create gift transaction in wallet-service (status: ${wallet_status})"
+        return 1
+    fi
     
     # Get badges - may require authentication token, so we'll test the endpoint exists
-    local response=$(curl -s -w "\n%{http_code}" -X GET "${SERVICE_URL}/users/${TEST_USER_1}/badges" 2>&1)
+    local response=$(curl -s -w "\n%{http_code}" -X GET "${SERVICE_URL}/users/${TEST_USER_1}/badges" 2>&1 || echo "000")
     local status_code=$(echo "$response" | tail -n1)
     
     if [ "$status_code" -eq 200 ]; then
@@ -412,6 +424,9 @@ test_get_badges() {
         log_success "Get badges (${status_code} - requires authentication, endpoint exists)"
     elif [ "$status_code" -eq 404 ]; then
         log_success "Get badges (404 - user may not exist or no badges yet)"
+    elif [ "$status_code" = "000" ] || [ -z "$status_code" ]; then
+        log_error "Get badges - Service not responding"
+        return 1
     else
         log_error "Get badges - Expected 200/401/403/404, got ${status_code}"
         return 1
@@ -441,11 +456,11 @@ test_get_active_badge() {
 test_set_active_badge() {
     log_test "Set Active Badge"
     
-    # First ensure user has a badge by creating gift transaction
+    # First ensure user has a badge by creating gift transaction (may fail if wallet service not available)
     curl -s -X POST \
         -H "Content-Type: application/json" \
         -d "{\"userId\": \"${TEST_USER_1}\", \"amount\": 2500, \"description\": \"test_gift\", \"giftId\": \"monkey\"}" \
-        "http://localhost:${WALLET_PORT}/test/wallet/add-coins" > /dev/null 2>&1
+        "http://localhost:${WALLET_PORT}/test/wallet/add-coins" > /dev/null 2>&1 || true
     
     local badge_data=$(cat <<EOF
 {
@@ -514,10 +529,15 @@ test_profile_includes_badge() {
     log_test "Profile Includes Active Badge (Regression)"
     
     # First set an active badge
-    curl -s -X POST \
+    local wallet_response=$(curl -s -w "\n%{http_code}" -X POST \
         -H "Content-Type: application/json" \
         -d "{\"userId\": \"${TEST_USER_1}\", \"amount\": 2500, \"description\": \"test_gift\", \"giftId\": \"pikachu\"}" \
-        "http://localhost:${WALLET_PORT}/test/wallet/add-coins" > /dev/null 2>&1
+        "http://localhost:${WALLET_PORT}/test/wallet/add-coins" 2>&1)
+    local wallet_status=$(echo "$wallet_response" | tail -n1)
+    if [ "$wallet_status" != "200" ] && [ "$wallet_status" != "201" ]; then
+        log_error "Failed to create gift transaction in wallet-service (status: ${wallet_status})"
+        return 1
+    fi
     
     # Get profile
     local response=$(http_request "GET" "${SERVICE_URL}/users/${TEST_USER_1}" "" 200 "Get user profile with badge")

@@ -175,7 +175,7 @@ export class AuthController {
   async suspendAccount(
     @Param("userId") userId: string,
     @Body() body: any,
-    @Headers("authorization") authz?: string
+    @Headers("authorization") _authz?: string
   ) {
     // TODO: Add admin role verification
     const { reason } = z.object({ reason: z.string().optional() }).parse(body);
@@ -190,7 +190,7 @@ export class AuthController {
   @Post("admin/users/:userId/unsuspend")
   async unsuspendAccount(
     @Param("userId") userId: string,
-    @Headers("authorization") authz?: string
+    @Headers("authorization") _authz?: string
   ) {
     // TODO: Add admin role verification
     await this.auth.unsuspendAccount(userId);
@@ -205,7 +205,7 @@ export class AuthController {
   async banAccount(
     @Param("userId") userId: string,
     @Body() body: any,
-    @Headers("authorization") authz?: string
+    @Headers("authorization") _authz?: string
   ) {
     // TODO: Add admin role verification
     const { reason } = z.object({ reason: z.string().min(1, "Ban reason is required") }).parse(body);

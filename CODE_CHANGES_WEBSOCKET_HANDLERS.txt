@@ -1,0 +1,120 @@
+// ============================================
+// FILE: apps/streaming-service/src/gateways/streaming.gateway.ts
+// ADD AFTER LINE 235 (after join-as-viewer case)
+// ============================================
+
+        case "create-viewer-transport":
+          await this.handleCreateViewerTransport(connectionId, userId, data, ws);
+          break;
+
+        case "get-broadcast-producers":
+          await this.handleGetBroadcastProducers(connectionId, userId, data, ws);
+          break;
+
+        case "consume-broadcast":
+          await this.handleConsumeBroadcast(connectionId, userId, data, ws);
+          break;
+
+// ============================================
+// ADD BEFORE onModuleDestroy (around line 1185)
+// ============================================
+
+  /**
+   * Handle create viewer transport (for TikTok-style viewing)
+   */
+  private async handleCreateViewerTransport(
+    connectionId: string,
+    userId: string,
+    data: any,
+    ws: any
+  ) {
+    const { roomId } = data;
+    if (!roomId) {
+      this.sendError(ws, "roomId is required");
+      return;
+    }
+
+    try {
+      const transport = await this.broadcastService.createViewerTransport(roomId, userId);
+
+      this.send(ws, {
+        type: "viewer-transport-created",
+        data: {
+          id: transport.id,
+          iceParameters: transport.iceParameters,
+          iceCandidates: transport.iceCandidates,
+          dtlsParameters: transport.dtlsParameters
+        }
+      });
+    } catch (error: any) {
+      this.sendError(ws, error.message || "Failed to create viewer transport");
+    }
+  }
+
+  /**
+   * Handle get broadcast producers
+   */
+  private async handleGetBroadcastProducers(
+    connectionId: string,
+    userId: string,
+    data: any,
+    ws: any
+  ) {
+    const { roomId } = data;
+    if (!roomId) {
+      this.sendError(ws, "roomId is required");
+      return;
+    }
+
+    try {
+      const producers = await this.broadcastService.getBroadcastProducers(roomId);
+
+      this.send(ws, {
+        type: "broadcast-producers",
+        data: {
+          roomId,
+          producers
+        }
+      });
+    } catch (error: any) {
+      this.sendError(ws, error.message || "Failed to get broadcast producers");
+    }
+  }
+
+  /**
+   * Handle consume broadcast stream
+   */
+  private async handleConsumeBroadcast(
+    connectionId: string,
+    userId: string,
+    data: any,
+    ws: any
+  ) {
+    const { roomId, transportId, producerId, rtpCapabilities } = data;
+    if (!roomId || !transportId || !producerId || !rtpCapabilities) {
+      this.sendError(ws, "roomId, transportId, producerId, and rtpCapabilities are required");
+      return;
+    }
+
+    try {
+      const consumer = await this.broadcastService.consumeBroadcast(
+        roomId,
+        userId,
+        transportId,
+        producerId,
+        rtpCapabilities
+      );
+
+      this.send(ws, {
+        type: "broadcast-consumed",
+        data: {
+          id: consumer.id,
+          producerId: consumer.producerId,
+          kind: consumer.kind,
+          rtpParameters: consumer.rtpParameters
+        }
+      });
+    } catch (error: any) {
+      this.sendError(ws, error.message || "Failed to consume broadcast");
+    }
+  }

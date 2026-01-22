@@ -6,6 +6,7 @@ import { GenderFilterController } from "../routes/gender-filter.controller.js";
 import { LocationController } from "../routes/location.controller.js";
 import { DiscoveryController } from "../routes/discovery.controller.js";
 import { SquadController } from "../routes/squad.controller.js";
+import { HealthController } from "../routes/health.controller.js";
 import { MetricService } from "../services/metric.service.js";
 import { UserClientService } from "../services/user-client.service.js";
 import { WalletClientService } from "../services/wallet-client.service.js";
@@ -29,7 +30,8 @@ import { CacheService } from "../services/cache.service.js";
     GenderFilterController,
     LocationController,
     DiscoveryController,
-    SquadController
+    SquadController,
+    HealthController
   ],
   providers: [
     MetricService,

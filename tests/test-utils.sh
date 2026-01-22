@@ -85,7 +85,9 @@ check_service_health() {
         fi
         # If health endpoint doesn't exist, check if service responds at all (any 2xx/4xx means it's up)
         local status=$(curl -s -o /dev/null -w "%{http_code}" "${url}/health" 2>/dev/null || echo "000")
-        if [ "$status" != "000" ] && [ "$status" != "" ]; then
+        # Remove any leading zeros and check if it's a valid HTTP status code
+        local clean_status=$(echo "$status" | sed 's/^0*//')
+        if [ -n "$clean_status" ] && [ "$clean_status" != "0" ] && [ "$status" != "000" ] && [ "$status" != "000000" ]; then
             # Service is responding (even if 404, it means the server is up)
             log_success "${service_name} is responding (status: ${status})"
             return 0
@@ -105,22 +107,38 @@ start_service() {
     local port=$3
     local health_url=$4
     
-    if check_service_health "${health_url}" "${service_name}" 3; then
-        log_info "${service_name} is already running"
-        return 0
-    fi
-    
-    log_info "Starting ${service_name}..."
-    
     # Check if service directory exists
     if [ ! -d "${service_dir}" ]; then
         log_error "Service directory not found: ${service_dir}"
         return 1
     fi
     
+    # Stop service if already running to ensure fresh start with latest code
+    stop_service "${service_name}"
+    
+    log_info "Starting ${service_name}..."
+    
     # Start service in background
     cd "${service_dir}"
-    npm run start:dev > "/tmp/${service_name}.log" 2>&1 &
+    # Force DATABASE_URL to be correct for this service (override any existing value)
+    export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/${service_name}?schema=public"
+    # Set TEST_MODE and NODE_ENV for the service
+    # Don't source .env if it exists - it might have wrong DATABASE_URL
+    # If .env is needed for other vars, source it but override DATABASE_URL immediately after
+    if [ -f "${service_dir}/.env" ]; then
+        set -a
+        source "${service_dir}/.env"
+        set +a
+    fi
+    # Force DATABASE_URL to be correct for this service (override any .env value)
+    export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/${service_name}?schema=public"
+    # Ensure PORT is not overridden (services should use their default ports from code)
+    # But set it explicitly based on the service port passed to this function
+    export PORT="${port}"
+    # Debug: log the DATABASE_URL being used
+    echo "[DEBUG] Starting ${service_name} with DATABASE_URL: ${DATABASE_URL}" >> "/tmp/${service_name}.log"
+    # Explicitly pass DATABASE_URL to npm to ensure it's available to the service
+    env DATABASE_URL="${DATABASE_URL}" TEST_MODE=true NODE_ENV=test npm run start:dev > "/tmp/${service_name}.log" 2>&1 &
     local pid=$!
     echo $pid > "/tmp/${service_name}.pid"
     cd - > /dev/null
@@ -151,6 +169,59 @@ stop_service() {
         fi
         rm -f "${pid_file}"
     fi
+    
+    # Also try to kill any process using the service port (in case it was started outside test script)
+    # Map service names to ports
+    case "$service_name" in
+        friend-service) local port=3009 ;;
+        streaming-service) local port=3006 ;;
+        auth-service) local port=3001 ;;
+        user-service) local port=3002 ;;
+        discovery-service) local port=3004 ;;
+        wallet-service) local port=3005 ;;
+        payment-service) local port=3007 ;;
+        files-service) local port=3008 ;;
+        *) local port="" ;;
+    esac
+    
+    if [ -n "$port" ]; then
+        local port_pid=$(lsof -ti :${port} 2>/dev/null || true)
+        if [ -n "$port_pid" ]; then
+            log_info "Stopping process on port ${port} (PID: ${port_pid})..."
+            kill "${port_pid}" 2>/dev/null || true
+            wait "${port_pid}" 2>/dev/null || true
+        fi
+    fi
+}
+
+# Create database if it doesn't exist
+create_database_if_not_exists() {
+    local db_name=$1
+    
+    log_info "Checking if database ${db_name} exists..."
+    
+    # Check if database exists
+    if psql -h localhost -U postgres -d postgres -tc "SELECT 1 FROM pg_database WHERE datname = '${db_name}'" | grep -q 1; then
+        log_success "Database ${db_name} already exists"
+        return 0
+    fi
+    
+    # Create database
+    log_info "Creating database ${db_name}..."
+    if psql -h localhost -U postgres -d postgres -c "CREATE DATABASE \"${db_name}\";" > /tmp/create-db-${db_name}.log 2>&1; then
+        log_success "Database ${db_name} created"
+        return 0
+    else
+        # Check if it's just a "already exists" error
+        if grep -q "already exists\|duplicate key" /tmp/create-db-${db_name}.log 2>/dev/null; then
+            log_success "Database ${db_name} already exists"
+            return 0
+        else
+            log_warn "Database creation had issues (may need manual creation)"
+            cat /tmp/create-db-${db_name}.log >&2
+            return 0  # Continue anyway, might work if database exists
+        fi
+    fi
 }
 
 # Setup database for a service
@@ -165,7 +236,22 @@ setup_database() {
         return 1
     fi
     
+    # Create database if it doesn't exist
+    create_database_if_not_exists "${service_name}"
+    
     cd "${service_dir}"
+    
+    # Set DATABASE_URL first to ensure it's correct for this service
+    export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/${service_name}?schema=public"
+    
+    # Ensure DATABASE_URL is set before generating (don't let .env override)
+    if [ -f "${service_dir}/.env" ]; then
+        set -a
+        source "${service_dir}/.env"
+        set +a
+        # Re-export to ensure it's correct for this service
+        export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/${service_name}?schema=public"
+    fi
     
     # Try to generate Prisma client (may fail if already generated or pnpm issues)
     if npm run prisma:generate > /tmp/prisma-generate-${service_name}.log 2>&1; then
@@ -179,16 +265,51 @@ setup_database() {
     fi
     
     # Try to push schema to database (may fail if already up to date)
-    if npm run prisma:push > /tmp/prisma-push-${service_name}.log 2>&1; then
+    # CRITICAL: Force DATABASE_URL to use the service-specific database for tests
+    # This ensures isolation and prevents pushing to wrong database from .env
+    export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/${service_name}?schema=public"
+    
+    # Source .env for other variables, but immediately override DATABASE_URL again
+    if [ -f "${service_dir}/.env" ]; then
+        set -a
+        source "${service_dir}/.env"
+        set +a
+        # Force DATABASE_URL again after sourcing .env to ensure test isolation
+        export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/${service_name}?schema=public"
+    fi
+    
+    # Run prisma push with explicit DATABASE_URL in environment
+    # Use --skip-generate to avoid pnpm issues during push
+    if env DATABASE_URL="${DATABASE_URL}" npx prisma db push --accept-data-loss --skip-generate > /tmp/prisma-push-${service_name}.log 2>&1; then
         log_success "Database schema pushed"
     else
         # Check if it's just a "already in sync" error
         if grep -q "already in sync\|already up to date\|No schema changes" /tmp/prisma-push-${service_name}.log 2>/dev/null; then
             log_success "Database schema already up to date"
+        elif grep -q "does not exist\|P1003" /tmp/prisma-push-${service_name}.log 2>/dev/null; then
+            log_error "Database does not exist - creation may have failed"
+            cat /tmp/prisma-push-${service_name}.log >&2
+            return 1
+        elif grep -q "Validation Error\|DATABASE_URL" /tmp/prisma-push-${service_name}.log 2>/dev/null; then
+            log_error "Database push failed - DATABASE_URL issue"
+            cat /tmp/prisma-push-${service_name}.log >&2
+            return 1
         else
-            log_warn "Database push had issues (database may already be set up)"
-            # Don't fail - database might already be configured
+            log_warn "Database push had issues (checking if tables exist anyway)"
+            cat /tmp/prisma-push-${service_name}.log >&2
+            # Don't fail yet - check if tables exist
         fi
+    fi
+    
+    # Verify tables were created (basic check)
+    local table_count=$(psql -h localhost -U postgres -d "${service_name}" -tc "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE';" 2>/dev/null | tr -d ' ' || echo "0")
+    if [ "$table_count" = "0" ] || [ -z "$table_count" ]; then
+        log_error "No tables found in database ${service_name} after schema push"
+        log_error "This indicates the schema push failed or pushed to wrong database"
+        cat /tmp/prisma-push-${service_name}.log >&2
+        return 1
+    else
+        log_success "Verified ${table_count} table(s) exist in database"
     fi
     
     # Run seed if available
@@ -237,17 +358,32 @@ http_request() {
     local data=${3:-}
     local expected_status=${4:-200}
     local description=${5:-"Request"}
+    local service_token=${6:-}  # Optional service token for internal endpoints
     
     local response
     local status_code
     
     if [ -n "$data" ]; then
-        response=$(curl -s -w "\n%{http_code}" -X "${method}" \
-            -H "Content-Type: application/json" \
-            -d "${data}" \
-            "${url}" 2>&1)
+        if [ -n "$service_token" ]; then
+            response=$(curl -s -w "\n%{http_code}" -X "${method}" \
+                -H "Content-Type: application/json" \
+                -H "x-service-token: ${service_token}" \
+                -d "${data}" \
+                "${url}" 2>&1)
+        else
+            response=$(curl -s -w "\n%{http_code}" -X "${method}" \
+                -H "Content-Type: application/json" \
+                -d "${data}" \
+                "${url}" 2>&1)
+        fi
     else
-        response=$(curl -s -w "\n%{http_code}" -X "${method}" "${url}" 2>&1)
+        if [ -n "$service_token" ]; then
+            response=$(curl -s -w "\n%{http_code}" -X "${method}" \
+                -H "x-service-token: ${service_token}" \
+                "${url}" 2>&1)
+        else
+            response=$(curl -s -w "\n%{http_code}" -X "${method}" "${url}" 2>&1)
+        fi
     fi
     
     status_code=$(echo "$response" | tail -n1)

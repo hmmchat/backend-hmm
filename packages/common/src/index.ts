@@ -1,6 +1,11 @@
 import { createLocalJWKSet, SignJWT, jwtVerify, JWK, JWTPayload } from "jose";
 import { z } from "zod";
 
+// Export service client and discovery
+export { ServiceClient, type ServiceClientConfig, type CircuitBreakerState } from "./service-client.js";
+export { ServiceDiscovery, type ServiceEndpoint } from "./service-discovery.js";
+export { HealthChecker, type HealthCheckResult } from "./health-check.js";
+
 /* ---------- Types ---------- */
 export type Provider = "google" | "apple" | "facebook" | "phone";
 

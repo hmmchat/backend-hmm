@@ -122,4 +122,11 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   isAvailable(): boolean {
     return this.client !== null && this.cacheEnabled;
   }
+  
+  /**
+   * Get Redis client (for health checks)
+   */
+  getClient(): Redis | null {
+    return this.client;
+  }
 }

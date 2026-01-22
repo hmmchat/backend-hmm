@@ -42,9 +42,9 @@ MODERATION_SERVICE_URL=http://localhost:3003
 DISCOVERY_SERVICE_URL=http://localhost:3004
 STREAMING_SERVICE_URL=http://localhost:3005
 WALLET_SERVICE_URL=http://localhost:3006
-FRIEND_SERVICE_URL=http://localhost:3007
+FRIEND_SERVICE_URL=http://localhost:3009
 FILES_SERVICE_URL=http://localhost:3008
-PAYMENT_SERVICE_URL=http://localhost:3009
+PAYMENT_SERVICE_URL=http://localhost:3007
 
 # JWT Authentication (same as other services)
 JWT_PUBLIC_JWK='{"kty":"RSA",...}'

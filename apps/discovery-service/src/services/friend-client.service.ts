@@ -8,7 +8,7 @@ export class FriendClientService {
   private readonly requestTimeoutMs: number;
 
   constructor() {
-    this.friendServiceUrl = process.env.FRIEND_SERVICE_URL || "http://localhost:3007";
+    this.friendServiceUrl = process.env.FRIEND_SERVICE_URL || "http://localhost:3009";
     this.requestTimeoutMs = parseInt(process.env.FRIEND_SERVICE_TIMEOUT_MS || "5000", 10);
   }
 

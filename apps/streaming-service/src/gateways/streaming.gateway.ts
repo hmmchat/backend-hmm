@@ -234,6 +234,22 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
           await this.handleJoinAsViewer(connectionId, userId, data, ws);
           break;
 
+        case "create-viewer-transport":
+          await this.handleCreateViewerTransport(connectionId, userId, data, ws);
+          break;
+
+        case "connect-viewer-transport":
+          await this.handleConnectViewerTransport(connectionId, userId, data);
+          break;
+
+        case "get-broadcast-producers":
+          await this.handleGetBroadcastProducers(connectionId, userId, data, ws);
+          break;
+
+        case "consume-broadcast":
+          await this.handleConsumeBroadcast(connectionId, userId, data, ws);
+          break;
+
         // Chat
         case "chat-message":
           await this.handleChatMessage(connectionId, userId, data, ws);
@@ -1180,6 +1196,122 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
    */
   private generateConnectionId(): string {
     return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  }
+
+  /**
+   * Handle create viewer transport (for TikTok-style viewing)
+   */
+  private async handleCreateViewerTransport(
+    _connectionId: string,
+    userId: string,
+    data: any,
+    ws: any
+  ) {
+    const { roomId } = data;
+    if (!roomId) {
+      this.sendError(ws, "roomId is required");
+      return;
+    }
+
+    try {
+      const transport = await this.broadcastService.createViewerTransport(roomId, userId);
+
+      this.send(ws, {
+        type: "viewer-transport-created",
+        data: {
+          id: transport.id,
+          iceParameters: transport.iceParameters,
+          iceCandidates: transport.iceCandidates,
+          dtlsParameters: transport.dtlsParameters
+        }
+      });
+    } catch (error: any) {
+      this.sendError(ws, error.message || "Failed to create viewer transport");
+    }
+  }
+
+  /**
+   * Handle connect viewer transport
+   */
+  private async handleConnectViewerTransport(
+    _connectionId: string,
+    userId: string,
+    data: any
+  ) {
+    const { roomId, transportId, dtlsParameters } = data;
+    if (!roomId || !transportId || !dtlsParameters) {
+      throw new Error("roomId, transportId, and dtlsParameters are required");
+    }
+
+    await this.broadcastService.connectViewerTransport(roomId, userId, transportId, dtlsParameters);
+  }
+
+  /**
+   * Handle get broadcast producers
+   */
+  private async handleGetBroadcastProducers(
+    _connectionId: string,
+    _userId: string,
+    data: any,
+    ws: any
+  ) {
+    const { roomId } = data;
+    if (!roomId) {
+      this.sendError(ws, "roomId is required");
+      return;
+    }
+
+    try {
+      const producers = await this.broadcastService.getBroadcastProducers(roomId);
+
+      this.send(ws, {
+        type: "broadcast-producers",
+        data: {
+          roomId,
+          producers
+        }
+      });
+    } catch (error: any) {
+      this.sendError(ws, error.message || "Failed to get broadcast producers");
+    }
+  }
+
+  /**
+   * Handle consume broadcast stream
+   */
+  private async handleConsumeBroadcast(
+    _connectionId: string,
+    userId: string,
+    data: any,
+    ws: any
+  ) {
+    const { roomId, transportId, producerId, rtpCapabilities } = data;
+    if (!roomId || !transportId || !producerId || !rtpCapabilities) {
+      this.sendError(ws, "roomId, transportId, producerId, and rtpCapabilities are required");
+      return;
+    }
+
+    try {
+      const consumer = await this.broadcastService.consumeBroadcast(
+        roomId,
+        userId,
+        transportId,
+        producerId,
+        rtpCapabilities
+      );
+
+      this.send(ws, {
+        type: "broadcast-consumed",
+        data: {
+          id: consumer.id,
+          producerId: consumer.producerId,
+          kind: consumer.kind,
+          rtpParameters: consumer.rtpParameters
+        }
+      });
+    } catch (error: any) {
+      this.sendError(ws, error.message || "Failed to consume broadcast");
+    }
   }
 
   async onModuleDestroy() {

@@ -170,21 +170,20 @@ export class BroadcastService {
   }
 
   /**
-   * Consume broadcast stream for viewer
+   * Connect viewer transport with DTLS parameters
    */
-  async consumeBroadcast(
+  async connectViewerTransport(
     roomId: string,
     userId: string,
     transportId: string,
-    producerId: string,
-    rtpCapabilities: MediasoupTypes.RtpCapabilities
-  ): Promise<MediasoupTypes.Consumer> {
+    dtlsParameters: MediasoupTypes.DtlsParameters
+  ): Promise<void> {
     // Ensure room exists and is in memory
     const roomExists = await this.roomService.roomExists(roomId);
     if (!roomExists) {
       throw new NotFoundException(`Room ${roomId} not found`);
     }
-    
+
     // Check if viewer exists in database (source of truth)
     const session = await this.prisma.callSession.findUnique({
       where: { roomId },
@@ -209,8 +208,6 @@ export class BroadcastService {
 
     const viewer = this.roomService.getViewer(roomId, userId);
     if (!viewer) {
-      // Viewer exists in DB but not in memory - this can happen if room was reloaded
-      // The viewer needs to create transport first, so throw a more specific error
       throw new NotFoundException(`Viewer ${userId} transport not initialized. Please create transport first.`);
     }
 
@@ -218,7 +215,80 @@ export class BroadcastService {
       throw new NotFoundException(`Transport ${transportId} not found`);
     }
 
+    await viewer.transport.connect({ dtlsParameters });
+    this.logger.log(`Viewer transport ${transportId} connected for user ${userId} in room ${roomId}`);
+  }
+
+  /**
+   * Consume broadcast stream for viewer
+   */
+  async consumeBroadcast(
+    roomId: string,
+    userId: string,
+    transportId: string,
+    producerId: string,
+    rtpCapabilities: MediasoupTypes.RtpCapabilities
+  ): Promise<MediasoupTypes.Consumer> {
+    // Ensure room exists and is in memory
+    const roomExists = await this.roomService.roomExists(roomId);
+    if (!roomExists) {
+      throw new NotFoundException(`Room ${roomId} not found`);
+    }
+    
+    // Check if viewer exists in database (source of truth)
+    const session = await this.prisma.callSession.findUnique({
+      where: { roomId },
+      select: { id: true, isBroadcasting: true }
+    });
+
+    if (!session) {
+      throw new NotFoundException(`Session for room ${roomId} not found`);
+    }
+
+    // Check if broadcast is still active
+    if (!session.isBroadcasting) {
+      throw new BadRequestException(`Room ${roomId} is no longer broadcasting`);
+    }
+
+    const viewerInDb = await this.prisma.callViewer.findFirst({
+      where: {
+        sessionId: session.id,
+        userId,
+        leftAt: null
+      }
+    });
+
+    if (!viewerInDb) {
+      throw new NotFoundException(`Viewer ${userId} not found in room ${roomId}`);
+    }
+
+    const viewer = this.roomService.getViewer(roomId, userId);
+    if (!viewer) {
+      // Viewer exists in DB but not in memory - this can happen if room was reloaded
+      // The viewer needs to create transport first, so throw a more specific error
+      throw new NotFoundException(`Viewer ${userId} transport not initialized. Please create transport first.`);
+    }
+
+    if (!viewer.transport) {
+      throw new NotFoundException(`Viewer ${userId} transport not created. Please create transport first.`);
+    }
+
+    if (viewer.transport.id !== transportId) {
+      throw new NotFoundException(`Transport ${transportId} not found`);
+    }
+
+    // Transport should be connected if it exists (connect() is called before consume)
+    // Note: mediasoup WebRtcTransport doesn't expose connectionState directly
+
     const room = this.roomService.getRoom(roomId);
+    
+    // Check if producer still exists
+    const producers = await this.callService.getProducers(roomId);
+    const producerExists = producers.some(p => p.producerId === producerId);
+    if (!producerExists) {
+      throw new NotFoundException(`Producer ${producerId} not found in room ${roomId}. It may have disconnected.`);
+    }
+
     const consumer = await this.mediasoup.createConsumer(
       room.router,
       viewer.transport,

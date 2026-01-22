@@ -9,55 +9,12 @@ generator client {
   output   = "../node_modules/.prisma/client"
 }
 
-// Shared tables with other services using hmm_user database
-// These tables are managed by their respective services but need to be in wallet-service schema
-// to prevent them from being dropped when wallet-service syncs the database
+// Tables owned and managed by wallet-service
+// These tables are in the shared hmm_user database but owned by wallet-service
 
-// From user-service - user profile and preferences
-enum Gender {
-  MALE
-  FEMALE
-  NON_BINARY
-  PREFER_NOT_TO_SAY
-}
-
-enum UserStatus {
-  AVAILABLE
-  OFFLINE
-  IN_SQUAD
-  IN_SQUAD_AVAILABLE
-  IN_BROADCAST
-  IN_BROADCAST_AVAILABLE
-  VIEWER
-}
-
-// From discovery-service - gender filter preferences
-model GenderFilterPreference {
-  id               String    @id @default(cuid())
-  userId           String    @unique
-  genders          Json // Array of Gender enum values: ["MALE", "FEMALE", "NON_BINARY"] (stored as JSON)
-  screensRemaining Int       @default(0) // Number of screens remaining for this filter
-  expiresAt        DateTime? // When the filter expires (if applicable)
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
-
-  @@index([userId])
-  @@map("gender_filter_preferences")
-}
-
-// From discovery-service - raincheck sessions
-model RaincheckSession {
-  id                String   @id @default(cuid())
-  userId            String   // User who rainchecked
-  sessionId         String   // Frontend-generated session ID
-  raincheckedUserId String   // User who was rainchecked
-  city              String?  // City context (null for "anywhere")
-  createdAt         DateTime  @default(now())
-
-  @@index([userId, sessionId])
-  @@index([userId, city, sessionId])
-  @@map("raincheck_sessions")
-}
+// Note: User, GenderFilterPreference, RaincheckSession, and other tables are owned by their respective services.
+// Access user data via HTTP API calls to user-service.
+// Access discovery data via HTTP API calls to discovery-service.
 
 model Wallet {
   id        String   @id // Links to auth-service User.id (must match auth-service user id)

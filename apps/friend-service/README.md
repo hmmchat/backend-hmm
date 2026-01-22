@@ -7,11 +7,28 @@ Friend request and messaging service for hmmchat.live. Handles friend requests, 
 - **In-Call Friend Requests ONLY**: Friend requests can ONLY be sent during video calls via "+" button on participant's video/audio placeholder. There is no other way to send friend requests.
 - **No Notifications**: When a user sends a friend request, the target user receives NO notification. They will see the request in their "Pending Requests" tab when they check.
 - **Auto-Accept Mutual Requests**: When both users send requests to each other during a call, both requests are automatically accepted and both users are notified.
+- **Messaging Sections**:
+  - **Inbox**: Friends and users who have conversed (two-sided messages)
+  - **Received Requests**: Users who messaged you but you haven't replied (one-sided)
+  - **Sent Requests**: Users you messaged but they haven't replied (one-sided)
 - **Messaging**:
-  - Free messaging between friends
-  - Paid messaging to non-friends (10 coins per message, configurable)
+  - Free unlimited messaging in Inbox section
+  - First message to non-friend costs coins (configurable, default: 10 coins)
+  - Subsequent messages require gifts (gift + optional message)
+  - Gift-only messages allowed anytime
   - Message persistence and history
   - Read receipts
+  - Gift support (send gifts with messages)
+- **Monetization**:
+  - First message cost: Configurable via `FIRST_MESSAGE_COST_COINS` (default: 10 coins)
+  - Subsequent messages: Only with gifts
+  - Gifts: Various gift options with different coin costs
+- **Security & Validation**:
+  - Rate limiting (configurable per message/gift)
+  - Spam detection (duplicate message prevention)
+  - Blocked user validation
+  - Account status validation (deactivated/suspended)
+  - Message length limits (max 1000 characters)
 - **Blocking**: Block users to prevent future interactions
 - **Request Expiration**: Friend requests expire after 30 days (configurable)
 
@@ -38,13 +55,37 @@ All endpoints require `Authorization: Bearer {accessToken}` header.
 - `POST /me/friends/:friendId/block` - Block a user
 
 #### Messages
-- `POST /me/friends/:friendId/messages` - Send message to friend (free)
-  - Body: `{ message: string }`
-- `POST /me/friends/requests/:requestId/messages` - Send message to non-friend (10 coins)
-  - Body: `{ message: string }`
+- `POST /me/friends/:friendId/messages` - Send message to friend (free, supports gifts)
+  - Body: `{ message?: string, giftId?: string, giftAmount?: number }`
+- `POST /me/friends/requests/:requestId/messages` - Send message to non-friend (first message costs coins, subsequent require gifts)
+  - Body: `{ message?: string, giftId?: string, giftAmount?: number }`
 - `GET /me/friends/:friendId/messages` - Get message history
-  - Query: `?limit=50&cursor=xxx` (pagination)
+  - Query: `?limit=50&cursor=xxx` (pagination, max limit: 100)
 - `POST /me/friends/:friendId/messages/read` - Mark messages as read
+
+#### Conversations (New)
+- `GET /me/conversations/inbox` - Get inbox conversations (friends + two-sided)
+  - Query: `?limit=50&cursor=xxx` (pagination, max limit: 100)
+  - Returns: Conversations with last message, unread count, friend status, user status, and broadcast info
+  - Response includes: `userStatus` ("online" | "offline" | "broadcasting"), `isBroadcasting`, `broadcastRoomId`, `broadcastUrl` (deep link)
+- `GET /me/conversations/received-requests` - Get received requests (they messaged you)
+  - Query: `?limit=50&cursor=xxx` (pagination, max limit: 100)
+  - Response includes user status and broadcast info
+- `GET /me/conversations/sent-requests` - Get sent requests (you messaged them)
+  - Query: `?limit=50&cursor=xxx` (pagination, max limit: 100)
+  - Response includes user status and broadcast info
+- `POST /me/conversations/:conversationId/messages` - Send message via conversation ID
+  - Body: `{ message?: string, giftId?: string, giftAmount?: number }`
+  - Auto-promotes to inbox if conversation becomes two-sided
+- `GET /me/conversations/:conversationId/messages` - Get messages for a conversation
+  - Query: `?limit=50&cursor=xxx` (pagination, max limit: 100)
+
+**Note:** Chat heads (display pictures) show user status indicators:
+- **Green dot**: User is online
+- **Broadcasting indicator**: User is currently broadcasting (clicking chat head redirects to their broadcast on hmm_TV)
+- **Offline**: User is offline
+
+When a user is broadcasting, clicking their chat head (display picture) will redirect to their broadcast feed on `hmm_TV` in TikTok-like format, landing directly on their specific broadcast. Users can scroll to see the next broadcasts.
 
 ### Internal Endpoints (Service-to-Service)
 
@@ -59,15 +100,22 @@ All endpoints require `Authorization: Bearer {accessToken}` header.
 ## Environment Variables
 
 ```bash
-PORT=3007
+PORT=3009
 DATABASE_URL="postgresql://..."
 JWT_PUBLIC_JWK='...'
 WALLET_SERVICE_URL=http://localhost:3006
+AUTH_SERVICE_URL=http://localhost:3001  # For account status checks
+STREAMING_SERVICE_URL=http://localhost:3005  # For broadcast status checks
+APP_DEEP_LINK_BASE_URL=https://app.hmmchat.live  # Base URL for broadcast deep links
 INTERNAL_SERVICE_TOKEN="your-secret-service-token"  # Required for internal endpoints
-REDIS_URL="redis://localhost:6379"  # Optional, for caching (defaults to localhost:6379)
+REDIS_URL="redis://localhost:6379"  # Optional, for caching and rate limiting (defaults to localhost:6379)
 REDIS_ENABLED=true  # Set to false to disable Redis caching
 REQUEST_EXPIRY_DAYS=30
-MESSAGE_COST_COINS=10
+MESSAGE_COST_COINS=10  # Legacy (for backward compatibility)
+FIRST_MESSAGE_COST_COINS=10  # Cost for first message to non-friend (configurable)
+MESSAGE_RATE_LIMIT=10  # Messages per time window
+GIFT_RATE_LIMIT=5  # Gifts per time window
+RATE_LIMIT_WINDOW=60  # Time window in seconds
 ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
 ```
 
@@ -84,6 +132,12 @@ npm run prisma:migrate
 
 # Or push schema (development)
 npm run prisma:push
+
+# Seed gift catalog (after migration)
+npm run seed:gifts
+
+# Migrate existing messages to conversations (after migration)
+npm run migrate:conversations
 ```
 
 ## Business Rules
@@ -92,9 +146,13 @@ npm run prisma:push
 2. **No Notifications**: When User A sends a request to User B, User B receives NO notification. User B will see the request in their "Pending Requests" tab when they check.
 3. **Auto-Accept Mutual Requests**: If both users send requests to each other during a call, both requests are automatically accepted and both users are notified via WebSocket.
 4. **Unlimited Friends**: No maximum friend limit
-5. **Unlimited Messages**: Users can send unlimited messages
-   - Free to friends
-   - 10 coins per message to non-friends (revenue source)
+5. **Messaging Rules**:
+   - **Inbox**: Unlimited free messaging (friends + two-sided conversations)
+   - **Received/Sent Requests**: 
+     - First message costs coins (configurable, default: 10 coins)
+     - Subsequent messages require gifts (gift + optional message)
+     - Gift-only messages allowed anytime
+   - When user replies, conversation automatically moves to Inbox (two-sided)
 6. **Request Expiration**: Requests expire after 30 days
 7. **Message Persistence**: All messages are stored permanently
 8. **Read Receipts**: Messages can be marked as read

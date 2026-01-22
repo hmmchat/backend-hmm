@@ -1209,15 +1209,28 @@ export class RoomService {
     }
 
     if (room && viewer) {
-      // Close transport
-      viewer.transport.close();
+      // Close transport (with error handling)
+      try {
+        if (viewer.transport) {
+          viewer.transport.close();
+          this.logger.log(`Closed transport for viewer ${userId} in room ${roomId}`);
+        }
+      } catch (error: any) {
+        this.logger.warn(`Error closing transport for viewer ${userId}: ${error.message}`);
+      }
       
-      // Close all consumers
-      for (const consumer of viewer.consumers.values()) {
-        consumer.close();
+      // Close all consumers (with error handling)
+      for (const [producerId, consumer] of viewer.consumers.entries()) {
+        try {
+          consumer.close();
+          this.logger.log(`Closed consumer ${producerId} for viewer ${userId} in room ${roomId}`);
+        } catch (error: any) {
+          this.logger.warn(`Error closing consumer ${producerId} for viewer ${userId}: ${error.message}`);
+        }
       }
 
       room.viewers.delete(userId);
+      this.logger.log(`Removed viewer ${userId} from room ${roomId} in-memory state`);
     }
 
     // Update database
@@ -1256,13 +1269,14 @@ export class RoomService {
       throw error; // Re-throw so caller knows update failed
     }
 
-    // BUSINESS RULE: When viewer leaves/stream ends, status changes to OFFLINE
-    // Viewers are not in matchmaking pool, so they go offline when they stop watching
-    this.discoveryClient.updateUserStatus(userId, "OFFLINE").catch((err) => {
-      this.logger.error(`Failed to update viewer ${userId} status to OFFLINE: ${err.message}`);
+    // BUSINESS RULE: When viewer leaves, restore status to AVAILABLE
+    // This allows them to go back to matching/discovery or continue browsing
+    // AVAILABLE is the default state for active users
+    this.discoveryClient.updateUserStatus(userId, "AVAILABLE").catch((err) => {
+      this.logger.error(`Failed to restore viewer ${userId} status to AVAILABLE: ${err.message}`);
     });
 
-    this.logger.log(`Viewer ${userId} removed from room ${roomId}, status updated to OFFLINE`);
+    this.logger.log(`Viewer ${userId} removed from room ${roomId}, status restored to AVAILABLE`);
   }
 
   /**
@@ -1606,5 +1620,187 @@ export class RoomService {
     }
 
     return { roomId: viewer.session.roomId };
+  }
+
+  /**
+   * Get all active broadcasts (for HMM_TV feed)
+   * Returns broadcasts with participant info and viewer count
+   * Supports sorting, filtering, and pagination
+   */
+  async getActiveBroadcasts(options: {
+    sort?: 'recent' | 'viewers' | 'popular' | 'trending';
+    filter?: {
+      participantCount?: { min?: number; max?: number };
+      gender?: string[];
+      city?: string;
+      tags?: string[];
+    };
+    limit?: number;
+    offset?: number;
+    cursor?: string;
+  } = {}): Promise<{
+    broadcasts: Array<{
+      roomId: string;
+      participantCount: number;
+      viewerCount: number;
+      participants: Array<{
+        userId: string;
+        role: string;
+        joinedAt: Date;
+        username?: string | null;
+        displayPictureUrl?: string | null;
+        age?: number | null;
+      }>;
+      startedAt: Date | null;
+      createdAt: Date;
+      broadcastTitle?: string | null;
+      broadcastDescription?: string | null;
+      broadcastTags?: string[];
+      isTrending?: boolean;
+      popularityScore?: number;
+    }>;
+    nextCursor?: string;
+    hasMore: boolean;
+  }> {
+    const {
+      sort = 'recent',
+      filter = {},
+      limit = 20,
+      offset = 0,
+      cursor
+    } = options;
+
+    // Build where clause
+    const where: any = {
+      status: "IN_BROADCAST",
+      isBroadcasting: true
+    };
+
+    // Apply filters
+    if (filter.tags && filter.tags.length > 0) {
+      where.broadcastTags = {
+        hasSome: filter.tags
+      };
+    }
+
+    // Build orderBy
+    let orderBy: any = { createdAt: "desc" };
+    if (sort === 'viewers') {
+      // Order by viewer count (will need to sort after fetching)
+      orderBy = { createdAt: "desc" };
+    } else if (sort === 'popular') {
+      orderBy = { popularityScore: "desc" };
+    } else if (sort === 'trending') {
+      orderBy = [
+        { isTrending: "desc" },
+        { popularityScore: "desc" },
+        { createdAt: "desc" }
+      ];
+    }
+
+    // Handle cursor-based pagination
+    if (cursor) {
+      where.id = { gt: cursor };
+    }
+
+    const sessions = await this.prisma.callSession.findMany({
+      where,
+      include: {
+        participants: {
+          where: { leftAt: null },
+          select: {
+            userId: true,
+            role: true,
+            joinedAt: true
+          }
+        },
+        viewers: {
+          where: { leftAt: null },
+          select: { userId: true }
+        }
+      },
+      orderBy,
+      take: limit + 1, // Fetch one extra to determine hasMore
+      skip: cursor ? 0 : offset
+    });
+
+    const hasMore = sessions.length > limit;
+    const sessionsToReturn = sessions.slice(0, limit);
+
+    // Fetch participant profiles (username, displayPicture, age)
+    const participantUserIds = new Set<string>();
+    sessionsToReturn.forEach(session => {
+      session.participants.forEach(p => participantUserIds.add(p.userId));
+    });
+
+    // Get user profiles from user-service (batch fetch to avoid N+1 queries)
+    const participantProfiles = new Map<string, { username: string | null; displayPictureUrl: string | null; age: number | null }>();
+    
+    if (participantUserIds.size > 0) {
+      try {
+        const userIdsArray = Array.from(participantUserIds);
+        // Use batch fetching to avoid N+1 query problem
+        const profiles = await this.discoveryClient.getUserProfilesBatch(userIdsArray);
+        profiles.forEach((profile, userId) => {
+          participantProfiles.set(userId, profile);
+        });
+      } catch (error) {
+        this.logger.warn(`Failed to fetch participant profiles: ${error}`);
+      }
+    }
+
+    // Apply participant count filter if specified
+    let filteredSessions = sessionsToReturn;
+    if (filter.participantCount) {
+      filteredSessions = sessionsToReturn.filter(session => {
+        const count = session.participants.length;
+        if (filter.participantCount!.min !== undefined && count < filter.participantCount!.min) {
+          return false;
+        }
+        if (filter.participantCount!.max !== undefined && count > filter.participantCount!.max) {
+          return false;
+        }
+        return true;
+      });
+    }
+
+    // Sort by viewer count if requested
+    if (sort === 'viewers') {
+      filteredSessions.sort((a, b) => b.viewers.length - a.viewers.length);
+    }
+
+    const broadcasts = filteredSessions.map(session => {
+      const participants = session.participants.map(p => {
+        const profile = participantProfiles.get(p.userId);
+        return {
+          userId: p.userId,
+          role: p.role,
+          joinedAt: p.joinedAt,
+          username: profile?.username || null,
+          displayPictureUrl: profile?.displayPictureUrl || null,
+          age: profile?.age || null
+        };
+      });
+
+      return {
+        roomId: session.roomId,
+        participantCount: session.participants.length,
+        viewerCount: session.viewers.length,
+        participants,
+        startedAt: session.startedAt,
+        createdAt: session.createdAt,
+        broadcastTitle: session.broadcastTitle,
+        broadcastDescription: session.broadcastDescription,
+        broadcastTags: session.broadcastTags || [],
+        isTrending: session.isTrending,
+        popularityScore: session.popularityScore
+      };
+    });
+
+    return {
+      broadcasts,
+      nextCursor: hasMore ? filteredSessions[filteredSessions.length - 1].id : undefined,
+      hasMore
+    };
   }
 }

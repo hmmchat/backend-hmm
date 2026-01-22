@@ -307,58 +307,45 @@ export class PaymentController {
   @Get("health")
   @HttpCode(HttpStatus.OK)
   async healthCheck() {
-    const isTestMode = process.env.NODE_ENV === "test" || process.env.ALLOW_TEST_MODE === "true";
+    const { HealthChecker, ServiceDiscovery } = await import("@hmm/common");
+    
+    const dbCheck = await HealthChecker.checkDatabase(this.prisma, "payment-service");
+    
+    // Check wallet service dependency
+    const discovery = ServiceDiscovery.getInstance();
+    const dependencies: {
+      [serviceName: string]: {
+        status: 'up' | 'down';
+        url?: string;
+        responseTime?: number;
+        error?: string;
+      };
+    } = {};
     
     try {
-      // Check database connection (skip in test mode if DATABASE_URL not set)
-      let dbStatus = "unknown";
-      if (process.env.DATABASE_URL && process.env.DATABASE_URL !== "undefined") {
-        try {
-          await this.prisma.$queryRaw`SELECT 1`;
-          dbStatus = "connected";
-        } catch (error: any) {
-          dbStatus = "disconnected";
-          if (!isTestMode) {
-            throw error;
-          }
-        }
-      } else if (isTestMode) {
-        dbStatus = "not_configured";
-      } else {
-        throw new Error("DATABASE_URL not configured");
-      }
-      
-      return {
-        status: dbStatus === "connected" ? "healthy" : (isTestMode ? "healthy_test_mode" : "unhealthy"),
-        service: "payment-service",
-        timestamp: new Date().toISOString(),
-        database: dbStatus,
-        testMode: isTestMode
+      const walletUrl = discovery.getServiceUrl("wallet-service");
+      const walletCheck = await HealthChecker.checkService(walletUrl, 3000);
+      dependencies["wallet-service"] = {
+        status: walletCheck.status,
+        url: walletUrl,
+        responseTime: walletCheck.responseTime,
+        error: walletCheck.error
       };
-    } catch (error: any) {
-      if (isTestMode) {
-        // In test mode, return healthy even if DB is not connected
-        return {
-          status: "healthy_test_mode",
-          service: "payment-service",
-          timestamp: new Date().toISOString(),
-          database: "not_connected",
-          testMode: true,
-          warning: "Database not connected - test mode"
-        };
-      }
-      
-      throw new HttpException(
-        {
-          status: "unhealthy",
-          service: "payment-service",
-          timestamp: new Date().toISOString(),
-          database: "disconnected",
-          error: error.message
-        },
-        HttpStatus.SERVICE_UNAVAILABLE
-      );
+    } catch (error) {
+      dependencies["wallet-service"] = {
+        status: "down",
+        error: error instanceof Error ? error.message : String(error)
+      };
     }
+    
+    return HealthChecker.createResponse(
+      "payment-service",
+      {
+        database: dbCheck
+      },
+      dependencies,
+      process.env.npm_package_version || "0.0.1"
+    );
   }
 
   /* ---------- Test Endpoints (No Auth Required) ---------- */

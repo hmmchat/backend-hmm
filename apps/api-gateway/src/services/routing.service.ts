@@ -24,9 +24,9 @@ export class RoutingService implements OnModuleInit {
     const discoveryServiceUrl = this.configService.get<string>("DISCOVERY_SERVICE_URL") || "http://localhost:3004";
     const streamingServiceUrl = this.configService.get<string>("STREAMING_SERVICE_URL") || "http://localhost:3005";
     const walletServiceUrl = this.configService.get<string>("WALLET_SERVICE_URL") || "http://localhost:3006";
-    const friendServiceUrl = this.configService.get<string>("FRIEND_SERVICE_URL") || "http://localhost:3007";
+    const friendServiceUrl = this.configService.get<string>("FRIEND_SERVICE_URL") || "http://localhost:3009";
     const filesServiceUrl = this.configService.get<string>("FILES_SERVICE_URL") || "http://localhost:3008";
-    const paymentServiceUrl = this.configService.get<string>("PAYMENT_SERVICE_URL") || "http://localhost:3009";
+    const paymentServiceUrl = this.configService.get<string>("PAYMENT_SERVICE_URL") || "http://localhost:3007";
 
     // Define routes (order matters - more specific routes first)
     this.routes.set("/me", {

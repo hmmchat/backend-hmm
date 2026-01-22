@@ -106,5 +106,12 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
   isAvailable(): boolean {
     return this.isConnected && this.client !== null;
   }
+  
+  /**
+   * Get Redis client (for health checks)
+   */
+  getClient(): RedisClientType | null {
+    return this.client;
+  }
 }
 

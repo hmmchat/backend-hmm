@@ -1,0 +1,135 @@
+// ============================================
+// FILE: apps/discovery-service/src/services/discovery.service.ts
+// REPLACE getViewedBroadcastRoomIds method (around line 2594)
+// ============================================
+
+  /**
+   * Get viewed broadcast roomIds for current session
+   * Uses BroadcastViewHistory table instead of RaincheckSession hack
+   */
+  private async getViewedBroadcastRoomIds(
+    userId: string,
+    sessionId: string
+  ): Promise<string[]> {
+    try {
+      // Try BroadcastViewHistory first (new table)
+      const views = await (this.prisma as any).broadcastViewHistory.findMany({
+        where: {
+          userId
+          // Optionally filter by deviceId for cross-device sync
+          // deviceId: deviceId
+        },
+        select: {
+          roomId: true
+        },
+        distinct: ['roomId']
+      });
+
+      if (views.length > 0) {
+        return views.map((v: { roomId: string }) => v.roomId);
+      }
+
+      // Fallback to RaincheckSession for backward compatibility
+      // This can be removed after migration
+      const rainchecks = await (this.prisma as any).raincheckSession.findMany({
+        where: {
+          userId,
+          sessionId,
+          raincheckedUserId: {
+            startsWith: "BROADCAST:"
+          }
+        },
+        select: {
+          raincheckedUserId: true
+        }
+      });
+
+      return rainchecks.map((r: { raincheckedUserId: string }) => 
+        r.raincheckedUserId.replace("BROADCAST:", "")
+      );
+    } catch (error: any) {
+      // If table doesn't exist or other Prisma error, return empty array
+      if (error?.code === 'P2021' || error?.message?.includes('does not exist')) {
+        console.warn("BroadcastViewHistory table not found, falling back to RaincheckSession:", error.message);
+        // Fallback to RaincheckSession
+        try {
+          const rainchecks = await (this.prisma as any).raincheckSession.findMany({
+            where: {
+              userId,
+              sessionId,
+              raincheckedUserId: {
+                startsWith: "BROADCAST:"
+              }
+            },
+            select: {
+              raincheckedUserId: true
+            }
+          });
+          return rainchecks.map((r: { raincheckedUserId: string }) => 
+            r.raincheckedUserId.replace("BROADCAST:", "")
+          );
+        } catch (fallbackError) {
+          console.warn("RaincheckSession fallback also failed:", fallbackError);
+          return [];
+        }
+      }
+      console.error("Error fetching viewed broadcasts:", error);
+      return [];
+    }
+  }
+
+// ============================================
+// REPLACE markBroadcastViewed method (around line 2552)
+// ============================================
+
+  /**
+   * Mark a broadcast as viewed (for session tracking)
+   * Uses BroadcastViewHistory table instead of RaincheckSession hack
+   */
+  async markBroadcastViewed(
+    userId: string,
+    sessionId: string,
+    roomId: string,
+    duration?: number,
+    deviceId?: string
+  ): Promise<void> {
+    try {
+      // Use BroadcastViewHistory table (new approach)
+      await (this.prisma as any).broadcastViewHistory.create({
+        data: {
+          userId,
+          roomId,
+          duration,
+          deviceId
+        }
+      });
+    } catch (error: any) {
+      // If BroadcastViewHistory doesn't exist, fallback to RaincheckSession
+      if (error?.code === 'P2021' || error?.message?.includes('does not exist')) {
+        console.warn("BroadcastViewHistory table not found, falling back to RaincheckSession:", error.message);
+        // Fallback to old method
+        const broadcastRoomId = `BROADCAST:${roomId}`;
+        const existing = await (this.prisma as any).raincheckSession.findFirst({
+          where: {
+            userId,
+            sessionId,
+            raincheckedUserId: broadcastRoomId
+          }
+        });
+
+        if (!existing) {
+          await (this.prisma as any).raincheckSession.create({
+            data: {
+              userId,
+              sessionId,
+              raincheckedUserId: broadcastRoomId,
+              city: null
+            }
+          });
+        }
+        return;
+      }
+      console.error("Error marking broadcast as viewed:", error);
+      // Don't throw - this is not critical
+    }
+  }

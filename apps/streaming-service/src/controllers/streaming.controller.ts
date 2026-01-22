@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Param, Body, BadRequestException, Headers } from "@nestjs/common";
+import { Controller, Get, Post, Param, Body, BadRequestException, Headers, Query } from "@nestjs/common";
 import { RoomService } from "../services/room.service.js";
 import { ChatService } from "../services/chat.service.js";
 import { DiscoveryClientService } from "../services/discovery-client.service.js";
@@ -513,6 +513,96 @@ export class StreamingController {
 
     const { fromUserId, toUserId, amount, giftId } = sendGiftDirectSchema.parse(body);
     return await this.giftService.sendGiftDirect(fromUserId, toUserId, amount, giftId);
+  }
+
+  /**
+   * Get all active broadcasts (for HMM_TV)
+   * GET /streaming/broadcasts?sort=recent&limit=20&offset=0&participantCountMin=2&tags[]=fun
+   */
+  @Get("broadcasts")
+  async getActiveBroadcasts(
+    @Query("sort") sort?: string,
+    @Query("limit") limit?: string,
+    @Query("offset") offset?: string,
+    @Query("cursor") cursor?: string,
+    @Query("participantCountMin") participantCountMin?: string,
+    @Query("participantCountMax") participantCountMax?: string,
+    @Query("tags") tags?: string | string[]
+  ) {
+    // Validate sort parameter
+    const validSorts = ['recent', 'viewers', 'popular', 'trending'];
+    const validatedSort = sort && validSorts.includes(sort) ? sort as any : 'recent';
+    
+    // Validate limit (1-100)
+    let validatedLimit = 20;
+    if (limit) {
+      const parsedLimit = parseInt(limit, 10);
+      if (isNaN(parsedLimit) || parsedLimit < 1 || parsedLimit > 100) {
+        throw new BadRequestException("limit must be between 1 and 100");
+      }
+      validatedLimit = parsedLimit;
+    }
+    
+    // Validate offset (non-negative)
+    let validatedOffset = 0;
+    if (offset) {
+      const parsedOffset = parseInt(offset, 10);
+      if (isNaN(parsedOffset) || parsedOffset < 0) {
+        throw new BadRequestException("offset must be a non-negative integer");
+      }
+      validatedOffset = parsedOffset;
+    }
+    
+    // Validate participantCountMin/Max (positive integers)
+    const filter: any = {};
+    if (participantCountMin || participantCountMax) {
+      filter.participantCount = {};
+      if (participantCountMin) {
+        const min = parseInt(participantCountMin, 10);
+        if (isNaN(min) || min < 1) {
+          throw new BadRequestException("participantCountMin must be a positive integer");
+        }
+        filter.participantCount.min = min;
+      }
+      if (participantCountMax) {
+        const max = parseInt(participantCountMax, 10);
+        if (isNaN(max) || max < 1) {
+          throw new BadRequestException("participantCountMax must be a positive integer");
+        }
+        filter.participantCount.max = max;
+      }
+      // Validate min <= max
+      if (filter.participantCount.min && filter.participantCount.max && 
+          filter.participantCount.min > filter.participantCount.max) {
+        throw new BadRequestException("participantCountMin must be less than or equal to participantCountMax");
+      }
+    }
+    
+    // Validate tags (array of non-empty strings)
+    if (tags) {
+      const tagsArray = Array.isArray(tags) ? tags : [tags];
+      const validatedTags = tagsArray.filter(tag => typeof tag === 'string' && tag.trim().length > 0);
+      if (validatedTags.length > 0) {
+        filter.tags = validatedTags;
+      }
+    }
+
+    return await this.roomService.getActiveBroadcasts({
+      sort: validatedSort,
+      filter,
+      limit: validatedLimit,
+      offset: validatedOffset,
+      cursor: cursor || undefined
+    });
+  }
+
+  /**
+   * Test endpoint: Get all active broadcasts (bypasses auth)
+   * GET /streaming/test/broadcasts
+   */
+  @Get("test/broadcasts")
+  async getActiveBroadcastsTest() {
+    return await this.roomService.getActiveBroadcasts();
   }
 }
 

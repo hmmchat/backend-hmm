@@ -5,6 +5,7 @@ import {
   Query,
   Body,
   Headers,
+  Param,
   HttpException,
   HttpStatus
 } from "@nestjs/common";
@@ -549,6 +550,379 @@ export class DiscoveryController {
       success: true,
       nextCard: nextCard.card
     };
+  }
+
+  /* ---------- HMM_TV Broadcast Feed Endpoints ---------- */
+
+  /**
+   * Get next broadcast in HMM_TV feed (for scrolling like TikTok/Reels)
+   * GET /discovery/broadcasts/feed?sessionId=xxx
+   */
+  @Get("broadcasts/feed")
+  async getNextBroadcast(
+    @Headers("authorization") authz?: string,
+    @Query() query?: any
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+
+    const sessionId = query?.sessionId;
+    if (!sessionId) {
+      throw new HttpException("sessionId is required", HttpStatus.BAD_REQUEST);
+    }
+
+    return this.discoveryService.getNextBroadcast(token, sessionId);
+  }
+
+  /**
+   * Mark broadcast as viewed (swipe to next)
+   * POST /discovery/broadcasts/viewed
+   */
+  @Post("broadcasts/viewed")
+  async markBroadcastViewed(
+    @Headers("authorization") authz: string,
+    @Body() body: any
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+
+    const { sessionId, roomId } = body;
+    if (!sessionId || !roomId) {
+      throw new HttpException("sessionId and roomId are required", HttpStatus.BAD_REQUEST);
+    }
+
+    // Get user ID from token
+    const { verifyToken } = await import("@hmm/common");
+    const jwkStr = process.env.JWT_PUBLIC_JWK;
+    if (!jwkStr || jwkStr === "undefined") {
+      throw new HttpException("Server configuration error", HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+    const cleanedJwk = jwkStr.trim().replace(/^['"]|['"]$/g, "");
+    const publicJwk = JSON.parse(cleanedJwk);
+    const verifyAccess = await verifyToken(publicJwk);
+    const payload = await verifyAccess(token);
+    const userId = payload.sub;
+
+    await this.discoveryService.markBroadcastViewed(userId, sessionId, roomId);
+
+    return {
+      success: true
+    };
+  }
+
+  /* ---------- Test Endpoints for HMM_TV Broadcasts (No Auth Required) ---------- */
+
+  /**
+   * Test endpoint: Get next broadcast in feed (bypasses auth)
+   * GET /discovery/test/broadcasts/feed?userId=xxx&sessionId=xxx
+   */
+  @Get("test/broadcasts/feed")
+  async getNextBroadcastTest(
+    @Query("userId") userId: string,
+    @Query("sessionId") sessionId: string
+  ) {
+    if (!userId || !sessionId) {
+      throw new HttpException("userId and sessionId are required", HttpStatus.BAD_REQUEST);
+    }
+
+    return this.discoveryService.getNextBroadcastForUser(userId, sessionId);
+  }
+
+  /**
+   * Test endpoint: Mark broadcast as viewed (bypasses auth)
+   * POST /discovery/test/broadcasts/viewed
+   */
+  @Post("test/broadcasts/viewed")
+  async markBroadcastViewedTest(@Body() body: any) {
+    const { userId, sessionId, roomId } = body;
+
+    if (!userId || !sessionId || !roomId) {
+      throw new HttpException("userId, sessionId, and roomId are required", HttpStatus.BAD_REQUEST);
+    }
+
+    await this.discoveryService.markBroadcastViewed(userId, sessionId, roomId);
+
+    return {
+      success: true
+    };
+  }
+
+  /* ---------- Broadcast Engagement Endpoints ---------- */
+
+  /**
+   * Add a comment to a broadcast
+   * POST /discovery/broadcasts/:roomId/comment
+   */
+  @Post("broadcasts/:roomId/comment")
+  async commentBroadcast(
+    @Headers("authorization") authz: string,
+    @Param("roomId") roomId: string,
+    @Body() body: { comment: string }
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+
+    if (!body.comment || typeof body.comment !== 'string' || body.comment.trim().length === 0) {
+      throw new HttpException("comment is required and cannot be empty", HttpStatus.BAD_REQUEST);
+    }
+
+    if (body.comment.length > 500) {
+      throw new HttpException("comment must be 500 characters or less", HttpStatus.BAD_REQUEST);
+    }
+
+    const { verifyToken } = await import("@hmm/common");
+    const jwkStr = process.env.JWT_PUBLIC_JWK;
+    if (!jwkStr || jwkStr === "undefined") {
+      throw new HttpException("Server configuration error", HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+    const cleanedJwk = jwkStr.trim().replace(/^['"]|['"]$/g, "");
+    const publicJwk = JSON.parse(cleanedJwk);
+    const verifyAccess = await verifyToken(publicJwk);
+    const payload = await verifyAccess(token);
+    const userId = payload.sub;
+
+    const result = await this.discoveryService.addBroadcastComment(roomId, userId, body.comment);
+    return result;
+  }
+
+  /**
+   * Get comments for a broadcast
+   * GET /discovery/broadcasts/:roomId/comments?limit=50&offset=0
+   */
+  @Get("broadcasts/:roomId/comments")
+  async getBroadcastComments(
+    @Param("roomId") roomId: string,
+    @Query("limit") limit?: string,
+    @Query("offset") offset?: string
+  ) {
+    const validatedLimit = limit ? Math.min(Math.max(parseInt(limit, 10) || 50, 1), 100) : 50;
+    const validatedOffset = offset ? Math.max(parseInt(offset, 10) || 0, 0) : 0;
+
+    const result = await this.discoveryService.getBroadcastComments(roomId, validatedLimit, validatedOffset);
+    return result;
+  }
+
+  /**
+   * Get broadcast details by roomId (for deep linking)
+   * GET /discovery/broadcasts/:roomId
+   * Public endpoint - no authentication required for deep linking
+   */
+  @Get("broadcasts/:roomId")
+  async getBroadcastByRoomId(
+    @Param("roomId") roomId: string
+  ) {
+    const result = await this.discoveryService.getBroadcastByRoomId(roomId);
+    if (!result) {
+      throw new HttpException("Broadcast not found or not active", HttpStatus.NOT_FOUND);
+    }
+    return result;
+  }
+
+  /**
+   * Share a broadcast
+   * POST /discovery/broadcasts/:roomId/share
+   */
+  @Post("broadcasts/:roomId/share")
+  async shareBroadcast(
+    @Headers("authorization") authz: string,
+    @Param("roomId") roomId: string,
+    @Body() body?: { shareType?: string }
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+
+    const { verifyToken } = await import("@hmm/common");
+    const jwkStr = process.env.JWT_PUBLIC_JWK;
+    if (!jwkStr || jwkStr === "undefined") {
+      throw new HttpException("Server configuration error", HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+    const cleanedJwk = jwkStr.trim().replace(/^['"]|['"]$/g, "");
+    const publicJwk = JSON.parse(cleanedJwk);
+    const verifyAccess = await verifyToken(publicJwk);
+    const payload = await verifyAccess(token);
+    const userId = payload.sub;
+
+    const shareType = body?.shareType || "link";
+    const result = await this.discoveryService.shareBroadcast(roomId, userId, shareType);
+    return result;
+  }
+
+  /**
+   * Send gift to broadcast participants
+   * POST /discovery/broadcasts/:roomId/gift
+   */
+  @Post("broadcasts/:roomId/gift")
+  async sendBroadcastGift(
+    @Headers("authorization") authz: string,
+    @Param("roomId") roomId: string,
+    @Body() body: { toUserId: string; amount: number; giftId: string }
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+
+    if (!body.toUserId || !body.amount || !body.giftId) {
+      throw new HttpException("toUserId, amount, and giftId are required", HttpStatus.BAD_REQUEST);
+    }
+
+    if (body.amount <= 0) {
+      throw new HttpException("amount must be positive", HttpStatus.BAD_REQUEST);
+    }
+
+    const { verifyToken } = await import("@hmm/common");
+    const jwkStr = process.env.JWT_PUBLIC_JWK;
+    if (!jwkStr || jwkStr === "undefined") {
+      throw new HttpException("Server configuration error", HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+    const cleanedJwk = jwkStr.trim().replace(/^['"]|['"]$/g, "");
+    const publicJwk = JSON.parse(cleanedJwk);
+    const verifyAccess = await verifyToken(publicJwk);
+    const payload = await verifyAccess(token);
+    const fromUserId = payload.sub;
+
+    const result = await this.discoveryService.sendBroadcastGift(roomId, fromUserId, body.toUserId, body.amount, body.giftId);
+    return result;
+  }
+
+  /**
+   * Follow a broadcast participant
+   * POST /discovery/broadcasts/:roomId/follow/:userId
+   * A viewer can follow individual participants in a broadcast
+   */
+  @Post("broadcasts/:roomId/follow/:userId")
+  async followBroadcastParticipant(
+    @Headers("authorization") authz: string,
+    @Param("roomId") roomId: string,
+    @Param("userId") followedUserId: string
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+
+    const { verifyToken } = await import("@hmm/common");
+    const jwkStr = process.env.JWT_PUBLIC_JWK;
+    if (!jwkStr || jwkStr === "undefined") {
+      throw new HttpException("Server configuration error", HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+    const cleanedJwk = jwkStr.trim().replace(/^['"]|['"]$/g, "");
+    const publicJwk = JSON.parse(cleanedJwk);
+    const verifyAccess = await verifyToken(publicJwk);
+    const payload = await verifyAccess(token);
+    const followerId = payload.sub;
+
+    const result = await this.discoveryService.followBroadcastParticipant(
+      followerId,
+      followedUserId,
+      roomId
+    );
+    return result;
+  }
+
+  /**
+   * Unfollow a broadcast participant
+   * POST /discovery/broadcasts/:roomId/unfollow/:userId
+   */
+  @Post("broadcasts/:roomId/unfollow/:userId")
+  async unfollowBroadcastParticipant(
+    @Headers("authorization") authz: string,
+    @Param("roomId") roomId: string,
+    @Param("userId") followedUserId: string
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+
+    const { verifyToken } = await import("@hmm/common");
+    const jwkStr = process.env.JWT_PUBLIC_JWK;
+    if (!jwkStr || jwkStr === "undefined") {
+      throw new HttpException("Server configuration error", HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+    const cleanedJwk = jwkStr.trim().replace(/^['"]|['"]$/g, "");
+    const publicJwk = JSON.parse(cleanedJwk);
+    const verifyAccess = await verifyToken(publicJwk);
+    const payload = await verifyAccess(token);
+    const followerId = payload.sub;
+
+    const result = await this.discoveryService.unfollowBroadcastParticipant(
+      followerId,
+      followedUserId,
+      roomId
+    );
+    return result;
+  }
+
+  /**
+   * Get all users followed by the viewer in broadcasts
+   * GET /discovery/broadcasts/follows
+   * This can be used later for the "sent request section"
+   */
+  @Get("broadcasts/follows")
+  async getFollowedBroadcastParticipants(
+    @Headers("authorization") authz: string
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+
+    const { verifyToken } = await import("@hmm/common");
+    const jwkStr = process.env.JWT_PUBLIC_JWK;
+    if (!jwkStr || jwkStr === "undefined") {
+      throw new HttpException("Server configuration error", HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+    const cleanedJwk = jwkStr.trim().replace(/^['"]|['"]$/g, "");
+    const publicJwk = JSON.parse(cleanedJwk);
+    const verifyAccess = await verifyToken(publicJwk);
+    const payload = await verifyAccess(token);
+    const followerId = payload.sub;
+
+    const result = await this.discoveryService.getFollowedBroadcastParticipants(followerId);
+    return { follows: result };
+  }
+
+  /**
+   * Check if viewer is following a participant in a broadcast
+   * GET /discovery/broadcasts/:roomId/follow/:userId/status
+   */
+  @Get("broadcasts/:roomId/follow/:userId/status")
+  async checkFollowStatus(
+    @Headers("authorization") authz: string,
+    @Param("roomId") roomId: string,
+    @Param("userId") followedUserId: string
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+
+    const { verifyToken } = await import("@hmm/common");
+    const jwkStr = process.env.JWT_PUBLIC_JWK;
+    if (!jwkStr || jwkStr === "undefined") {
+      throw new HttpException("Server configuration error", HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+    const cleanedJwk = jwkStr.trim().replace(/^['"]|['"]$/g, "");
+    const publicJwk = JSON.parse(cleanedJwk);
+    const verifyAccess = await verifyToken(publicJwk);
+    const payload = await verifyAccess(token);
+    const followerId = payload.sub;
+
+    const isFollowing = await this.discoveryService.isFollowingBroadcastParticipant(
+      followerId,
+      followedUserId,
+      roomId
+    );
+    return { isFollowing };
   }
 }
 

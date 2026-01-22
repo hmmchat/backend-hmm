@@ -30,6 +30,10 @@ setup() {
     # Setup database
     setup_database "${SERVICE_DIR}" "${SERVICE_NAME}"
     
+    # Export TEST_MODE for services
+    export TEST_MODE=true
+    export NODE_ENV=test
+    
     # Start service
     start_service "${SERVICE_DIR}" "${SERVICE_NAME}" "${SERVICE_PORT}" "${SERVICE_URL}"
     
@@ -53,8 +57,18 @@ test_health() {
     if [ "$status_code" -eq 200 ]; then
         log_success "Health check (200)"
     elif [ "$status_code" -eq 404 ]; then
-        # Service is running but no health endpoint
-        log_success "Service is running (health endpoint not available)"
+        # Service is running but no health endpoint - verify by checking a real endpoint
+        local test_response=$(curl -s -w "\n%{http_code}" -X GET "${SERVICE_URL}/streaming" 2>&1)
+        local test_status=$(echo "$test_response" | tail -n1)
+        if [ "$test_status" != "000" ]; then
+            log_success "Service is running (health endpoint not available, but service responds)"
+        else
+            log_error "Service is not responding"
+            return 1
+        fi
+    elif [ "$status_code" = "000" ]; then
+        log_error "Health check - service not responding (status: ${status_code})"
+        return 1
     else
         log_error "Health check failed (status: ${status_code})"
         return 1
@@ -184,10 +198,16 @@ EOF
         -d "${custom_dare_data}" \
         "${SERVICE_URL}/streaming/rooms/${dummy_room_id}/dares/custom/save" 2>&1)
     local status_code=$(echo "$response" | tail -n1)
+    local body=$(echo "$response" | sed '$d')
+    
     if [ "$status_code" -eq 200 ] || [ "$status_code" -eq 201 ]; then
         log_success "Save custom dare (${status_code})"
+    elif [ "$status_code" -eq 404 ]; then
+        # Route might not be registered - check if service needs restart or route issue
+        log_error "Save custom dare - Expected 200/201, got 404. Route may not be registered. Response: ${body}"
+        return 1
     else
-        log_error "Save custom dare - Expected 200/201, got ${status_code}"
+        log_error "Save custom dare - Expected 200/201, got ${status_code}. Response: ${body}"
         return 1
     fi
 }
@@ -199,7 +219,21 @@ test_get_user_custom_dares() {
     # Use dummy room ID since custom dares don't require a real room
     local dummy_room_id="${TEST_ROOM_ID:-test-room-dummy}"
     
-    http_request "GET" "${SERVICE_URL}/streaming/rooms/${dummy_room_id}/dares/custom?userId=${TEST_USER_1}" "" 200 "Get user custom dares"
+    local response=$(curl -s -w "\n%{http_code}" -X GET \
+        "${SERVICE_URL}/streaming/rooms/${dummy_room_id}/dares/custom?userId=${TEST_USER_1}" 2>&1)
+    local status_code=$(echo "$response" | tail -n1)
+    local body=$(echo "$response" | sed '$d')
+    
+    if [ "$status_code" -eq 200 ]; then
+        log_success "Get user custom dares (200)"
+    elif [ "$status_code" -eq 404 ]; then
+        # Route might not be registered - check if service needs restart or route issue
+        log_error "Get user custom dares - Expected 200, got 404. Route may not be registered. Response: ${body}"
+        return 1
+    else
+        log_error "Get user custom dares - Expected 200, got ${status_code}. Response: ${body}"
+        return 1
+    fi
 }
 
 # Test: Get random dares with custom dares mixed in

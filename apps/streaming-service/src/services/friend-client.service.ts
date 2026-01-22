@@ -7,7 +7,7 @@ export class FriendClientService {
   private readonly friendServiceUrl: string;
 
   constructor() {
-    this.friendServiceUrl = process.env.FRIEND_SERVICE_URL || "http://localhost:3007";
+    this.friendServiceUrl = process.env.FRIEND_SERVICE_URL || "http://localhost:3009";
   }
 
   /**

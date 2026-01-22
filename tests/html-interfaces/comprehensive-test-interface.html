@@ -483,6 +483,48 @@
                     🗑️ Clear History
                 </button>
             </div>
+            
+            <!-- HMM_TV Broadcast Feed -->
+            <div class="section" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-left: 4px solid #fff;">
+                <h3 style="color: white;">📺 HMM_TV - Broadcast Feed</h3>
+                <p style="margin-bottom: 15px; color: rgba(255,255,255,0.9); font-size: 13px;">
+                    Scroll through active broadcasts like TikTok/Reels. Users with IN_BROADCAST status are broadcasting their calls.
+                </p>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
+                    <div class="form-group">
+                        <label style="color: white;">Viewer User ID:</label>
+                        <input type="text" id="hmmtvUserId" value="test-user-1" placeholder="test-user-1" style="background: rgba(255,255,255,0.95);">
+                    </div>
+                    <div class="form-group">
+                        <label style="color: white;">Session ID:</label>
+                        <input type="text" id="hmmtvSessionId" value="hmmtv-session-1" placeholder="hmmtv-session-1" style="background: rgba(255,255,255,0.95);">
+                    </div>
+                </div>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
+                    <button onclick="getNextBroadcast()" class="btn-primary" style="background: rgba(255,255,255,0.2); border: 2px solid white; color: white;">
+                        📺 Get Next Broadcast
+                    </button>
+                    <button onclick="getAllBroadcasts()" class="btn-secondary" style="background: rgba(255,255,255,0.2); border: 2px solid white; color: white;">
+                        📋 List All Broadcasts
+                    </button>
+                </div>
+                
+                <div id="hmmtvBroadcastDisplay" style="display: none; background: rgba(255,255,255,0.95); border-radius: 12px; padding: 20px; margin-top: 15px; color: #333;">
+                    <div id="hmmtvBroadcastContent"></div>
+                    <div style="margin-top: 15px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                        <button onclick="markBroadcastViewed()" class="btn-success" style="width: 100%;">
+                            ✅ Mark as Viewed (Swipe Next)
+                        </button>
+                        <button onclick="joinBroadcast()" class="btn-primary" style="width: 100%;">
+                            🎥 Join as Viewer
+                        </button>
+                    </div>
+                </div>
+                
+                <div id="hmmtvResponse" class="response" style="display:none; background: rgba(255,255,255,0.95); color: #333;"></div>
+            </div>
         </div>
         
         <!-- Discovery Tab -->
@@ -3077,6 +3119,215 @@
             } catch (error) {
                 addActionLog(`❌ Error getting icebreaker: ${error.message}`, null, 'error');
                 showResponse('icebreakerResponse', { error: error.message }, true);
+            }
+        }
+        
+        // HMM_TV Broadcast Feed Functions
+        let currentBroadcastRoomId = null;
+        
+        async function getNextBroadcast() {
+            const userId = document.getElementById('hmmtvUserId').value.trim();
+            const sessionId = document.getElementById('hmmtvSessionId').value.trim();
+            
+            if (!userId || !sessionId) {
+                showResponse('hmmtvResponse', { error: 'User ID and Session ID are required' }, true);
+                return;
+            }
+            
+            try {
+                const response = await fetch(getApiUrl(`/discovery/test/broadcasts/feed?userId=${userId}&sessionId=${sessionId}`));
+                const data = await response.json();
+                
+                if (response.ok) {
+                    if (data.broadcast) {
+                        currentBroadcastRoomId = data.broadcast.roomId;
+                        displayBroadcast(data.broadcast);
+                        addActionLog(`📺 Next broadcast loaded: ${data.broadcast.roomId}`, userId, 'success');
+                    } else {
+                        document.getElementById('hmmtvBroadcastDisplay').style.display = 'none';
+                        showResponse('hmmtvResponse', { 
+                            message: 'No more broadcasts available',
+                            exhausted: true 
+                        }, false);
+                        addActionLog(`📺 No more broadcasts available`, userId, 'info');
+                    }
+                } else {
+                    showResponse('hmmtvResponse', data, true);
+                    addActionLog(`❌ Error getting broadcast: ${data.message || JSON.stringify(data)}`, userId, 'error');
+                }
+            } catch (error) {
+                showResponse('hmmtvResponse', { error: error.message }, true);
+                addActionLog(`❌ Error: ${error.message}`, userId, 'error');
+            }
+        }
+        
+        async function getAllBroadcasts() {
+            try {
+                const response = await fetch(getApiUrl('/streaming/test/broadcasts'));
+                const data = await response.json();
+                
+                if (response.ok) {
+                    let html = `<div style="margin-bottom: 15px;"><strong>Total Active Broadcasts: ${data.length}</strong></div>`;
+                    
+                    if (data.length === 0) {
+                        html += '<div style="color: #666; padding: 20px; text-align: center;">No active broadcasts</div>';
+                    } else {
+                        html += '<div style="display: grid; gap: 10px;">';
+                        data.forEach((broadcast, index) => {
+                            html += `
+                                <div style="padding: 15px; background: #f8f9fa; border-radius: 8px; border-left: 4px solid #667eea;">
+                                    <div style="font-weight: 600; margin-bottom: 8px;">Broadcast #${index + 1}</div>
+                                    <div style="font-size: 12px; color: #666;">
+                                        <div><strong>Room ID:</strong> ${broadcast.roomId}</div>
+                                        <div><strong>Participants:</strong> ${broadcast.participantCount}</div>
+                                        <div><strong>Viewers:</strong> ${broadcast.viewerCount}</div>
+                                        <div><strong>Started:</strong> ${new Date(broadcast.startedAt || broadcast.createdAt).toLocaleString()}</div>
+                                    </div>
+                                </div>
+                            `;
+                        });
+                        html += '</div>';
+                    }
+                    
+                    showResponse('hmmtvResponse', { broadcasts: data }, false);
+                    document.getElementById('hmmtvResponse').innerHTML = html;
+                    document.getElementById('hmmtvResponse').style.display = 'block';
+                    addActionLog(`📋 Retrieved ${data.length} active broadcasts`, null, 'success');
+                } else {
+                    showResponse('hmmtvResponse', data, true);
+                }
+            } catch (error) {
+                showResponse('hmmtvResponse', { error: error.message }, true);
+                addActionLog(`❌ Error: ${error.message}`, null, 'error');
+            }
+        }
+        
+        function displayBroadcast(broadcast) {
+            const displayDiv = document.getElementById('hmmtvBroadcastDisplay');
+            const contentDiv = document.getElementById('hmmtvBroadcastContent');
+            
+            let html = `
+                <div style="margin-bottom: 15px;">
+                    <h4 style="margin-bottom: 10px; color: #667eea;">📺 Broadcast</h4>
+                    <div style="background: #f8f9fa; padding: 15px; border-radius: 8px;">
+                        <div style="margin-bottom: 8px;"><strong>Room ID:</strong> ${broadcast.roomId}</div>
+                        <div style="margin-bottom: 8px;"><strong>Participants:</strong> ${broadcast.participantCount}</div>
+                        <div style="margin-bottom: 8px;"><strong>Viewers:</strong> ${broadcast.viewerCount}</div>
+                        <div style="margin-bottom: 8px;"><strong>Started:</strong> ${new Date(broadcast.startedAt || broadcast.createdAt).toLocaleString()}</div>
+                        ${broadcast.participants.length > 0 ? `
+                            <div style="margin-top: 10px;">
+                                <strong>Participants:</strong>
+                                <ul style="margin-top: 5px; padding-left: 20px; font-size: 12px;">
+                                    ${broadcast.participants.map(p => `<li>${p.userId} (${p.role})</li>`).join('')}
+                                </ul>
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+            `;
+            
+            contentDiv.innerHTML = html;
+            displayDiv.style.display = 'block';
+        }
+        
+        async function markBroadcastViewed() {
+            const userId = document.getElementById('hmmtvUserId').value.trim();
+            const sessionId = document.getElementById('hmmtvSessionId').value.trim();
+            
+            if (!currentBroadcastRoomId) {
+                alert('No broadcast loaded. Get next broadcast first.');
+                return;
+            }
+            
+            if (!userId || !sessionId) {
+                showResponse('hmmtvResponse', { error: 'User ID and Session ID are required' }, true);
+                return;
+            }
+            
+            try {
+                const response = await fetch(getApiUrl('/discovery/test/broadcasts/viewed'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId, sessionId, roomId: currentBroadcastRoomId })
+                });
+                const data = await response.json();
+                
+                if (response.ok) {
+                    addActionLog(`✅ Broadcast ${currentBroadcastRoomId} marked as viewed`, userId, 'success');
+                    // Auto-load next broadcast
+                    setTimeout(() => getNextBroadcast(), 500);
+                } else {
+                    showResponse('hmmtvResponse', data, true);
+                    addActionLog(`❌ Error: ${data.message || JSON.stringify(data)}`, userId, 'error');
+                }
+            } catch (error) {
+                showResponse('hmmtvResponse', { error: error.message }, true);
+                addActionLog(`❌ Error: ${error.message}`, userId, 'error');
+            }
+        }
+        
+        async function joinBroadcast() {
+            const userId = document.getElementById('hmmtvUserId').value.trim();
+            
+            if (!currentBroadcastRoomId) {
+                alert('No broadcast loaded. Get next broadcast first.');
+                return;
+            }
+            
+            if (!userId) {
+                showResponse('hmmtvResponse', { error: 'User ID is required' }, true);
+                return;
+            }
+            
+            try {
+                // Connect WebSocket to join as viewer
+                const wsUrl = getWsUrl(`/streaming/ws?token=${userId}`);
+                const ws = new WebSocket(wsUrl);
+                
+                ws.onopen = () => {
+                    addActionLog(`✅ WebSocket connected for joining broadcast (User: ${userId})`, userId, 'success');
+                    
+                    // Join room first
+                    ws.send(JSON.stringify({
+                        type: 'join-room',
+                        data: { roomId: currentBroadcastRoomId }
+                    }));
+                    
+                    // Then join as viewer
+                    setTimeout(() => {
+                        ws.send(JSON.stringify({
+                            type: 'join-as-viewer',
+                            data: { roomId: currentBroadcastRoomId }
+                        }));
+                        addActionLog(`🎥 Joining broadcast ${currentBroadcastRoomId} as viewer...`, userId, 'info');
+                    }, 1000);
+                };
+                
+                ws.onmessage = (event) => {
+                    const message = JSON.parse(event.data);
+                    
+                    if (message.type === 'viewer-joined') {
+                        addActionLog(`✅ Successfully joined broadcast as viewer!`, userId, 'success');
+                        showResponse('hmmtvResponse', { 
+                            success: true, 
+                            message: 'Joined broadcast as viewer',
+                            roomId: currentBroadcastRoomId
+                        }, false);
+                        setTimeout(() => refreshAllUserStatuses(), 1000);
+                    } else if (message.type === 'error') {
+                        addActionLog(`❌ Error: ${message.message}`, userId, 'error');
+                        showResponse('hmmtvResponse', { error: message.message }, true);
+                    }
+                };
+                
+                ws.onerror = (error) => {
+                    addActionLog(`❌ WebSocket error: ${error}`, userId, 'error');
+                    showResponse('hmmtvResponse', { error: 'WebSocket connection error' }, true);
+                };
+                
+            } catch (error) {
+                showResponse('hmmtvResponse', { error: error.message }, true);
+                addActionLog(`❌ Error: ${error.message}`, userId, 'error');
             }
         }
         

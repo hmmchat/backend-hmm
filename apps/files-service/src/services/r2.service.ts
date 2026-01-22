@@ -1,6 +1,6 @@
 import { Injectable, OnModuleInit, HttpException, HttpStatus } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { v4 as uuidv4 } from "uuid";
 
@@ -25,14 +25,14 @@ export class R2Service implements OnModuleInit {
       return;
     }
 
-    this.accountId = accountId;
+    this.accountId = accountId; // Used for endpoint construction
     this.bucketName = bucketName;
     this.publicUrl = publicUrl.endsWith("/") ? publicUrl.slice(0, -1) : publicUrl;
 
     // Cloudflare R2 is S3-compatible
     this.s3Client = new S3Client({
       region: "auto",
-      endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
+      endpoint: `https://${this.accountId}.r2.cloudflarestorage.com`,
       credentials: {
         accessKeyId,
         secretAccessKey
@@ -71,7 +71,7 @@ export class R2Service implements OnModuleInit {
     metadata?: Record<string, string>
   ): Promise<string> {
     if (!this.s3Client) {
-      throw new HttpException("R2 not configured", HttpStatus.INTERNAL_SERVER_ERROR);
+      throw new HttpException("R2 not configured", HttpStatus.SERVICE_UNAVAILABLE);
     }
 
     try {
@@ -100,7 +100,7 @@ export class R2Service implements OnModuleInit {
    */
   async deleteFile(key: string): Promise<void> {
     if (!this.s3Client) {
-      throw new HttpException("R2 not configured", HttpStatus.INTERNAL_SERVER_ERROR);
+      throw new HttpException("R2 not configured", HttpStatus.SERVICE_UNAVAILABLE);
     }
 
     try {
@@ -127,7 +127,7 @@ export class R2Service implements OnModuleInit {
     expiresIn: number = 3600
   ): Promise<string> {
     if (!this.s3Client) {
-      throw new HttpException("R2 not configured", HttpStatus.INTERNAL_SERVER_ERROR);
+      throw new HttpException("R2 not configured", HttpStatus.SERVICE_UNAVAILABLE);
     }
 
     try {

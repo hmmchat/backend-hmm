@@ -9,43 +9,11 @@ generator client {
   output   = "../node_modules/.prisma/client"
 }
 
-// Shared tables with other services using hmm_user database
-// These tables are managed by their respective services but need to be in discovery-service schema
-// to prevent them from being dropped when discovery-service syncs the database
+// Note: Wallet and Transaction tables are owned by wallet-service.
+// Access wallet data via HTTP API calls to wallet-service, not direct database access.
 
-// From wallet-service - wallet and transactions
-model Wallet {
-  id        String   @id // Links to auth-service User.id (must match auth-service user id)
-  balance   Int      @default(0) // Coin balance (non-negative)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Transaction history
-  transactions Transaction[]
-
-  @@map("wallets")
-}
-
-model Transaction {
-  id          String          @id @default(cuid())
-  walletId    String
-  wallet      Wallet          @relation(fields: [walletId], references: [id], onDelete: Cascade)
-  amount      Int // Positive for credits, negative for debits
-  type        TransactionType
-  description String?
-  createdAt   DateTime        @default(now())
-
-  @@index([walletId])
-  @@index([createdAt])
-  @@map("transactions")
-}
-
-enum TransactionType {
-  CREDIT // Coins added (e.g., purchase, reward, bonus)
-  DEBIT // Coins spent (e.g., premium features, gifts)
-  REFUND // Refund for a previous transaction
-  ADJUSTMENT // Manual adjustment by admin
-}
+// Tables owned and managed by discovery-service
+// These tables are in the shared hmm_user database but owned by discovery-service
 
 // Gender filter preference for users
 // Note: Gender enum is defined in user-service schema and shared via same database
@@ -158,4 +126,66 @@ model SquadLobby {
   @@index([inviterId])
   @@index([status])
   @@map("squad_lobbies")
+}
+
+// Broadcast view history (replaces RaincheckSession hack for broadcasts)
+model BroadcastViewHistory {
+  id        String   @id @default(cuid())
+  userId    String   // User who viewed
+  roomId    String   // Broadcast room ID
+  viewedAt  DateTime @default(now())
+  duration  Int?     // Viewing duration in seconds (optional)
+  deviceId  String?  // For cross-device sync (optional)
+  
+  @@index([userId])
+  @@index([roomId])
+  @@index([userId, roomId])
+  @@index([viewedAt])
+  @@map("broadcast_view_history")
+}
+
+// Broadcast engagement - Comments
+model BroadcastComment {
+  id        String   @id @default(cuid())
+  roomId    String   // Broadcast room ID
+  userId    String   // User who commented
+  comment   String   // Comment text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime? // Soft delete
+  
+  @@index([roomId])
+  @@index([userId])
+  @@index([createdAt])
+  @@map("broadcast_comments")
+}
+
+// Broadcast engagement - Shares
+model BroadcastShare {
+  id        String   @id @default(cuid())
+  roomId    String   // Broadcast room ID
+  userId    String   // User who shared
+  shareType String   @default("link") // link, social, etc.
+  createdAt DateTime @default(now())
+  
+  @@index([roomId])
+  @@index([userId])
+  @@index([createdAt])
+  @@map("broadcast_shares")
+}
+
+// Broadcast follows - Viewer follows broadcast participant
+model BroadcastFollow {
+  id              String   @id @default(cuid())
+  followerId      String   // User who is following (viewer)
+  followedUserId  String   // User being followed (broadcast participant)
+  roomId          String   // Broadcast room ID where the follow happened
+  createdAt       DateTime @default(now())
+  
+  @@unique([followerId, followedUserId, roomId]) // Prevent duplicate follows for same broadcast
+  @@index([followerId])
+  @@index([followedUserId])
+  @@index([roomId])
+  @@index([createdAt])
+  @@map("broadcast_follows")
 }

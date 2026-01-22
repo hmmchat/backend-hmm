@@ -6,7 +6,13 @@ import { FriendService } from "../services/friend.service.js";
 import { WalletClientService } from "../services/wallet-client.service.js";
 import { RedisService } from "../services/redis.service.js";
 import { MetricsService } from "../services/metrics.service.js";
+import { ConversationService } from "../services/conversation.service.js";
+import { GiftCatalogService } from "../services/gift-catalog.service.js";
+import { UserClientService } from "../services/user-client.service.js";
+import { StreamingClientService } from "../services/streaming-client.service.js";
+import { RateLimitGuard } from "../guards/rate-limit.guard.js";
 import { FriendController } from "../routes/friend.controller.js";
+import { HealthController } from "../routes/health.controller.js";
 import { CleanupTasksService } from "../services/cleanup-tasks.service.js";
 
 @Module({
@@ -14,13 +20,18 @@ import { CleanupTasksService } from "../services/cleanup-tasks.service.js";
     ConfigModule.forRoot(),
     ScheduleModule.forRoot() // Enable cron jobs
   ],
-  controllers: [FriendController],
+  controllers: [FriendController, HealthController],
   providers: [
     PrismaService,
     FriendService,
     WalletClientService,
     RedisService,
     MetricsService,
+    ConversationService,
+    GiftCatalogService,
+    UserClientService,
+    StreamingClientService,
+    RateLimitGuard,
     CleanupTasksService
   ]
 })

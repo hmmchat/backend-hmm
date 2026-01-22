@@ -49,19 +49,65 @@ model Friend {
   @@map("friends")
 }
 
+enum MessageType {
+  TEXT
+  GIFT
+  GIFT_WITH_MESSAGE
+}
+
 model FriendMessage {
-  id            String   @id @default(cuid())
+  id            String      @id @default(cuid())
   fromUserId    String
   toUserId      String
-  message       String
-  isRead        Boolean  @default(false)
+  message       String?     // Nullable for gift-only messages
+  isRead        Boolean     @default(false)
   readAt        DateTime?
-  transactionId String?  // Wallet transaction if sent to non-friend (10 coins)
-  createdAt     DateTime @default(now())
+  transactionId String?     // Wallet transaction if paid message
+  giftId        String?     // Gift sticker ID if sent with gift
+  giftAmount    Int?        // Coins value of gift
+  messageType   MessageType @default(TEXT) // TEXT, GIFT, GIFT_WITH_MESSAGE
+  createdAt     DateTime    @default(now())
   
   @@index([fromUserId, toUserId, createdAt])
   @@index([toUserId, isRead])
   @@index([createdAt])
   @@map("friend_messages")
+}
+
+enum ConversationSection {
+  INBOX
+  RECEIVED_REQUESTS
+  SENT_REQUESTS
+}
+
+model Conversation {
+  id              String              @id @default(cuid())
+  userId1         String              // Smaller userId (sorted)
+  userId2         String              // Larger userId
+  section         ConversationSection @default(INBOX)
+  lastMessageAt   DateTime            @default(now())
+  lastMessageId   String?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  
+  @@unique([userId1, userId2])
+  @@index([userId1, section, lastMessageAt])
+  @@index([userId2, section, lastMessageAt])
+  @@map("conversations")
+}
+
+model Gift {
+  id            String   @id @default(cuid())
+  giftId       String   @unique // e.g., "monkey", "pikachu"
+  name          String   // Display name
+  emoji         String   // Emoji representation
+  coins         Int      // Cost in coins
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  @@index([giftId])
+  @@index([isActive])
+  @@map("gifts")
 }
 

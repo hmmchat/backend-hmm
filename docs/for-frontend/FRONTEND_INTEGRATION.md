@@ -1020,9 +1020,59 @@ GET /users/{userId}?fields=username,photos,brandPreferences
 
 ## Friends & Messaging
 
+The messaging system is organized into **conversations** with three sections: **INBOX**, **RECEIVED_REQUESTS**, and **SENT_REQUESTS**. Messages can include text, gifts, or both.
+
+### 📋 Conversation Sections Overview
+
+**INBOX:**
+- Contains conversations with **friends** (unlimited free messaging)
+- Contains **two-sided conversations** (both users have sent messages, even if not friends)
+- Messages are **free** for friends
+- Auto-promoted when both users send messages
+
+**RECEIVED_REQUESTS:**
+- Contains conversations where **you received** a message/request
+- First message from them is free (they paid)
+- Your first reply is **free**
+- Subsequent messages from you require a **gift**
+
+**SENT_REQUESTS:**
+- Contains conversations where **you sent** a message/request
+- Your first message costs **10 coins** (or gift amount)
+- They can reply for **free** (first message back)
+- Subsequent text-only messages from you are **not allowed** (must send gift)
+
+### 💰 Message Cost Rules
+
+**Friends (INBOX):**
+- ✅ Text messages: **FREE** (unlimited)
+- ✅ Gifts: Cost coins (transferred to recipient)
+- ✅ Gift + message: Cost coins (gift transferred)
+
+**Non-Friends (SENT_REQUESTS or RECEIVED_REQUESTS):**
+
+**First Message:**
+- Text only: **10 coins** (FIRST_MESSAGE_COST_COINS)
+- Gift only: Gift amount in coins
+- Gift + message: Gift amount in coins
+
+**Subsequent Messages:**
+- ❌ Text only: **NOT ALLOWED** (must send gift)
+- ✅ Gift only: Gift amount in coins
+- ✅ Gift + message: Gift amount in coins
+
+**Recipient's First Reply:**
+- ✅ **FREE** (they didn't initiate)
+
+---
+
 ### 1. Send Friend Request
 
-**Endpoint:** `POST /me/friends/requests`
+**Endpoint:** `POST /me/friends/offline-cards/request`
+
+**Note:** Friend requests can be sent from:
+- Offline cards section (this endpoint)
+- Video calls (via WebSocket, handled by streaming-service)
 
 **Request:**
 ```json
@@ -1034,15 +1084,15 @@ GET /users/{userId}?fields=username,photos,brandPreferences
 **Response:**
 ```json
 {
-  "id": "string",
-  "fromUserId": "string",
-  "toUserId": "string",
-  "status": "PENDING",
-  "createdAt": "string"
+  "ok": true,
+  "requestId": "string",
+  "autoAccepted": false  // true if mutual request (both users sent)
 }
 ```
 
-### 2. Get Pending Friend Requests
+**Use Case:** Send friend request when viewing offline cards.
+
+### 2. Get Pending Friend Requests (Incoming)
 
 **Endpoint:** `GET /me/friends/requests/pending`
 
@@ -1053,23 +1103,32 @@ GET /users/{userId}?fields=username,photos,brandPreferences
     {
       "id": "string",
       "fromUserId": "string",
-      "fromUser": {
-        "id": "string",
-        "username": "string",
-        "displayPictureUrl": "string"
-      },
-      "status": "PENDING",
-      "createdAt": "string"
+      "message": "string | null",
+      "createdAt": "string",
+      "expiresAt": "string"
     }
   ]
 }
 ```
 
-### 3. Get Sent Friend Requests
+### 3. Get Sent Friend Requests (Outgoing)
 
 **Endpoint:** `GET /me/friends/requests/sent`
 
-**Response:** Same format as pending requests
+**Response:**
+```json
+{
+  "requests": [
+    {
+      "id": "string",
+      "toUserId": "string",
+      "message": "string | null",
+      "createdAt": "string",
+      "expiresAt": "string"
+    }
+  ]
+}
+```
 
 ### 4. Accept Friend Request
 
@@ -1078,16 +1137,11 @@ GET /users/{userId}?fields=username,photos,brandPreferences
 **Response:**
 ```json
 {
-  "success": true,
-  "friendship": {
-    "id": "string",
-    "user1Id": "string",
-    "user2Id": "string",
-    "status": "FRIENDS",
-    "createdAt": "string"
-  }
+  "ok": true
 }
 ```
+
+**Note:** Conversation automatically moves to INBOX when accepted.
 
 ### 5. Reject Friend Request
 
@@ -1096,63 +1150,182 @@ GET /users/{userId}?fields=username,photos,brandPreferences
 **Response:**
 ```json
 {
-  "success": true
+  "ok": true
 }
 ```
 
 ### 6. Get Friends List
 
-**Endpoint:** `GET /me/friends`
+**Endpoint:** `GET /me/friends?limit=50&cursor=xxx`
+
+**Query Parameters:**
+- `limit` (optional): Number of friends (default 50, max 100)
+- `cursor` (optional): Pagination cursor
 
 **Response:**
 ```json
 {
   "friends": [
     {
-      "id": "string",
-      "userId": "string",
-      "user": {
-        "id": "string",
-        "username": "string",
-        "displayPictureUrl": "string"
-      },
-      "status": "FRIENDS",
+      "friendId": "string",
       "createdAt": "string"
     }
-  ]
+  ],
+  "nextCursor": "string | undefined",
+  "hasMore": false
 }
 ```
 
-### 7. Send Message to Friend
+---
+
+### 7. Get Inbox Conversations
+
+**Endpoint:** `GET /me/conversations/inbox?limit=50&cursor=xxx`
+
+**Query Parameters:**
+- `limit` (optional): Number of conversations (default 50, max 100)
+- `cursor` (optional): Pagination cursor
+
+**Response:**
+```json
+{
+  "conversations": [
+    {
+      "id": "string",
+      "otherUserId": "string",
+      "section": "INBOX",
+      "isFriend": true,
+      "unreadCount": 2,
+      "userStatus": "online" | "offline" | "broadcasting",
+      "isBroadcasting": false,
+      "broadcastRoomId": "string | null",
+      "broadcastUrl": "string | null",
+      "lastMessage": {
+        "id": "string",
+        "fromUserId": "string",
+        "message": "string | null",
+        "messageType": "TEXT" | "GIFT" | "GIFT_WITH_MESSAGE",
+        "giftId": "string | null",
+        "giftAmount": "number | null",
+        "createdAt": "string"
+      },
+      "lastMessageAt": "string",
+      "createdAt": "string"
+    }
+  ],
+  "nextCursor": "string | undefined",
+  "hasMore": false
+}
+```
+
+**Use Case:** Display main inbox with friends and two-sided conversations.
+
+### 8. Get Received Requests Conversations
+
+**Endpoint:** `GET /me/conversations/received-requests?limit=50&cursor=xxx`
+
+**Response:** Same format as inbox conversations, but `section: "RECEIVED_REQUESTS"`
+
+**Use Case:** Display conversations where someone messaged you.
+
+### 9. Get Sent Requests Conversations
+
+**Endpoint:** `GET /me/conversations/sent-requests?limit=50&cursor=xxx`
+
+**Response:** Same format as inbox conversations, but `section: "SENT_REQUESTS"`
+
+**Use Case:** Display conversations where you messaged someone.
+
+---
+
+### 10. Send Message to Friend (Free)
 
 **Endpoint:** `POST /me/friends/:friendId/messages`
 
 **Request:**
 ```json
 {
-  "message": "Hello!"
+  "message": "Hello!" | null,  // Optional if sending gift
+  "giftId": "string",  // Optional
+  "giftAmount": 100  // Required if giftId provided
 }
 ```
 
 **Response:**
 ```json
 {
-  "id": "string",
-  "userId": "string",
-  "friendId": "string",
-  "message": "Hello!",
-  "read": false,
-  "timestamp": "string"
+  "messageId": "string",
+  "newBalance": 900  // Updated balance if gift sent
 }
 ```
 
-### 8. Get Messages with Friend
+**Note:** 
+- Text messages are **FREE** for friends
+- Gifts cost coins (transferred to friend)
+- Either `message` or `giftId` must be provided
 
-**Endpoint:** `GET /me/friends/:friendId/messages`
+### 11. Send Message to Non-Friend (Costs Coins)
+
+**Endpoint:** `POST /me/friends/requests/:requestId/messages`
+
+**Request:**
+```json
+{
+  "message": "Hello!" | null,  // Optional if sending gift
+  "giftId": "string",  // Optional
+  "giftAmount": 100  // Required if giftId provided
+}
+```
+
+**Response:**
+```json
+{
+  "messageId": "string",
+  "newBalance": 890,  // Updated balance
+  "promotedToInbox": false  // true if conversation moved to INBOX
+}
+```
+
+**Cost Rules:**
+- **First message:** 10 coins (text only) OR gift amount
+- **Subsequent messages:** Gift required (text-only not allowed)
+- **Recipient's first reply:** FREE
+
+**Note:** Conversation automatically moves to INBOX when both users send messages.
+
+### 12. Send Message via Conversation ID (Unified)
+
+**Endpoint:** `POST /me/conversations/:conversationId/messages`
+
+**Request:**
+```json
+{
+  "message": "Hello!" | null,
+  "giftId": "string",
+  "giftAmount": 100
+}
+```
+
+**Response:**
+```json
+{
+  "messageId": "string",
+  "newBalance": 900,
+  "promotedToInbox": false
+}
+```
+
+**Use Case:** Unified endpoint that automatically routes to friend or non-friend messaging based on conversation.
+
+---
+
+### 13. Get Messages for a Conversation
+
+**Endpoint:** `GET /me/conversations/:conversationId/messages?limit=50&cursor=xxx`
 
 **Query Parameters:**
-- `limit` (optional): Number of messages (default 50)
-- `before` (optional): Get messages before this timestamp
+- `limit` (optional): Number of messages (default 50, max 100)
+- `cursor` (optional): Pagination cursor
 
 **Response:**
 ```json
@@ -1160,45 +1333,157 @@ GET /users/{userId}?fields=username,photos,brandPreferences
   "messages": [
     {
       "id": "string",
-      "userId": "string",
-      "message": "string",
-      "read": false,
-      "timestamp": "string"
+      "fromUserId": "string",
+      "toUserId": "string",
+      "message": "string | null",
+      "isRead": false,
+      "readAt": "string | null",
+      "transactionId": "string | null",  // Shows if message cost coins
+      "giftId": "string | null",
+      "giftAmount": "number | null",
+      "messageType": "TEXT" | "GIFT" | "GIFT_WITH_MESSAGE",
+      "createdAt": "string"
     }
-  ]
+  ],
+  "nextCursor": "string | undefined",
+  "hasMore": false
 }
 ```
 
-### 9. Mark Messages as Read
+### 14. Get Messages with Friend (Legacy)
+
+**Endpoint:** `GET /me/friends/:friendId/messages?limit=50&cursor=xxx`
+
+**Response:** Same format as conversation messages
+
+### 15. Get Messages for Pending Request
+
+**Endpoint:** `GET /me/friends/requests/:requestId/messages`
+
+**Response:** Same format as conversation messages
+
+**Use Case:** View messages in a pending friend request conversation.
+
+---
+
+### 16. Mark Messages as Read
 
 **Endpoint:** `POST /me/friends/:friendId/messages/read`
 
-**Request:**
+**Response:**
 ```json
 {
-  "messageIds": ["message-id-1", "message-id-2"]  // Optional, marks all if not provided
+  "ok": true
 }
 ```
 
-### 10. Unfriend
+**Note:** Marks all unread messages from that friend as read.
+
+---
+
+### 17. Unfriend
 
 **Endpoint:** `POST /me/friends/:friendId/unfriend`
 
 **Response:**
 ```json
 {
-  "success": true
+  "ok": true
 }
 ```
 
-### 11. Block User
+**Note:** Conversation remains in INBOX but `isFriend` becomes `false`.
+
+### 18. Block User
 
 **Endpoint:** `POST /me/friends/:friendId/block`
 
 **Response:**
 ```json
 {
-  "success": true
+  "ok": true
+}
+```
+
+**Note:** Blocks user, removes friendship, and prevents messaging.
+
+---
+
+### 🔄 Conversation Promotion Flow
+
+Conversations automatically move between sections:
+
+```
+SENT_REQUESTS → INBOX (when recipient replies)
+RECEIVED_REQUESTS → INBOX (when you reply)
+Any section → INBOX (when friendship is accepted)
+```
+
+**Promotion triggers:**
+1. Both users send messages → Two-sided conversation → INBOX
+2. Friend request accepted → INBOX
+3. Mutual friend requests → Auto-accepted → INBOX
+
+---
+
+### 📱 Frontend Implementation Tips
+
+**1. Display Conversations by Section:**
+```javascript
+// Get all three sections
+const [inbox, received, sent] = await Promise.all([
+  fetch('/me/conversations/inbox'),
+  fetch('/me/conversations/received-requests'),
+  fetch('/me/conversations/sent-requests')
+]);
+```
+
+**2. Check Message Cost Before Sending:**
+```javascript
+// Check if user is friend
+if (conversation.isFriend) {
+  // Free messaging
+} else if (conversation.section === 'SENT_REQUESTS') {
+  // Check if first message or need gift
+  const messageCount = await getMessageCount(conversationId);
+  if (messageCount > 0 && !giftId) {
+    // Show error: "Subsequent messages require a gift"
+  }
+}
+```
+
+**3. Handle Conversation Promotion:**
+```javascript
+// After sending message, check if promoted
+const response = await sendMessage(conversationId, message);
+if (response.promotedToInbox) {
+  // Move conversation to INBOX tab
+  // Show notification: "Conversation moved to inbox"
+}
+```
+
+**4. Display User Status:**
+```javascript
+// Show broadcast indicator
+if (conversation.isBroadcasting) {
+  // Show "Live" badge
+  // Link to broadcast: conversation.broadcastUrl
+}
+```
+
+**5. Message Types:**
+```javascript
+// Handle different message types
+switch (message.messageType) {
+  case 'TEXT':
+    // Display text only
+    break;
+  case 'GIFT':
+    // Display gift animation
+    break;
+  case 'GIFT_WITH_MESSAGE':
+    // Display gift + text
+    break;
 }
 ```
 
@@ -1608,6 +1893,18 @@ const retryRequest = async (fn, retries = 3) => {
 - Cache frequently accessed data
 - Lazy load non-critical data
 
+### 6. Conversation Management
+
+- **Load all three sections** on app start (INBOX, RECEIVED_REQUESTS, SENT_REQUESTS)
+- **Handle conversation promotion** - Move conversations between tabs when `promotedToInbox: true`
+- **Check message costs** before sending:
+  - Friends: Always free
+  - Non-friends: First message costs 10 coins, subsequent require gift
+- **Display user status** - Show online/offline/broadcasting indicators
+- **Handle broadcast links** - Use `broadcastUrl` for deep linking to live broadcasts
+- **Update unread counts** - Refresh after marking messages as read
+- **Validate gift requirements** - Show error if trying to send text-only to non-friend after first message
+
 ---
 
 ## Complete User Flows
@@ -1649,6 +1946,68 @@ const retryRequest = async (fn, retries = 3) => {
 3. **Complete Payment** → Use Razorpay SDK on frontend
 4. **Verify Purchase** → `POST /v1/payments/purchase/verify`
 5. **Update Balance** → Refresh balance display
+
+### Flow 5: Messaging & Conversations
+
+#### 5a. Send First Message to Non-Friend
+
+1. **View Offline Card** → `GET /discovery/offline-cards/card`
+2. **Send Friend Request** → `POST /me/friends/offline-cards/request` with `{ toUserId }`
+3. **Get Request ID** → From response or `GET /me/friends/requests/sent`
+4. **Check Balance** → `GET /me/balance` (need 10 coins minimum)
+5. **Send First Message** → `POST /me/friends/requests/:requestId/messages` with `{ message: "Hello!" }`
+   - Costs **10 coins** (or send gift instead)
+6. **Conversation Created** → Appears in **SENT_REQUESTS** section
+7. **If Recipient Replies** → Conversation moves to **INBOX** automatically
+
+#### 5b. Reply to Received Message
+
+1. **Get Received Requests** → `GET /me/conversations/received-requests`
+2. **View Conversation** → `GET /me/conversations/:conversationId/messages`
+3. **Send Reply** → `POST /me/conversations/:conversationId/messages` with `{ message: "Hi!" }`
+   - **FREE** (first reply is free)
+4. **Conversation Promoted** → Moves to **INBOX** (two-sided conversation)
+
+#### 5c. Message a Friend (Free)
+
+1. **Get Inbox** → `GET /me/conversations/inbox`
+2. **Select Friend** → Find conversation with `isFriend: true`
+3. **Send Message** → `POST /me/friends/:friendId/messages` with `{ message: "Hey!" }`
+   - **FREE** (unlimited free messaging)
+4. **Or Send Gift** → `POST /me/friends/:friendId/messages` with `{ giftId, giftAmount }`
+   - Costs coins (transferred to friend)
+
+#### 5d. Send Gift to Non-Friend
+
+1. **Get Sent Requests** → `GET /me/conversations/sent-requests`
+2. **Select Conversation** → Find conversation with non-friend
+3. **Check Balance** → `GET /me/balance`
+4. **Send Gift** → `POST /me/conversations/:conversationId/messages` with `{ giftId, giftAmount, message: "Optional message" }`
+   - Costs gift amount in coins
+   - Text-only messages not allowed after first message
+
+#### 5e. Accept Friend Request & Message
+
+1. **Get Pending Requests** → `GET /me/friends/requests/pending`
+2. **View Request Messages** → `GET /me/friends/requests/:requestId/messages`
+3. **Accept Request** → `POST /me/friends/requests/:requestId/accept`
+4. **Conversation Moved** → Automatically moves to **INBOX**
+5. **Message Freely** → `POST /me/friends/:friendId/messages` (all messages free)
+
+### Flow 6: View Conversations by Section
+
+1. **Get All Sections** → Load three tabs:
+   - `GET /me/conversations/inbox`
+   - `GET /me/conversations/received-requests`
+   - `GET /me/conversations/sent-requests`
+2. **Display Conversations** → Show with:
+   - Last message preview
+   - Unread count badge
+   - User status (online/offline/broadcasting)
+   - Broadcast indicator (if live)
+3. **Open Conversation** → `GET /me/conversations/:conversationId/messages`
+4. **Send Message** → `POST /me/conversations/:conversationId/messages`
+5. **Check Promotion** → If `promotedToInbox: true`, move to INBOX tab
 
 ---
 

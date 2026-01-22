@@ -1,0 +1,57 @@
+# Multi-stage build for api-gateway
+FROM node:22-alpine AS base
+
+# Install dependencies only when needed
+FROM base AS deps
+WORKDIR /app
+
+# Copy workspace configuration
+COPY package.json package-lock.json* ./
+COPY packages/*/package.json ./packages/
+COPY apps/*/package.json ./apps/
+
+# Install dependencies
+RUN npm ci
+
+# Build stage
+FROM base AS builder
+WORKDIR /app
+
+# Copy dependencies
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/packages ./packages
+
+# Copy source code
+COPY tsconfig.base.json ./
+COPY apps/api-gateway ./apps/api-gateway
+COPY packages ./packages
+
+# Build the service
+WORKDIR /app/apps/api-gateway
+RUN npm run build
+
+# Production stage
+FROM base AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+
+# Copy built application
+COPY --from=builder /app/apps/api-gateway/dist ./dist
+COPY --from=builder /app/apps/api-gateway/package.json ./
+
+# Copy shared packages
+COPY --from=builder /app/packages ./packages
+
+# Install production dependencies only
+RUN npm ci --omit=dev && npm cache clean --force
+
+# Expose port
+EXPOSE 3000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+
+# Run the service
+CMD ["node", "dist/main.js"]

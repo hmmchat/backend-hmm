@@ -3,21 +3,31 @@ import { PrismaService } from "../prisma/prisma.service.js";
 import { WalletClientService } from "./wallet-client.service.js";
 import { RedisService } from "./redis.service.js";
 import { MetricsService } from "./metrics.service.js";
+import { ConversationService } from "./conversation.service.js";
+import { GiftCatalogService } from "./gift-catalog.service.js";
+import { UserClientService } from "./user-client.service.js";
+import { MessageType, ConversationSection } from "@prisma/client";
+import * as crypto from "crypto";
 
 @Injectable()
 export class FriendService {
   private readonly logger = new Logger(FriendService.name);
   private readonly REQUEST_EXPIRY_DAYS = parseInt(process.env.REQUEST_EXPIRY_DAYS || "30", 10);
-  private readonly MESSAGE_COST_COINS = parseInt(
-    process.env.MESSAGE_COST_COINS || "10",
+  private readonly FIRST_MESSAGE_COST_COINS = parseInt(
+    process.env.FIRST_MESSAGE_COST_COINS || "10",
     10
   );
+  private readonly MAX_MESSAGE_LENGTH = 1000;
+  private readonly SPAM_DETECTION_WINDOW = 60; // seconds
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly walletClient: WalletClientService,
     private readonly redis: RedisService,
-    private readonly metrics: MetricsService
+    private readonly metrics: MetricsService,
+    private readonly conversationService: ConversationService,
+    private readonly giftCatalog: GiftCatalogService,
+    private readonly userClient: UserClientService
   ) {}
 
 
@@ -136,6 +146,20 @@ export class FriendService {
         update: {} // No update needed if exists
       });
 
+      // Move conversation to inbox if it exists
+      await tx.conversation.updateMany({
+        where: {
+          userId1: id1,
+          userId2: id2,
+          section: {
+            in: [ConversationSection.RECEIVED_REQUESTS, ConversationSection.SENT_REQUESTS]
+          }
+        },
+        data: {
+          section: ConversationSection.INBOX
+        }
+      });
+
       this.logger.log(`Mutual friend request auto-accepted between ${newFromUserId} and ${newToUserId}`);
       this.metrics.incrementFriendRequestSent(true);
       this.metrics.incrementFriendshipCreated();
@@ -187,6 +211,21 @@ export class FriendService {
 
     // Create friendship
     await this.createFriendship(request.fromUserId, request.toUserId);
+
+    // Move conversation to inbox if it exists
+    const [id1, id2] = [request.fromUserId, request.toUserId].sort();
+    await this.prisma.conversation.updateMany({
+      where: {
+        userId1: id1,
+        userId2: id2,
+        section: {
+          in: [ConversationSection.RECEIVED_REQUESTS, ConversationSection.SENT_REQUESTS]
+        }
+      },
+      data: {
+        section: ConversationSection.INBOX
+      }
+    });
 
     this.metrics.incrementFriendRequestAccepted();
     this.metrics.incrementFriendshipCreated();
@@ -371,25 +410,137 @@ export class FriendService {
       isRead: msg.isRead,
       readAt: msg.readAt,
       transactionId: msg.transactionId,
+      giftId: msg.giftId,
+      giftAmount: msg.giftAmount,
+      messageType: msg.messageType,
       createdAt: msg.createdAt
     }));
   }
 
   /**
-   * Send message to non-friend (costs 10 coins per message - unlimited messages)
-   * This is a revenue source - users can send as many messages as they want
+   * Check if user is blocked
+   */
+  private async isBlocked(blockerId: string, blockedId: string): Promise<boolean> {
+    const blockedRequest = await this.prisma.friendRequest.findFirst({
+      where: {
+        OR: [
+          { fromUserId: blockerId, toUserId: blockedId, status: "BLOCKED" },
+          { fromUserId: blockedId, toUserId: blockerId, status: "BLOCKED" }
+        ]
+      }
+    });
+
+    return blockedRequest !== null;
+  }
+
+  /**
+   * Check for spam (duplicate message within time window)
+   */
+  private async isSpam(fromUserId: string, toUserId: string, message: string | null): Promise<boolean> {
+    if (!message || message.trim().length === 0) {
+      return false; // Empty messages can't be spam
+    }
+
+    const trimmedMessage = message.trim();
+    
+    // Create hash of message content
+    const messageHash = crypto.createHash("sha256").update(trimmedMessage.toLowerCase()).digest("hex");
+    const spamKey = `spam:${fromUserId}:${toUserId}:${messageHash}`;
+
+    if (!this.redis.isAvailable()) {
+      // If Redis unavailable, check database for recent duplicate
+      const recentMessage = await this.prisma.friendMessage.findFirst({
+        where: {
+          fromUserId,
+          toUserId,
+          message: {
+            equals: trimmedMessage,
+            mode: "insensitive"
+          },
+          createdAt: {
+            gte: new Date(Date.now() - this.SPAM_DETECTION_WINDOW * 1000)
+          }
+        }
+      });
+
+      return recentMessage !== null;
+    }
+
+    // Check Redis for spam
+    const exists = await this.redis.get(spamKey);
+    if (exists) {
+      return true;
+    }
+
+    // Set spam key with window TTL
+    await this.redis.set(spamKey, "1", this.SPAM_DETECTION_WINDOW);
+    return false;
+  }
+
+  /**
+   * Get message count in conversation (for determining first message)
+   */
+  private async getMessageCountInConversation(fromUserId: string, toUserId: string): Promise<number> {
+    return await this.prisma.friendMessage.count({
+      where: {
+        OR: [
+          { fromUserId, toUserId },
+          { fromUserId: toUserId, toUserId: fromUserId }
+        ]
+      }
+    });
+  }
+
+  /**
+   * Send message to non-friend with new monetization rules
+   * CRITICAL: Uses transaction atomicity to prevent coin loss
    */
   async sendMessageToNonFriend(
     fromUserId: string,
     toUserId: string,
-    message: string,
-    requestId: string // Friend request ID
-  ): Promise<{ messageId: string; newBalance: number }> {
+    message: string | null,
+    requestId: string, // Friend request ID
+    giftId?: string,
+    giftAmount?: number
+  ): Promise<{ messageId: string; newBalance?: number; promotedToInbox?: boolean }> {
     if (fromUserId === toUserId) {
       throw new BadRequestException("Cannot send message to yourself");
     }
 
-    // Verify request exists and is pending
+    // CRITICAL: Validate user account status
+    const [senderActive, recipientActive] = await Promise.all([
+      this.userClient.isAccountActive(fromUserId),
+      this.userClient.isAccountActive(toUserId)
+    ]);
+
+    if (!senderActive) {
+      throw new BadRequestException("Your account is not active. Please contact support.");
+    }
+
+    if (!recipientActive) {
+      throw new BadRequestException("Recipient account is not active");
+    }
+
+    // CRITICAL: Check if blocked
+    const isUserBlocked = await this.isBlocked(fromUserId, toUserId);
+    if (isUserBlocked) {
+      throw new BadRequestException("You cannot message this user");
+    }
+
+    // Validate message length
+    if (message && message.length > this.MAX_MESSAGE_LENGTH) {
+      throw new BadRequestException(`Message exceeds maximum length of ${this.MAX_MESSAGE_LENGTH} characters`);
+    }
+
+    // CRITICAL: Check for spam (only for text messages)
+    if (message) {
+      const isSpamMessage = await this.isSpam(fromUserId, toUserId, message);
+      if (isSpamMessage) {
+        throw new BadRequestException("Duplicate message detected. Please wait before sending the same message again.");
+      }
+    }
+
+    // Verify request exists
     const request = await this.prisma.friendRequest.findUnique({
       where: { id: requestId }
     });
@@ -406,72 +557,206 @@ export class FriendService {
       throw new BadRequestException("Can only send messages to pending requests");
     }
 
-    // Deduct coins from wallet and create message
-    // If message creation fails, we can't rollback wallet transaction,
-    // but we log it for manual reconciliation
-    let transactionId: string | undefined;
-    let newBalance: number;
+    // Get message count to determine if first message (before transaction)
+    const messageCount = await this.getMessageCountInConversation(fromUserId, toUserId);
+    const isFirstMessage = messageCount === 0;
 
-    try {
-      // Step 1: Deduct coins from wallet
-      const result = await this.walletClient.deductCoins(
-        fromUserId,
-        this.MESSAGE_COST_COINS,
-        `Message to non-friend: ${toUserId}`
+    // Determine message type
+    let messageType: MessageType = MessageType.TEXT;
+    if (giftId && !message) {
+      messageType = MessageType.GIFT;
+    } else if (giftId && message) {
+      messageType = MessageType.GIFT_WITH_MESSAGE;
+    }
+
+    // CRITICAL: Validate gift if provided
+    if (giftId) {
+      if (!giftAmount) {
+        throw new BadRequestException("Gift amount is required when sending a gift");
+      }
+      await this.giftCatalog.validateGift(giftId, giftAmount);
+    }
+
+    // Determine if we need to charge for message
+    const needsPayment = !giftId && isFirstMessage;
+    const cost = needsPayment ? this.FIRST_MESSAGE_COST_COINS : 0;
+
+    // Check if subsequent message without gift (not allowed)
+    if (!isFirstMessage && !giftId && message) {
+      throw new BadRequestException(
+        "Subsequent messages require a gift. Please send a gift with your message."
       );
-      transactionId = result.transactionId;
-      newBalance = result.newBalance;
+    }
+
+    // CRITICAL: Use transaction to ensure atomicity
+    return await this.prisma.$transaction(async (tx) => {
+      let transactionId: string | undefined;
+      let newBalance: number | undefined;
+
+      // Step 1: Deduct coins if needed (for first message or gift)
+      if (cost > 0) {
+        const result = await this.walletClient.deductCoins(
+          fromUserId,
+          cost,
+          `First message to non-friend: ${toUserId}`
+        );
+        transactionId = result.transactionId;
+        newBalance = result.newBalance;
+      } else if (giftId && giftAmount) {
+        // Transfer coins for gift
+        const result = await this.walletClient.transferCoins(
+          fromUserId,
+          toUserId,
+          giftAmount,
+          `Gift to user ${toUserId}`,
+          giftId
+        );
+        transactionId = result.transactionId;
+        newBalance = result.newBalance;
+      }
 
       // Step 2: Create message in database
-      // If this fails, we've already deducted coins, so we log for reconciliation
-      const friendMessage = await this.prisma.friendMessage.create({
+      const friendMessage = await tx.friendMessage.create({
         data: {
           fromUserId,
           toUserId,
-          message,
-          transactionId
+          message: message || null,
+          transactionId,
+          giftId: giftId || null,
+          giftAmount: giftAmount || null,
+          messageType
         }
       });
+
+      // Step 3: Check friendship within transaction
+      const [id1, id2] = [fromUserId, toUserId].sort();
+      const friendship = await tx.friend.findUnique({
+        where: {
+          userId1_userId2: {
+            userId1: id1,
+            userId2: id2
+          }
+        }
+      });
+      const areFriends = friendship !== null;
+
+      // Step 4: Determine section (after message is created)
+      // Section is stored from userId1's perspective (smaller ID)
+      // Check if both users have sent messages (including the one just created)
+      const messagesFromOtherUser = await tx.friendMessage.findFirst({
+        where: {
+          fromUserId: toUserId,
+          toUserId: fromUserId,
+          id: { not: friendMessage.id } // Exclude the message we just created
+        }
+      });
+
+      let newSection: ConversationSection = ConversationSection.INBOX;
+      if (!areFriends) {
+        const hasMessagesFromOtherUser = messagesFromOtherUser !== null;
+
+        if (hasMessagesFromOtherUser) {
+          // Both users have messages = two-sided = INBOX
+          newSection = ConversationSection.INBOX;
+        } else {
+          // Determine section from userId1's perspective
+          const [id1, _id2] = [fromUserId, toUserId].sort();
+          
+          if (fromUserId === id1) {
+            // fromUserId is userId1, they sent message = SENT_REQUESTS from their perspective
+            newSection = ConversationSection.SENT_REQUESTS;
+          } else {
+            // fromUserId is userId2, they sent message = RECEIVED_REQUESTS from userId1's perspective
+            // (because userId1 received it)
+            newSection = ConversationSection.RECEIVED_REQUESTS;
+          }
+        }
+      }
+
+      // Step 5: Update conversation within transaction
+      const [convId1, convId2] = [fromUserId, toUserId].sort();
+      await tx.conversation.upsert({
+        where: {
+          userId1_userId2: {
+            userId1: convId1,
+            userId2: convId2
+          }
+        },
+        create: {
+          userId1: convId1,
+          userId2: convId2,
+          section: newSection,
+          lastMessageId: friendMessage.id,
+          lastMessageAt: new Date()
+        },
+        update: {
+          section: newSection,
+          lastMessageId: friendMessage.id,
+          lastMessageAt: new Date()
+        }
+      });
+
+      // Step 6: Check if conversation was promoted to inbox
+      // Get existing conversation section before update
+      const existingConv = await tx.conversation.findUnique({
+        where: {
+          userId1_userId2: {
+            userId1: convId1,
+            userId2: convId2
+          }
+        }
+      });
+      const wasPromoted = existingConv && 
+                         existingConv.section !== ConversationSection.INBOX && 
+                         newSection === ConversationSection.INBOX;
 
       this.metrics.incrementMessageSentToNonFriend();
       this.logger.log(
         `Message sent from ${fromUserId} to non-friend ${toUserId} ` +
-        `(cost: ${this.MESSAGE_COST_COINS} coins, balance: ${newBalance})`
+        `(type: ${messageType}, cost: ${cost || giftAmount || 0} coins)`
       );
 
-      return { messageId: friendMessage.id, newBalance };
-    } catch (error: any) {
-      // If wallet deduction succeeded but message creation failed,
-      // log for manual reconciliation (wallet-service should have transaction record)
-      if (transactionId) {
-        this.logger.error(
-          `CRITICAL: Wallet deduction succeeded (tx: ${transactionId}) but message creation failed. ` +
-          `User ${fromUserId} lost ${this.MESSAGE_COST_COINS} coins. Manual reconciliation required.`,
-          error
-        );
-      }
-
-      if (error.message?.includes("Insufficient balance") || error.message?.includes("Failed to deduct coins")) {
-        this.metrics.incrementWalletDeductionFailed();
-        throw new BadRequestException(
-          `Insufficient coins to send message. Required: ${this.MESSAGE_COST_COINS} coins`
-        );
-      }
-      this.metrics.incrementMessageSendFailed();
-      throw error;
-    }
+      return {
+        messageId: friendMessage.id,
+        newBalance,
+        promotedToInbox: wasPromoted || undefined
+      };
+    });
   }
 
   /**
    * Send message to friend (free - unlimited messages)
+   * Supports text, gift, or gift+message
    */
   async sendMessageToFriend(
     fromUserId: string,
     toUserId: string,
-    message: string
-  ): Promise<{ messageId: string }> {
+    message: string | null,
+    giftId?: string,
+    giftAmount?: number
+  ): Promise<{ messageId: string; newBalance?: number }> {
     if (fromUserId === toUserId) {
       throw new BadRequestException("Cannot send message to yourself");
+    }
+
+    // CRITICAL: Validate user account status
+    const [senderActive, recipientActive] = await Promise.all([
+      this.userClient.isAccountActive(fromUserId),
+      this.userClient.isAccountActive(toUserId)
+    ]);
+
+    if (!senderActive) {
+      throw new BadRequestException("Your account is not active. Please contact support.");
+    }
+
+    if (!recipientActive) {
+      throw new BadRequestException("Recipient account is not active");
+    }
+
+    // CRITICAL: Check if blocked
+    const isUserBlocked = await this.isBlocked(fromUserId, toUserId);
+    if (isUserBlocked) {
+      throw new BadRequestException("You cannot message this user");
     }
 
     // Verify friendship
@@ -480,19 +765,92 @@ export class FriendService {
       throw new BadRequestException("Users are not friends");
     }
 
-    // Create message (persisted in database - no cost for friends)
-    const friendMessage = await this.prisma.friendMessage.create({
-      data: {
-        fromUserId,
-        toUserId,
-        message
-        // No transactionId - free for friends
-      }
-    });
+    // Validate message length
+    if (message && message.length > this.MAX_MESSAGE_LENGTH) {
+      throw new BadRequestException(`Message exceeds maximum length of ${this.MAX_MESSAGE_LENGTH} characters`);
+    }
 
-    this.metrics.incrementMessageSentToFriend();
-    this.logger.log(`Message sent from ${fromUserId} to friend ${toUserId} (free)`);
-    return { messageId: friendMessage.id };
+    // CRITICAL: Validate gift if provided
+    if (giftId) {
+      if (!giftAmount) {
+        throw new BadRequestException("Gift amount is required when sending a gift");
+      }
+      await this.giftCatalog.validateGift(giftId, giftAmount);
+    }
+
+    // Determine message type
+    let messageType: MessageType = MessageType.TEXT;
+    if (giftId && !message) {
+      messageType = MessageType.GIFT;
+    } else if (giftId && message) {
+      messageType = MessageType.GIFT_WITH_MESSAGE;
+    }
+
+    // Use transaction for atomicity
+    return await this.prisma.$transaction(async (tx) => {
+      let transactionId: string | undefined;
+      let newBalance: number | undefined;
+
+      // If gift is sent, transfer coins
+      if (giftId && giftAmount) {
+        const result = await this.walletClient.transferCoins(
+          fromUserId,
+          toUserId,
+          giftAmount,
+          `Gift to friend ${toUserId}`,
+          giftId
+        );
+        transactionId = result.transactionId;
+        newBalance = result.newBalance;
+      }
+
+      // Create message (free for friends, but gift costs coins)
+      const friendMessage = await tx.friendMessage.create({
+        data: {
+          fromUserId,
+          toUserId,
+          message: message || null,
+          transactionId,
+          giftId: giftId || null,
+          giftAmount: giftAmount || null,
+          messageType
+        }
+      });
+
+      // Update conversation within transaction (friends always in inbox)
+      const [convId1, convId2] = [fromUserId, toUserId].sort();
+      await tx.conversation.upsert({
+        where: {
+          userId1_userId2: {
+            userId1: convId1,
+            userId2: convId2
+          }
+        },
+        create: {
+          userId1: convId1,
+          userId2: convId2,
+          section: ConversationSection.INBOX,
+          lastMessageId: friendMessage.id,
+          lastMessageAt: new Date()
+        },
+        update: {
+          section: ConversationSection.INBOX,
+          lastMessageId: friendMessage.id,
+          lastMessageAt: new Date()
+        }
+      });
+
+      this.metrics.incrementMessageSentToFriend();
+      this.logger.log(
+        `Message sent from ${fromUserId} to friend ${toUserId} ` +
+        `(type: ${messageType}${giftAmount ? `, gift: ${giftAmount} coins` : ""})`
+      );
+
+      return {
+        messageId: friendMessage.id,
+        newBalance
+      };
+    });
   }
 
   /**
@@ -539,6 +897,9 @@ export class FriendService {
         isRead: msg.isRead,
         readAt: msg.readAt,
         transactionId: msg.transactionId, // Shows if message cost coins
+        giftId: msg.giftId,
+        giftAmount: msg.giftAmount,
+        messageType: msg.messageType,
         createdAt: msg.createdAt
       })),
       nextCursor,
@@ -684,6 +1045,21 @@ export class FriendService {
     // Directly create friendship without going through friend request flow
     await this.createFriendship(userId1, userId2);
     
+    // Move conversation to inbox if it exists
+    const [id1, id2] = [userId1, userId2].sort();
+    await this.prisma.conversation.updateMany({
+      where: {
+        userId1: id1,
+        userId2: id2,
+        section: {
+          in: [ConversationSection.RECEIVED_REQUESTS, ConversationSection.SENT_REQUESTS]
+        }
+      },
+      data: {
+        section: ConversationSection.INBOX
+      }
+    });
+    
     // Invalidate friendship cache
     await this.invalidateFriendshipCache(userId1, userId2);
     
@@ -729,6 +1105,191 @@ export class FriendService {
     });
 
     this.logger.log(`Cleaned up ${result.count} expired friend requests`);
+  }
+
+  /**
+   * Get inbox conversations
+   */
+  async getInboxConversations(
+    userId: string,
+    limit: number = 50,
+    cursor?: string
+  ): Promise<{
+    conversations: any[];
+    nextCursor?: string;
+    hasMore: boolean;
+  }> {
+    return await this.conversationService.getConversationsBySection(
+      userId,
+      ConversationSection.INBOX,
+      limit,
+      cursor
+    );
+  }
+
+  /**
+   * Get received requests conversations
+   */
+  async getReceivedRequestsConversations(
+    userId: string,
+    limit: number = 50,
+    cursor?: string
+  ): Promise<{
+    conversations: any[];
+    nextCursor?: string;
+    hasMore: boolean;
+  }> {
+    return await this.conversationService.getConversationsBySection(
+      userId,
+      ConversationSection.RECEIVED_REQUESTS,
+      limit,
+      cursor
+    );
+  }
+
+  /**
+   * Get sent requests conversations
+   */
+  async getSentRequestsConversations(
+    userId: string,
+    limit: number = 50,
+    cursor?: string
+  ): Promise<{
+    conversations: any[];
+    nextCursor?: string;
+    hasMore: boolean;
+  }> {
+    return await this.conversationService.getConversationsBySection(
+      userId,
+      ConversationSection.SENT_REQUESTS,
+      limit,
+      cursor
+    );
+  }
+
+  /**
+   * Send message to conversation (unified endpoint)
+   */
+  async sendMessageToConversation(
+    userId: string,
+    conversationId: string,
+    message: string | null,
+    giftId?: string,
+    giftAmount?: number
+  ): Promise<{ messageId: string; newBalance?: number; promotedToInbox?: boolean }> {
+    // Get conversation
+    const conversation = await this.prisma.conversation.findUnique({
+      where: { id: conversationId }
+    });
+
+    if (!conversation) {
+      throw new NotFoundException("Conversation not found");
+    }
+
+    // Determine other user
+    const otherUserId = conversation.userId1 === userId ? conversation.userId2 : conversation.userId1;
+
+    // Check if friends
+    const areFriends = await this.areFriends(userId, otherUserId);
+
+    if (areFriends) {
+      return await this.sendMessageToFriend(userId, otherUserId, message, giftId, giftAmount);
+    } else {
+      // Find friend request
+      const request = await this.prisma.friendRequest.findFirst({
+        where: {
+          OR: [
+            { fromUserId: userId, toUserId: otherUserId, status: "PENDING" },
+            { fromUserId: otherUserId, toUserId: userId, status: "PENDING" }
+          ]
+        }
+      });
+
+      if (!request) {
+        throw new NotFoundException("Friend request not found for this conversation");
+      }
+
+      // Determine which user is sender
+      if (request.fromUserId === userId) {
+        return await this.sendMessageToNonFriend(
+          userId,
+          otherUserId,
+          message,
+          request.id,
+          giftId,
+          giftAmount
+        );
+      } else {
+        // Reverse the request direction for the API
+        const reverseRequest = await this.prisma.friendRequest.findFirst({
+          where: {
+            fromUserId: userId,
+            toUserId: otherUserId,
+            status: "PENDING"
+          }
+        });
+
+        if (!reverseRequest) {
+          // Create a pending request if it doesn't exist
+          const newRequest = await this.prisma.friendRequest.create({
+            data: {
+              fromUserId: userId,
+              toUserId: otherUserId,
+              status: "PENDING"
+            }
+          });
+          return await this.sendMessageToNonFriend(
+            userId,
+            otherUserId,
+            message,
+            newRequest.id,
+            giftId,
+            giftAmount
+          );
+        }
+
+        return await this.sendMessageToNonFriend(
+          userId,
+          otherUserId,
+          message,
+          reverseRequest.id,
+          giftId,
+          giftAmount
+        );
+      }
+    }
+  }
+
+  /**
+   * Get messages for a conversation
+   */
+  async getConversationMessages(
+    userId: string,
+    conversationId: string,
+    limit: number = 50,
+    cursor?: string
+  ): Promise<{
+    messages: any[];
+    nextCursor?: string;
+    hasMore: boolean;
+  }> {
+    // Get conversation
+    const conversation = await this.prisma.conversation.findUnique({
+      where: { id: conversationId }
+    });
+
+    if (!conversation) {
+      throw new NotFoundException("Conversation not found");
+    }
+
+    // Verify user is part of conversation
+    if (conversation.userId1 !== userId && conversation.userId2 !== userId) {
+      throw new BadRequestException("You are not part of this conversation");
+    }
+
+    const otherUserId = conversation.userId1 === userId ? conversation.userId2 : conversation.userId1;
+
+    return await this.getMessageHistory(userId, otherUserId, limit, cursor);
   }
 
   /**

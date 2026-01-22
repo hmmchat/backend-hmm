@@ -230,4 +230,83 @@ export class DiscoveryClientService {
       throw error;
     }
   }
+
+  /**
+   * Get user profile by userId (for enriching broadcast participant info)
+   */
+  async getUserProfile(userId: string): Promise<{
+    username: string | null;
+    displayPictureUrl: string | null;
+    age: number | null;
+  }> {
+    try {
+      const response = await fetch(`${this.userServiceUrl}/users/test/${userId}?fields=username,displayPictureUrl,dateOfBirth`, {
+        method: "GET",
+        headers: { "Content-Type": "application/json" }
+      });
+
+      if (!response.ok) {
+        this.logger.warn(`Failed to get user profile for ${userId}: ${response.status}`);
+        return { username: null, displayPictureUrl: null, age: null };
+      }
+
+      const data = await response.json() as { user?: { username?: string | null; displayPictureUrl?: string | null; dateOfBirth?: string | null } };
+      const user = data.user || {};
+      
+      // Calculate age from dateOfBirth
+      let age: number | null = null;
+      if (user.dateOfBirth) {
+        const birthDate = new Date(user.dateOfBirth);
+        const today = new Date();
+        age = today.getFullYear() - birthDate.getFullYear();
+        const monthDiff = today.getMonth() - birthDate.getMonth();
+        if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+          age--;
+        }
+      }
+
+      return {
+        username: user.username || null,
+        displayPictureUrl: user.displayPictureUrl || null,
+        age
+      };
+    } catch (error: any) {
+      this.logger.error(`Error getting user profile for ${userId}: ${error.message}`);
+      return { username: null, displayPictureUrl: null, age: null };
+    }
+  }
+
+  /**
+   * Get user profiles in batch (for enriching broadcast participant info)
+   * Fetches multiple user profiles efficiently
+   */
+  async getUserProfilesBatch(userIds: string[]): Promise<Map<string, {
+    username: string | null;
+    displayPictureUrl: string | null;
+    age: number | null;
+  }>> {
+    const profiles = new Map<string, { username: string | null; displayPictureUrl: string | null; age: number | null }>();
+    
+    if (userIds.length === 0) {
+      return profiles;
+    }
+
+    // Fetch all profiles in parallel
+    const profilePromises = userIds.map(async (userId) => {
+      try {
+        const profile = await this.getUserProfile(userId);
+        return { userId, profile };
+      } catch (error: any) {
+        this.logger.warn(`Failed to fetch profile for user ${userId}: ${error.message}`);
+        return { userId, profile: { username: null, displayPictureUrl: null, age: null } };
+      }
+    });
+
+    const results = await Promise.all(profilePromises);
+    results.forEach(({ userId, profile }) => {
+      profiles.set(userId, profile);
+    });
+
+    return profiles;
+  }
 }

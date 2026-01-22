@@ -31,6 +31,13 @@ model CallSession {
   startedAt     DateTime?
   endedAt       DateTime?
   
+  // Broadcast metadata
+  broadcastTitle       String?   // Optional title for the broadcast
+  broadcastDescription String?   // Optional description
+  broadcastTags        String[]  @default([]) // Array of tags/categories
+  isTrending           Boolean   @default(false) // Trending/popular flag
+  popularityScore      Float     @default(0) // Calculated popularity score
+  
   participants  CallParticipant[]
   viewers       CallViewer[]
   events        CallEvent[]
@@ -42,6 +49,9 @@ model CallSession {
   @@index([roomId])
   @@index([status])
   @@index([createdAt])
+  @@index([isBroadcasting])
+  @@index([isTrending])
+  @@index([popularityScore])
 }
 
 model CallParticipant {

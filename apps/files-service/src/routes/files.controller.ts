@@ -13,6 +13,7 @@ import {
 } from "@nestjs/common";
 import { FastifyRequest } from "fastify";
 import { FilesService } from "../services/files.service.js";
+import { PrismaService } from "../prisma/prisma.service.js";
 import { z } from "zod";
 import { verifyToken } from "@hmm/common";
 
@@ -34,7 +35,10 @@ const PresignedUrlSchema = z.object({
 
 @Controller()
 export class FilesController {
-  constructor(private readonly filesService: FilesService) {}
+  constructor(
+    private readonly filesService: FilesService,
+    private readonly prisma: PrismaService
+  ) {}
 
   private getTokenFromHeader(h?: string): string | null {
     if (!h) return null;
@@ -80,7 +84,7 @@ export class FilesController {
     const options = UploadFileSchema.parse(query || {});
 
     // Get file from multipart request
-    const data = await req.file();
+    const data = await (req as any).file();
     if (!data) {
       throw new HttpException("No file provided", HttpStatus.BAD_REQUEST);
     }
@@ -206,11 +210,24 @@ export class FilesController {
    */
   @Get("health")
   async healthCheck() {
-    return {
-      status: "healthy",
-      service: "files-service",
-      timestamp: new Date().toISOString()
+    const { HealthChecker } = await import("@hmm/common");
+    const dbCheck = await HealthChecker.checkDatabase(this.prisma, "files-service");
+    
+    // Check R2 configuration (optional)
+    const r2Check = {
+      status: (process.env.R2_ACCOUNT_ID && process.env.R2_ACCESS_KEY_ID) ? "up" as const : "down" as const,
+      message: process.env.R2_ACCOUNT_ID ? "R2 configured" : "R2 not configured"
     };
+    
+    return HealthChecker.createResponse(
+      "files-service",
+      {
+        database: dbCheck,
+        r2: r2Check
+      },
+      undefined,
+      process.env.npm_package_version || "0.0.1"
+    );
   }
 
   /* ---------- Test Endpoints (No Auth Required) ---------- */
@@ -226,7 +243,7 @@ export class FilesController {
   ) {
     const options = UploadFileSchema.parse(query || {});
 
-    const data = await req.file();
+    const data = await (req as any).file();
     if (!data) {
       throw new HttpException("No file provided", HttpStatus.BAD_REQUEST);
     }

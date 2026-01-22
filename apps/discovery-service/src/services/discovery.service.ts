@@ -2484,5 +2484,876 @@ export class DiscoveryService implements OnModuleInit {
     console.log(`[DEBUG] findOfflineMatchingUsersForUser - users from service: ${users.length}, after filtering: ${filteredUsers.length}`);
     return filteredUsers;
   }
+
+  /**
+   * Get next broadcast in HMM_TV feed (for scrolling like TikTok/Reels)
+   * Uses session tracking to avoid showing the same broadcast twice
+   */
+  async getNextBroadcast(
+    token: string,
+    sessionId: string
+  ): Promise<{
+    broadcast: {
+      roomId: string;
+      participantCount: number;
+      viewerCount: number;
+      participants: Array<{
+        userId: string;
+        role: string;
+        joinedAt: Date;
+      }>;
+      startedAt: Date | null;
+      createdAt: Date;
+    } | null;
+    exhausted: boolean;
+  }> {
+    // Get current user profile
+    const userProfileResponse = await this.userClient.getUserFullProfile(token);
+    const userId = userProfileResponse.id;
+
+    // Get all active broadcasts
+    const broadcasts = await this.streamingClient.getActiveBroadcasts();
+
+    if (broadcasts.length === 0) {
+      return {
+        broadcast: null,
+        exhausted: true
+      };
+    }
+
+    // Get viewed broadcast roomIds for this session
+    const viewedRoomIds = await this.getViewedBroadcastRoomIds(userId, sessionId);
+
+    // Filter out viewed broadcasts
+    const availableBroadcasts = broadcasts.filter(
+      b => !viewedRoomIds.includes(b.roomId)
+    );
+
+    if (availableBroadcasts.length === 0) {
+      // All broadcasts have been viewed - return exhausted
+      return {
+        broadcast: null,
+        exhausted: true
+      };
+    }
+
+    // Return the first available broadcast (most recent)
+    const nextBroadcast = availableBroadcasts[0];
+
+    return {
+      broadcast: nextBroadcast,
+      exhausted: false
+    };
+  }
+
+  /**
+   * Mark a broadcast as viewed (for session tracking)
+   * Uses BroadcastViewHistory table instead of RaincheckSession hack
+   */
+  async markBroadcastViewed(
+    userId: string,
+    sessionId: string,
+    roomId: string,
+    duration?: number,
+    deviceId?: string
+  ): Promise<void> {
+    try {
+      // Use BroadcastViewHistory table (new approach)
+      await (this.prisma as any).broadcastViewHistory.create({
+        data: {
+          userId,
+          roomId,
+          duration,
+          deviceId
+        }
+      });
+    } catch (error: any) {
+      // If BroadcastViewHistory doesn't exist, fallback to RaincheckSession
+      if (error?.code === 'P2021' || error?.message?.includes('does not exist')) {
+        console.warn("BroadcastViewHistory table not found, falling back to RaincheckSession:", error.message);
+        // Fallback to old method
+        const broadcastRoomId = `BROADCAST:${roomId}`;
+        const existing = await (this.prisma as any).raincheckSession.findFirst({
+          where: {
+            userId,
+            sessionId,
+            raincheckedUserId: broadcastRoomId
+          }
+        });
+
+        if (!existing) {
+          await (this.prisma as any).raincheckSession.create({
+            data: {
+              userId,
+              sessionId,
+              raincheckedUserId: broadcastRoomId,
+              city: null
+            }
+          });
+        }
+        return;
+      }
+      console.error("Error marking broadcast as viewed:", error);
+      // Don't throw - this is not critical
+    }
+  }
+
+  /**
+   * Get viewed broadcast roomIds for current session
+   * Uses BroadcastViewHistory table instead of RaincheckSession hack
+   */
+  private async getViewedBroadcastRoomIds(
+    userId: string,
+    sessionId: string
+  ): Promise<string[]> {
+    try {
+      // Try BroadcastViewHistory first (new table)
+      const views = await (this.prisma as any).broadcastViewHistory.findMany({
+        where: {
+          userId
+          // Optionally filter by deviceId for cross-device sync
+          // deviceId: deviceId
+        },
+        select: {
+          roomId: true
+        },
+        distinct: ['roomId']
+      });
+
+      if (views.length > 0) {
+        return views.map((v: { roomId: string }) => v.roomId);
+      }
+
+      // Fallback to RaincheckSession for backward compatibility
+      // This can be removed after migration
+      const rainchecks = await (this.prisma as any).raincheckSession.findMany({
+        where: {
+          userId,
+          sessionId,
+          raincheckedUserId: {
+            startsWith: "BROADCAST:"
+          }
+        },
+        select: {
+          raincheckedUserId: true
+        }
+      });
+
+      return rainchecks.map((r: { raincheckedUserId: string }) => 
+        r.raincheckedUserId.replace("BROADCAST:", "")
+      );
+    } catch (error: any) {
+      // If table doesn't exist or other Prisma error, return empty array
+      if (error?.code === 'P2021' || error?.message?.includes('does not exist')) {
+        console.warn("BroadcastViewHistory table not found, falling back to RaincheckSession:", error.message);
+        // Fallback to RaincheckSession
+        try {
+          const rainchecks = await (this.prisma as any).raincheckSession.findMany({
+            where: {
+              userId,
+              sessionId,
+              raincheckedUserId: {
+                startsWith: "BROADCAST:"
+              }
+            },
+            select: {
+              raincheckedUserId: true
+            }
+          });
+          return rainchecks.map((r: { raincheckedUserId: string }) => 
+            r.raincheckedUserId.replace("BROADCAST:", "")
+          );
+        } catch (fallbackError) {
+          console.warn("RaincheckSession fallback also failed:", fallbackError);
+          return [];
+        }
+      }
+      console.error("Error fetching viewed broadcasts:", error);
+      return [];
+    }
+  }
+
+  /**
+   * Get next broadcast in feed (test endpoint - bypasses auth)
+   */
+  async getNextBroadcastForUser(
+    userId: string,
+    sessionId: string
+  ): Promise<{
+    broadcast: {
+      roomId: string;
+      participantCount: number;
+      viewerCount: number;
+      participants: Array<{
+        userId: string;
+        role: string;
+        joinedAt: Date;
+      }>;
+      startedAt: Date | null;
+      createdAt: Date;
+    } | null;
+    exhausted: boolean;
+  }> {
+    // Get all active broadcasts
+    const broadcasts = await this.streamingClient.getActiveBroadcasts();
+
+    if (broadcasts.length === 0) {
+      return {
+        broadcast: null,
+        exhausted: true
+      };
+    }
+
+    // Get viewed broadcast roomIds for this session
+    const viewedRoomIds = await this.getViewedBroadcastRoomIds(userId, sessionId);
+
+    // Filter out viewed broadcasts
+    let availableBroadcasts = broadcasts.filter(
+      b => !viewedRoomIds.includes(b.roomId)
+    );
+
+    if (availableBroadcasts.length === 0) {
+      // All broadcasts have been viewed - return exhausted
+      return {
+        broadcast: null,
+        exhausted: true
+      };
+    }
+
+    // Apply recommendation algorithm for personalized feed
+    const recommendedBroadcast = await this.getRecommendedBroadcast(userId, availableBroadcasts);
+
+    return {
+      broadcast: recommendedBroadcast,
+      exhausted: false
+    };
+  }
+
+  /**
+   * Get recommended broadcast based on user preferences and viewing history
+   * Considers: interests, location, gender preferences, engagement patterns, trending
+   */
+  private async getRecommendedBroadcast(
+    userId: string,
+    availableBroadcasts: Array<{
+      roomId: string;
+      participantCount: number;
+      viewerCount: number;
+      participants: Array<{
+        userId: string;
+        role: string;
+        joinedAt: Date;
+      }>;
+      startedAt: Date | null;
+      createdAt: Date;
+      broadcastTitle?: string | null;
+      broadcastDescription?: string | null;
+      broadcastTags?: string[];
+      isTrending?: boolean;
+      popularityScore?: number;
+    }>
+  ): Promise<{
+    roomId: string;
+    participantCount: number;
+    viewerCount: number;
+    participants: Array<{
+      userId: string;
+      role: string;
+      joinedAt: Date;
+    }>;
+    startedAt: Date | null;
+    createdAt: Date;
+  }> {
+    try {
+      // Get user profile for preferences
+      const userProfile = await this.userClient.getUserProfileById(userId).catch(() => null);
+      
+      // Score each broadcast
+      const scoredBroadcasts = await Promise.all(
+        availableBroadcasts.map(async (broadcast) => {
+          let score = 0;
+
+          // 1. Trending boost (high priority)
+          if (broadcast.isTrending) {
+            score += 50;
+          }
+
+          // 2. Popularity score (normalized)
+          if (broadcast.popularityScore) {
+            score += Math.min(broadcast.popularityScore / 10, 30); // Cap at 30 points
+          }
+
+          // 3. Viewer count (engagement indicator)
+          score += Math.min(broadcast.viewerCount / 5, 20); // Cap at 20 points
+
+          // 4. Recency (recent broadcasts get boost)
+          if (broadcast.startedAt) {
+            const hoursSinceStart = (Date.now() - new Date(broadcast.startedAt).getTime()) / (1000 * 60 * 60);
+            if (hoursSinceStart < 1) {
+              score += 15; // Very recent
+            } else if (hoursSinceStart < 6) {
+              score += 10; // Recent
+            } else if (hoursSinceStart < 24) {
+              score += 5; // Today
+            }
+          }
+
+          // 5. Tags/interests matching (if user profile available)
+          if (userProfile && broadcast.broadcastTags && broadcast.broadcastTags.length > 0) {
+            const userInterests = userProfile.interests?.map(i => i.interest?.name?.toLowerCase()) || [];
+            const matchingTags = broadcast.broadcastTags.filter(tag => 
+              userInterests.some(interest => interest.includes(tag.toLowerCase()) || tag.toLowerCase().includes(interest))
+            );
+            score += matchingTags.length * 5; // 5 points per matching tag
+          }
+
+          return { broadcast, score };
+        })
+      );
+
+      // Sort by score (descending) and return top broadcast
+      scoredBroadcasts.sort((a, b) => b.score - a.score);
+      return scoredBroadcasts[0].broadcast;
+    } catch (error: any) {
+      // If recommendation fails, fall back to most recent
+      console.error("Error in recommendation algorithm:", error);
+      return availableBroadcasts[0];
+    }
+  }
+
+  /**
+   * Add a comment to a broadcast
+   */
+  async addBroadcastComment(
+    roomId: string,
+    userId: string,
+    comment: string
+  ): Promise<{
+    id: string;
+    roomId: string;
+    userId: string;
+    comment: string;
+    createdAt: Date;
+  }> {
+    try {
+      const newComment = await (this.prisma as any).broadcastComment.create({
+        data: {
+          roomId,
+          userId,
+          comment: comment.trim()
+        }
+      });
+
+      // Update popularity score
+      await this.updateBroadcastPopularityScore(roomId);
+
+      return {
+        id: newComment.id,
+        roomId: newComment.roomId,
+        userId: newComment.userId,
+        comment: newComment.comment,
+        createdAt: newComment.createdAt
+      };
+    } catch (error: any) {
+      console.error("Error adding broadcast comment:", error);
+      throw new HttpException("Failed to add comment", HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  /**
+   * Get comments for a broadcast
+   */
+  async getBroadcastComments(
+    roomId: string,
+    limit: number = 50,
+    offset: number = 0
+  ): Promise<{
+    comments: Array<{
+      id: string;
+      userId: string;
+      comment: string;
+      createdAt: Date;
+    }>;
+    total: number;
+  }> {
+    try {
+      const [comments, total] = await Promise.all([
+        (this.prisma as any).broadcastComment.findMany({
+          where: {
+            roomId,
+            deletedAt: null
+          },
+          orderBy: {
+            createdAt: 'desc'
+          },
+          take: limit,
+          skip: offset,
+          select: {
+            id: true,
+            userId: true,
+            comment: true,
+            createdAt: true
+          }
+        }),
+        (this.prisma as any).broadcastComment.count({
+          where: {
+            roomId,
+            deletedAt: null
+          }
+        })
+      ]);
+
+      return {
+        comments,
+        total
+      };
+    } catch (error: any) {
+      console.error("Error getting broadcast comments:", error);
+      throw new HttpException("Failed to get comments", HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  /**
+   * Share a broadcast
+   */
+  async shareBroadcast(
+    roomId: string,
+    userId: string,
+    shareType: string = "link"
+  ): Promise<{
+    id: string;
+    roomId: string;
+    userId: string;
+    shareType: string;
+    shareableUrl: string;
+    createdAt: Date;
+  }> {
+    try {
+      const share = await (this.prisma as any).broadcastShare.create({
+        data: {
+          roomId,
+          userId,
+          shareType
+        }
+      });
+
+      // Generate shareable URL
+      const baseUrl = process.env.APP_URL || "https://app.hmmchat.live";
+      const shareableUrl = `${baseUrl}/broadcast/${roomId}`;
+
+      // Update popularity score
+      await this.updateBroadcastPopularityScore(roomId);
+
+      return {
+        id: share.id,
+        roomId: share.roomId,
+        userId: share.userId,
+        shareType: share.shareType,
+        shareableUrl,
+        createdAt: share.createdAt
+      };
+    } catch (error: any) {
+      console.error("Error sharing broadcast:", error);
+      throw new HttpException("Failed to share broadcast", HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  /**
+   * Get broadcast details by roomId (for deep linking)
+   */
+  async getBroadcastByRoomId(roomId: string): Promise<{
+    roomId: string;
+    participantCount: number;
+    viewerCount: number;
+    participants: Array<{
+      userId: string;
+      role: string;
+      joinedAt: Date;
+      username?: string | null;
+      displayPictureUrl?: string | null;
+      age?: number | null;
+    }>;
+    startedAt: Date | null;
+    createdAt: Date;
+    broadcastTitle?: string | null;
+    broadcastDescription?: string | null;
+    broadcastTags?: string[];
+    isTrending?: boolean;
+    popularityScore?: number;
+    commentCount: number;
+    shareCount: number;
+    exists: boolean;
+    isActive: boolean;
+  } | null> {
+    try {
+      // Get all active broadcasts and find the one matching roomId
+      const broadcasts = await this.streamingClient.getActiveBroadcasts();
+      const broadcast = broadcasts.find((b: any) => b.roomId === roomId);
+
+      if (!broadcast) {
+        // Broadcast not found or not active
+        return null;
+      }
+
+      // Get engagement metrics
+      const [commentCount, shareCount] = await Promise.all([
+        (this.prisma as any).broadcastComment.count({ where: { roomId, deletedAt: null } }),
+        (this.prisma as any).broadcastShare.count({ where: { roomId } })
+      ]);
+
+      // Get participant profiles (if not already included)
+      const participantUserIds = broadcast.participants?.map((p: any) => p.userId) || [];
+      const participantProfiles = new Map<string, { username: string | null; displayPictureUrl: string | null; age: number | null }>();
+      
+      // Only fetch profiles if they're not already included in the broadcast data
+      const needsProfileFetch = broadcast.participants?.some((p: any) => !p.username);
+      if (needsProfileFetch && participantUserIds.length > 0) {
+        try {
+          // Fetch profiles in parallel
+          const profilePromises = participantUserIds.map(async (userId: string) => {
+            try {
+              const profile = await this.userClient.getUserFullProfileById(userId);
+              return { userId, profile };
+            } catch (error) {
+              console.warn(`Failed to fetch profile for user ${userId}: ${error}`);
+              return { userId, profile: null };
+            }
+          });
+          const profileResults = await Promise.all(profilePromises);
+          profileResults.forEach(({ userId, profile }) => {
+            if (profile) {
+              const age = profile.dateOfBirth 
+                ? Math.floor((Date.now() - new Date(profile.dateOfBirth).getTime()) / (365.25 * 24 * 60 * 60 * 1000))
+                : null;
+              participantProfiles.set(userId, {
+                username: profile.username,
+                displayPictureUrl: profile.displayPictureUrl,
+                age
+              });
+            }
+          });
+        } catch (error) {
+          console.warn(`Failed to fetch participant profiles: ${error}`);
+        }
+      }
+
+      // Get additional metadata from database if not in broadcast
+      const session = await (this.prisma as any).callSession.findUnique({
+        where: { roomId },
+        select: { 
+          popularityScore: true,
+          isTrending: true,
+          broadcastTitle: true,
+          broadcastDescription: true,
+          broadcastTags: true
+        }
+      });
+
+      return {
+        roomId: broadcast.roomId,
+        participantCount: broadcast.participantCount || 0,
+        viewerCount: broadcast.viewerCount || 0,
+        participants: (broadcast.participants || []).map((p: any) => {
+          // Use existing profile data if available, otherwise fetch
+          if (p.username !== undefined) {
+            return {
+              userId: p.userId,
+              role: p.role,
+              joinedAt: p.joinedAt,
+              username: p.username || null,
+              displayPictureUrl: p.displayPictureUrl || null,
+              age: p.age || null
+            };
+          }
+          const profile = participantProfiles.get(p.userId);
+          return {
+            userId: p.userId,
+            role: p.role,
+            joinedAt: p.joinedAt,
+            username: profile?.username || null,
+            displayPictureUrl: profile?.displayPictureUrl || null,
+            age: profile?.age || null
+          };
+        }),
+        startedAt: broadcast.startedAt,
+        createdAt: broadcast.createdAt,
+        broadcastTitle: (broadcast as any).broadcastTitle || session?.broadcastTitle || null,
+        broadcastDescription: (broadcast as any).broadcastDescription || session?.broadcastDescription || null,
+        broadcastTags: (broadcast as any).broadcastTags || session?.broadcastTags || [],
+        isTrending: (broadcast as any).isTrending !== undefined ? (broadcast as any).isTrending : (session?.isTrending || false),
+        popularityScore: (broadcast as any).popularityScore !== undefined ? (broadcast as any).popularityScore : (session?.popularityScore || 0),
+        commentCount,
+        shareCount,
+        exists: true,
+        isActive: true
+      };
+    } catch (error: any) {
+      console.error("Error getting broadcast by roomId:", error);
+      throw new HttpException("Failed to get broadcast", HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  /**
+   * Send gift to broadcast participants (via streaming service)
+   */
+  async sendBroadcastGift(
+    roomId: string,
+    fromUserId: string,
+    toUserId: string,
+    amount: number,
+    giftId: string
+  ): Promise<{
+    success: boolean;
+    transactionId?: string;
+    newBalance?: number;
+  }> {
+    try {
+      // Call streaming service to send gift
+      const result = await this.streamingClient.sendGift(roomId, fromUserId, toUserId, amount, giftId);
+      return result;
+    } catch (error: any) {
+      console.error("Error sending broadcast gift:", error);
+      throw new HttpException("Failed to send gift", HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  /**
+   * Update popularity score for a broadcast
+   * Calculates based on: viewer count, comments, shares, recency
+   */
+  private async updateBroadcastPopularityScore(roomId: string): Promise<void> {
+    try {
+      // Get engagement metrics
+      const [commentCount, shareCount] = await Promise.all([
+        (this.prisma as any).broadcastComment.count({ where: { roomId, deletedAt: null } }),
+        (this.prisma as any).broadcastShare.count({ where: { roomId } })
+      ]);
+
+      // Get viewer count from streaming service
+      const broadcasts = await this.streamingClient.getActiveBroadcasts();
+      const broadcast = broadcasts.find((b: any) => b.roomId === roomId);
+      const viewerCount = broadcast?.viewerCount || 0;
+
+      // Calculate popularity score
+      // Formula: (viewers * 1) + (comments * 3) + (shares * 5) + recency bonus
+      const baseScore = viewerCount * 1 + commentCount * 3 + shareCount * 5;
+
+      // Recency bonus: broadcasts started in last hour get bonus
+      const session = await (this.prisma as any).callSession.findUnique({
+        where: { roomId },
+        select: { startedAt: true, createdAt: true }
+      });
+
+      let recencyBonus = 0;
+      if (session?.startedAt) {
+        const hoursSinceStart = (Date.now() - new Date(session.startedAt).getTime()) / (1000 * 60 * 60);
+        if (hoursSinceStart < 1) {
+          recencyBonus = 10; // Bonus for broadcasts less than 1 hour old
+        } else if (hoursSinceStart < 6) {
+          recencyBonus = 5; // Smaller bonus for broadcasts less than 6 hours old
+        }
+      }
+
+      const popularityScore = baseScore + recencyBonus;
+
+      // Update in streaming service database
+      await (this.prisma as any).callSession.update({
+        where: { roomId },
+        data: { popularityScore }
+      });
+
+      // Check if should be marked as trending
+      await this.updateTrendingStatus(roomId, popularityScore, viewerCount);
+    } catch (error: any) {
+      console.error("Error updating popularity score:", error);
+      // Don't throw - this is not critical
+    }
+  }
+
+  /**
+   * Update trending status for a broadcast
+   * Trending = high popularity score + recent spike in viewers/engagement
+   */
+  private async updateTrendingStatus(
+    roomId: string,
+    popularityScore: number,
+    viewerCount: number
+  ): Promise<void> {
+    try {
+      // Trending criteria:
+      // - Popularity score > 50
+      // - Viewer count > 10
+      const isTrending = popularityScore > 50 && viewerCount > 10;
+
+      await (this.prisma as any).callSession.update({
+        where: { roomId },
+        data: { isTrending }
+      });
+    } catch (error: any) {
+      console.error("Error updating trending status:", error);
+      // Don't throw - this is not critical
+    }
+  }
+
+  /**
+   * Follow a broadcast participant
+   * A viewer can follow individual participants in a broadcast
+   */
+  async followBroadcastParticipant(
+    followerId: string,
+    followedUserId: string,
+    roomId: string
+  ): Promise<{ success: boolean; followId: string }> {
+    try {
+      // Validate that the roomId is an active broadcast
+      const broadcasts = await this.streamingClient.getActiveBroadcasts();
+      const broadcast = broadcasts.find((b: any) => b.roomId === roomId);
+
+      if (!broadcast) {
+        throw new HttpException("Broadcast not found or not active", HttpStatus.NOT_FOUND);
+      }
+
+      // Validate that followedUserId is a participant in the broadcast
+      const participantIds = (broadcast.participants || []).map((p: any) => p.userId);
+      if (!participantIds.includes(followedUserId)) {
+        throw new HttpException(
+          "User is not a participant in this broadcast",
+          HttpStatus.BAD_REQUEST
+        );
+      }
+
+      // Prevent self-follow
+      if (followerId === followedUserId) {
+        throw new HttpException("Cannot follow yourself", HttpStatus.BAD_REQUEST);
+      }
+
+      // Check if already following
+      const existingFollow = await (this.prisma as any).broadcastFollow.findFirst({
+        where: {
+          followerId,
+          followedUserId,
+          roomId
+        }
+      });
+
+      if (existingFollow) {
+        throw new HttpException("Already following this user in this broadcast", HttpStatus.BAD_REQUEST);
+      }
+
+      // Create follow relationship
+      const follow = await (this.prisma as any).broadcastFollow.create({
+        data: {
+          followerId,
+          followedUserId,
+          roomId
+        }
+      });
+
+      return {
+        success: true,
+        followId: follow.id
+      };
+    } catch (error: any) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      console.error("Error following broadcast participant:", error);
+      throw new HttpException("Failed to follow user", HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  /**
+   * Unfollow a broadcast participant
+   */
+  async unfollowBroadcastParticipant(
+    followerId: string,
+    followedUserId: string,
+    roomId: string
+  ): Promise<{ success: boolean }> {
+    try {
+      // Find and delete the follow relationship
+      const follow = await (this.prisma as any).broadcastFollow.findFirst({
+        where: {
+          followerId,
+          followedUserId,
+          roomId
+        }
+      });
+
+      if (!follow) {
+        throw new HttpException("Follow relationship not found", HttpStatus.NOT_FOUND);
+      }
+
+      await (this.prisma as any).broadcastFollow.delete({
+        where: {
+          id: follow.id
+        }
+      });
+
+      return { success: true };
+    } catch (error: any) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      console.error("Error unfollowing broadcast participant:", error);
+      throw new HttpException("Failed to unfollow user", HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  /**
+   * Get all users followed by a viewer in broadcasts
+   * This can be used later for the "sent request section"
+   */
+  async getFollowedBroadcastParticipants(followerId: string): Promise<Array<{
+    followId: string;
+    followedUserId: string;
+    roomId: string;
+    createdAt: Date;
+  }>> {
+    try {
+      const follows = await (this.prisma as any).broadcastFollow.findMany({
+        where: {
+          followerId
+        },
+        orderBy: {
+          createdAt: "desc"
+        }
+      });
+
+      return follows.map((follow: any) => ({
+        followId: follow.id,
+        followedUserId: follow.followedUserId,
+        roomId: follow.roomId,
+        createdAt: follow.createdAt
+      }));
+    } catch (error: any) {
+      console.error("Error getting followed broadcast participants:", error);
+      throw new HttpException("Failed to get followed users", HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  /**
+   * Check if a user is following another user in a specific broadcast
+   */
+  async isFollowingBroadcastParticipant(
+    followerId: string,
+    followedUserId: string,
+    roomId: string
+  ): Promise<boolean> {
+    try {
+      const follow = await (this.prisma as any).broadcastFollow.findFirst({
+        where: {
+          followerId,
+          followedUserId,
+          roomId
+        }
+      });
+
+      return !!follow;
+    } catch (error: any) {
+      console.error("Error checking follow status:", error);
+      return false;
+    }
+  }
 }
 

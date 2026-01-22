@@ -27,9 +27,9 @@ export class HealthService {
       { name: "discovery-service", url: this.configService.get<string>("DISCOVERY_SERVICE_URL") || "http://localhost:3004" },
       { name: "streaming-service", url: this.configService.get<string>("STREAMING_SERVICE_URL") || "http://localhost:3005" },
       { name: "wallet-service", url: this.configService.get<string>("WALLET_SERVICE_URL") || "http://localhost:3006" },
-      { name: "friend-service", url: this.configService.get<string>("FRIEND_SERVICE_URL") || "http://localhost:3007" },
+      { name: "friend-service", url: this.configService.get<string>("FRIEND_SERVICE_URL") || "http://localhost:3009" },
       { name: "files-service", url: this.configService.get<string>("FILES_SERVICE_URL") || "http://localhost:3008" },
-      { name: "payment-service", url: this.configService.get<string>("PAYMENT_SERVICE_URL") || "http://localhost:3009" }
+      { name: "payment-service", url: this.configService.get<string>("PAYMENT_SERVICE_URL") || "http://localhost:3007" }
     ];
 
     const healthChecks = await Promise.all(

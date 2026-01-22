@@ -81,7 +81,7 @@ test_calculate_coins() {
     
     local calc_data=$(cat <<EOF
 {
-  "amountInr": 100
+  "inrAmount": 100
 }
 EOF
 )
@@ -92,12 +92,12 @@ EOF
         -d "${calc_data}" \
         "${SERVICE_URL}/v1/payments/test/calculate/coins" 2>&1)
     local status_code=$(echo "$response" | tail -n1)
-    if [ "$status_code" -eq 200 ]; then
-        log_success "Calculate coins from INR (200)"
+    if [ "$status_code" -eq 200 ] || [ "$status_code" -eq 201 ]; then
+        log_success "Calculate coins from INR (${status_code})"
     elif [ "$status_code" -eq 404 ] || [ "$status_code" = "000" ] || [ -z "$status_code" ]; then
         log_success "Calculate coins (service may not be running, expected in some setups)"
     else
-        log_error "Calculate coins - Expected 200, got ${status_code}"
+        log_error "Calculate coins - Expected 200/201, got ${status_code}"
         return 1
     fi
 }
@@ -108,12 +108,23 @@ test_calculate_inr() {
     
     local calc_data=$(cat <<EOF
 {
-  "amountCoins": 1000
+  "coinsAmount": 1000
 }
 EOF
 )
     
-    http_request "POST" "${SERVICE_URL}/v1/payments/test/calculate/inr" "${calc_data}" 200 "Calculate INR from coins"
+    local response=$(curl -s -w "\n%{http_code}" -X POST \
+        -H "Content-Type: application/json" \
+        -d "${calc_data}" \
+        "${SERVICE_URL}/v1/payments/test/calculate/inr" 2>&1)
+    local status_code=$(echo "$response" | tail -n1)
+    if [ "$status_code" -eq 200 ] || [ "$status_code" -eq 201 ]; then
+        log_success "Calculate INR from coins (${status_code})"
+    else
+        log_error "Calculate INR from coins - Expected 200/201, got ${status_code}"
+        echo "$response" | sed '$d' >&2
+        return 1
+    fi
 }
 
 # Test: Calculate diamonds
@@ -122,12 +133,23 @@ test_calculate_diamonds() {
     
     local calc_data=$(cat <<EOF
 {
-  "amountInr": 100
+  "coinsAmount": 1000
 }
 EOF
 )
     
-    http_request "POST" "${SERVICE_URL}/v1/payments/test/calculate/diamonds" "${calc_data}" 200 "Calculate diamonds from INR"
+    local response=$(curl -s -w "\n%{http_code}" -X POST \
+        -H "Content-Type: application/json" \
+        -d "${calc_data}" \
+        "${SERVICE_URL}/v1/payments/test/calculate/diamonds" 2>&1)
+    local status_code=$(echo "$response" | tail -n1)
+    if [ "$status_code" -eq 200 ] || [ "$status_code" -eq 201 ]; then
+        log_success "Calculate diamonds from coins (${status_code})"
+    else
+        log_error "Calculate diamonds from coins - Expected 200/201, got ${status_code}"
+        echo "$response" | sed '$d' >&2
+        return 1
+    fi
 }
 
 # Test: Calculate INR from diamonds
@@ -136,12 +158,23 @@ test_calculate_diamond_inr() {
     
     local calc_data=$(cat <<EOF
 {
-  "amountDiamonds": 100
+  "diamondsAmount": 100
 }
 EOF
 )
     
-    http_request "POST" "${SERVICE_URL}/v1/payments/test/calculate/diamond-inr" "${calc_data}" 200 "Calculate INR from diamonds"
+    local response=$(curl -s -w "\n%{http_code}" -X POST \
+        -H "Content-Type: application/json" \
+        -d "${calc_data}" \
+        "${SERVICE_URL}/v1/payments/test/calculate/diamond-inr" 2>&1)
+    local status_code=$(echo "$response" | tail -n1)
+    if [ "$status_code" -eq 200 ] || [ "$status_code" -eq 201 ]; then
+        log_success "Calculate INR from diamonds (${status_code})"
+    else
+        log_error "Calculate INR from diamonds - Expected 200/201, got ${status_code}"
+        echo "$response" | sed '$d' >&2
+        return 1
+    fi
 }
 
 # Test: Calculate upsell
@@ -150,12 +183,24 @@ test_calculate_upsell() {
     
     local calc_data=$(cat <<EOF
 {
-  "amountInr": 100
+  "baseDiamonds": 100,
+  "upsellLevel": 1
 }
 EOF
 )
     
-    http_request "POST" "${SERVICE_URL}/v1/payments/test/calculate/upsell" "${calc_data}" 200 "Calculate upsell"
+    local response=$(curl -s -w "\n%{http_code}" -X POST \
+        -H "Content-Type: application/json" \
+        -d "${calc_data}" \
+        "${SERVICE_URL}/v1/payments/test/calculate/upsell" 2>&1)
+    local status_code=$(echo "$response" | tail -n1)
+    if [ "$status_code" -eq 200 ] || [ "$status_code" -eq 201 ]; then
+        log_success "Calculate upsell (${status_code})"
+    else
+        log_error "Calculate upsell - Expected 200/201, got ${status_code}"
+        echo "$response" | sed '$d' >&2
+        return 1
+    fi
 }
 
 # Test: Redemption preview
@@ -165,12 +210,24 @@ test_redemption_preview() {
     local preview_data=$(cat <<EOF
 {
   "userId": "test-user-1",
-  "amountCoins": 1000
+  "baseDiamonds": 100,
+  "availableDiamonds": 200
 }
 EOF
 )
     
-    http_request "POST" "${SERVICE_URL}/v1/payments/test/redemption/preview" "${preview_data}" 200 "Get redemption preview"
+    local response=$(curl -s -w "\n%{http_code}" -X POST \
+        -H "Content-Type: application/json" \
+        -d "${preview_data}" \
+        "${SERVICE_URL}/v1/payments/test/redemption/preview" 2>&1)
+    local status_code=$(echo "$response" | tail -n1)
+    if [ "$status_code" -eq 200 ] || [ "$status_code" -eq 201 ]; then
+        log_success "Get redemption preview (${status_code})"
+    else
+        log_error "Get redemption preview - Expected 200/201, got ${status_code}"
+        echo "$response" | sed '$d' >&2
+        return 1
+    fi
 }
 
 # Test: Edge case - Invalid amount

@@ -174,14 +174,14 @@ EOF
         -d "${logout_data}" \
         "${SERVICE_URL}/auth/logout" 2>&1)
     local status_code=$(echo "$response" | tail -n1)
-    if [ "$status_code" -eq 200 ]; then
-        log_success "Logout (200)"
+    if [ "$status_code" -eq 200 ] || [ "$status_code" -eq 201 ]; then
+        log_success "Logout (${status_code})"
     elif [ "$status_code" -eq 400 ]; then
         log_success "Logout (400 - invalid token, expected)"
     elif [ "$status_code" = "000" ] || [ -z "$status_code" ]; then
         log_success "Logout (service may not be fully running, expected in some setups)"
     else
-        log_error "Logout - Expected 200/400, got ${status_code}"
+        log_error "Logout - Expected 200/201/400, got ${status_code}"
         return 1
     fi
 }

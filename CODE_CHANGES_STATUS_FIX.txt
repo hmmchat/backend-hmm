@@ -1,0 +1,13 @@
+// ============================================
+// FILE: apps/streaming-service/src/services/room.service.ts
+// REPLACE lines 1259-1265 in removeViewer method
+// ============================================
+
+    // BUSINESS RULE: When viewer leaves, restore status to AVAILABLE
+    // This allows them to go back to matching/discovery or continue browsing
+    // AVAILABLE is the default state for active users
+    this.discoveryClient.updateUserStatus(userId, "AVAILABLE").catch((err) => {
+      this.logger.error(`Failed to restore viewer ${userId} status to AVAILABLE: ${err.message}`);
+    });
+
+    this.logger.log(`Viewer ${userId} removed from room ${roomId}, status restored to AVAILABLE`);

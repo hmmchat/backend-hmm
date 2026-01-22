@@ -1,0 +1,198 @@
+// ============================================
+// FILE: apps/streaming-service/src/services/room.service.ts
+// REPLACE getActiveBroadcasts method (around line 1615)
+// ============================================
+
+  /**
+   * Get all active broadcasts (for HMM_TV feed)
+   * Returns broadcasts with participant info and viewer count
+   * Supports sorting, filtering, and pagination
+   */
+  async getActiveBroadcasts(options: {
+    sort?: 'recent' | 'viewers' | 'popular' | 'trending';
+    filter?: {
+      participantCount?: { min?: number; max?: number };
+      gender?: string[];
+      city?: string;
+      tags?: string[];
+    };
+    limit?: number;
+    offset?: number;
+    cursor?: string;
+  } = {}): Promise<{
+    broadcasts: Array<{
+      roomId: string;
+      participantCount: number;
+      viewerCount: number;
+      participants: Array<{
+        userId: string;
+        role: string;
+        joinedAt: Date;
+        username?: string | null;
+        displayPictureUrl?: string | null;
+        age?: number | null;
+      }>;
+      startedAt: Date | null;
+      createdAt: Date;
+      broadcastTitle?: string | null;
+      broadcastDescription?: string | null;
+      broadcastTags?: string[];
+      isTrending?: boolean;
+      popularityScore?: number;
+    }>;
+    nextCursor?: string;
+    hasMore: boolean;
+  }> {
+    const {
+      sort = 'recent',
+      filter = {},
+      limit = 20,
+      offset = 0,
+      cursor
+    } = options;
+
+    // Build where clause
+    const where: any = {
+      status: "IN_BROADCAST",
+      isBroadcasting: true
+    };
+
+    // Apply filters
+    if (filter.tags && filter.tags.length > 0) {
+      where.broadcastTags = {
+        hasSome: filter.tags
+      };
+    }
+
+    // Build orderBy
+    let orderBy: any = { createdAt: "desc" };
+    if (sort === 'viewers') {
+      // Order by viewer count (will need to sort after fetching)
+      orderBy = { createdAt: "desc" };
+    } else if (sort === 'popular') {
+      orderBy = { popularityScore: "desc" };
+    } else if (sort === 'trending') {
+      orderBy = [
+        { isTrending: "desc" },
+        { popularityScore: "desc" },
+        { createdAt: "desc" }
+      ];
+    }
+
+    // Handle cursor-based pagination
+    if (cursor) {
+      where.id = { gt: cursor };
+    }
+
+    const sessions = await this.prisma.callSession.findMany({
+      where,
+      include: {
+        participants: {
+          where: { leftAt: null },
+          select: {
+            userId: true,
+            role: true,
+            joinedAt: true
+          }
+        },
+        viewers: {
+          where: { leftAt: null },
+          select: { userId: true }
+        }
+      },
+      orderBy,
+      take: limit + 1, // Fetch one extra to determine hasMore
+      skip: cursor ? 0 : offset
+    });
+
+    const hasMore = sessions.length > limit;
+    const sessionsToReturn = sessions.slice(0, limit);
+
+    // Fetch participant profiles (username, displayPicture, age)
+    const participantUserIds = new Set<string>();
+    sessionsToReturn.forEach(session => {
+      session.participants.forEach(p => participantUserIds.add(p.userId));
+    });
+
+    // Get user profiles from user-service
+    const participantProfiles = new Map<string, { username: string | null; displayPictureUrl: string | null; age: number | null }>();
+    
+    if (participantUserIds.size > 0) {
+      try {
+        // Call user-service to get profiles
+        const userIdsArray = Array.from(participantUserIds);
+        // Note: This requires a batch endpoint in user-service or multiple calls
+        // For now, we'll fetch them individually or create a batch endpoint
+        // TODO: Add batch user profile endpoint
+        for (const userId of userIdsArray) {
+          try {
+            const profile = await this.discoveryClient.getUserProfile(userId);
+            participantProfiles.set(userId, {
+              username: profile.username,
+              displayPictureUrl: profile.displayPictureUrl,
+              age: profile.age
+            });
+          } catch (error) {
+            // If profile fetch fails, continue without it
+            this.logger.warn(`Failed to fetch profile for user ${userId}: ${error}`);
+          }
+        }
+      } catch (error) {
+        this.logger.warn(`Failed to fetch participant profiles: ${error}`);
+      }
+    }
+
+    // Apply participant count filter if specified
+    let filteredSessions = sessionsToReturn;
+    if (filter.participantCount) {
+      filteredSessions = sessionsToReturn.filter(session => {
+        const count = session.participants.length;
+        if (filter.participantCount!.min !== undefined && count < filter.participantCount!.min) {
+          return false;
+        }
+        if (filter.participantCount!.max !== undefined && count > filter.participantCount!.max) {
+          return false;
+        }
+        return true;
+      });
+    }
+
+    // Sort by viewer count if requested
+    if (sort === 'viewers') {
+      filteredSessions.sort((a, b) => b.viewers.length - a.viewers.length);
+    }
+
+    const broadcasts = filteredSessions.map(session => {
+      const participants = session.participants.map(p => {
+        const profile = participantProfiles.get(p.userId);
+        return {
+          userId: p.userId,
+          role: p.role,
+          joinedAt: p.joinedAt,
+          username: profile?.username || null,
+          displayPictureUrl: profile?.displayPictureUrl || null,
+          age: profile?.age || null
+        };
+      });
+
+      return {
+        roomId: session.roomId,
+        participantCount: session.participants.length,
+        viewerCount: session.viewers.length,
+        participants,
+        startedAt: session.startedAt,
+        createdAt: session.createdAt,
+        broadcastTitle: session.broadcastTitle,
+        broadcastDescription: session.broadcastDescription,
+        broadcastTags: session.broadcastTags || [],
+        isTrending: session.isTrending,
+        popularityScore: session.popularityScore
+      };
+    });
+
+    return {
+      broadcasts,
+      nextCursor: hasMore ? filteredSessions[filteredSessions.length - 1].id : undefined,
+      hasMore
+    };
+  }

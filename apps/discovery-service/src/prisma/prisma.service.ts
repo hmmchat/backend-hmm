@@ -1,5 +1,5 @@
 import { Injectable, OnModuleInit, OnModuleDestroy } from "@nestjs/common";
-// Import PrismaClient with proper ESM handling
+// Import directly from generated client to avoid root-level @prisma/client resolution issues
 import { PrismaClient } from "../../node_modules/.prisma/client/index.js";
 
 @Injectable()

@@ -306,8 +306,8 @@ Default service URLs (override with environment variables):
 - User: `http://localhost:3002`
 - Moderation: `http://localhost:3003`
 - Discovery: `http://localhost:3004`
-- Streaming: `http://localhost:3005`
-- Wallet: `http://localhost:3006`
+- Streaming: `http://localhost:3006`
+- Wallet: `http://localhost:3005`
 - Payment: `http://localhost:3007`
 - Files: `http://localhost:3008`
 - Friend: `http://localhost:3009`

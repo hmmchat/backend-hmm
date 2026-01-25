@@ -123,6 +123,64 @@ export class StreamingController {
   }
 
   /**
+   * Request to join broadcast (viewer clicks "Join" button)
+   * POST /streaming/rooms/:roomId/request-to-join
+   */
+  @Post("rooms/:roomId/request-to-join")
+  async requestToJoin(
+    @Param("roomId") roomId: string,
+    @Body() body: { userId: string }
+  ) {
+    if (!body.userId) {
+      throw new BadRequestException("userId is required");
+    }
+    await this.roomService.requestToJoin(roomId, body.userId);
+    return { success: true, message: "Join request submitted" };
+  }
+
+  /**
+   * Cancel join request (viewer cancels their request)
+   * POST /streaming/rooms/:roomId/cancel-join-request
+   */
+  @Post("rooms/:roomId/cancel-join-request")
+  async cancelJoinRequest(
+    @Param("roomId") roomId: string,
+    @Body() body: { userId: string }
+  ) {
+    if (!body.userId) {
+      throw new BadRequestException("userId is required");
+    }
+    await this.roomService.cancelJoinRequest(roomId, body.userId);
+    return { success: true, message: "Join request cancelled" };
+  }
+
+  /**
+   * Get waitlist for a room (hosts can see who requested to join)
+   * GET /streaming/rooms/:roomId/waitlist
+   */
+  @Get("rooms/:roomId/waitlist")
+  async getWaitlist(@Param("roomId") roomId: string) {
+    const waitlist = await this.roomService.getWaitlist(roomId);
+    return { waitlist };
+  }
+
+  /**
+   * Accept user from waitlist (host adds viewer to call)
+   * POST /streaming/rooms/:roomId/accept-from-waitlist
+   */
+  @Post("rooms/:roomId/accept-from-waitlist")
+  async acceptFromWaitlist(
+    @Param("roomId") roomId: string,
+    @Body() body: { hostUserId: string; targetUserId: string }
+  ) {
+    if (!body.hostUserId || !body.targetUserId) {
+      throw new BadRequestException("hostUserId and targetUserId are required");
+    }
+    await this.roomService.acceptFromWaitlist(roomId, body.hostUserId, body.targetUserId);
+    return { success: true, message: "User added to call from waitlist" };
+  }
+
+  /**
    * Get room info for a user
    * GET /streaming/users/:userId/room
    */
@@ -378,6 +436,111 @@ export class StreamingController {
       sessionId: result.sessionId,
       message: "Successfully joined room via pull stranger"
     };
+  }
+
+  /**
+   * Test endpoint: Request to join broadcast (bypasses auth)
+   * POST /streaming/test/rooms/:roomId/request-to-join
+   */
+  @Post("test/rooms/:roomId/request-to-join")
+  async requestToJoinTest(
+    @Param("roomId") roomId: string,
+    @Body() body: { userId: string }
+  ) {
+    if (!body.userId) {
+      throw new BadRequestException("userId is required");
+    }
+    await this.roomService.requestToJoin(roomId, body.userId);
+    return { success: true, message: "Join request submitted" };
+  }
+
+  /**
+   * Test endpoint: Cancel join request (bypasses auth)
+   * POST /streaming/test/rooms/:roomId/cancel-join-request
+   */
+  @Post("test/rooms/:roomId/cancel-join-request")
+  async cancelJoinRequestTest(
+    @Param("roomId") roomId: string,
+    @Body() body: { userId: string }
+  ) {
+    if (!body.userId) {
+      throw new BadRequestException("userId is required");
+    }
+    await this.roomService.cancelJoinRequest(roomId, body.userId);
+    return { success: true, message: "Join request cancelled" };
+  }
+
+  /**
+   * Test endpoint: Get waitlist (bypasses auth)
+   * GET /streaming/test/rooms/:roomId/waitlist
+   */
+  @Get("test/rooms/:roomId/waitlist")
+  async getWaitlistTest(@Param("roomId") roomId: string) {
+    const waitlist = await this.roomService.getWaitlist(roomId);
+    return { waitlist };
+  }
+
+  /**
+   * Test endpoint: Accept from waitlist (bypasses auth)
+   * POST /streaming/test/rooms/:roomId/accept-from-waitlist
+   */
+  @Post("test/rooms/:roomId/accept-from-waitlist")
+  async acceptFromWaitlistTest(
+    @Param("roomId") roomId: string,
+    @Body() body: { hostUserId: string; targetUserId: string }
+  ) {
+    if (!body.hostUserId || !body.targetUserId) {
+      throw new BadRequestException("hostUserId and targetUserId are required");
+    }
+    await this.roomService.acceptFromWaitlist(roomId, body.hostUserId, body.targetUserId);
+    return { success: true, message: "User added to call from waitlist" };
+  }
+
+  /**
+   * Test endpoint: Enable broadcasting (bypasses auth)
+   * POST /streaming/test/rooms/:roomId/enable-broadcasting
+   */
+  @Post("test/rooms/:roomId/enable-broadcasting")
+  async enableBroadcastingTest(
+    @Param("roomId") roomId: string,
+    @Body() body: { userId: string }
+  ) {
+    if (!body.userId) {
+      throw new BadRequestException("userId is required");
+    }
+    await this.roomService.enableBroadcasting(roomId, body.userId);
+    return { success: true, message: "Broadcasting enabled" };
+  }
+
+  /**
+   * Test endpoint: Add viewer to broadcast (bypasses auth)
+   * POST /streaming/test/rooms/:roomId/add-viewer
+   */
+  @Post("test/rooms/:roomId/add-viewer")
+  async addViewerTest(
+    @Param("roomId") roomId: string,
+    @Body() body: { userId: string }
+  ) {
+    if (!body.userId) {
+      throw new BadRequestException("userId is required");
+    }
+    await this.roomService.addViewer(roomId, body.userId);
+    return { success: true, message: "Viewer added to broadcast" };
+  }
+
+  /**
+   * POST /streaming/test/rooms/:roomId/remove-viewer
+   */
+  @Post("test/rooms/:roomId/remove-viewer")
+  async removeViewerTest(
+    @Param("roomId") roomId: string,
+    @Body() body: { userId: string }
+  ) {
+    if (!body.userId) {
+      throw new BadRequestException("userId is required");
+    }
+    await this.roomService.removeViewer(roomId, body.userId, false);
+    return { success: true, message: "Viewer removed from broadcast" };
   }
 
   /**

@@ -8,6 +8,7 @@ import {
   Headers,
   HttpException,
   HttpStatus,
+  HttpCode,
   Query,
   Req
 } from "@nestjs/common";
@@ -202,6 +203,38 @@ export class FilesController {
 
     const files = await this.filesService.getUserFiles(userId, limitNum);
     return { files };
+  }
+
+  /**
+   * Readiness check endpoint (database only)
+   * GET /ready
+   */
+  @Get("ready")
+  @HttpCode(HttpStatus.OK)
+  async readinessCheck() {
+    const { HealthChecker } = await import("@hmm/common");
+    try {
+      const dbCheck = await HealthChecker.checkDatabase(this.prisma, "files-service");
+      
+      if (dbCheck.status === 'up') {
+        return {
+          status: 'ready',
+          timestamp: new Date().toISOString()
+        };
+      } else {
+        return {
+          status: 'not_ready',
+          message: dbCheck.message,
+          timestamp: new Date().toISOString()
+        };
+      }
+    } catch (error: any) {
+      return {
+        status: 'not_ready',
+        message: error.message || 'Database check failed',
+        timestamp: new Date().toISOString()
+      };
+    }
   }
 
   /**

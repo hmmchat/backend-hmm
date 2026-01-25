@@ -29,14 +29,50 @@ export class GatewayController {
   ) {}
 
   /**
-   * Health check endpoint
+   * Readiness endpoint - simple check that gateway is running
+   * GET /ready
+   */
+  @All("ready")
+  async readinessCheck(@Res() res: FastifyReply) {
+    res.status(200).send({
+      status: "ready",
+      service: "api-gateway",
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  /**
+   * Liveness endpoint - simple check that gateway is running
+   * GET /health/live
+   */
+  @All("health/live")
+  async healthLive(@Res() res: FastifyReply) {
+    res.status(200).send({
+      status: "healthy",
+      service: "api-gateway",
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  /**
+   * Health check endpoint - returns cached results immediately
    * GET /health
    */
   @All("health")
   async healthCheck(@Res() res: FastifyReply) {
     try {
-      const health = await this.healthService.getOverallHealth();
-      res.status(health.status === "healthy" ? 200 : 503).send(health);
+      // Return cached results immediately (non-blocking)
+      const health = await this.healthService.getOverallHealth(true);
+      
+      // Return 200 for healthy or degraded (70%+ services up)
+      // Only return 503 for truly unhealthy (< 70% services)
+      const statusCode = health.status === "unhealthy" ? 503 : 200;
+      res.status(statusCode).send(health);
+      
+      // Trigger background update (don't await)
+      this.healthService.getOverallHealth(false).catch(err => {
+        this.logger.error(`Background health check update failed: ${err.message}`);
+      });
     } catch (error: any) {
       res.status(503).send({
         status: "unhealthy",

@@ -10,10 +10,20 @@ export interface RouteConfig {
   timeout?: number;
 }
 
+interface CircuitBreakerState {
+  failures: number;
+  lastFailure: number;
+  state: 'open' | 'half-open' | 'closed';
+}
+
 @Injectable()
 export class RoutingService implements OnModuleInit {
   private readonly logger = new Logger(RoutingService.name);
   private routes: Map<string, RouteConfig> = new Map();
+  private circuitBreakers: Map<string, CircuitBreakerState> = new Map();
+  private readonly CIRCUIT_BREAKER_THRESHOLD = 5; // Open after 5 failures (less aggressive)
+  private readonly CIRCUIT_BREAKER_TIMEOUT = 15000; // 15 seconds before attempting recovery (faster recovery)
+  private readonly CIRCUIT_BREAKER_WINDOW = 60000; // 1 minute window for failure counting
 
   constructor(private configService: ConfigService) {}
 
@@ -21,9 +31,10 @@ export class RoutingService implements OnModuleInit {
     // Load service URLs from environment variables
     const authServiceUrl = this.configService.get<string>("AUTH_SERVICE_URL") || "http://localhost:3001";
     const userServiceUrl = this.configService.get<string>("USER_SERVICE_URL") || "http://localhost:3002";
+    const moderationServiceUrl = this.configService.get<string>("MODERATION_SERVICE_URL") || "http://localhost:3003";
     const discoveryServiceUrl = this.configService.get<string>("DISCOVERY_SERVICE_URL") || "http://localhost:3004";
-    const streamingServiceUrl = this.configService.get<string>("STREAMING_SERVICE_URL") || "http://localhost:3005";
-    const walletServiceUrl = this.configService.get<string>("WALLET_SERVICE_URL") || "http://localhost:3006";
+    const streamingServiceUrl = this.configService.get<string>("STREAMING_SERVICE_URL") || "http://localhost:3006";
+    const walletServiceUrl = this.configService.get<string>("WALLET_SERVICE_URL") || "http://localhost:3005";
     const friendServiceUrl = this.configService.get<string>("FRIEND_SERVICE_URL") || "http://localhost:3009";
     const filesServiceUrl = this.configService.get<string>("FILES_SERVICE_URL") || "http://localhost:3008";
     const paymentServiceUrl = this.configService.get<string>("PAYMENT_SERVICE_URL") || "http://localhost:3007";
@@ -51,6 +62,12 @@ export class RoutingService implements OnModuleInit {
     this.routes.set("/auth", {
       path: "/auth",
       serviceUrl: authServiceUrl,
+      requiresAuth: false
+    });
+
+    this.routes.set("/moderation", {
+      path: "/moderation",
+      serviceUrl: moderationServiceUrl,
       requiresAuth: false
     });
 
@@ -205,9 +222,15 @@ export class RoutingService implements OnModuleInit {
     // Most services expect the route prefix (e.g., /users/123, /discovery/card)
     // But wallet service expects NO route prefix (e.g., /test/wallet/add-coins, not /wallet/test/wallet/add-coins)
     let servicePath = cleanPath;
-    
-    // Special case: wallet service doesn't use /wallet prefix in its routes
-    if (route.path === "/wallet" && cleanPath.startsWith("/wallet/")) {
+
+    // Special case: auth, files, moderation expose /health at root only; gateway uses /auth/health, /files/health, /moderation/health
+    if (cleanPath === "/auth/health" && route.path === "/auth") {
+      servicePath = "/health";
+    } else if (cleanPath === "/files/health" && route.path === "/files") {
+      servicePath = "/health";
+    } else if (cleanPath === "/moderation/health" && route.path === "/moderation") {
+      servicePath = "/health";
+    } else if (route.path === "/wallet" && cleanPath.startsWith("/wallet/")) {
       // Strip /wallet prefix for wallet service
       servicePath = cleanPath.substring("/wallet".length);
       if (!servicePath) {
@@ -231,7 +254,7 @@ export class RoutingService implements OnModuleInit {
     }
 
     const url = `${route.serviceUrl}${servicePath}`;
-    const timeout = route.timeout || 30000; // 30 second default timeout
+    const timeout = route.timeout || 10000; // 10 second default timeout (reduced from 30s)
 
     // Prepare headers
     const requestHeaders: Record<string, string> = {
@@ -243,58 +266,227 @@ export class RoutingService implements OnModuleInit {
     // Remove host header (let service set it)
     delete requestHeaders.host;
 
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeout);
+    // Check circuit breaker
+    const circuitBreaker = this.getCircuitBreaker(route.serviceUrl);
+    if (circuitBreaker.state === 'open') {
+      const timeSinceLastFailure = Date.now() - circuitBreaker.lastFailure;
+      if (timeSinceLastFailure < this.CIRCUIT_BREAKER_TIMEOUT) {
+        // Circuit breaker is open, but try recovery attempt anyway (half-open state)
+        // This allows services to recover even if health checks are failing
+        circuitBreaker.state = 'half-open';
+        this.logger.log(`Circuit breaker HALF-OPEN for ${route.serviceUrl}, attempting recovery`);
+      } else {
+        // Enough time has passed, attempt recovery
+        circuitBreaker.state = 'half-open';
+        this.logger.log(`Circuit breaker HALF-OPEN for ${route.serviceUrl}, attempting recovery`);
+      }
+    }
 
-      const fetchOptions: any = {
-        method,
-        headers: requestHeaders,
-        signal: controller.signal as any
-      };
-
-      if (body && (method === "POST" || method === "PUT" || method === "PATCH")) {
-        if (typeof body === "string") {
-          requestHeaders["content-type"] = "application/json";
-          fetchOptions.body = body;
-        } else {
-          requestHeaders["content-type"] = "application/json";
-          fetchOptions.body = JSON.stringify(body);
-        }
+    // Retry logic with exponential backoff
+    const maxRetries = 2;
+    let lastError: any = null;
+    
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      if (attempt > 0) {
+        const backoffDelay = Math.min(100 * Math.pow(2, attempt - 1), 200); // 100ms, 200ms
+        this.logger.log(`Retrying request to ${url} (attempt ${attempt + 1}/${maxRetries + 1}) after ${backoffDelay}ms`);
+        await new Promise(resolve => setTimeout(resolve, backoffDelay));
       }
 
-      const response = await fetch(url, fetchOptions);
-      clearTimeout(timeoutId);
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeout);
 
-      const responseData = await response.json().catch(() => ({}));
-      const responseHeaders: Record<string, string> = {};
-      
-      // Copy relevant headers
-      response.headers.forEach((value, key) => {
-        if (key.toLowerCase() !== "transfer-encoding") {
-          responseHeaders[key] = value;
+        const fetchOptions: any = {
+          method,
+          headers: requestHeaders,
+          signal: controller.signal as any
+        };
+
+        if (body && (method === "POST" || method === "PUT" || method === "PATCH")) {
+          if (typeof body === "string") {
+            requestHeaders["content-type"] = "application/json";
+            fetchOptions.body = body;
+          } else {
+            requestHeaders["content-type"] = "application/json";
+            fetchOptions.body = JSON.stringify(body);
+          }
         }
+
+        const response = await fetch(url, fetchOptions);
+        clearTimeout(timeoutId);
+
+        // Success - reset circuit breaker completely
+        if (circuitBreaker.state === 'half-open') {
+          circuitBreaker.state = 'closed';
+          circuitBreaker.failures = 0;
+          circuitBreaker.lastFailure = 0;
+          this.logger.log(`Circuit breaker CLOSED for ${route.serviceUrl} after successful recovery`);
+        } else if (circuitBreaker.state === 'closed') {
+          // Reset failure count on success
+          circuitBreaker.failures = 0;
+          circuitBreaker.lastFailure = 0;
+        }
+
+        const responseData = await response.json().catch(() => ({}));
+        const responseHeaders: Record<string, string> = {};
+        
+        // Copy relevant headers
+        response.headers.forEach((value, key) => {
+          if (key.toLowerCase() !== "transfer-encoding") {
+            responseHeaders[key] = value;
+          }
+        });
+
+        return {
+          status: response.status,
+          data: responseData,
+          headers: responseHeaders
+        };
+      } catch (error: any) {
+        lastError = error;
+        
+        // Don't retry on certain errors (4xx client errors, AbortError on last attempt)
+        if (error.name === "AbortError" && attempt === maxRetries) {
+          // Final timeout - record failure and throw
+          this.recordFailure(route.serviceUrl);
+          throw new HttpException(
+            `Request timeout after ${timeout}ms: ${url}`,
+            HttpStatus.GATEWAY_TIMEOUT
+          );
+        }
+        
+        // Check if error is retryable (network errors, timeouts)
+        const isRetryable = this.isRetryableError(error);
+        if (!isRetryable || attempt === maxRetries) {
+          // Not retryable or last attempt - record failure and throw
+          // Only record failure if it's not a transient network error during startup
+          const isTransientNetworkError = error.message && (
+            error.message.includes("ECONNREFUSED") ||
+            error.message.includes("fetch failed") ||
+            error.message.includes("network")
+          );
+          
+          if (!isTransientNetworkError || attempt === maxRetries) {
+            this.recordFailure(route.serviceUrl);
+          }
+          throw this.createErrorResponse(error, url, timeout);
+        }
+        
+        // Retryable error - continue to next attempt
+        this.logger.warn(`Retryable error on attempt ${attempt + 1} for ${url}: ${error.message}`);
+      }
+    }
+
+    // Should never reach here, but just in case
+    this.recordFailure(route.serviceUrl);
+    throw this.createErrorResponse(lastError, url, timeout);
+  }
+
+  /**
+   * Get circuit breaker state for a service URL
+   */
+  private getCircuitBreaker(serviceUrl: string): CircuitBreakerState {
+    if (!this.circuitBreakers.has(serviceUrl)) {
+      this.circuitBreakers.set(serviceUrl, {
+        failures: 0,
+        lastFailure: 0,
+        state: 'closed'
       });
+    }
+    return this.circuitBreakers.get(serviceUrl)!;
+  }
 
-      return {
-        status: response.status,
-        data: responseData,
-        headers: responseHeaders
-      };
-    } catch (error: any) {
-      if (error.name === "AbortError") {
-        throw new HttpException(
-          `Request timeout after ${timeout}ms: ${url}`,
-          HttpStatus.REQUEST_TIMEOUT
-        );
+  /**
+   * Record a failure for circuit breaker tracking
+   */
+  private recordFailure(serviceUrl: string): void {
+    const breaker = this.getCircuitBreaker(serviceUrl);
+    const now = Date.now();
+    
+    // Reset failure count if outside the time window
+    if (now - breaker.lastFailure > this.CIRCUIT_BREAKER_WINDOW) {
+      breaker.failures = 0;
+    }
+    
+    breaker.failures++;
+    breaker.lastFailure = now;
+    
+    // Open circuit breaker if threshold exceeded
+    // Only open if we have persistent failures (not just startup issues)
+    if (breaker.failures >= this.CIRCUIT_BREAKER_THRESHOLD && breaker.state !== 'open') {
+      breaker.state = 'open';
+      this.logger.error(`Circuit breaker OPENED for ${serviceUrl} after ${breaker.failures} failures`);
+    }
+  }
+
+  /**
+   * Check if an error is retryable
+   */
+  private isRetryableError(error: any): boolean {
+    // Retry on network errors, timeouts, and 5xx errors
+    // Don't retry on 4xx client errors
+    if (error.name === "AbortError") {
+      return true; // Timeout - retryable
+    }
+    
+    if (error.message) {
+      const msg = error.message.toLowerCase();
+      if (msg.includes('econnrefused') || msg.includes('enotfound') || 
+          msg.includes('etimedout') || msg.includes('network') ||
+          msg.includes('fetch failed')) {
+        return true; // Network error - retryable
       }
+    }
+    
+    // Check if it's an HttpException with 5xx status
+    if (error instanceof HttpException) {
+      const status = error.getStatus();
+      return status >= 500 && status < 600; // 5xx errors are retryable
+    }
+    
+    return false;
+  }
 
-      this.logger.error(`Error proxying request to ${url}: ${error.message}`);
-      throw new HttpException(
-        `Service unavailable: ${error.message}`,
-        HttpStatus.BAD_GATEWAY
+  /**
+   * Create appropriate error response based on error type
+   */
+  private createErrorResponse(error: any, url: string, timeout: number): HttpException {
+    if (error.name === "AbortError") {
+      return new HttpException(
+        `Request timeout after ${timeout}ms: ${url}`,
+        HttpStatus.GATEWAY_TIMEOUT
       );
     }
+    
+    // Check for connection refused errors
+    if (error.message) {
+      const msg = error.message.toLowerCase();
+      if (msg.includes('econnrefused') || msg.includes('enotfound')) {
+        return new HttpException(
+          `Service unavailable: Connection refused to ${url}`,
+          HttpStatus.BAD_GATEWAY
+        );
+      }
+      if (msg.includes('etimedout')) {
+        return new HttpException(
+          `Service unavailable: Connection timeout to ${url}`,
+          HttpStatus.GATEWAY_TIMEOUT
+        );
+      }
+    }
+    
+    // Check if it's already an HttpException
+    if (error instanceof HttpException) {
+      return error;
+    }
+    
+    // Default error
+    this.logger.error(`Error proxying request to ${url}: ${error.message}`);
+    return new HttpException(
+      `Service unavailable: ${error.message || 'Unknown error'}`,
+      HttpStatus.BAD_GATEWAY
+    );
   }
 
   /**

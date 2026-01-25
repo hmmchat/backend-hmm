@@ -313,6 +313,9 @@
                 <p style="color: #856404; font-size: 0.9em; margin-top: 10px; font-style: italic;">
                     If services fail to start, check the logs in <code>/tmp/&lt;service-name&gt;.log</code>
                 </p>
+                <p style="background: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; padding: 12px; border-radius: 6px; margin-top: 15px; font-size: 14px;">
+                    <strong>⚠️ Run Setup Script does NOT create users.</strong> It only starts services and runs Prisma. To create test-user-1, test-user-2, etc., you <strong>must</strong> also click <strong>Create Comprehensive Test Data</strong> below.
+                </p>
             </div>
             
             <div class="section">
@@ -326,6 +329,13 @@
                     <input type="text" id="baseUrl" value="http://localhost:3000" placeholder="http://localhost:3000">
                 </div>
                 <button onclick="checkGateway()">Check Gateway Health</button>
+                <div style="margin-top: 15px; padding: 12px; background: #f8f9fa; border-radius: 6px; font-size: 13px;">
+                    <strong>🔍 Test API (diagnose 404 / curl failures)</strong>
+                    <p style="margin: 8px 0;">Tests the same request as Discovery Quick Status Check:</p>
+                    <button type="button" onclick="testApiGetUser()" class="btn-warning" style="padding: 8px 16px; margin-bottom: 8px;">Test GET test-user-1</button>
+                    <div id="testApiResult" style="display: none; margin-top: 8px; padding: 10px; background: white; border-radius: 6px; font-family: monospace; font-size: 12px; white-space: pre-wrap; word-break: break-all;"></div>
+                    <p style="margin: 8px 0 0 0; color: #666; font-size: 12px;">Or run in terminal: <code id="testApiCurlHint">curl -s "http://localhost:3000/v1/users/test/test-user-1?fields=status"</code></p>
+                </div>
             </div>
             
             <div class="section">
@@ -649,155 +659,205 @@
         
         <!-- Streaming Tab -->
         <div id="streaming" class="tab-content">
-            <!-- Quick Status Checker -->
-            <div class="section" style="background: #fff3cd; border-left: 4px solid #ffc107;">
-                <h3>⚡ Quick Status Check</h3>
-                <p style="margin-bottom: 10px; color: #666; font-size: 12px;">
-                    Check user status instantly - useful for monitoring status changes
-                </p>
-                <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 10px; margin-bottom: 10px;">
-                    <input type="text" id="quickStatusCheckUserId" placeholder="Enter User ID (e.g., test-user-1)" style="padding: 10px;">
-                    <button onclick="quickCheckStatus()" class="btn-warning" style="padding: 10px;">🔍 Check Status</button>
+            <!-- Main Room Control -->
+            <div class="section" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none;">
+                <h3 style="color: white; margin-bottom: 20px;">📹 Streaming Room Control</h3>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px;">
+                    <div>
+                        <label style="color: white; opacity: 0.9;">Room ID:</label>
+                        <input type="text" id="mainRoomId" placeholder="Enter or create room ID" style="padding: 12px; border-radius: 6px; border: none; width: 100%; margin-top: 5px;" onchange="refreshRoomDisplay()">
+                    </div>
+                    <div>
+                        <label style="color: white; opacity: 0.9;">Your User ID:</label>
+                        <input type="text" id="mainUserId" value="test-user-1" placeholder="test-user-1" style="padding: 12px; border-radius: 6px; border: none; width: 100%; margin-top: 5px;">
+                    </div>
                 </div>
-                <div id="quickStatusResult" style="display: none; padding: 10px; background: white; border-radius: 6px; margin-top: 10px;">
-                    <div id="quickStatusResultContent"></div>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 15px;">
+                    <button onclick="createRoomSimple()" class="btn-primary" style="padding: 15px; font-size: 16px; font-weight: 600;">➕ Create Room</button>
+                    <button onclick="startBroadcast()" class="btn-success" style="padding: 15px; font-size: 16px; font-weight: 600; background: #28a745;">▶️ Start Broadcast</button>
+                    <button onclick="endBroadcast()" class="btn-danger" style="padding: 15px; font-size: 16px; font-weight: 600; background: #dc3545;">⏹️ End Broadcast</button>
+                </div>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                    <button onclick="refreshRoomDisplay()" class="btn-info" style="padding: 12px;">🔄 Refresh Room</button>
+                    <button onclick="leaveRoomSimple()" class="btn-secondary" style="padding: 12px;">🚪 Leave Room</button>
                 </div>
             </div>
 
-            <!-- User Status Monitor -->
+            <!-- Users in Room Display -->
             <div class="section" style="background: #f8f9fa; border-left: 4px solid #007bff;">
-                <h3>👥 User Status Monitor</h3>
+                <h3>👥 Users in Room</h3>
                 <p style="margin-bottom: 15px; color: #666; font-size: 13px;">
-                    Real-time status for users involved in streaming operations
+                    All participants and viewers with their current status. Green highlight = active socket user.
                 </p>
-                <div id="userStatusMonitor" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-bottom: 15px;">
-                    <!-- Status cards will be populated here -->
+                <div id="roomUsersDisplay" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; margin-bottom: 15px;">
+                    <div style="padding: 20px; background: white; border-radius: 8px; text-align: center; color: #999;">
+                        No room loaded. Create or enter a room ID above.
+                    </div>
                 </div>
-                <button onclick="refreshAllUserStatuses()" class="btn-info" style="width: 100%;">🔄 Refresh All Statuses</button>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <button onclick="refreshRoomDisplay()" class="btn-info">🔄 Refresh</button>
+                    <div id="socketUserIndicator" style="padding: 8px 15px; background: #e8f5e9; border-radius: 6px; color: #2e7d32; font-size: 13px; font-weight: 500; display: none;">
+                        <span id="socketUserText">No active socket user</span>
+                    </div>
+                </div>
             </div>
 
             <!-- Action Log -->
-            <div class="section" style="background: #fff; max-height: 200px; overflow-y: auto;">
+            <div class="section" style="background: #fff; max-height: 250px; overflow-y: auto;">
                 <h3>📋 Action Log</h3>
                 <div id="actionLog" style="font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.6;">
                     <div style="color: #666;">No actions yet. Start using streaming features to see logs.</div>
                 </div>
             </div>
 
-            <!-- Room Operations -->
+            <!-- Quick Actions -->
             <div class="section">
-                <h3>🏠 Room Operations</h3>
-                
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+                <h3>⚡ Quick Actions</h3>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
                     <div>
                         <label>User IDs (comma-separated, 2-4):</label>
-                        <input type="text" id="roomUserIds" value="test-user-1,test-user-2" placeholder="test-user-1,test-user-2">
+                        <input type="text" id="roomUserIds" value="test-user-1,test-user-2" placeholder="test-user-1,test-user-2" style="width: 100%; padding: 8px;">
                     </div>
                     <div>
                         <label>Call Type:</label>
-                        <select id="callType" style="width: 100%;">
+                        <select id="callType" style="width: 100%; padding: 8px;">
                             <option value="matched">Matched</option>
                             <option value="squad">Squad</option>
                         </select>
                     </div>
                 </div>
-                
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
-                    <button onclick="createRoom()" class="btn-primary">➕ Create Room</button>
-                    <button onclick="getRoom()" class="btn-secondary">📦 Get Room Info</button>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+                    <button onclick="createRoomSimple()" class="btn-primary" style="padding: 12px;">➕ Create New Room</button>
+                    <button onclick="getRoomIdFromUserId()" class="btn-info" style="padding: 12px;">🔍 Get Room from User ID</button>
                 </div>
-                
-                <div class="form-group">
-                    <label>Room ID:</label>
-                    <input type="text" id="getRoomId" placeholder="Enter room ID">
+                <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 10px; margin-bottom: 10px;">
+                    <input type="text" id="findRoomUserId" placeholder="Enter User ID to find their room" style="padding: 8px;">
+                    <button onclick="getRoomIdFromUserId()" class="btn-secondary" style="padding: 8px;">Find</button>
                 </div>
-                
-                <div id="roomResponse" class="response" style="display:none;"></div>
-                <div id="getRoomResponse" class="response" style="display:none;"></div>
+                <div id="findRoomCurlCommand" style="display: none; margin-top: 10px; padding: 10px; background: #f8f9fa; border-radius: 6px; font-family: monospace; font-size: 12px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                        <strong style="color: #333;">📋 cURL Command:</strong>
+                        <button onclick="copyFindRoomCurl()" class="btn-info" style="padding: 4px 8px; font-size: 11px;">📋 Copy</button>
+                    </div>
+                    <code id="findRoomCurlText" style="word-break: break-all; white-space: pre-wrap;"></code>
+                </div>
             </div>
 
-            <!-- Room Management -->
+            <!-- Waitlist Management -->
             <div class="section">
-                <h3>🚪 Room Management</h3>
+                <h3>📋 Waitlist Management</h3>
+                <p style="margin-bottom: 15px; color: #666; font-size: 13px;">
+                    <strong>How it works:</strong> Viewers watching a broadcast can request to join the call. Hosts can see all requests and accept them. 
+                    The user who clicks "Request to Join" will be highlighted in the waitlist below.
+                </p>
                 
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
-                    <div class="form-group">
-                        <label>Room ID:</label>
-                        <input type="text" id="roomMgmtRoomId" placeholder="Enter room ID">
+                <!-- Viewer Actions -->
+                <div style="margin-bottom: 15px; padding: 15px; background: #e7f3ff; border-radius: 8px; border-left: 4px solid #007bff;">
+                    <h4 style="margin-bottom: 10px; color: #333;">👀 Viewer Actions</h4>
+                    <p style="font-size: 12px; color: #666; margin-bottom: 10px;">
+                        Use <strong>"Your User ID"</strong> from the main control section above. You must be a VIEWER of the broadcast first.
+                    </p>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+                        <button onclick="joinAsViewer()" class="btn-success" style="width: 100%; padding: 12px;">
+                            🎥 Join as Viewer
+                        </button>
+                        <button onclick="leaveAsViewer()" class="btn-secondary" style="width: 100%; padding: 12px;">
+                            🚪 Leave as Viewer
+                        </button>
                     </div>
-                    <div class="form-group">
-                        <label>Your User ID:</label>
-                        <input type="text" id="roomMgmtUserId" value="test-user-1">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                        <button onclick="requestToJoin()" class="btn-primary" style="width: 100%; padding: 12px;">
+                            ✋ Request to Join
+                        </button>
+                        <button onclick="cancelJoinRequest()" class="btn-secondary" style="width: 100%; padding: 12px;">
+                            ❌ Cancel Request
+                        </button>
                     </div>
+                    <p style="font-size: 11px; color: #666; margin-top: 8px; font-style: italic;">
+                        💡 <strong>Step 1:</strong> Click "Join as Viewer" to become a viewer of the broadcast.<br>
+                        💡 <strong>Step 2:</strong> Click "Request to Join" to request joining as a participant. The host can accept it.
+                    </p>
                 </div>
                 
-                <button onclick="fetchRoomByUserId()" class="btn-info" style="width: 100%; margin-bottom: 10px;">
-                    🔍 Find Room by User ID
+                <!-- Host Actions -->
+                <div style="padding: 15px; background: #f8f9fa; border-radius: 8px;">
+                    <h4 style="margin-bottom: 10px; color: #333;">👑 Host Actions</h4>
+                    <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+                        <button onclick="refreshWaitlist()" class="btn-info" style="flex: 1; padding: 10px;">
+                            🔄 Refresh Waitlist
+                        </button>
+                        <button onclick="setInterval(() => refreshWaitlist(), 3000)" class="btn-secondary" style="padding: 10px; font-size: 11px;">
+                            ⏱️ Auto-refresh (3s)
+                        </button>
+                    </div>
+                    <div id="waitlistDisplay" style="min-height: 80px; padding: 15px; background: white; border-radius: 8px; border: 1px solid #e0e0e0;">
+                        <div style="color: #666; text-align: center; padding: 20px;">
+                            <div>No waitlist entries yet.</div>
+                            <div style="font-size: 11px; margin-top: 5px;">Click "Refresh Waitlist" to check for requests.</div>
+                        </div>
+                    </div>
+                    <p style="font-size: 11px; color: #666; margin-top: 8px;">
+                        💡 <strong>Green highlight</strong> = User who just clicked "Request to Join"<br>
+                        💡 <strong>Yellow highlight</strong> = Your own request (if you're in the waitlist)
+                    </p>
+                </div>
+            </div>
+
+            <!-- Pull Stranger Mode -->
+            <div class="section">
+                <h3>🔗 Pull Stranger Mode</h3>
+                <p style="margin-bottom: 15px; color: #666; font-size: 13px;">
+                    HOST can enable pull stranger mode. Then others can join via pull stranger.
+                </p>
+                
+                <button onclick="enablePullStranger()" class="btn-info" style="width: 100%; margin-bottom: 15px; padding: 12px;">
+                    🔓 Enable Pull Stranger (as User Above)
                 </button>
                 
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
-                    <button onclick="refreshRoomInfo()" class="btn-info">🔄 Refresh Info</button>
-                    <button onclick="leaveRoom()" class="btn-secondary">🚪 Leave Room</button>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+                    <input type="text" id="joinPullStrangerUserId" placeholder="Joining User ID" style="padding: 8px;">
+                    <input type="text" id="joinPullStrangerTargetId" placeholder="Target User ID" style="padding: 8px;">
                 </div>
-
-                <!-- Participant Management -->
-                <div style="margin-top: 20px; padding-top: 20px; border-top: 2px solid #e0e0e0;">
-                    <h4 style="margin-bottom: 15px; color: #333;">👥 Participants</h4>
-                    
-                    <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 10px; margin-bottom: 10px;">
-                        <input type="text" id="addParticipantUserId" placeholder="User ID to add (test-user-3)">
-                        <button onclick="addParticipant()" class="btn-success">➕ Add</button>
-                    </div>
-                    
-                    <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 10px;">
-                        <input type="text" id="kickUserId" placeholder="User ID to kick">
-                        <button onclick="kickUser()" class="btn-danger">👢 Kick</button>
-                    </div>
-                </div>
-
-                <!-- Pull Stranger Mode -->
-                <div style="margin-top: 20px; padding-top: 20px; border-top: 2px solid #e0e0e0;">
-                    <h4 style="margin-bottom: 15px; color: #333;">🔗 Pull Stranger Mode</h4>
-                    <p style="margin-bottom: 10px; color: #666; font-size: 12px;">
-                        HOST can enable pull stranger mode. Then others can join via pull stranger.
-                    </p>
-                    
-                    <button onclick="enablePullStranger()" class="btn-info" style="width: 100%; margin-bottom: 10px;">
-                        🔓 Enable Pull Stranger (as User Above)
-                    </button>
-                    
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
-                        <input type="text" id="joinPullStrangerUserId" placeholder="Joining User ID">
-                        <input type="text" id="joinPullStrangerTargetId" placeholder="Target User ID">
-                    </div>
-                    
-                    <button onclick="joinViaPullStranger()" class="btn-success" style="width: 100%;">
-                        🚪 Join Via Pull Stranger
-                    </button>
-                </div>
-
-                <div id="roomMgmtResponse" class="response" style="display:none;"></div>
+                
+                <button onclick="joinViaPullStranger()" class="btn-success" style="width: 100%; padding: 12px;">
+                    🚪 Join Via Pull Stranger
+                </button>
             </div>
 
-            <!-- Additional Features -->
+            <!-- Participant Management -->
+            <div class="section">
+                <h3>👥 Participant Management</h3>
+                
+                <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 10px; margin-bottom: 10px;">
+                    <input type="text" id="addParticipantUserId" placeholder="User ID to add (test-user-3)" style="padding: 8px;">
+                    <button onclick="addParticipant()" class="btn-success" style="padding: 8px;">➕ Add</button>
+                </div>
+                
+                <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 10px;">
+                    <input type="text" id="kickUserId" placeholder="User ID to kick" style="padding: 8px;">
+                    <button onclick="kickUser()" class="btn-danger" style="padding: 8px;">👢 Kick</button>
+                </div>
+            </div>
+
+            <!-- Room Features -->
             <div class="section">
                 <h3>🎁 Room Features</h3>
                 
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
                     <div class="form-group">
-                        <label>Room ID:</label>
-                        <input type="text" id="giftRoomId" placeholder="Room ID">
+                        <label>From User:</label>
+                        <input type="text" id="giftFromUserId" value="test-user-1" style="width: 100%; padding: 8px;">
                     </div>
                     <div class="form-group">
-                        <label>From User:</label>
-                        <input type="text" id="giftFromUserId" value="test-user-1">
+                        <label>To User:</label>
+                        <input type="text" id="giftToUserId" value="test-user-2" style="width: 100%; padding: 8px;">
                     </div>
                 </div>
-                
-                <div class="form-group" style="margin-bottom: 15px;">
-                    <label>To User:</label>
-                    <input type="text" id="giftToUserId" value="test-user-2">
-                </div>
+                <input type="hidden" id="giftRoomId" value="">
+                <input type="hidden" id="chatRoomId" value="">
                 
                 <div class="form-group" style="margin-bottom: 15px;">
                     <label>Select Gift:</label>
@@ -808,13 +868,9 @@
                     <input type="hidden" id="selectedGiftAmount" value="0">
                 </div>
                 
-                <button onclick="sendGift()" class="btn-primary" style="width: 100%; margin-bottom: 15px;">🎁 Send Gift</button>
+                <button onclick="sendGift()" class="btn-primary" style="width: 100%; margin-bottom: 15px; padding: 12px;">🎁 Send Gift</button>
                 
-                <div class="form-group">
-                    <label>Room ID (Chat):</label>
-                    <input type="text" id="chatRoomId" placeholder="Room ID">
-                </div>
-                <button onclick="getChat()" class="btn-secondary" style="width: 100%;">💬 Get Chat History</button>
+                <button onclick="getChat()" class="btn-secondary" style="width: 100%; padding: 12px;">💬 Get Chat History</button>
                 
                 <div id="giftResponse" class="response" style="display:none;"></div>
                 <div id="chatResponse" class="response" style="display:none;"></div>
@@ -834,16 +890,16 @@
                 
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
                     <div class="form-group">
-                        <label>Room ID:</label>
-                        <input type="text" id="icebreakerRoomId" placeholder="Room ID">
+                        <label>User ID (who requests):</label>
+                        <input type="text" id="icebreakerUserId" value="test-user-1" placeholder="test-user-1" style="width: 100%; padding: 8px;">
                     </div>
                     <div class="form-group">
-                        <label>User ID (who requests):</label>
-                        <input type="text" id="icebreakerUserId" value="test-user-1" placeholder="test-user-1">
+                        <label>Room ID:</label>
+                        <input type="text" id="icebreakerRoomId" placeholder="Room ID (auto-filled)" style="width: 100%; padding: 8px;">
                     </div>
                 </div>
                 
-                <button onclick="getIcebreaker()" class="btn-primary" style="width: 100%; margin-bottom: 15px;">
+                <button onclick="getIcebreaker()" class="btn-primary" style="width: 100%; margin-bottom: 15px; padding: 12px;">
                     ❄️ Get Icebreaker (Broadcast to All)
                 </button>
                 
@@ -861,10 +917,10 @@
                 <h3>⚙️ Admin: Icebreaker Management</h3>
                 
                 <div style="margin-bottom: 15px;">
-                    <button onclick="loadAllIcebreakers()" class="btn-info" style="width: 100%; margin-bottom: 10px;">
+                    <button onclick="loadAllIcebreakers()" class="btn-info" style="width: 100%; margin-bottom: 10px; padding: 10px;">
                         📋 Load All Icebreakers
                     </button>
-                    <button onclick="loadActiveIcebreakers()" class="btn-info" style="width: 100%; margin-bottom: 15px;">
+                    <button onclick="loadActiveIcebreakers()" class="btn-info" style="width: 100%; margin-bottom: 15px; padding: 10px;">
                         ✅ Load Active Icebreakers Only
                     </button>
                 </div>
@@ -877,27 +933,27 @@
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
                     <div class="form-group">
                         <label>Category (optional):</label>
-                        <input type="text" id="newIcebreakerCategory" placeholder="fun, personal, etc.">
+                        <input type="text" id="newIcebreakerCategory" placeholder="fun, personal, etc." style="width: 100%; padding: 8px;">
                     </div>
                     <div class="form-group">
                         <label>Order (optional):</label>
-                        <input type="number" id="newIcebreakerOrder" placeholder="1, 2, 3...">
+                        <input type="number" id="newIcebreakerOrder" placeholder="1, 2, 3..." style="width: 100%; padding: 8px;">
                     </div>
                 </div>
                 
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
-                    <button onclick="createIcebreaker()" class="btn-success">➕ Create Icebreaker</button>
-                    <button onclick="updateIcebreaker()" class="btn-warning">✏️ Update Selected</button>
+                    <button onclick="createIcebreaker()" class="btn-success" style="padding: 10px;">➕ Create Icebreaker</button>
+                    <button onclick="updateIcebreaker()" class="btn-warning" style="padding: 10px;">✏️ Update Selected</button>
                 </div>
                 
                 <div class="form-group">
                     <label>Icebreaker ID (for update/delete):</label>
-                    <input type="text" id="icebreakerIdForEdit" placeholder="Enter ID from list above">
+                    <input type="text" id="icebreakerIdForEdit" placeholder="Enter ID from list above" style="width: 100%; padding: 8px;">
                 </div>
                 
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-                    <button onclick="deactivateIcebreaker()" class="btn-secondary">🚫 Deactivate</button>
-                    <button onclick="hardDeleteIcebreaker()" class="btn-danger">🗑️ Hard Delete</button>
+                    <button onclick="deactivateIcebreaker()" class="btn-secondary" style="padding: 10px;">🚫 Deactivate</button>
+                    <button onclick="hardDeleteIcebreaker()" class="btn-danger" style="padding: 10px;">🗑️ Hard Delete</button>
                 </div>
                 
                 <div id="adminIcebreakerResponse" class="response" style="display:none; margin-top: 15px;"></div>
@@ -1062,6 +1118,34 @@
             // Initialize gift selector when streaming tab is opened
             if (tabName === 'streaming') {
                 setTimeout(() => initializeGiftSelector(), 100);
+                // Start auto-refresh waitlist every 3 seconds
+                if (waitlistRefreshInterval) {
+                    clearInterval(waitlistRefreshInterval);
+                }
+                // Initial refresh
+                setTimeout(() => {
+                    const roomMgmtEl = document.getElementById('roomMgmtRoomId');
+                    const mainRoomEl = document.getElementById('mainRoomId');
+                    const roomId = (roomMgmtEl?.value || mainRoomEl?.value || '').trim();
+                    if (roomId) {
+                        refreshWaitlist();
+                    }
+                }, 500);
+                // Set up interval
+                waitlistRefreshInterval = setInterval(() => {
+                    const roomMgmtEl = document.getElementById('roomMgmtRoomId');
+                    const mainRoomEl = document.getElementById('mainRoomId');
+                    const roomId = (roomMgmtEl?.value || mainRoomEl?.value || '').trim();
+                    if (roomId) {
+                        refreshWaitlist();
+                    }
+                }, 3000);
+            } else {
+                // Stop auto-refresh when leaving streaming tab
+                if (waitlistRefreshInterval) {
+                    clearInterval(waitlistRefreshInterval);
+                    waitlistRefreshInterval = null;
+                }
             }
         }
         
@@ -1177,10 +1261,10 @@
             responseEl.innerHTML += html;
             
             const allServices = [
-                { name: 'API Gateway', url: getApiUrl('/health'), port: 3000, testEndpoint: '/health' },
+                { name: 'API Gateway', url: getBaseUrl() + '/health', port: 3000, testEndpoint: '/health' },
                 { name: 'Auth Service', url: getApiUrl('/auth/health'), port: 3001, testEndpoint: '/auth/health' },
                 { name: 'User Service', url: getApiUrl('/users/test/test-user-1?fields=id'), port: 3002, testEndpoint: '/users/test/...' },
-                { name: 'Moderation Service', url: getApiUrl('/moderation/check-image'), port: 3003, testEndpoint: '/moderation/check-image' },
+                { name: 'Moderation Service', url: getApiUrl('/moderation/health'), port: 3003, testEndpoint: '/moderation/health' },
                 { name: 'Discovery Service', url: getApiUrl('/discovery/test/card?userId=test&sessionId=test'), port: 3004, testEndpoint: '/discovery/test/...' },
                 { name: 'Streaming Service', url: getApiUrl('/streaming/test/rooms/test'), port: 3006, testEndpoint: '/streaming/test/...' },
                 { name: 'Wallet Service', url: getApiUrl('/wallet/test/wallet/balance?userId=test'), port: 3005, testEndpoint: '/wallet/test/...' },
@@ -1469,6 +1553,27 @@
             }
         }
         
+        async function testApiGetUser() {
+            const url = getApiUrl('/users/test/test-user-1?fields=status');
+            const el = document.getElementById('testApiResult');
+            el.style.display = 'block';
+            el.innerHTML = '⏳ Testing...';
+            try {
+                const res = await fetch(url, { cache: 'no-store' });
+                const text = await res.text();
+                let body = text;
+                try {
+                    body = JSON.stringify(JSON.parse(text), null, 2);
+                } catch (_) {}
+                const curl = `curl -s -w "\\n\\nHTTP_STATUS:%{http_code}" "${url}"`;
+                el.innerHTML = `HTTP ${res.status} ${res.statusText}\n\n${body}\n\n---\nRun in terminal:\n${curl}`;
+                el.style.color = res.ok ? '#28a745' : '#dc3545';
+            } catch (e) {
+                el.innerHTML = `❌ Failed: ${e.message}\n\nPossible causes:\n• Gateway not running (curl http://localhost:3000/health)\n• User-service not running (curl http://localhost:3002/health)\n• CORS (if file://): serve via "npx serve -p 8080 tests/html-interfaces" then open http://localhost:8080/comprehensive-test-interface.html`;
+                el.style.color = '#dc3545';
+            }
+        }
+        
         async function createComprehensiveTestData() {
             const responseEl = document.getElementById('setupResponse');
             responseEl.style.display = 'block';
@@ -1531,6 +1636,11 @@
             let successCount = 0;
             let errorCount = 0;
             
+            // Brief delay so gateway/user-service are ready (avoids "Failed to fetch" on first users)
+            responseEl.innerHTML = '<div style="color: #667eea;">⏳ Warming up... (1s)</div>';
+            await new Promise(r => setTimeout(r, 1000));
+            responseEl.innerHTML = '<div style="color: #667eea;">🔄 Creating comprehensive test data...</div>';
+            
             // Create users in batches to avoid overwhelming the server
             for (let i = 0; i < users.length; i++) {
                 const user = users[i];
@@ -1543,7 +1653,7 @@
                     // Check if user exists first (404 is expected and should be handled silently)
                     let userExists = false;
                     try {
-                        const userCheckRes = await fetch(getApiUrl(`/users/test/${user.id}?fields=id`));
+                        const userCheckRes = await fetch(getApiUrl(`/users/test/${user.id}?fields=id`), { cache: 'no-store' });
                         userExists = userCheckRes.ok;
                         // If response is not ok but not 404, log it (unexpected error)
                         if (!userCheckRes.ok && userCheckRes.status !== 404) {
@@ -1557,31 +1667,47 @@
                     let profileStatus = 'created';
                     
                     if (!userExists) {
-                        // User doesn't exist - create new profile
-                        // Step 1: Create profile (only with required fields)
-                        let profileRes = await fetch(getApiUrl(`/users/${user.id}/profile`), {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                username: user.username,
-                                dateOfBirth: dateOfBirth,
-                                gender: user.gender,
-                                displayPictureUrl: 'https://via.placeholder.com/300'
-                            })
-                        }).catch((err) => {
-                            console.error(`Error creating user ${user.id}:`, err);
-                            return { status: 0, ok: false, error: err.message };
-                        });
+                        // User doesn't exist - create new profile (retry on "Failed to fetch")
+                        const createPayload = {
+                            username: user.username,
+                            dateOfBirth: dateOfBirth,
+                            gender: user.gender,
+                            displayPictureUrl: 'https://via.placeholder.com/300'
+                        };
+                        let profileRes;
+                        const maxCreateRetries = 3;
+                        for (let attempt = 0; attempt < maxCreateRetries; attempt++) {
+                            if (attempt > 0) {
+                                await new Promise(r => setTimeout(r, 500));
+                            }
+                            profileRes = await fetch(getApiUrl(`/users/test/${user.id}/profile`), {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(createPayload)
+                            }).catch((err) => {
+                                console.error(`Network error creating user ${user.id} (attempt ${attempt + 1}):`, err);
+                                return { status: 0, ok: false, error: err.message || 'Network error - service may not be running' };
+                            });
+                            if (profileRes.ok) break;
+                            if (profileRes.status === 0 && attempt < maxCreateRetries - 1) continue; // Retry on Failed to fetch
+                            break;
+                        }
                         
                         if (!profileRes.ok && profileRes.status !== 0) {
-                            const errorData = await profileRes.json().catch(() => ({ message: 'Unknown error' }));
-                            console.error(`Failed to create user ${user.id}:`, errorData);
+                            let errorData;
+                            try {
+                                const text = await profileRes.text();
+                                errorData = text ? JSON.parse(text) : { message: `HTTP ${profileRes.status} ${profileRes.statusText}` };
+                            } catch (e) {
+                                errorData = { message: `HTTP ${profileRes.status} ${profileRes.statusText}` };
+                            }
+                            console.error(`Failed to create user ${user.id} (${profileRes.status}):`, errorData);
                             errorCount++;
                             results.push({ 
                                 user: user.id, 
                                 city: user.city, 
                                 status: 'creation_failed',
-                                error: errorData.message || `HTTP ${profileRes.status}`
+                                error: errorData.message || errorData.error || `HTTP ${profileRes.status}`
                             });
                             continue; // Skip to next user
                         }
@@ -1592,7 +1718,7 @@
                                 user: user.id, 
                                 city: user.city, 
                                 status: 'creation_failed',
-                                error: profileRes.error || 'Network error'
+                                error: profileRes.error || 'Failed to fetch (retries exhausted)'
                             });
                             continue;
                         }
@@ -1742,6 +1868,39 @@
             
             // Show detailed error information if there are errors
             const errorDetails = results.filter(r => r.status === 'creation_failed' || r.error);
+            const hasFailedToFetch = errorDetails.some(r => (r.error || '').toString().toLowerCase().includes('failed to fetch') || (r.error || '').toString().toLowerCase().includes('network error'));
+            
+            // Verify test-user-1 exists (same API as Quick Status Check) — helps debug "404 after Create"
+            let verifyNote = '';
+            if (successCount > 0) {
+                responseEl.innerHTML = '<div style="color: #667eea;">🔍 Verifying test-user-1...</div>';
+                try {
+                    const verifyRes = await fetch(getApiUrl('/users/test/test-user-1?fields=id'), { cache: 'no-store' });
+                    if (verifyRes.ok) {
+                        verifyNote = '\n\n✓ Verification: GET test-user-1 returned 200. Quick Status Check should work.';
+                    } else {
+                        verifyNote = `\n\n⚠ Verification failed: GET test-user-1 returned ${verifyRes.status}. Discovery Quick Check may still show 404. Try: 1) Same API base URL in both tabs, 2) Hard refresh (Ctrl+Shift+R), 3) curl the Request URL shown in Discovery.`;
+                    }
+                } catch (e) {
+                    verifyNote = `\n\n⚠ Verification error: ${e.message}. Quick Status Check uses the same API.`;
+                }
+            }
+            
+            const baseNote = successCount > 0 
+                ? `🎉 ${successCount} users ready! 
+                    • ${byStatus.AVAILABLE || 0} Discovery users (AVAILABLE) - Test in Discovery tab
+                    • ${byStatus.ONLINE || 0} ONLINE users - Test in Homepage tab
+                    • ${byStatus.OFFLINE || 0} OFFLINE users - Test in Homepage tab
+                    • ${byStatus.VIEWER || 0} VIEWER users - Test in Homepage tab${verifyNote}${hasFailedToFetch ? '\n\n💡 Failed to fetch usually means network/timeout. Re-run Create Comprehensive Test Data to retry failed users.' : ''}`
+                : `⚠️ No users were created. 
+                    ${errorDetails.length > 0 ? `\n\nFirst error: ${errorDetails[0].user} - ${errorDetails[0].error || errorDetails[0].status || 'Unknown error'}` : ''}${hasFailedToFetch ? '\n\n💡 Failed to fetch usually means network/timeout. Ensure services are running, then re-run Create Comprehensive Test Data.' : ''}
+                    \nCommon issues:
+                    • Services not running - Check if User Service is running on port 3002
+                    • API Gateway not running - Check if API Gateway is running on port 3000
+                    • Endpoint not found - User Service may need restart to pick up new test endpoint
+                    • Database not set up - Run: cd scripts && ./setup-and-start-services.sh
+                    • Check browser console (F12) for detailed error messages
+                    • Try: curl -X POST http://localhost:3000/v1/users/test/test-user-1/profile -H "Content-Type: application/json" -d '{"username":"test","dateOfBirth":"1998-01-15T00:00:00.000Z","gender":"MALE","displayPictureUrl":"https://via.placeholder.com/300"}'`;
             
             showResponse('setupResponse', {
                 message: successCount > 0 
@@ -1755,18 +1914,8 @@
                     byStatus: byStatus
                 },
                 results: results.slice(0, 10), // Show first 10
-                errors: errorDetails.slice(0, 5), // Show first 5 errors
-                note: successCount > 0 
-                    ? `🎉 ${successCount} users ready! 
-                    • ${byStatus.AVAILABLE || 0} Discovery users (AVAILABLE) - Test in Discovery tab
-                    • ${byStatus.ONLINE || 0} ONLINE users - Test in Homepage tab
-                    • ${byStatus.OFFLINE || 0} OFFLINE users - Test in Homepage tab
-                    • ${byStatus.VIEWER || 0} VIEWER users - Test in Homepage tab`
-                    : `⚠️ No users were created. Common issues:
-                    • Services not running - Click "Run Setup Script" button above
-                    • Database not set up - Run: cd scripts && ./setup-and-start-services.sh
-                    • Prisma schemas not synced - The setup script will handle this
-                    • Check browser console for detailed error messages`
+                errors: errorDetails.slice(0, 10), // Show first 10 errors for debugging
+                note: baseNote
             });
         }
         
@@ -1877,7 +2026,7 @@
             
             try {
                 // Fetch both status and preferredCity
-                const statusRes = await fetch(getApiUrl(`/users/test/${userId}?fields=status,preferredCity`));
+                const statusRes = await fetch(getApiUrl(`/users/test/${userId}?fields=status,preferredCity`), { cache: 'no-store' });
                 
                 // Handle 404 - user profile doesn't exist
                 if (statusRes.status === 404) {
@@ -1976,7 +2125,7 @@
                     const gender = userId.includes('squad') ? 'MALE' : (userId.includes('1') || userId.includes('3') || userId.includes('5') || userId.includes('7') ? 'MALE' : 'FEMALE');
                     
                     // Create profile using POST
-                    const createRes = await fetch(getApiUrl(`/users/${userId}/profile`), {
+                    const createRes = await fetch(getApiUrl(`/users/test/${userId}/profile`), {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -2630,7 +2779,7 @@
             }
             
             try {
-                const response = await fetch(getApiUrl(`/users/test/${userId.trim()}?fields=status`));
+                const response = await fetch(getApiUrl(`/users/test/${userId.trim()}?fields=status`), { cache: 'no-store' });
                 
                 // Handle 404 - user profile doesn't exist
                 if (response.status === 404) {
@@ -2700,6 +2849,70 @@
             }
         }
         
+        async function createSingleTestUser(userId) {
+            const username = userId.replace(/[^a-zA-Z0-9]/g, '_').replace(/^_+|_+$/g, '') || 'user_1';
+            const safeUsername = username.length >= 3 ? username.slice(0, 30) : 'user_' + username;
+            const birthYear = new Date().getFullYear() - 25;
+            const dateOfBirth = `${birthYear}-01-15T00:00:00.000Z`;
+            try {
+                const profileRes = await fetch(getApiUrl(`/users/test/${userId}/profile`), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username: safeUsername,
+                        dateOfBirth,
+                        gender: 'MALE',
+                        displayPictureUrl: 'https://via.placeholder.com/300'
+                    })
+                });
+                if (!profileRes.ok) {
+                    const err = await profileRes.json().catch(() => ({}));
+                    return { error: err.message || `HTTP ${profileRes.status}` };
+                }
+                await fetch(getApiUrl(`/users/test/${userId}/location`), {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ latitude: 19.076, longitude: 72.8777 })
+                }).catch(() => {});
+                await fetch(getApiUrl(`/users/test/${userId}/preferred-city`), {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ city: 'Mumbai' })
+                }).catch(() => {});
+                await fetch(getApiUrl(`/users/test/${userId}/status`), {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status: 'AVAILABLE' })
+                }).catch(() => {});
+                await fetch(getApiUrl('/wallet/test/wallet/add-coins'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId, amount: 10000, description: 'test_setup' })
+                }).catch(() => {});
+                return { ok: true };
+            } catch (e) {
+                return { error: e.message || 'Network error' };
+            }
+        }
+
+        async function createSingleTestUserAndCheck() {
+            const userId = document.getElementById('discoveryQuickStatusCheckUserId').value.trim();
+            const resultEl = document.getElementById('discoveryQuickStatusResult');
+            const contentEl = document.getElementById('discoveryQuickStatusResultContent');
+            if (!userId) return;
+            resultEl.style.display = 'block';
+            contentEl.innerHTML = '<div style="color: #666;">⏳ Creating user...</div>';
+            const createResult = await createSingleTestUser(userId);
+            if (createResult.error) {
+                contentEl.innerHTML = `<div style="color: #dc3545;">❌ Create failed: ${createResult.error}</div>`;
+                return;
+            }
+            contentEl.innerHTML = '<div style="color: #28a745;">✅ User created. Checking status...</div>';
+            await quickCheckStatusDiscovery();
+            const cardUserId = document.getElementById('cardUserId')?.value?.trim();
+            if (cardUserId === userId) await updateUserStatusDisplay(userId);
+        }
+
         async function quickCheckStatusDiscovery() {
             const userId = document.getElementById('discoveryQuickStatusCheckUserId').value.trim();
             const resultEl = document.getElementById('discoveryQuickStatusResult');
@@ -2717,7 +2930,23 @@
             const result = await checkUserStatusQuick(userId);
             
             if (result.error) {
-                contentEl.innerHTML = `<div style="color: #dc3545;">❌ Error: ${result.error}</div>`;
+                const is404 = result.error.includes('User profile not found');
+                const reqUrl = getApiUrl(`/users/test/${userId}?fields=status`);
+                contentEl.innerHTML = `
+                    <div style="color: #dc3545;">❌ Error: ${result.error}</div>
+                    ${is404 ? `
+                    <div style="margin-top: 12px; font-size: 12px; color: #666; font-family: monospace; word-break: break-all;">
+                        Request: GET ${reqUrl}
+                    </div>
+                    <p style="margin: 10px 0 0 0; font-size: 13px; color: #856404;">
+                        If you ran Setup: ensure you clicked <strong>Create Comprehensive Test Data</strong> (not just Run Setup Script). Run Setup Script alone does not create users.
+                    </p>
+                    <div style="margin-top: 10px;">
+                        <button type="button" onclick="createSingleTestUserAndCheck()" class="btn-warning" style="padding: 8px 16px;">✨ Create this user</button>
+                        <span style="margin-left: 8px; font-size: 12px; color: #666;">Creates a minimal profile so you can use Discovery.</span>
+                    </div>
+                    ` : ''}
+                `;
             } else {
                 const statusColor = getStatusColor(result.status);
                 const timestamp = new Date().toLocaleTimeString();
@@ -2746,7 +2975,7 @@
             
             // Get all user IDs from inputs
             const userIds = new Set();
-            const inputs = ['roomMgmtUserId', 'addParticipantUserId', 'kickUserId', 
+            const inputs = ['mainUserId', 'roomMgmtUserId', 'addParticipantUserId', 'kickUserId', 
                           'joinPullStrangerUserId', 'joinPullStrangerTargetId', 
                           'giftFromUserId', 'giftToUserId'];
             inputs.forEach(id => {
@@ -2761,7 +2990,10 @@
             }
             
             // Get participants from room info if available
-            const roomId = document.getElementById('roomMgmtRoomId').value || document.getElementById('getRoomId').value;
+            const roomMgmtEl = document.getElementById('roomMgmtRoomId');
+            const mainRoomEl = document.getElementById('mainRoomId');
+            const getRoomEl = document.getElementById('getRoomId');
+            const roomId = (roomMgmtEl?.value || mainRoomEl?.value || getRoomEl?.value || '').trim();
             if (roomId) {
                 try {
                     const response = await fetch(getApiUrl(`/streaming/test/rooms/${roomId}`));
@@ -2813,6 +3045,11 @@
             };
             return colors[status] || '#999';
         }
+
+        // Waitlist-specific status color function (reuse existing)
+        if (typeof window.getStatusColor === 'undefined') {
+            window.getStatusColor = getStatusColor;
+        }
         
         function addActionLog(message, userId = null, type = 'info') {
             const logEl = document.getElementById('actionLog');
@@ -2828,6 +3065,478 @@
             // Keep only last 50 entries
             while (logEl.children.length > 50) {
                 logEl.removeChild(logEl.lastChild);
+            }
+        }
+
+        // Track active socket user (which user clicked which button)
+        let activeSocketUser = null;
+        let activeSocketAction = null;
+
+        // Simplified Streaming functions
+        async function createRoomSimple() {
+            const userIdsStr = document.getElementById('roomUserIds').value || 'test-user-1,test-user-2';
+            const callType = document.getElementById('callType').value || 'matched';
+            const userIds = userIdsStr.split(',').map(id => id.trim()).filter(Boolean);
+            
+            if (userIds.length < 2 || userIds.length > 4) {
+                addActionLog('❌ Room must have 2-4 users', null, 'error');
+                return;
+            }
+            
+            addActionLog(`Creating room with users: ${userIds.join(', ')}`, null, 'info');
+            
+            try {
+                const response = await fetch(getApiUrl('/streaming/test/rooms'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userIds, callType })
+                });
+                const data = await response.json();
+                
+                if (response.ok) {
+                    addActionLog(`✅ Room created: ${data.roomId}`, null, 'success');
+                    document.getElementById('mainRoomId').value = data.roomId;
+                    // Sync room ID to all relevant inputs
+                    document.getElementById('icebreakerRoomId').value = data.roomId;
+                    document.getElementById('giftRoomId').value = data.roomId;
+                    document.getElementById('chatRoomId').value = data.roomId;
+                    const roomMgmtEl = document.getElementById('roomMgmtRoomId');
+                    const mainRoomEl = document.getElementById('mainRoomId');
+                    if (roomMgmtEl) roomMgmtEl.value = data.roomId;
+                    if (mainRoomEl) mainRoomEl.value = data.roomId;
+                    setTimeout(() => refreshRoomDisplay(), 1000);
+                } else {
+                    addActionLog(`❌ Failed: ${data.message || JSON.stringify(data)}`, null, 'error');
+                }
+            } catch (error) {
+                addActionLog(`❌ Error: ${error.message}`, null, 'error');
+            }
+        }
+
+        async function startBroadcast() {
+            const roomId = document.getElementById('mainRoomId').value;
+            const userId = document.getElementById('mainUserId').value;
+            
+            if (!roomId || !userId) {
+                addActionLog('❌ Room ID and User ID are required', null, 'error');
+                return;
+            }
+            
+            // Track active socket user
+            activeSocketUser = userId;
+            activeSocketAction = 'Start Broadcast';
+            updateSocketUserIndicator();
+            
+            addActionLog(`▶️ Starting broadcast (User: ${userId})`, userId, 'info');
+            
+            try {
+                const response = await fetch(getApiUrl(`/streaming/test/rooms/${roomId}/enable-broadcasting`), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId })
+                });
+                const data = await response.json();
+                
+                if (response.ok) {
+                    addActionLog(`✅ Broadcast started successfully`, userId, 'success');
+                    setTimeout(() => refreshRoomDisplay(), 1000);
+                } else {
+                    addActionLog(`❌ Failed: ${data.message || JSON.stringify(data)}`, userId, 'error');
+                }
+            } catch (error) {
+                addActionLog(`❌ Error: ${error.message}`, userId, 'error');
+            }
+        }
+
+        async function endBroadcast() {
+            const roomId = document.getElementById('mainRoomId').value;
+            const userId = document.getElementById('mainUserId').value;
+            
+            if (!roomId) {
+                addActionLog('❌ Room ID is required', null, 'error');
+                return;
+            }
+            
+            // Track active socket user
+            if (userId) {
+                activeSocketUser = userId;
+                activeSocketAction = 'End Broadcast';
+                updateSocketUserIndicator();
+            }
+            
+            addActionLog(`⏹️ Ending broadcast${userId ? ` (User: ${userId})` : ''}`, userId, 'info');
+            
+            try {
+                const response = await fetch(getApiUrl(`/streaming/test/rooms/${roomId}/end`), {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                
+                if (response.ok) {
+                    addActionLog(`✅ Broadcast ended successfully`, userId, 'success');
+                    activeSocketUser = null;
+                    activeSocketAction = null;
+                    updateSocketUserIndicator();
+                    setTimeout(() => refreshRoomDisplay(), 1000);
+                } else {
+                    addActionLog(`❌ Failed: ${data.message || JSON.stringify(data)}`, userId, 'error');
+                }
+            } catch (error) {
+                addActionLog(`❌ Error: ${error.message}`, userId, 'error');
+            }
+        }
+
+        async function refreshRoomDisplay() {
+            const roomId = document.getElementById('mainRoomId').value;
+            
+            if (!roomId) {
+                document.getElementById('roomUsersDisplay').innerHTML = `
+                    <div style="padding: 20px; background: white; border-radius: 8px; text-align: center; color: #999;">
+                        No room ID. Enter a room ID above or create a new room.
+                    </div>
+                `;
+                return;
+            }
+            
+            addActionLog(`🔄 Refreshing room display: ${roomId}`, null, 'info');
+            
+            try {
+                const response = await fetch(getApiUrl(`/streaming/test/rooms/${roomId}`));
+                const data = await response.json();
+                
+                if (response.ok && data.exists !== false) {
+                    displayRoomUsers(data);
+                } else {
+                    document.getElementById('roomUsersDisplay').innerHTML = `
+                        <div style="padding: 20px; background: #fff3cd; border-radius: 8px; text-align: center; color: #856404;">
+                            Room not found or doesn't exist.
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                addActionLog(`❌ Error: ${error.message}`, null, 'error');
+                document.getElementById('roomUsersDisplay').innerHTML = `
+                    <div style="padding: 20px; background: #f8d7da; border-radius: 8px; text-align: center; color: #721c24;">
+                        Error loading room: ${error.message}
+                    </div>
+                `;
+            }
+        }
+
+        async function displayRoomUsers(roomData) {
+            const displayEl = document.getElementById('roomUsersDisplay');
+            const participants = roomData.participants || [];
+            const viewers = roomData.viewers || [];
+            const isBroadcasting = roomData.isBroadcasting || false;
+            
+            // Get all user IDs
+            const allUserIds = new Set();
+            participants.forEach(p => allUserIds.add(p.userId));
+            viewers.forEach(v => allUserIds.add(v.userId));
+            
+            // Fetch statuses for all users
+            const userStatusPromises = Array.from(allUserIds).map(async (userId) => {
+                try {
+                    const statusRes = await fetch(getApiUrl(`/users/test/${userId}?fields=status`), { cache: 'no-store' });
+                    if (statusRes.ok) {
+                        const userData = await statusRes.json();
+                        return { userId, status: userData.user?.status || 'UNKNOWN' };
+                    }
+                } catch (e) {}
+                return { userId, status: 'UNKNOWN' };
+            });
+            
+            const userStatuses = await Promise.all(userStatusPromises);
+            const statusMap = new Map(userStatuses.map(u => [u.userId, u.status]));
+            
+            let html = '';
+            
+            // Display participants
+            if (participants.length > 0) {
+                html += '<div style="grid-column: 1/-1; margin-bottom: 10px;"><strong style="color: #333;">👥 Participants:</strong></div>';
+                participants.forEach(participant => {
+                    const status = statusMap.get(participant.userId) || 'UNKNOWN';
+                    const statusColor = getStatusColor(status);
+                    const isActiveSocket = activeSocketUser === participant.userId;
+                    const role = participant.role || 'PARTICIPANT';
+                    
+                    html += `
+                        <div style="padding: 15px; background: ${isActiveSocket ? '#e8f5e9' : 'white'}; border-radius: 8px; border: 2px solid ${isActiveSocket ? '#28a745' : '#e0e0e0'}; ${isActiveSocket ? 'box-shadow: 0 0 10px rgba(40, 167, 69, 0.3);' : ''}">
+                            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                                <div style="font-weight: 600; color: #333; font-size: 16px;">${participant.userId}</div>
+                                ${isActiveSocket ? '<span style="background: #28a745; color: white; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;">🔌 ACTIVE</span>' : ''}
+                            </div>
+                            <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px;">
+                                <span style="padding: 4px 10px; background: ${statusColor}; color: white; border-radius: 4px; font-size: 12px; font-weight: 500;">${status}</span>
+                                <span style="padding: 4px 10px; background: #007bff; color: white; border-radius: 4px; font-size: 12px; font-weight: 500;">${role}</span>
+                            </div>
+                            ${isActiveSocket && activeSocketAction ? `<div style="margin-top: 8px; font-size: 11px; color: #2e7d32; font-weight: 500;">⚡ ${activeSocketAction}</div>` : ''}
+                        </div>
+                    `;
+                });
+            }
+            
+            // Display viewers
+            if (viewers.length > 0) {
+                html += '<div style="grid-column: 1/-1; margin-top: 15px; margin-bottom: 10px;"><strong style="color: #333;">👀 Viewers:</strong></div>';
+                viewers.forEach(viewer => {
+                    const status = statusMap.get(viewer.userId) || 'UNKNOWN';
+                    const statusColor = getStatusColor(status);
+                    const isActiveSocket = activeSocketUser === viewer.userId;
+                    
+                    html += `
+                        <div style="padding: 15px; background: ${isActiveSocket ? '#e8f5e9' : 'white'}; border-radius: 8px; border: 2px solid ${isActiveSocket ? '#28a745' : '#e0e0e0'}; ${isActiveSocket ? 'box-shadow: 0 0 10px rgba(40, 167, 69, 0.3);' : ''}">
+                            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                                <div style="font-weight: 600; color: #333; font-size: 16px;">${viewer.userId}</div>
+                                ${isActiveSocket ? '<span style="background: #28a745; color: white; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;">🔌 ACTIVE</span>' : ''}
+                            </div>
+                            <div style="margin-top: 8px;">
+                                <span style="padding: 4px 10px; background: ${statusColor}; color: white; border-radius: 4px; font-size: 12px; font-weight: 500;">${status}</span>
+                                <span style="padding: 4px 10px; background: #6c757d; color: white; border-radius: 4px; font-size: 12px; font-weight: 500; margin-left: 5px;">VIEWER</span>
+                            </div>
+                            ${isActiveSocket && activeSocketAction ? `<div style="margin-top: 8px; font-size: 11px; color: #2e7d32; font-weight: 500;">⚡ ${activeSocketAction}</div>` : ''}
+                        </div>
+                    `;
+                });
+            }
+            
+            if (participants.length === 0 && viewers.length === 0) {
+                html = '<div style="padding: 20px; background: white; border-radius: 8px; text-align: center; color: #999;">No users in room.</div>';
+            }
+            
+            // Add broadcast status
+            if (isBroadcasting) {
+                html = `<div style="grid-column: 1/-1; padding: 10px; background: #d4edda; border-radius: 6px; margin-bottom: 10px; text-align: center; color: #155724; font-weight: 600;">📡 BROADCASTING LIVE</div>` + html;
+            }
+            
+            displayEl.innerHTML = html;
+        }
+
+        function updateSocketUserIndicator() {
+            const indicator = document.getElementById('socketUserIndicator');
+            const text = document.getElementById('socketUserText');
+            
+            if (activeSocketUser && activeSocketAction) {
+                indicator.style.display = 'block';
+                text.textContent = `🔌 ${activeSocketUser} - ${activeSocketAction}`;
+            } else {
+                indicator.style.display = 'none';
+            }
+        }
+
+        function copyFindRoomCurl() {
+            const curlTextEl = document.getElementById('findRoomCurlText');
+            if (curlTextEl) {
+                const curlCommand = curlTextEl.textContent;
+                navigator.clipboard.writeText(curlCommand).then(() => {
+                    addActionLog('✅ cURL command copied to clipboard', null, 'success');
+                    // Show temporary feedback
+                    const btn = event.target;
+                    const originalText = btn.textContent;
+                    btn.textContent = '✅ Copied!';
+                    btn.style.background = '#28a745';
+                    setTimeout(() => {
+                        btn.textContent = originalText;
+                        btn.style.background = '';
+                    }, 2000);
+                }).catch(err => {
+                    addActionLog('❌ Failed to copy: ' + err.message, null, 'error');
+                });
+            }
+        }
+
+        async function leaveRoomSimple() {
+            const roomId = document.getElementById('mainRoomId').value;
+            const userId = document.getElementById('mainUserId').value;
+            
+            if (!roomId || !userId) {
+                addActionLog('❌ Room ID and User ID are required', null, 'error');
+                return;
+            }
+            
+            addActionLog(`🚪 Leaving room (User: ${userId})`, userId, 'info');
+            
+            try {
+                const response = await fetch(getApiUrl(`/streaming/test/rooms/${roomId}/leave`), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId })
+                });
+                const data = await response.json();
+                
+                if (response.ok) {
+                    addActionLog(`✅ Left room successfully`, userId, 'success');
+                    setTimeout(() => refreshRoomDisplay(), 1000);
+                } else {
+                    addActionLog(`❌ Failed: ${data.message || JSON.stringify(data)}`, userId, 'error');
+                }
+            } catch (error) {
+                addActionLog(`❌ Error: ${error.message}`, userId, 'error');
+            }
+        }
+
+        async function getRoomIdFromUserId() {
+            const userId = document.getElementById('findRoomUserId').value || document.getElementById('mainUserId').value;
+            
+            if (!userId || userId.trim() === '') {
+                addActionLog('❌ User ID is required', null, 'error');
+                alert('Please enter a User ID to find their room.');
+                return;
+            }
+            
+            const trimmedUserId = userId.trim();
+            addActionLog(`🔍 Finding room for user: ${trimmedUserId}`, trimmedUserId, 'info');
+            
+            try {
+                const apiUrl = getApiUrl(`/streaming/test/users/${encodeURIComponent(trimmedUserId)}/room`);
+                addActionLog(`📡 Request: GET ${apiUrl}`, trimmedUserId, 'info');
+                
+                // Generate and display curl command
+                const curlCommand = `curl -s '${apiUrl}' -H 'Accept: application/json'`;
+                const curlEl = document.getElementById('findRoomCurlCommand');
+                const curlTextEl = document.getElementById('findRoomCurlText');
+                if (curlEl && curlTextEl) {
+                    curlTextEl.textContent = curlCommand;
+                    curlEl.style.display = 'block';
+                }
+                
+                // Track active socket user
+                activeSocketUser = trimmedUserId;
+                activeSocketAction = 'Find Room';
+                updateSocketUserIndicator();
+                
+                // Use AbortController for timeout handling
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout
+                
+                const response = await fetch(apiUrl, { 
+                    cache: 'no-store',
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'application/json'
+                    },
+                    signal: controller.signal
+                });
+                
+                clearTimeout(timeoutId);
+                
+                addActionLog(`📥 Response status: ${response.status} ${response.statusText}`, trimmedUserId, 'info');
+                
+                // Read response body once (can only be read once)
+                const responseText = await response.text();
+                addActionLog(`📦 Response body: ${responseText.substring(0, 200)}${responseText.length > 200 ? '...' : ''}`, trimmedUserId, 'info');
+                
+                if (!response.ok) {
+                    let errorText;
+                    try {
+                        const errorData = JSON.parse(responseText);
+                        errorText = errorData.error || errorData.message || responseText;
+                    } catch {
+                        errorText = responseText;
+                    }
+                    addActionLog(`❌ HTTP ${response.status}: ${errorText}`, trimmedUserId, 'error');
+                    alert(`Failed to find room: HTTP ${response.status}\n\n${errorText}\n\nUser: ${trimmedUserId}`);
+                    activeSocketUser = null;
+                    activeSocketAction = null;
+                    updateSocketUserIndicator();
+                    return;
+                }
+                
+                let data;
+                try {
+                    data = JSON.parse(responseText);
+                } catch (parseError) {
+                    addActionLog(`❌ Invalid JSON response: ${responseText}`, trimmedUserId, 'error');
+                    alert(`Invalid response from server:\n${responseText}\n\nUser: ${trimmedUserId}`);
+                    activeSocketUser = null;
+                    activeSocketAction = null;
+                    updateSocketUserIndicator();
+                    return;
+                }
+                
+                // Check if response indicates room exists
+                if (data.exists === true && data.roomId) {
+                    addActionLog(`✅ Found room: ${data.roomId} (Role: ${data.role}, UserRole: ${data.userRole}, Status: ${data.status})`, trimmedUserId, 'success');
+                    
+                    // Update main room ID
+                    document.getElementById('mainRoomId').value = data.roomId;
+                    
+                    // Sync room ID to all relevant inputs
+                    const roomIdInputs = ['icebreakerRoomId', 'giftRoomId', 'chatRoomId', 'roomMgmtRoomId'];
+                    roomIdInputs.forEach(inputId => {
+                        const input = document.getElementById(inputId);
+                        if (input) input.value = data.roomId;
+                    });
+                    
+                    // Show success message with full details
+                    const participantsList = data.participants ? data.participants.map(p => `  • ${p.userId} (${p.role})`).join('\n') : 'None';
+                    const viewersList = data.viewers ? data.viewers.map(v => `  • ${v.userId}`).join('\n') : 'None';
+                    
+                    alert(`✅ Room found!\n\n` +
+                        `Room ID: ${data.roomId}\n` +
+                        `User: ${trimmedUserId}\n` +
+                        `Your Role: ${data.userRole}\n` +
+                        `Room Status: ${data.status}\n` +
+                        `Broadcasting: ${data.isBroadcasting ? 'Yes' : 'No'}\n` +
+                        `Participants (${data.participantCount || 0}):\n${participantsList}\n` +
+                        `Viewers (${data.viewerCount || 0}):\n${viewersList}\n\n` +
+                        `The room ID has been loaded into the main control section.`);
+                    
+                    // Refresh room display
+                    setTimeout(() => {
+                        refreshRoomDisplay();
+                        activeSocketUser = null;
+                        activeSocketAction = null;
+                        updateSocketUserIndicator();
+                    }, 500);
+                } else if (data.exists === false) {
+                    // User has no active room
+                    addActionLog(`ℹ️ No active room found for user: ${trimmedUserId}`, trimmedUserId, 'info');
+                    alert(`No active room found for user: ${trimmedUserId}\n\nThe user might not be in any room, or the room might have ended.`);
+                    activeSocketUser = null;
+                    activeSocketAction = null;
+                    updateSocketUserIndicator();
+                } else if (data.error) {
+                    // Service error
+                    addActionLog(`❌ Service error: ${data.error}`, trimmedUserId, 'error');
+                    alert(`Service error: ${data.error}\n\nPlease check if streaming service is running.\n\nUser: ${trimmedUserId}`);
+                    activeSocketUser = null;
+                    activeSocketAction = null;
+                    updateSocketUserIndicator();
+                } else {
+                    // Unexpected response format - but still try to extract roomId if present
+                    if (data.roomId) {
+                        addActionLog(`⚠️ Unexpected response format but found roomId: ${data.roomId}`, trimmedUserId, 'info');
+                        document.getElementById('mainRoomId').value = data.roomId;
+                        const roomIdInputs = ['icebreakerRoomId', 'giftRoomId', 'chatRoomId', 'roomMgmtRoomId'];
+                        roomIdInputs.forEach(inputId => {
+                            const input = document.getElementById(inputId);
+                            if (input) input.value = data.roomId;
+                        });
+                        alert(`⚠️ Unexpected response format, but found room ID: ${data.roomId}\n\nFull response:\n${JSON.stringify(data, null, 2)}`);
+                        setTimeout(() => refreshRoomDisplay(), 500);
+                    } else {
+                        addActionLog(`⚠️ Unexpected response format: ${JSON.stringify(data)}`, trimmedUserId, 'error');
+                        alert(`Unexpected response from server:\n${JSON.stringify(data, null, 2)}\n\nUser: ${trimmedUserId}`);
+                    }
+                    activeSocketUser = null;
+                    activeSocketAction = null;
+                    updateSocketUserIndicator();
+                }
+            } catch (error) {
+                const errorMsg = error.message || 'Unknown error';
+                const isTimeout = error.name === 'AbortError' || errorMsg.includes('timeout') || errorMsg.includes('aborted');
+                
+                if (isTimeout) {
+                    addActionLog(`⏱️ Request timed out after 15 seconds for user: ${trimmedUserId}`, trimmedUserId, 'error');
+                    alert(`Request timed out for user: ${trimmedUserId}\n\nThe query might be taking too long due to many active rooms.\n\nTry:\n1. Wait a moment and try again\n2. Check if streaming service is responding: curl http://localhost:3006/health\n3. The database might have many active participants causing slow queries`);
+                } else {
+                    addActionLog(`❌ Error: ${errorMsg}`, trimmedUserId, 'error');
+                    alert(`Error finding room: ${errorMsg}\n\nUser: ${trimmedUserId}\n\nPlease check:\n1. API Gateway is running (http://localhost:3000/health)\n2. Streaming service is running (http://localhost:3006/health)\n3. User ID is correct`);
+                }
+                activeSocketUser = null;
+                activeSocketAction = null;
+                updateSocketUserIndicator();
             }
         }
 
@@ -2855,8 +3564,13 @@
                 
                 if (response.ok) {
                     addActionLog(`✅ Room created: ${data.roomId}`, null, 'success');
+                    document.getElementById('mainRoomId').value = data.roomId;
                     document.getElementById('getRoomId').value = data.roomId;
-                    document.getElementById('roomMgmtRoomId').value = data.roomId;
+                    const roomMgmtEl = document.getElementById('roomMgmtRoomId');
+                    const mainRoomEl = document.getElementById('mainRoomId');
+                    if (roomMgmtEl) roomMgmtEl.value = data.roomId;
+                    if (mainRoomEl) mainRoomEl.value = data.roomId;
+                    setTimeout(() => refreshRoomDisplay(), 1000);
                     setTimeout(() => refreshAllUserStatuses(), 1000);
                 } else {
                     addActionLog(`❌ Failed: ${data.message || JSON.stringify(data)}`, null, 'error');
@@ -2885,6 +3599,8 @@
                 
                 if (response.ok && data.participants) {
                     addActionLog(`✅ Room info retrieved - ${data.participants.length} participants`, null, 'success');
+                    document.getElementById('mainRoomId').value = roomId;
+                    displayRoomUsers(data);
                     setTimeout(() => refreshAllUserStatuses(), 500);
                 }
                 
@@ -2939,7 +3655,7 @@
         }
         
         async function sendGift() {
-            const roomId = document.getElementById('giftRoomId').value;
+            const roomId = document.getElementById('giftRoomId').value || document.getElementById('mainRoomId').value;
             const fromUserId = document.getElementById('giftFromUserId').value;
             const toUserId = document.getElementById('giftToUserId').value;
             const giftId = document.getElementById('selectedGiftId').value;
@@ -3012,7 +3728,7 @@
         }
         
         async function getChat() {
-            const roomId = document.getElementById('chatRoomId').value;
+            const roomId = document.getElementById('chatRoomId').value || document.getElementById('mainRoomId').value;
             
             try {
                 const response = await fetch(getApiUrl(`/streaming/test/rooms/${roomId}/chat`));
@@ -3028,8 +3744,8 @@
         let icebreakerRoomId = null;
         
         async function getIcebreaker() {
-            const roomId = document.getElementById('icebreakerRoomId').value;
-            const userId = document.getElementById('icebreakerUserId').value;
+            const roomId = document.getElementById('icebreakerRoomId').value || document.getElementById('mainRoomId').value;
+            const userId = document.getElementById('icebreakerUserId').value || document.getElementById('mainUserId').value;
             
             if (!roomId || !userId) {
                 showResponse('icebreakerResponse', { error: 'Room ID and User ID are required' }, true);
@@ -3520,7 +4236,9 @@
         
         // Room Management functions
         async function fetchRoomByUserId() {
-            const userId = document.getElementById('roomMgmtUserId').value.trim();
+            const roomMgmtUserEl = document.getElementById('roomMgmtUserId');
+            const mainUserEl = document.getElementById('mainUserId');
+            const userId = (roomMgmtUserEl?.value || mainUserEl?.value || '').trim();
             
             if (!userId) {
                 showResponse('roomMgmtResponse', { error: 'User ID is required' }, true);
@@ -3534,8 +4252,17 @@
                 const data = await response.json();
                 
                 if (response.ok && data.exists && data.roomId) {
-                    // Auto-fill room ID if found
-                    document.getElementById('roomMgmtRoomId').value = data.roomId;
+                    // Auto-fill room ID if found - sync to all inputs
+                    const mainRoomEl = document.getElementById('mainRoomId');
+                    const roomMgmtEl = document.getElementById('roomMgmtRoomId');
+                    const icebreakerEl = document.getElementById('icebreakerRoomId');
+                    const giftEl = document.getElementById('giftRoomId');
+                    const chatEl = document.getElementById('chatRoomId');
+                    if (mainRoomEl) mainRoomEl.value = data.roomId;
+                    if (roomMgmtEl) roomMgmtEl.value = data.roomId;
+                    if (icebreakerEl) icebreakerEl.value = data.roomId;
+                    if (giftEl) giftEl.value = data.roomId;
+                    if (chatEl) chatEl.value = data.roomId;
                     addActionLog(`✅ Room found: ${data.roomId} for user ${userId}`, userId, 'success');
                     setTimeout(() => refreshAllUserStatuses(), 500);
                     showResponse('roomMgmtResponse', {
@@ -3562,8 +4289,12 @@
         }
         
         async function leaveRoom() {
-            const roomId = document.getElementById('roomMgmtRoomId').value;
-            const userId = document.getElementById('roomMgmtUserId').value;
+            const roomMgmtRoomEl = document.getElementById('roomMgmtRoomId');
+            const mainRoomEl = document.getElementById('mainRoomId');
+            const roomMgmtUserEl = document.getElementById('roomMgmtUserId');
+            const mainUserEl = document.getElementById('mainUserId');
+            const roomId = (roomMgmtRoomEl?.value || mainRoomEl?.value || '').trim();
+            const userId = (roomMgmtUserEl?.value || mainUserEl?.value || '').trim();
             
             if (!roomId || !userId) {
                 addActionLog('❌ Room ID and User ID required', null, 'error');
@@ -3599,7 +4330,9 @@
         }
         
         async function refreshRoomInfo() {
-            const roomId = document.getElementById('roomMgmtRoomId').value;
+            const roomMgmtRoomEl = document.getElementById('roomMgmtRoomId');
+            const mainRoomEl = document.getElementById('mainRoomId');
+            const roomId = (roomMgmtRoomEl?.value || mainRoomEl?.value || '').trim();
             
             if (!roomId) {
                 showResponse('roomMgmtResponse', { error: 'Room ID is required' }, true);
@@ -3612,6 +4345,7 @@
                 
                 if (response.ok && data.participants) {
                     addActionLog(`🔄 Room info refreshed - ${data.participants.length} participants`, null, 'info');
+                    displayRoomUsers(data);
                     setTimeout(() => refreshAllUserStatuses(), 500);
                 }
                 
@@ -3622,8 +4356,11 @@
         }
         
         async function addParticipant() {
-            const roomId = document.getElementById('roomMgmtRoomId').value;
-            const userId = document.getElementById('addParticipantUserId').value;
+            const roomMgmtRoomEl = document.getElementById('roomMgmtRoomId');
+            const mainRoomEl = document.getElementById('mainRoomId');
+            const addParticipantEl = document.getElementById('addParticipantUserId');
+            const roomId = (roomMgmtRoomEl?.value || mainRoomEl?.value || '').trim();
+            const userId = (addParticipantEl?.value || '').trim();
             
             if (!roomId || !userId) {
                 addActionLog('❌ Room ID and User ID required', null, 'error');
@@ -3659,8 +4396,12 @@
         }
         
         async function kickUser() {
-            const roomId = document.getElementById('roomMgmtRoomId').value;
-            const kickerUserId = document.getElementById('roomMgmtUserId').value;
+            const roomMgmtRoomEl = document.getElementById('roomMgmtRoomId');
+            const mainRoomEl = document.getElementById('mainRoomId');
+            const roomMgmtUserEl = document.getElementById('roomMgmtUserId');
+            const mainUserEl = document.getElementById('mainUserId');
+            const roomId = (roomMgmtRoomEl?.value || mainRoomEl?.value || '').trim();
+            const kickerUserId = (roomMgmtUserEl?.value || mainUserEl?.value || '').trim();
             const targetUserId = document.getElementById('kickUserId').value;
             
             if (!roomId || !kickerUserId || !targetUserId) {
@@ -3701,8 +4442,12 @@
         }
         
         async function enablePullStranger() {
-            const roomId = document.getElementById('roomMgmtRoomId').value;
-            const userId = document.getElementById('roomMgmtUserId').value;
+            const roomMgmtRoomEl = document.getElementById('roomMgmtRoomId');
+            const mainRoomEl = document.getElementById('mainRoomId');
+            const roomMgmtUserEl = document.getElementById('roomMgmtUserId');
+            const mainUserEl = document.getElementById('mainUserId');
+            const roomId = (roomMgmtRoomEl?.value || mainRoomEl?.value || '').trim();
+            const userId = (roomMgmtUserEl?.value || mainUserEl?.value || '').trim();
             
             if (!roomId || !userId) {
                 addActionLog('❌ Room ID and User ID required', null, 'error');
@@ -3735,7 +4480,9 @@
         }
         
         async function getPullStrangerRoom() {
-            const userId = document.getElementById('roomMgmtUserId').value;
+            const roomMgmtUserEl = document.getElementById('roomMgmtUserId');
+            const mainUserEl = document.getElementById('mainUserId');
+            const userId = (roomMgmtUserEl?.value || mainUserEl?.value || '').trim();
             
             if (!userId) {
                 showResponse('roomMgmtResponse', { error: 'User ID is required' }, true);
@@ -3748,7 +4495,10 @@
                 showResponse('roomMgmtResponse', data, !response.ok);
                 if (data.exists && data.roomId) {
                     // Auto-fill room ID if found
-                    document.getElementById('roomMgmtRoomId').value = data.roomId;
+                    const roomMgmtEl = document.getElementById('roomMgmtRoomId');
+                    const mainRoomEl = document.getElementById('mainRoomId');
+                    if (roomMgmtEl) roomMgmtEl.value = data.roomId;
+                    if (mainRoomEl) mainRoomEl.value = data.roomId;
                 }
             } catch (error) {
                 showResponse('roomMgmtResponse', { error: error.message }, true);
@@ -3756,8 +4506,11 @@
         }
         
         async function joinViaPullStranger() {
-            const roomId = document.getElementById('roomMgmtRoomId').value;
-            const joiningUserId = document.getElementById('joinPullStrangerUserId').value;
+            const roomMgmtRoomEl = document.getElementById('roomMgmtRoomId');
+            const mainRoomEl = document.getElementById('mainRoomId');
+            const joinPullStrangerEl = document.getElementById('joinPullStrangerUserId');
+            const roomId = (roomMgmtRoomEl?.value || mainRoomEl?.value || '').trim();
+            const joiningUserId = (joinPullStrangerEl?.value || '').trim();
             const targetUserId = document.getElementById('joinPullStrangerTargetId').value;
             
             if (!roomId || !joiningUserId || !targetUserId) {
@@ -3792,6 +4545,349 @@
                 showResponse('roomMgmtResponse', { error: error.message }, true);
             }
         }
+
+        // Waitlist functions
+        let waitlistRefreshInterval = null;
+
+        async function joinAsViewer() {
+            const roomId = document.getElementById('mainRoomId').value;
+            const userId = document.getElementById('mainUserId').value;
+            
+            if (!roomId || !userId) {
+                addActionLog('❌ Room ID and User ID required', null, 'error');
+                alert('Please enter Room ID and Your User ID in the main control section above.');
+                return;
+            }
+            
+            // Track which user clicked the button
+            activeSocketUser = userId;
+            activeSocketAction = 'Join as Viewer';
+            updateSocketUserIndicator();
+            
+            addActionLog(`🎥 User ${userId} joining as viewer for room ${roomId}`, userId, 'info');
+            
+            try {
+                const response = await fetch(getApiUrl(`/streaming/test/rooms/${roomId}/add-viewer`), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId })
+                });
+                const data = await response.json();
+                
+                if (response.ok) {
+                    addActionLog(`✅ Successfully joined as viewer! User: ${userId}, Room: ${roomId}`, userId, 'success');
+                    alert(`✅ Successfully joined as viewer!\n\nUser: ${userId}\nRoom: ${roomId}\n\nYou can now:\n• Watch the broadcast\n• Request to join as a participant\n• Send gifts`);
+                    setTimeout(() => {
+                        refreshRoomDisplay();
+                        refreshAllUserStatuses();
+                    }, 500);
+                } else {
+                    addActionLog(`❌ Failed: ${data.message || JSON.stringify(data)}`, userId, 'error');
+                    alert(`❌ Failed to join as viewer:\n\n${data.message || JSON.stringify(data)}\n\nNote: The room must be broadcasting (use "Start Broadcast" first).`);
+                }
+            } catch (error) {
+                addActionLog(`❌ Error: ${error.message}`, userId, 'error');
+                alert(`❌ Error: ${error.message}`);
+            }
+        }
+
+        async function leaveAsViewer() {
+            const mainRoomEl = document.getElementById('mainRoomId');
+            const mainUserEl = document.getElementById('mainUserId');
+            const roomId = (mainRoomEl?.value || '').trim();
+            const userId = (mainUserEl?.value || '').trim();
+            
+            if (!roomId || !userId) {
+                addActionLog('❌ Room ID and User ID required', null, 'error');
+                alert('Please enter Room ID and Your User ID in the main control section above.');
+                return;
+            }
+            
+            // Track which user clicked the button
+            activeSocketUser = userId;
+            activeSocketAction = 'Leave as Viewer';
+            updateSocketUserIndicator();
+            
+            addActionLog(`🚪 User ${userId} leaving as viewer from room ${roomId}`, userId, 'info');
+            
+            try {
+                const response = await fetch(getApiUrl(`/streaming/test/rooms/${roomId}/remove-viewer`), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId })
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    addActionLog(`✅ Successfully left as viewer. User: ${userId}, Room: ${roomId}`, userId, 'success');
+                    alert(`✅ Successfully left as viewer!\n\nUser: ${userId}\nRoom: ${roomId}`);
+                    activeSocketUser = null;
+                    activeSocketAction = null;
+                    updateSocketUserIndicator();
+                    setTimeout(() => {
+                        refreshRoomDisplay();
+                        refreshAllUserStatuses();
+                    }, 500);
+                } else {
+                    const data = await response.json().catch(() => ({ message: 'Endpoint not available' }));
+                    addActionLog(`⚠️ ${data.message || 'Endpoint not available'}`, userId, 'info');
+                    alert(`⚠️ ${data.message || 'Endpoint not available'}\n\nNote: Viewers are automatically removed when WebSocket disconnects.`);
+                }
+            } catch (error) {
+                addActionLog(`⚠️ Note: ${error.message}. Viewers are removed when WebSocket disconnects.`, userId, 'info');
+                alert(`⚠️ Note: Viewers are automatically removed when the WebSocket connection closes.\n\nTo leave, simply close the connection or navigate away.`);
+            }
+        }
+
+        async function requestToJoin() {
+            const roomMgmtRoomEl = document.getElementById('roomMgmtRoomId');
+            const mainRoomEl = document.getElementById('mainRoomId');
+            const roomMgmtUserEl = document.getElementById('roomMgmtUserId');
+            const mainUserEl = document.getElementById('mainUserId');
+            const roomId = (roomMgmtRoomEl?.value || mainRoomEl?.value || '').trim();
+            const userId = (roomMgmtUserEl?.value || mainUserEl?.value || '').trim();
+            
+            if (!roomId || !userId) {
+                addActionLog('❌ Room ID and User ID required', null, 'error');
+                alert('Please enter Room ID and Your User ID in the main control section above.');
+                return;
+            }
+            
+            // Track which user clicked the button
+            activeSocketUser = userId;
+            activeSocketAction = 'Request to Join';
+            updateSocketUserIndicator();
+            
+            addActionLog(`✋ User ${userId} requesting to join room ${roomId}`, userId, 'info');
+            
+            try {
+                const response = await fetch(getApiUrl(`/streaming/test/rooms/${roomId}/request-to-join`), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId })
+                });
+                const data = await response.json();
+                
+                if (response.ok) {
+                    addActionLog(`✅ Join request submitted by ${userId}. Status: VIEWER → MATCHED`, userId, 'success');
+                    alert(`✅ Join request submitted!\n\nUser: ${userId}\nRoom: ${roomId}\n\nYour request is now in the waitlist. The host can see and accept your request.`);
+                    setTimeout(() => {
+                        refreshWaitlist();
+                        refreshAllUserStatuses();
+                        refreshRoomDisplay();
+                    }, 500);
+                } else {
+                    addActionLog(`❌ Failed: ${data.message || JSON.stringify(data)}`, userId, 'error');
+                    alert(`❌ Failed to submit join request:\n\n${data.message || JSON.stringify(data)}\n\nNote: You must be a VIEWER of the broadcast to request to join.`);
+                }
+            } catch (error) {
+                addActionLog(`❌ Error: ${error.message}`, userId, 'error');
+                alert(`❌ Error: ${error.message}`);
+            }
+        }
+
+        async function cancelJoinRequest() {
+            const roomMgmtRoomEl = document.getElementById('roomMgmtRoomId');
+            const mainRoomEl = document.getElementById('mainRoomId');
+            const roomMgmtUserEl = document.getElementById('roomMgmtUserId');
+            const mainUserEl = document.getElementById('mainUserId');
+            const roomId = (roomMgmtRoomEl?.value || mainRoomEl?.value || '').trim();
+            const userId = (roomMgmtUserEl?.value || mainUserEl?.value || '').trim();
+            
+            if (!roomId || !userId) {
+                addActionLog('❌ Room ID and User ID required', null, 'error');
+                alert('Please enter Room ID and Your User ID in the main control section above.');
+                return;
+            }
+            
+            // Track which user clicked the button
+            activeSocketUser = userId;
+            activeSocketAction = 'Cancel Join Request';
+            updateSocketUserIndicator();
+            
+            addActionLog(`❌ User ${userId} cancelling join request for room ${roomId}`, userId, 'info');
+            
+            try {
+                const response = await fetch(getApiUrl(`/streaming/test/rooms/${roomId}/cancel-join-request`), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId })
+                });
+                const data = await response.json();
+                
+                if (response.ok) {
+                    addActionLog(`✅ Join request cancelled by ${userId}. Status: MATCHED → VIEWER`, userId, 'success');
+                    activeSocketUser = null;
+                    activeSocketAction = null;
+                    updateSocketUserIndicator();
+                    setTimeout(() => {
+                        refreshWaitlist();
+                        refreshAllUserStatuses();
+                        refreshRoomDisplay();
+                    }, 500);
+                } else {
+                    addActionLog(`❌ Failed: ${data.message || JSON.stringify(data)}`, userId, 'error');
+                    alert(`❌ Failed to cancel join request:\n\n${data.message || JSON.stringify(data)}`);
+                }
+            } catch (error) {
+                addActionLog(`❌ Error: ${error.message}`, userId, 'error');
+                alert(`❌ Error: ${error.message}`);
+            }
+        }
+
+        async function refreshWaitlist() {
+            const roomMgmtRoomEl = document.getElementById('roomMgmtRoomId');
+            const mainRoomEl = document.getElementById('mainRoomId');
+            const roomId = (roomMgmtRoomEl?.value || mainRoomEl?.value || '').trim();
+            
+            if (!roomId) {
+                document.getElementById('waitlistDisplay').innerHTML = '<div style="color: #666; text-align: center;">Enter Room ID first</div>';
+                return;
+            }
+            
+            try {
+                const response = await fetch(getApiUrl(`/streaming/test/rooms/${roomId}/waitlist`));
+                const data = await response.json();
+                
+                if (response.ok && data.waitlist) {
+                    updateWaitlistDisplay(data.waitlist);
+                } else {
+                    document.getElementById('waitlistDisplay').innerHTML = '<div style="color: #dc3545; text-align: center;">Failed to load waitlist</div>';
+                }
+            } catch (error) {
+                document.getElementById('waitlistDisplay').innerHTML = `<div style="color: #dc3545; text-align: center;">Error: ${error.message}</div>`;
+            }
+        }
+
+        async function updateWaitlistDisplay(waitlist) {
+            const displayDiv = document.getElementById('waitlistDisplay');
+            const mainUserEl = document.getElementById('mainUserId');
+            const roomMgmtUserEl = document.getElementById('roomMgmtUserId');
+            const currentUserId = (mainUserEl?.value || roomMgmtUserEl?.value || '').trim();
+            
+            if (!waitlist || waitlist.length === 0) {
+                displayDiv.innerHTML = '<div style="color: #666; text-align: center; padding: 20px;">No pending requests</div>';
+                return;
+            }
+            
+            // Fetch statuses for all users in waitlist
+            const statusPromises = waitlist.map(async (entry) => {
+                try {
+                    const statusResponse = await fetch(getApiUrl(`/users/test/${entry.userId}?fields=status`), { cache: 'no-store' });
+                    const statusData = await statusResponse.json();
+                    return { ...entry, status: statusData.user?.status || 'UNKNOWN' };
+                } catch (error) {
+                    return { ...entry, status: 'UNKNOWN' };
+                }
+            });
+            
+            const waitlistWithStatuses = await Promise.all(statusPromises);
+            
+            let html = `<div style="margin-bottom: 10px; padding: 8px; background: #e7f3ff; border-radius: 6px; font-size: 12px; color: #004085;">
+                <strong>📋 Waitlist (${waitlistWithStatuses.length} pending request${waitlistWithStatuses.length !== 1 ? 's' : ''})</strong>
+            </div>`;
+            html += '<div style="display: grid; gap: 10px;">';
+            
+            waitlistWithStatuses.forEach((entry, index) => {
+                const statusColor = getStatusColor(entry.status);
+                const requestedTime = new Date(entry.requestedAt).toLocaleTimeString();
+                const requestedDate = new Date(entry.requestedAt).toLocaleDateString();
+                const isCurrentUser = entry.userId === currentUserId;
+                const isActiveSocket = activeSocketUser === entry.userId && activeSocketAction === 'Request to Join';
+                
+                // Highlight if this is the current user or active socket user
+                const cardStyle = isActiveSocket 
+                    ? `padding: 12px; background: #e8f5e9; border-radius: 8px; border: 2px solid #28a745; box-shadow: 0 0 10px rgba(40, 167, 69, 0.3);`
+                    : isCurrentUser
+                    ? `padding: 12px; background: #fff3cd; border-radius: 8px; border-left: 4px solid #ffc107;`
+                    : `padding: 12px; background: #f8f9fa; border-radius: 8px; border-left: 4px solid ${statusColor};`;
+                
+                html += `
+                    <div style="${cardStyle}">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+                            <div style="flex: 1;">
+                                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 5px;">
+                                    <strong style="font-size: 14px; color: #333;">${entry.username || entry.userId}</strong>
+                                    ${isCurrentUser ? '<span style="background: #ffc107; color: #333; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 600;">YOU</span>' : ''}
+                                    ${isActiveSocket ? '<span style="background: #28a745; color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 600;">🔌 ACTIVE</span>' : ''}
+                                </div>
+                                <div style="font-size: 11px; color: #666; margin-top: 4px;">
+                                    <div>🕐 Requested: ${requestedDate} at ${requestedTime}</div>
+                                    <div style="margin-top: 2px;">User ID: <code style="background: #e9ecef; padding: 2px 4px; border-radius: 3px; font-size: 10px;">${entry.userId}</code></div>
+                                </div>
+                            </div>
+                            <div style="display: flex; flex-direction: column; gap: 6px; align-items: flex-end;">
+                                <span style="padding: 4px 8px; background: ${statusColor}; color: white; border-radius: 4px; font-size: 11px; font-weight: 600;">
+                                    ${entry.status}
+                                </span>
+                                <button onclick="acceptFromWaitlist('${entry.userId}')" class="btn-success" style="padding: 6px 12px; font-size: 12px; white-space: nowrap;">
+                                    ✓ Accept
+                                </button>
+                            </div>
+                        </div>
+                        ${entry.displayPictureUrl ? `
+                            <div style="margin-top: 8px;">
+                                <img src="${entry.displayPictureUrl}" style="width: 50px; height: 50px; border-radius: 50%; object-fit: cover; border: 2px solid ${statusColor};" />
+                            </div>
+                        ` : ''}
+                    </div>
+                `;
+            });
+            html += '</div>';
+            
+            displayDiv.innerHTML = html;
+        }
+
+        async function acceptFromWaitlist(targetUserId) {
+            const roomMgmtRoomEl = document.getElementById('roomMgmtRoomId');
+            const mainRoomEl = document.getElementById('mainRoomId');
+            const roomMgmtUserEl = document.getElementById('roomMgmtUserId');
+            const mainUserEl = document.getElementById('mainUserId');
+            const roomId = (roomMgmtRoomEl?.value || mainRoomEl?.value || '').trim();
+            const hostUserId = (roomMgmtUserEl?.value || mainUserEl?.value || '').trim();
+            
+            if (!roomId || !hostUserId) {
+                addActionLog('❌ Room ID and Host User ID required', null, 'error');
+                return;
+            }
+            
+            addActionLog(`✅ Host ${hostUserId} accepting ${targetUserId} from waitlist`, hostUserId, 'info');
+            
+            try {
+                const response = await fetch(getApiUrl(`/streaming/test/rooms/${roomId}/accept-from-waitlist`), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ hostUserId, targetUserId })
+                });
+                const data = await response.json();
+                
+                if (response.ok) {
+                    addActionLog(`✅ User ${targetUserId} added to call. Status: MATCHED → IN_BROADCAST/IN_SQUAD`, targetUserId, 'success');
+                    setTimeout(() => {
+                        refreshWaitlist();
+                        refreshRoomInfo();
+                        refreshAllUserStatuses();
+                    }, 500);
+                } else {
+                    addActionLog(`❌ Failed: ${data.message || JSON.stringify(data)}`, hostUserId, 'error');
+                }
+            } catch (error) {
+                addActionLog(`❌ Error: ${error.message}`, hostUserId, 'error');
+            }
+        }
+
+        function getStatusColor(status) {
+            const colors = {
+                'VIEWER': '#6c757d',
+                'MATCHED': '#007bff',
+                'IN_BROADCAST': '#6610f2',
+                'IN_SQUAD': '#28a745',
+                'AVAILABLE': '#17a2b8',
+                'ONLINE': '#ffc107'
+            };
+            return colors[status] || '#6c757d';
+        }
+
         
         // Wallet functions
         async function getBalance() {

@@ -112,8 +112,8 @@ export class ServiceDiscovery {
       'user-service': 3002,
       'moderation-service': 3003,
       'discovery-service': 3004,
-      'streaming-service': 3005,
-      'wallet-service': 3006,
+      'streaming-service': 3006,  // Fixed: streaming-service runs on 3006
+      'wallet-service': 3005,     // Fixed: wallet-service runs on 3005
       'payment-service': 3007,
       'files-service': 3008,
       'friend-service': 3009

@@ -301,6 +301,38 @@ export class PaymentController {
   }
 
   /**
+   * Readiness check endpoint (database only)
+   * GET /v1/payments/ready
+   */
+  @Get("ready")
+  @HttpCode(HttpStatus.OK)
+  async readinessCheck() {
+    const { HealthChecker } = await import("@hmm/common");
+    try {
+      const dbCheck = await HealthChecker.checkDatabase(this.prisma, "payment-service");
+      
+      if (dbCheck.status === 'up') {
+        return {
+          status: 'ready',
+          timestamp: new Date().toISOString()
+        };
+      } else {
+        return {
+          status: 'not_ready',
+          message: dbCheck.message,
+          timestamp: new Date().toISOString()
+        };
+      }
+    } catch (error: any) {
+      return {
+        status: 'not_ready',
+        message: error.message || 'Database check failed',
+        timestamp: new Date().toISOString()
+      };
+    }
+  }
+
+  /**
    * Health check endpoint
    * GET /v1/payments/health
    */
@@ -324,7 +356,7 @@ export class PaymentController {
     
     try {
       const walletUrl = discovery.getServiceUrl("wallet-service");
-      const walletCheck = await HealthChecker.checkService(walletUrl, 3000);
+      const walletCheck = await HealthChecker.checkService(walletUrl, 1000); // Reduced from 2000ms to 1000ms
       dependencies["wallet-service"] = {
         status: walletCheck.status,
         url: walletUrl,

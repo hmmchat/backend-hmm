@@ -34,6 +34,27 @@ export class UserService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
+    // Validate database schema exists
+    try {
+      // Try a simple query to verify the users table exists
+      await this.prisma.$queryRaw`SELECT 1 FROM users LIMIT 1`;
+    } catch (error: any) {
+      const errorMessage = error?.message || String(error);
+      if (errorMessage.includes("does not exist") || errorMessage.includes("relation") || errorMessage.includes("table")) {
+        throw new Error(
+          `Database schema not initialized! The 'users' table does not exist.\n` +
+          `This is a CRITICAL error that will cause all requests to fail.\n\n` +
+          `To fix:\n` +
+          `1. Run: cd apps/user-service && npx prisma db push\n` +
+          `2. Or run the setup script: ./scripts/setup-and-start-services.sh\n` +
+          `3. For production, use: npx prisma migrate deploy\n\n` +
+          `Original error: ${errorMessage}`
+        );
+      }
+      // If it's a different error (like connection issue), let it propagate
+      throw error;
+    }
+
     // Load JWT public key for token verification
     const jwkStr = process.env.JWT_PUBLIC_JWK;
     if (!jwkStr || jwkStr === "undefined") {
@@ -129,8 +150,23 @@ export class UserService implements OnModuleInit {
         throw error;
       }
       // Re-throw as HttpException with proper status
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      
+      // Provide helpful error message if database schema is missing
+      if (errorMessage.includes("does not exist") || errorMessage.includes("relation") || errorMessage.includes("table")) {
+        throw new HttpException(
+          `Database schema not initialized! The required table does not exist.\n` +
+          `Error: ${errorMessage}\n\n` +
+          `To fix:\n` +
+          `1. Run: cd apps/user-service && npx prisma db push\n` +
+          `2. Or run the setup script: ./scripts/setup-and-start-services.sh\n` +
+          `3. For production, use: npx prisma migrate deploy`,
+          HttpStatus.INTERNAL_SERVER_ERROR
+        );
+      }
+      
       throw new HttpException(
-        `Failed to create profile: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to create profile: ${errorMessage}`,
         HttpStatus.INTERNAL_SERVER_ERROR
       );
     }

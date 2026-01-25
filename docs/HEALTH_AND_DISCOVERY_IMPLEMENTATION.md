@@ -183,7 +183,7 @@ console.log(discovery.getServiceUrl("user-service"));
 ```bash
 # Service URLs (required)
 USER_SERVICE_URL=http://user-service:3002
-WALLET_SERVICE_URL=http://wallet-service:3006
+WALLET_SERVICE_URL=http://wallet-service:3005
 
 # Circuit Breaker (optional)
 CIRCUIT_BREAKER_THRESHOLD=5

@@ -5,10 +5,13 @@ import * as mediasoup from "mediasoup";
 export class MediasoupService implements OnModuleInit {
   private readonly logger = new Logger(MediasoupService.name);
   private workers: mediasoup.types.Worker[] = [];
+  private workerRestartAttempts: Map<number, number> = new Map(); // Track restart attempts per worker index
   private nextWorkerIndex = 0;
   private readonly numWorkers: number;
   private readonly listenIp: string;
   private readonly announcedIp: string;
+  private readonly MAX_RESTART_ATTEMPTS = 5;
+  private readonly RESTART_BACKOFF_BASE = 2000; // 2 seconds base delay
 
   constructor() {
     this.numWorkers = parseInt(process.env.MEDIASOUP_WORKERS || "4", 10);
@@ -29,8 +32,10 @@ export class MediasoupService implements OnModuleInit {
         });
 
         worker.on("died", () => {
-          this.logger.error(`Mediasoup worker ${i} died, exiting in 2 seconds...`);
-          setTimeout(() => process.exit(1), 2000);
+          this.logger.error(`Mediasoup worker ${i} died, attempting to restart...`);
+          this.restartWorker(i).catch(err => {
+            this.logger.error(`Failed to restart worker ${i}: ${err.message}`);
+          });
         });
 
         this.workers.push(worker);
@@ -190,12 +195,62 @@ export class MediasoupService implements OnModuleInit {
   }
 
   /**
+   * Restart a worker with exponential backoff
+   */
+  private async restartWorker(workerIndex: number): Promise<void> {
+    const attempts = this.workerRestartAttempts.get(workerIndex) || 0;
+    
+    if (attempts >= this.MAX_RESTART_ATTEMPTS) {
+      this.logger.error(`Worker ${workerIndex} exceeded max restart attempts (${this.MAX_RESTART_ATTEMPTS}), giving up`);
+      // Remove worker from pool but don't crash service
+      this.workers[workerIndex] = null as any;
+      return;
+    }
+
+    // Exponential backoff: 2s, 4s, 8s, 16s, 32s
+    const backoffDelay = Math.min(
+      this.RESTART_BACKOFF_BASE * Math.pow(2, attempts),
+      32000
+    );
+    
+    this.workerRestartAttempts.set(workerIndex, attempts + 1);
+    this.logger.log(`Restarting worker ${workerIndex} (attempt ${attempts + 1}/${this.MAX_RESTART_ATTEMPTS}) after ${backoffDelay}ms`);
+    
+    await new Promise(resolve => setTimeout(resolve, backoffDelay));
+
+    try {
+      const newWorker = await mediasoup.createWorker({
+        logLevel: "warn",
+        logTags: ["info", "ice", "dtls", "rtp", "srtp", "rtcp"],
+        rtcMinPort: 40000,
+        rtcMaxPort: 49999
+      });
+
+      newWorker.on("died", () => {
+        this.logger.error(`Mediasoup worker ${workerIndex} died again, will retry...`);
+        this.restartWorker(workerIndex).catch(err => {
+          this.logger.error(`Failed to restart worker ${workerIndex}: ${err.message}`);
+        });
+      });
+
+      this.workers[workerIndex] = newWorker;
+      this.workerRestartAttempts.delete(workerIndex); // Reset on successful restart
+      this.logger.log(`✅ Worker ${workerIndex} restarted successfully (PID: ${newWorker.pid})`);
+    } catch (error: any) {
+      this.logger.error(`Failed to restart worker ${workerIndex}: ${error.message}`);
+      // Will retry on next death event
+    }
+  }
+
+  /**
    * Cleanup: close all workers
    */
   async onModuleDestroy() {
     this.logger.log("Closing all Mediasoup workers...");
     for (const worker of this.workers) {
-      worker.close();
+      if (worker) {
+        worker.close();
+      }
     }
     this.logger.log("✅ All Mediasoup workers closed");
   }

@@ -56,7 +56,7 @@ export class EnvValidationService implements OnModuleInit {
     // Wallet Service URL (Required)
     if (!process.env.WALLET_SERVICE_URL) {
       // Use default but warn
-      console.warn("WARNING: WALLET_SERVICE_URL not set, using default: http://localhost:3006");
+      console.warn("WARNING: WALLET_SERVICE_URL not set, using default: http://localhost:3005");
     }
 
     // Optional but recommended

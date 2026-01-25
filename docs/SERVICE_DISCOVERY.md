@@ -12,7 +12,7 @@ Services discover each other via environment variables:
 
 ```bash
 USER_SERVICE_URL=http://user-service:3002
-WALLET_SERVICE_URL=http://wallet-service:3006
+WALLET_SERVICE_URL=http://wallet-service:3005
 FRIEND_SERVICE_URL=http://friend-service:3009
 # etc.
 ```
@@ -38,7 +38,7 @@ KUBERNETES_NAMESPACE=default       # Optional, defaults to "default"
 **Service Ports**: Can be overridden per service:
 ```bash
 USER_SERVICE_PORT=3002
-WALLET_SERVICE_PORT=3006
+WALLET_SERVICE_PORT=3005
 ```
 
 ### 3. Service Registry (Future)
@@ -91,8 +91,8 @@ Service names follow the pattern: `{service-name}-service`
 | `user-service` | 3002 | `http://localhost:3002` |
 | `moderation-service` | 3003 | `http://localhost:3003` |
 | `discovery-service` | 3004 | `http://localhost:3004` |
-| `streaming-service` | 3005 | `http://localhost:3005` |
-| `wallet-service` | 3006 | `http://localhost:3006` |
+| `streaming-service` | 3006 | `http://localhost:3006` |
+| `wallet-service` | 3005 | `http://localhost:3005` |
 | `payment-service` | 3007 | `http://localhost:3007` |
 | `files-service` | 3008 | `http://localhost:3008` |
 | `friend-service` | 3009 | `http://localhost:3009` |
@@ -104,7 +104,7 @@ Service names follow the pattern: `{service-name}-service`
 ```bash
 # .env file
 USER_SERVICE_URL=http://localhost:3002
-WALLET_SERVICE_URL=http://localhost:3006
+WALLET_SERVICE_URL=http://localhost:3005
 ```
 
 ### Docker Compose

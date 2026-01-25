@@ -452,6 +452,16 @@ export class UserController {
   }
 
   /**
+   * Test endpoint: Create profile (bypasses auth)
+   * POST /users/test/:userId/profile
+   */
+  @Post("users/test/:userId/profile")
+  async createProfileTest(@Param("userId") userId: string, @Body() body: any) {
+    const dto = CreateProfileSchema.parse(body);
+    return this.userService.createProfile(userId, dto);
+  }
+
+  /**
    * Test endpoint: Get profile completion (bypasses auth)
    * GET /users/test/:userId/profile-completion
    */

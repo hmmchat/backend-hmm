@@ -217,8 +217,8 @@ This script will:
 2. **Backend Services** must be running:
    - Discovery Service (port 3004)
    - User Service (port 3002)
-   - Wallet Service (port 3006)
-   - Streaming Service (port 3005) - **Must have `NODE_ENV=test` set**
+   - Wallet Service (port 3005)
+   - Streaming Service (port 3006) - **Must have `NODE_ENV=test` set**
    - Friend Service (port 3009)
 3. **Database** must be set up and migrated (use `scripts/setup-prerequisites.sh`)
 4. **Redis** (optional, for rate limiting)

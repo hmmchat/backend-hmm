@@ -12,7 +12,7 @@ export class AggregationService {
   private publicJwk: any = null;
 
   constructor(private configService: ConfigService) {
-    this.walletServiceUrl = this.configService.get<string>("WALLET_SERVICE_URL") || "http://localhost:3006";
+    this.walletServiceUrl = this.configService.get<string>("WALLET_SERVICE_URL") || "http://localhost:3005";
     this.discoveryServiceUrl = this.configService.get<string>("DISCOVERY_SERVICE_URL") || "http://localhost:3004";
     this.userServiceUrl = this.configService.get<string>("USER_SERVICE_URL") || "http://localhost:3002";
 

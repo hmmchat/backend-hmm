@@ -9,8 +9,8 @@ Canonical port assignment for local development. All services respect `PORT` env
 | User Service       | 3002 | `http://localhost:3002`      |
 | Moderation Service | 3003 | `http://localhost:3003`      |
 | Discovery Service  | 3004 | `http://localhost:3004`      |
-| Streaming Service  | 3005 | `http://localhost:3005`      |
-| Wallet Service     | 3006 | `http://localhost:3006`      |
+| Streaming Service  | 3006 | `http://localhost:3006`      |
+| Wallet Service     | 3005 | `http://localhost:3005`      |
 | Payment Service    | 3007 | `http://localhost:3007`      |
 | Files Service      | 3008 | `http://localhost:3008`      |
 | Friend Service     | 3009 | `http://localhost:3009`      |

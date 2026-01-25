@@ -4,6 +4,11 @@
  * Provides standardized health check responses and database connectivity checks
  */
 
+interface CachedServiceHealth {
+  result: { status: 'up' | 'down'; responseTime?: number; error?: string };
+  timestamp: number;
+}
+
 export interface HealthCheckResult {
   status: 'healthy' | 'degraded' | 'unhealthy';
   timestamp: string;
@@ -27,16 +32,26 @@ export interface HealthCheckResult {
 }
 
 export class HealthChecker {
+  private static serviceHealthCache: Map<string, CachedServiceHealth> = new Map();
+  private static readonly CACHE_TTL = 8000; // 8 seconds
+
   /**
-   * Check database connectivity
+   * Check database connectivity (with timeout)
    */
   static async checkDatabase(
     prisma: any,
-    _serviceName: string
+    _serviceName: string,
+    timeoutMs: number = 5000  // 5 second timeout for database queries
   ): Promise<{ status: 'up' | 'down'; message?: string; responseTime?: number }> {
     const startTime = Date.now();
     try {
-      await prisma.$queryRaw`SELECT 1`;
+      // Wrap query in timeout
+      const queryPromise = prisma.$queryRaw`SELECT 1`;
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Database query timeout')), timeoutMs);
+      });
+      
+      await Promise.race([queryPromise, timeoutPromise]);
       const responseTime = Date.now() - startTime;
       return {
         status: 'up',
@@ -45,9 +60,12 @@ export class HealthChecker {
       };
     } catch (error: any) {
       const responseTime = Date.now() - startTime;
+      const errorMessage = error.message === 'Database query timeout'
+        ? `Database query timed out after ${timeoutMs}ms`
+        : `Database connection failed: ${error.message}`;
       return {
         status: 'down',
-        message: `Database connection failed: ${error.message}`,
+        message: errorMessage,
         responseTime
       };
     }
@@ -80,12 +98,22 @@ export class HealthChecker {
   }
 
   /**
-   * Check external service
+   * Check external service (with caching)
    */
   static async checkService(
     url: string,
-    timeout: number = 5000
+    timeout: number = 2000  // Reduced default timeout from 5000ms to 2000ms
   ): Promise<{ status: 'up' | 'down'; responseTime?: number; error?: string }> {
+    // Check cache first
+    const cacheKey = url;
+    const cached = this.serviceHealthCache.get(cacheKey);
+    const now = Date.now();
+    
+    if (cached && (now - cached.timestamp) < this.CACHE_TTL) {
+      return cached.result;
+    }
+
+    // Cache miss or expired - perform check
     const startTime = Date.now();
     try {
       const controller = new AbortController();
@@ -99,26 +127,50 @@ export class HealthChecker {
       clearTimeout(timeoutId);
       const responseTime = Date.now() - startTime;
 
+      let result: { status: 'up' | 'down'; responseTime?: number; error?: string };
       if (response.ok) {
-        return {
+        result = {
           status: 'up',
           responseTime
         };
       } else {
-        return {
+        result = {
           status: 'down',
           responseTime,
           error: `HTTP ${response.status}`
         };
       }
+
+      // Cache the result
+      this.serviceHealthCache.set(cacheKey, {
+        result,
+        timestamp: now
+      });
+
+      return result;
     } catch (error: any) {
       const responseTime = Date.now() - startTime;
-      return {
-        status: 'down',
+      const result = {
+        status: 'down' as const,
         responseTime,
         error: error.message || 'Connection failed'
       };
+
+      // Cache failures too (but with shorter TTL for failures)
+      this.serviceHealthCache.set(cacheKey, {
+        result,
+        timestamp: now
+      });
+
+      return result;
     }
+  }
+
+  /**
+   * Clear health check cache (useful for testing or forced refresh)
+   */
+  static clearCache(): void {
+    this.serviceHealthCache.clear();
   }
 
   /**

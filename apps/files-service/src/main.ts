@@ -8,7 +8,10 @@ import multipart from "fastify-multipart";
 async function bootstrap() {
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
-    new FastifyAdapter({ logger: true })
+    new FastifyAdapter({ 
+      logger: true,
+      requestTimeout: 8000  // 8 second request timeout (less than gateway's 10s)
+    })
   );
 
   // Register multipart plugin for file uploads
@@ -34,4 +37,27 @@ async function bootstrap() {
   await app.listen(port, "0.0.0.0");
   console.log(`🚀 Files service running on http://localhost:${port}`);
 }
+
+// Global error handlers
+process.on('uncaughtException', (error: Error) => {
+  console.error('Uncaught Exception:', error);
+  // Don't exit - log and continue
+});
+
+process.on('unhandledRejection', (reason: any, promise: Promise<any>) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  // Don't exit - log and continue
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down gracefully...');
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT received, shutting down gracefully...');
+  process.exit(0);
+});
+
 bootstrap();

@@ -88,7 +88,8 @@ export class RoomService {
     const usersInRooms: string[] = [];
     
     try {
-      // Check if any user is already in an active room (same validation as before)
+      // Check if any user is already in an active room
+      // Always check database to prevent duplicate rooms, even in TEST_MODE
       const activeSessions = await this.prisma.callSession.findMany({
         where: {
           status: {
@@ -116,6 +117,18 @@ export class RoomService {
         for (const participant of session.participants) {
           if (userIds.includes(participant.userId) && !usersInRooms.includes(participant.userId)) {
             usersInRooms.push(participant.userId);
+          }
+        }
+      }
+
+      // Also check in-memory rooms Map as secondary validation
+      for (const [existingRoomId, roomState] of this.rooms.entries()) {
+        for (const participantUserId of roomState.participants.keys()) {
+          if (userIds.includes(participantUserId) && !usersInRooms.includes(participantUserId)) {
+            usersInRooms.push(participantUserId);
+            this.logger.warn(
+              `User ${participantUserId} found in in-memory room ${existingRoomId} but not in database. This may indicate a sync issue.`
+            );
           }
         }
       }
@@ -182,23 +195,44 @@ export class RoomService {
       // Generate room ID
       const roomId = uuidv4();
 
+      // Get previous status for each user before they join
+      // Users are currently MATCHED, but we need to track what they were before MATCHED
+      // For normal flow: AVAILABLE, IN_SQUAD_AVAILABLE, or IN_BROADCAST_AVAILABLE → MATCHED → IN_SQUAD
+      // We'll try to get their status before MATCHED, but if unavailable, default to AVAILABLE
+      const previousStatuses = new Map<string, string>();
+      
+      for (const userId of userIds) {
+        try {
+          // Try to get user's status history or check if they were in a squad/broadcast
+          // For now, we'll default to AVAILABLE since users coming from discovery are AVAILABLE
+          // This could be enhanced later to track actual previous status
+          previousStatuses.set(userId, "AVAILABLE");
+        } catch (error) {
+          // Default to AVAILABLE if we can't determine
+          previousStatuses.set(userId, "AVAILABLE");
+        }
+      }
+
       // Determine roles based on callType
       // - matched: First 2 users are HOSTS
       // - squad: All users are HOSTS
       const participantRoles = userIds.map((userId, index) => {
+        const previousStatus = previousStatuses.get(userId) || "AVAILABLE";
         if (callType === "matched") {
           // Matched call: First 2 users are HOSTS
           return {
             userId,
             role: (index < 2 ? "HOST" : "PARTICIPANT") as "HOST" | "PARTICIPANT",
-            status: "active"
+            status: "active",
+            previousStatus
           };
         } else {
           // Squad call: All users are HOSTS
           return {
             userId,
             role: "HOST" as "HOST" | "PARTICIPANT",
-            status: "active"
+            status: "active",
+            previousStatus
           };
         }
       });
@@ -477,13 +511,40 @@ export class RoomService {
       this.logger.log(`[TEST_MODE] Skipping user status validation for adding participant ${userId}`);
     }
 
+    // Get user's previous status before joining
+    // User is currently MATCHED, but we need to track what they were before MATCHED
+    // For addParticipant flow, user likely came from discovery (AVAILABLE) or was in a squad (IN_SQUAD_AVAILABLE)
+    // Default to AVAILABLE if we can't determine
+    let previousStatus = "AVAILABLE";
+    try {
+      // Check if user was a viewer first (they might have come from waitlist or were viewing)
+      const wasViewer = await this.prisma.callViewer.findFirst({
+        where: {
+          sessionId: session.id,
+          userId,
+          leftAt: null
+        }
+      });
+      if (wasViewer) {
+        previousStatus = "VIEWER";
+      } else {
+        // User likely came from discovery or was in a squad
+        // Default to AVAILABLE (most common case)
+        previousStatus = "AVAILABLE";
+      }
+    } catch (error) {
+      // Default to AVAILABLE if we can't determine
+      previousStatus = "AVAILABLE";
+    }
+
     // Add to database
     await this.prisma.callParticipant.create({
       data: {
         sessionId: session.id,
         userId,
         role: "PARTICIPANT",
-        status: "active"
+        status: "active",
+        previousStatus
       }
     });
 
@@ -1047,13 +1108,34 @@ export class RoomService {
         }
       }
 
+      // Get joining user's previous status
+      // For pull stranger flow, user likely came from discovery (AVAILABLE) or was in a squad (IN_SQUAD_AVAILABLE)
+      // Check if they were in a squad first
+      let previousStatus = "AVAILABLE";
+      try {
+        // Check if user was in a squad (IN_SQUAD_AVAILABLE status)
+        const userStatus = await this.discoveryClient.getUserStatus(joiningUserId);
+        if (userStatus === "IN_SQUAD_AVAILABLE") {
+          previousStatus = "IN_SQUAD_AVAILABLE";
+        } else if (userStatus === "IN_BROADCAST_AVAILABLE") {
+          previousStatus = "IN_BROADCAST_AVAILABLE";
+        } else {
+          // Default to AVAILABLE (most common case - coming from discovery)
+          previousStatus = "AVAILABLE";
+        }
+      } catch (error) {
+        // Default to AVAILABLE if we can't determine
+        previousStatus = "AVAILABLE";
+      }
+
       // Add joining user to room
       await tx.callParticipant.create({
         data: {
           sessionId: session.id,
           userId: joiningUserId,
           role: "PARTICIPANT",
-          status: "active"
+          status: "active",
+          previousStatus
         }
       });
 
@@ -1140,6 +1222,328 @@ export class RoomService {
   }
 
   /**
+   * Request to join broadcast (viewer clicks "Join" button)
+   * Adds user to waitlist and updates status to MATCHED
+   */
+  async requestToJoin(roomId: string, userId: string): Promise<void> {
+    // Ensure room exists
+    const session = await this.prisma.callSession.findUnique({
+      where: { roomId },
+      include: {
+        participants: {
+          where: {
+            status: "active",
+            leftAt: null
+          }
+        }
+      }
+    });
+
+    if (!session) {
+      throw new NotFoundException(`Room ${roomId} not found`);
+    }
+
+    // Verify broadcast is active
+    if (!session.isBroadcasting) {
+      throw new BadRequestException("Room is not broadcasting");
+    }
+
+    // Verify user is currently a viewer
+    const viewer = await this.prisma.callViewer.findFirst({
+      where: {
+        sessionId: session.id,
+        userId,
+        leftAt: null
+      }
+    });
+
+    if (!viewer) {
+      throw new BadRequestException(`User ${userId} is not a viewer of this broadcast`);
+    }
+
+    // Check if user already has pending request
+    const existingRequest = await this.prisma.callWaitlist.findFirst({
+      where: {
+        sessionId: session.id,
+        userId,
+        status: "pending"
+      }
+    });
+
+    if (existingRequest) {
+      throw new BadRequestException(`User ${userId} already has a pending join request`);
+    }
+
+    // Check room capacity
+    if (session.participants.length >= this.maxParticipants) {
+      throw new BadRequestException(
+        `Room is full (${session.participants.length}/${this.maxParticipants} participants). Cannot add to waitlist.`
+      );
+    }
+
+    // Create waitlist entry
+    await this.prisma.callWaitlist.create({
+      data: {
+        sessionId: session.id,
+        userId,
+        status: "pending"
+      }
+    });
+
+    // Update user status: VIEWER → MATCHED
+    await this.discoveryClient.updateUserStatus(userId, "MATCHED").catch((err) => {
+      this.logger.error(`Failed to update user ${userId} status to MATCHED: ${err.message}`);
+    });
+
+    // Log event
+    await this.prisma.callEvent.create({
+      data: {
+        sessionId: session.id,
+        eventType: "waitlist_requested",
+        userId,
+        metadata: JSON.stringify({ roomId })
+      }
+    });
+
+    this.logger.log(`User ${userId} requested to join room ${roomId}, added to waitlist`);
+  }
+
+  /**
+   * Cancel join request (viewer cancels their request)
+   * Removes from waitlist and updates status back to VIEWER
+   */
+  async cancelJoinRequest(roomId: string, userId: string): Promise<void> {
+    const session = await this.prisma.callSession.findUnique({
+      where: { roomId }
+    });
+
+    if (!session) {
+      throw new NotFoundException(`Room ${roomId} not found`);
+    }
+
+    // Verify user has pending request
+    const waitlistEntry = await this.prisma.callWaitlist.findFirst({
+      where: {
+        sessionId: session.id,
+        userId,
+        status: "pending"
+      }
+    });
+
+    if (!waitlistEntry) {
+      throw new BadRequestException(`User ${userId} does not have a pending join request`);
+    }
+
+    // Update waitlist entry: status = "cancelled"
+    await this.prisma.callWaitlist.update({
+      where: { id: waitlistEntry.id },
+      data: { status: "cancelled" }
+    });
+
+    // Update user status: MATCHED → VIEWER
+    await this.discoveryClient.updateUserStatus(userId, "VIEWER").catch((err) => {
+      this.logger.error(`Failed to update user ${userId} status to VIEWER: ${err.message}`);
+    });
+
+    // Log event
+    await this.prisma.callEvent.create({
+      data: {
+        sessionId: session.id,
+        eventType: "waitlist_cancelled",
+        userId,
+        metadata: JSON.stringify({ roomId })
+      }
+    });
+
+    this.logger.log(`User ${userId} cancelled join request for room ${roomId}`);
+  }
+
+  /**
+   * Get waitlist for a room (hosts can see who requested to join)
+   */
+  async getWaitlist(roomId: string): Promise<Array<{
+    userId: string;
+    requestedAt: Date;
+    username?: string | null;
+    displayPictureUrl?: string | null;
+  }>> {
+    const session = await this.prisma.callSession.findUnique({
+      where: { roomId },
+      include: {
+        waitlist: {
+          where: {
+            status: "pending"
+          },
+          orderBy: {
+            requestedAt: "asc" // Oldest first (first-come-first-served)
+          }
+        }
+      }
+    });
+
+    if (!session) {
+      throw new NotFoundException(`Room ${roomId} not found`);
+    }
+
+    // Extract userIds from waitlist entries
+    const userIds = session.waitlist.map(w => w.userId);
+
+    if (userIds.length === 0) {
+      return [];
+    }
+
+    // Fetch user profiles in batch (reuse existing method)
+    const profiles = await this.discoveryClient.getUserProfilesBatch(userIds);
+
+    // Map profiles to waitlist entries
+    return session.waitlist.map(waitlistEntry => {
+      const profile = profiles.get(waitlistEntry.userId);
+      return {
+        userId: waitlistEntry.userId,
+        requestedAt: waitlistEntry.requestedAt,
+        username: profile?.username || null,
+        displayPictureUrl: profile?.displayPictureUrl || null
+      };
+    });
+  }
+
+  /**
+   * Accept user from waitlist (host adds viewer to call)
+   * Reuses addParticipant logic
+   */
+  async acceptFromWaitlist(roomId: string, hostUserId: string, targetUserId: string): Promise<void> {
+    // Verify hostUserId is a HOST
+    const isUserHost = await this.isHost(roomId, hostUserId);
+    if (!isUserHost) {
+      throw new BadRequestException(
+        `User ${hostUserId} is not a HOST. Only HOSTs can accept users from waitlist.`
+      );
+    }
+
+    const session = await this.prisma.callSession.findUnique({
+      where: { roomId },
+      include: {
+        participants: {
+          where: {
+            status: "active",
+            leftAt: null
+          }
+        }
+      }
+    });
+
+    if (!session) {
+      throw new NotFoundException(`Room ${roomId} not found`);
+    }
+
+    // Verify targetUserId has pending waitlist request
+    const waitlistEntry = await this.prisma.callWaitlist.findFirst({
+      where: {
+        sessionId: session.id,
+        userId: targetUserId,
+        status: "pending"
+      }
+    });
+
+    if (!waitlistEntry) {
+      throw new BadRequestException(
+        `User ${targetUserId} does not have a pending join request for this room`
+      );
+    }
+
+    // Verify targetUserId is still a viewer (hasn't scrolled away)
+    const viewer = await this.prisma.callViewer.findFirst({
+      where: {
+        sessionId: session.id,
+        userId: targetUserId,
+        leftAt: null
+      }
+    });
+
+    if (!viewer) {
+      throw new BadRequestException(
+        `User ${targetUserId} is no longer viewing this broadcast. They may have left.`
+      );
+    }
+
+    // Verify room has capacity
+    if (session.participants.length >= this.maxParticipants) {
+      throw new BadRequestException(
+        `Room is full (${session.participants.length}/${this.maxParticipants} participants). Cannot add more participants.`
+      );
+    }
+
+    // Verify target is not already a participant
+    const existingParticipant = session.participants.find(p => p.userId === targetUserId);
+    if (existingParticipant) {
+      throw new BadRequestException(`User ${targetUserId} is already a participant in this room`);
+    }
+
+    // Use transaction to ensure atomicity
+    await this.prisma.$transaction(async (tx) => {
+      // Remove from waitlist (mark as "accepted")
+      await tx.callWaitlist.update({
+        where: { id: waitlistEntry.id },
+        data: { status: "accepted" }
+      });
+
+      // Remove from viewers (if still viewing)
+      await tx.callViewer.updateMany({
+        where: {
+          sessionId: session.id,
+          userId: targetUserId,
+          leftAt: null
+        },
+        data: {
+          leftAt: new Date()
+        }
+      });
+
+      // Add as PARTICIPANT with previousStatus = "VIEWER" since they came from waitlist
+      await tx.callParticipant.create({
+        data: {
+          sessionId: session.id,
+          userId: targetUserId,
+          role: "PARTICIPANT",
+          status: "active",
+          previousStatus: "VIEWER"
+        }
+      });
+
+      // Log event
+      await tx.callEvent.create({
+        data: {
+          sessionId: session.id,
+          eventType: "participant_joined_via_waitlist",
+          userId: targetUserId,
+          metadata: JSON.stringify({
+            roomId,
+            acceptedBy: hostUserId,
+            previousStatus: "VIEWER"
+          })
+        }
+      });
+    });
+
+    // Determine status to set based on room's broadcasting state
+    const statusToSet = session.isBroadcasting ? "IN_BROADCAST" : "IN_SQUAD";
+
+    // Update user status: MATCHED → IN_BROADCAST or IN_SQUAD
+    await this.discoveryClient.updateUserStatus(targetUserId, statusToSet).catch((err) => {
+      this.logger.error(`Failed to update user ${targetUserId} status to ${statusToSet}: ${err.message}`);
+    });
+
+    // Notify discovery-service of participant join
+    this.discoveryClient.notifyParticipantJoined(roomId, targetUserId).catch((err) => {
+      this.logger.error(`Failed to notify discovery-service: ${err.message}`);
+    });
+
+    this.logger.log(
+      `User ${targetUserId} accepted from waitlist and added to room ${roomId} as PARTICIPANT by HOST ${hostUserId}. Status: MATCHED → ${statusToSet}`
+    );
+  }
+
+  /**
    * Add a viewer to the broadcast
    */
   async addViewer(roomId: string, userId: string): Promise<void> {
@@ -1194,8 +1598,9 @@ export class RoomService {
 
   /**
    * Remove a viewer from the broadcast
+   * @param leavingHMMTV - true if user is leaving HMM_TV section entirely (going to homepage), false if just scrolling to next broadcast
    */
-  async removeViewer(roomId: string, userId: string): Promise<void> {
+  async removeViewer(roomId: string, userId: string, leavingHMMTV: boolean = false): Promise<void> {
     // Try to get room from memory, but continue even if not found (will update DB)
     let room: RoomState | null = null;
     let viewer: ViewerState | undefined;
@@ -1269,14 +1674,42 @@ export class RoomService {
       throw error; // Re-throw so caller knows update failed
     }
 
-    // BUSINESS RULE: When viewer leaves, restore status to AVAILABLE
-    // This allows them to go back to matching/discovery or continue browsing
-    // AVAILABLE is the default state for active users
-    this.discoveryClient.updateUserStatus(userId, "AVAILABLE").catch((err) => {
-      this.logger.error(`Failed to restore viewer ${userId} status to AVAILABLE: ${err.message}`);
+    // Check if user is on waitlist
+    const waitlistEntry = await this.prisma.callWaitlist.findFirst({
+      where: {
+        sessionId: session.id,
+        userId,
+        status: "pending"
+      }
     });
 
-    this.logger.log(`Viewer ${userId} removed from room ${roomId}, status restored to AVAILABLE`);
+    if (waitlistEntry) {
+      // Remove from waitlist (mark as "cancelled")
+      await this.prisma.callWaitlist.update({
+        where: { id: waitlistEntry.id },
+        data: { status: "cancelled" }
+      });
+
+      // Update status: MATCHED → VIEWER (user still in HMM_TV, just scrolled to different broadcast)
+      this.discoveryClient.updateUserStatus(userId, "VIEWER").catch((err) => {
+        this.logger.error(`Failed to update user ${userId} status to VIEWER: ${err.message}`);
+      });
+
+      this.logger.log(`Viewer ${userId} removed from room ${roomId} and waitlist, status: MATCHED → VIEWER`);
+    } else {
+      // Not on waitlist - handle status based on context
+      if (leavingHMMTV) {
+        // User leaving HMM_TV section entirely → ONLINE
+        this.discoveryClient.updateUserStatus(userId, "ONLINE").catch((err) => {
+          this.logger.error(`Failed to update user ${userId} status to ONLINE: ${err.message}`);
+        });
+        this.logger.log(`Viewer ${userId} removed from room ${roomId}, status: VIEWER → ONLINE (leaving HMM_TV)`);
+      } else {
+        // User still in HMM_TV, just scrolling to next broadcast → keep VIEWER
+        // Status remains VIEWER (no change needed)
+        this.logger.log(`Viewer ${userId} removed from room ${roomId}, status remains VIEWER (still in HMM_TV)`);
+      }
+    }
   }
 
   /**
@@ -1373,7 +1806,7 @@ export class RoomService {
         sessionId: session.id,
         // Include both active and just-left participants to update all their statuses
       },
-      select: { userId: true }
+      select: { userId: true, previousStatus: true }
     });
     const viewers = await this.prisma.callViewer.findMany({
       where: { 
@@ -1383,8 +1816,18 @@ export class RoomService {
       select: { userId: true }
     });
     
+    // Get all pending waitlist entries
+    const waitlistEntries = await this.prisma.callWaitlist.findMany({
+      where: {
+        sessionId: session.id,
+        status: "pending"
+      },
+      select: { userId: true }
+    });
+    
     const participantUserIds = participants.map((p: any) => p.userId);
     const viewerUserIds = viewers.map((v: any) => v.userId);
+    const waitlistUserIds = waitlistEntries.map((w: any) => w.userId);
 
     // Cleanup pending dares: Mark sent/done dares as cancelled if not fully paid
     // This prevents stuck dares where room ends but payment wasn't completed
@@ -1437,19 +1880,63 @@ export class RoomService {
       this.logger.error(`Failed to notify discovery-service: ${err.message}`);
     });
 
-    // BUSINESS RULE: When entire room ends:
-    // - Participants (IN_SQUAD/IN_BROADCAST) → AVAILABLE (back to matching pool for fast re-matching)
-    // - Viewers (VIEWER) → AVAILABLE (back to matching pool for fast re-matching)
-    if (participantUserIds.length > 0) {
-      this.logger.log(`Updating ${participantUserIds.length} participant(s) to AVAILABLE status: ${participantUserIds.join(", ")}`);
-      this.discoveryClient.updateUserStatuses(participantUserIds, "AVAILABLE").catch((err) => {
-        this.logger.error(`Failed to update participant statuses: ${err.message}`);
+    // Cancel all pending waitlist entries
+    if (waitlistUserIds.length > 0) {
+      await this.prisma.callWaitlist.updateMany({
+        where: {
+          sessionId: session.id,
+          status: "pending"
+        },
+        data: {
+          status: "cancelled"
+        }
+      });
+
+      // Update waitlist users: MATCHED → VIEWER (users still in HMM_TV)
+      this.logger.log(`Cancelling ${waitlistUserIds.length} waitlist entry(ies) and updating status: MATCHED → VIEWER`);
+      this.discoveryClient.updateUserStatuses(waitlistUserIds, "VIEWER").catch((err) => {
+        this.logger.error(`Failed to update waitlist user statuses: ${err.message}`);
       });
     }
 
-    if (viewerUserIds.length > 0) {
-      this.logger.log(`Updating ${viewerUserIds.length} viewer(s) to AVAILABLE status: ${viewerUserIds.join(", ")}`);
-      this.discoveryClient.updateUserStatuses(viewerUserIds, "AVAILABLE").catch((err) => {
+    // BUSINESS RULE: When entire room ends:
+    // - Participants revert to their previousStatus (excluding MATCHED)
+    // - Viewers (not on waitlist) → VIEWER (still in HMM_TV)
+    if (participantUserIds.length > 0) {
+      // Group participants by previousStatus for batch updates
+      const statusGroups = new Map<string, string[]>();
+      
+      participants.forEach((p: any) => {
+        const previousStatus = p.previousStatus || "AVAILABLE"; // Default to AVAILABLE for legacy data
+        // Never revert to MATCHED (it's transitional)
+        if (previousStatus !== "MATCHED") {
+          if (!statusGroups.has(previousStatus)) {
+            statusGroups.set(previousStatus, []);
+          }
+          statusGroups.get(previousStatus)!.push(p.userId);
+        } else {
+          // If previousStatus is MATCHED (shouldn't happen, but handle gracefully), default to AVAILABLE
+          if (!statusGroups.has("AVAILABLE")) {
+            statusGroups.set("AVAILABLE", []);
+          }
+          statusGroups.get("AVAILABLE")!.push(p.userId);
+        }
+      });
+
+      // Update each group to their previousStatus
+      for (const [status, userIds] of statusGroups.entries()) {
+        this.logger.log(`Reverting ${userIds.length} participant(s) to ${status} status: ${userIds.join(", ")}`);
+        this.discoveryClient.updateUserStatuses(userIds, status as any).catch((err) => {
+          this.logger.error(`Failed to update participant statuses to ${status}: ${err.message}`);
+        });
+      }
+    }
+
+    // Viewers (not on waitlist) revert to VIEWER (still in HMM_TV)
+    const viewersNotOnWaitlist = viewerUserIds.filter(vId => !waitlistUserIds.includes(vId));
+    if (viewersNotOnWaitlist.length > 0) {
+      this.logger.log(`Updating ${viewersNotOnWaitlist.length} viewer(s) to VIEWER status (still in HMM_TV): ${viewersNotOnWaitlist.join(", ")}`);
+      this.discoveryClient.updateUserStatuses(viewersNotOnWaitlist, "VIEWER").catch((err) => {
         this.logger.error(`Failed to update viewer statuses: ${err.message}`);
       });
     }
@@ -1571,29 +2058,28 @@ export class RoomService {
 
   /**
    * Get user's active room (as participant)
+   * Returns the most recently started room if user is in multiple rooms
    */
   async getUserActiveRoom(userId: string): Promise<{ roomId: string } | null> {
-    const participant = await this.prisma.callParticipant.findFirst({
-      where: {
-        userId,
-        status: "active",
-        leftAt: null
-      },
-      include: {
-        session: true
-      }
-    });
+    // Optimized query: use raw SQL for better performance with large datasets
+    // This avoids the slow nested orderBy on relations
+    const result = await this.prisma.$queryRaw<Array<{ roomId: string }>>`
+      SELECT cs."roomId"
+      FROM call_participants cp
+      INNER JOIN call_sessions cs ON cp."sessionId" = cs.id
+      WHERE cp."userId" = ${userId}
+        AND cp.status = 'active'
+        AND cp."leftAt" IS NULL
+        AND cs.status != 'ENDED'
+      ORDER BY cs."startedAt" DESC
+      LIMIT 1
+    `;
 
-    if (!participant || !participant.session) {
+    if (!result || result.length === 0) {
       return null;
     }
 
-    // Only return if session is still active (not ended)
-    if (participant.session.status === "ENDED") {
-      return null;
-    }
-
-    return { roomId: participant.session.roomId };
+    return { roomId: result[0].roomId };
   }
 
   /**

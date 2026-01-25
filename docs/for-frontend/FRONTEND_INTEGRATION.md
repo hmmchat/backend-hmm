@@ -29,8 +29,8 @@ Complete API integration guide for all backend services. This document covers ev
 - Auth: `http://localhost:3001`
 - User: `http://localhost:3002`
 - Discovery: `http://localhost:3004`
-- Streaming: `http://localhost:3005`
-- Wallet: `http://localhost:3006`
+- Streaming: `http://localhost:3006`
+- Wallet: `http://localhost:3005`
 - Payment: `http://localhost:3007`
 - Friend: `http://localhost:3009`
 - Files: `http://localhost:3008`

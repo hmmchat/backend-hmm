@@ -40,6 +40,7 @@ model CallSession {
   
   participants  CallParticipant[]
   viewers       CallViewer[]
+  waitlist      CallWaitlist[]
   events        CallEvent[]
   dares         CallDare[]
   gifts         CallGift[]
@@ -62,6 +63,7 @@ model CallParticipant {
   joinedAt      DateTime    @default(now())
   leftAt        DateTime?
   status        String      @default("active") // active, left
+  previousStatus String?    // Track user's status before joining (AVAILABLE, VIEWER, IN_SQUAD_AVAILABLE, IN_BROADCAST_AVAILABLE)
   
   session       CallSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   
@@ -188,4 +190,20 @@ model UserCustomDare {
   
   @@index([userId])
   @@map("user_custom_dares")
+}
+
+model CallWaitlist {
+  id            String      @id @default(cuid())
+  sessionId     String
+  userId        String
+  requestedAt   DateTime    @default(now())
+  status        String      @default("pending") // pending, accepted, cancelled
+  
+  session       CallSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  
+  @@unique([sessionId, userId])
+  @@map("call_waitlist")
+  @@index([sessionId])
+  @@index([userId])
+  @@index([status])
 }

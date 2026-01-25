@@ -103,7 +103,7 @@ When a user is broadcasting, clicking their chat head (display picture) will red
 PORT=3009
 DATABASE_URL="postgresql://..."
 JWT_PUBLIC_JWK='...'
-WALLET_SERVICE_URL=http://localhost:3006
+WALLET_SERVICE_URL=http://localhost:3005
 AUTH_SERVICE_URL=http://localhost:3001  # For account status checks
 STREAMING_SERVICE_URL=http://localhost:3005  # For broadcast status checks
 APP_DEEP_LINK_BASE_URL=https://app.hmmchat.live  # Base URL for broadcast deep links

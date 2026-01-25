@@ -151,7 +151,7 @@ Services discover each other via environment variables:
 
 ```bash
 USER_SERVICE_URL=http://user-service:3002
-WALLET_SERVICE_URL=http://wallet-service:3006
+WALLET_SERVICE_URL=http://wallet-service:3005
 # etc.
 ```
 
@@ -265,7 +265,7 @@ curl http://localhost:3000/health
 ```bash
 # Service URLs (required in production)
 USER_SERVICE_URL=http://user-service:3002
-WALLET_SERVICE_URL=http://wallet-service:3006
+WALLET_SERVICE_URL=http://wallet-service:3005
 
 # Circuit Breaker Configuration
 CIRCUIT_BREAKER_THRESHOLD=5

@@ -117,6 +117,6 @@ export class PaymentConfigService {
 
   // Wallet Service URL
   getWalletServiceUrl(): string {
-    return process.env.WALLET_SERVICE_URL || "http://localhost:3006";
+    return process.env.WALLET_SERVICE_URL || "http://localhost:3005";
   }
 }

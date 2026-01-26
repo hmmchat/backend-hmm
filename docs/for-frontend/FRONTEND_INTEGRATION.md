@@ -1176,6 +1176,79 @@ The messaging system is organized into **conversations** with three sections: **
 }
 ```
 
+### 6a. Get Friends Wall
+
+**Endpoint:** `GET /me/friends/wall?limit=35&cursor=xxx`
+
+**Description:** Get paginated friends with their profile photos for display in a grid layout (friends wall feature).
+
+**Query Parameters:**
+- `limit` (optional): Number of photos per page (default: 35, configured via `FRIENDS_WALL_PHOTOS_PER_PAGE` env variable)
+- `cursor` (optional): Pagination cursor for next page
+
+**Response:**
+```json
+{
+  "friends": [
+    {
+      "friendId": "string",
+      "photoUrl": "https://cdn.example.com/photo.jpg" | null,
+      "createdAt": "2024-01-01T00:00:00Z"
+    }
+  ],
+  "nextCursor": "string | undefined",
+  "hasMore": true | false,
+  "pageSize": 35
+}
+```
+
+**Use Case:** Display friends' profile photos in a grid layout (like the reference screenshot showing 35 photos per page).
+
+**Frontend Implementation:**
+```javascript
+const fetchFriendsWall = async (cursor) => {
+  const url = new URL('http://localhost:3000/v1/friends/me/friends/wall');
+  if (cursor) url.searchParams.set('cursor', cursor);
+  // limit is optional - uses default 35 if not provided
+  
+  const response = await fetch(url, {
+    headers: {
+      'Authorization': `Bearer ${accessToken}`
+    }
+  });
+  
+  const data = await response.json();
+  
+  // Handle empty friends list
+  if (data.friends.length === 0) {
+    // Show empty state
+    return;
+  }
+  
+  // Display friends in grid
+  data.friends.forEach(friend => {
+    // friend.photoUrl can be null - show placeholder if null
+    const photoUrl = friend.photoUrl || '/placeholder-avatar.png';
+    // Render friend photo in grid
+  });
+  
+  // Pagination
+  if (data.hasMore && data.nextCursor) {
+    // Load next page with data.nextCursor
+    fetchFriendsWall(data.nextCursor);
+  }
+  
+  return data;
+};
+```
+
+**Notes:**
+- `photoUrl` can be `null` if friend doesn't have a profile photo - show placeholder image
+- Default page size is 35, but can be customized via `limit` query parameter
+- Use `nextCursor` for pagination to load next page
+- `hasMore` indicates if there are more friends to load
+- `pageSize` shows the current page size used (useful for UI display)
+
 ---
 
 ### 7. Get Inbox Conversations

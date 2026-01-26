@@ -19,6 +19,10 @@ export class FriendService {
   );
   private readonly MAX_MESSAGE_LENGTH = 1000;
   private readonly SPAM_DETECTION_WINDOW = 60; // seconds
+  private readonly FRIENDS_WALL_PHOTOS_PER_PAGE = parseInt(
+    process.env.FRIENDS_WALL_PHOTOS_PER_PAGE || "35",
+    10
+  );
 
   constructor(
     private readonly prisma: PrismaService,
@@ -361,6 +365,60 @@ export class FriendService {
       })),
       nextCursor,
       hasMore
+    };
+  }
+
+  /**
+   * Get friends wall - paginated friends with their profile photos
+   * Returns friends with displayPictureUrl for grid display
+   */
+  async getFriendsWall(
+    userId: string,
+    limit?: number,
+    cursor?: string
+  ): Promise<{
+    friends: Array<{
+      friendId: string;
+      photoUrl: string | null;
+      createdAt: Date;
+    }>;
+    nextCursor?: string;
+    hasMore: boolean;
+    pageSize: number;
+  }> {
+    // Use configured page size if limit not provided
+    const pageSize = limit || this.FRIENDS_WALL_PHOTOS_PER_PAGE;
+
+    // Get friends list using existing method
+    const friendsResult = await this.getFriends(userId, pageSize, cursor);
+
+    if (friendsResult.friends.length === 0) {
+      return {
+        friends: [],
+        nextCursor: undefined,
+        hasMore: false,
+        pageSize
+      };
+    }
+
+    // Extract friend IDs
+    const friendIds = friendsResult.friends.map(f => f.friendId);
+
+    // Batch fetch display pictures from user-service
+    const photoMap = await this.userClient.getUsersDisplayPictures(friendIds);
+
+    // Enrich friends with photos
+    const enrichedFriends = friendsResult.friends.map(friend => ({
+      friendId: friend.friendId,
+      photoUrl: photoMap.get(friend.friendId) || null,
+      createdAt: friend.createdAt
+    }));
+
+    return {
+      friends: enrichedFriends,
+      nextCursor: friendsResult.nextCursor,
+      hasMore: friendsResult.hasMore,
+      pageSize
     };
   }
 

@@ -190,6 +190,24 @@ export class FriendController {
   }
 
   /**
+   * Get friends wall - paginated friends with profile photos
+   * GET /me/friends/wall
+   * Query params: ?limit=35&cursor=xxx
+   * Returns friends with displayPictureUrl for grid display
+   */
+  @Get("me/friends/wall")
+  async getFriendsWall(
+    @Headers("authorization") authz?: string,
+    @Query() query?: any
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    const userId = await this.verifyTokenAndGetUserId(token!);
+    const limit = query?.limit ? parseInt(query.limit, 10) : undefined;
+    const cursor = query?.cursor;
+    return this.friendService.getFriendsWall(userId, limit, cursor);
+  }
+
+  /**
    * Send message to friend (free, supports gifts)
    * POST /me/friends/:friendId/messages
    */

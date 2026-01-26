@@ -5,9 +5,11 @@ import fetch from "node-fetch";
 export class UserClientService {
   private readonly logger = new Logger(UserClientService.name);
   private readonly authServiceUrl: string;
+  private readonly userServiceUrl: string;
 
   constructor() {
     this.authServiceUrl = process.env.AUTH_SERVICE_URL || "http://localhost:3001";
+    this.userServiceUrl = process.env.USER_SERVICE_URL || "http://localhost:3002";
   }
 
   /**
@@ -56,5 +58,62 @@ export class UserClientService {
     // This will be checked in FriendService using Prisma directly
     // since blocking is tracked in friend-service's database
     return false; // Placeholder - actual check done in FriendService
+  }
+
+  /**
+   * Batch fetch display pictures for multiple users
+   * Returns a Map of userId -> displayPictureUrl (or null if not found/no photo)
+   */
+  async getUsersDisplayPictures(userIds: string[]): Promise<Map<string, string | null>> {
+    if (userIds.length === 0) {
+      return new Map();
+    }
+
+    try {
+      // Use the existing batch endpoint from user-service
+      const response = await fetch(`${this.userServiceUrl}/users/batch`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-service-token": process.env.INTERNAL_SERVICE_TOKEN || ""
+        },
+        body: JSON.stringify({ userIds }),
+        signal: AbortSignal.timeout(5000) // 5 second timeout
+      });
+
+      if (!response.ok) {
+        this.logger.warn(`Failed to fetch display pictures from user-service: ${response.status}`);
+        // Return empty map on error - graceful degradation
+        return new Map();
+      }
+
+      const data = await response.json() as { users: Array<{ id: string; displayPictureUrl: string | null }> };
+      const photoMap = new Map<string, string | null>();
+
+      // Map users to their display pictures
+      if (data.users && Array.isArray(data.users)) {
+        for (const user of data.users) {
+          photoMap.set(user.id, user.displayPictureUrl || null);
+        }
+      }
+
+      // Ensure all requested userIds are in the map (set to null if not found)
+      for (const userId of userIds) {
+        if (!photoMap.has(userId)) {
+          photoMap.set(userId, null);
+        }
+      }
+
+      return photoMap;
+    } catch (error: any) {
+      // Graceful degradation - log error but return empty map
+      this.logger.warn(`Error fetching display pictures: ${error.message}`);
+      // Return map with null values for all requested users
+      const photoMap = new Map<string, string | null>();
+      for (const userId of userIds) {
+        photoMap.set(userId, null);
+      }
+      return photoMap;
+    }
   }
 }

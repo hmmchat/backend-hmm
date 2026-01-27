@@ -2,12 +2,14 @@ import { Controller, Get, HttpCode, HttpStatus } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { HealthChecker, HealthCheckResult, ServiceDiscovery } from "@hmm/common";
 import { RedisService } from "../services/redis.service.js";
+import { FriendsWallImageService } from "../services/friends-wall-image.service.js";
 
 @Controller()
 export class HealthController {
   constructor(
     private prisma: PrismaService,
-    private redis: RedisService
+    private redis: RedisService,
+    private friendsWallImageService: FriendsWallImageService
   ) {}
 
   @Get("ready")
@@ -96,11 +98,20 @@ export class HealthController {
       };
     }
     
+    // Check Puppeteer browser health
+    const browserCheck = {
+      status: this.friendsWallImageService.isBrowserHealthy() ? ("up" as const) : ("down" as const),
+      message: this.friendsWallImageService.isBrowserHealthy() 
+        ? "Puppeteer browser available" 
+        : "Puppeteer browser not available"
+    };
+
     return HealthChecker.createResponse(
       "friend-service",
       {
         database: dbCheck,
-        redis: redisCheck
+        redis: redisCheck,
+        puppeteer: browserCheck
       },
       dependencies,
       process.env.npm_package_version || "0.0.1"

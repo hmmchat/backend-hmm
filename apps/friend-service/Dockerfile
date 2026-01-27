@@ -36,6 +36,20 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
+# Install Chrome dependencies for Puppeteer
+RUN apk add --no-cache \
+    chromium \
+    nss \
+    freetype \
+    freetype-dev \
+    harfbuzz \
+    ca-certificates \
+    ttf-freefont
+
+# Set Puppeteer to use system Chrome
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+
 # Copy built application
 COPY --from=builder /app/apps/friend-service/dist ./dist
 COPY --from=builder /app/apps/friend-service/package.json ./

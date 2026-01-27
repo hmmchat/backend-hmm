@@ -116,4 +116,43 @@ export class UserClientService {
       return photoMap;
     }
   }
+
+  /**
+   * Get user profile (username and display picture)
+   * Returns username and displayPictureUrl for a single user
+   */
+  async getUserProfile(userId: string): Promise<{ username: string | null; displayPictureUrl: string | null }> {
+    try {
+      // Use the existing user endpoint with fields filter
+      const response = await fetch(`${this.userServiceUrl}/users/${userId}?fields=username,displayPictureUrl`, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          "x-service-token": process.env.INTERNAL_SERVICE_TOKEN || ""
+        },
+        signal: AbortSignal.timeout(5000) // 5 second timeout
+      });
+
+      if (!response.ok) {
+        this.logger.warn(`Failed to fetch user profile from user-service: ${response.status}`);
+        // Return null values on error - graceful degradation
+        return { username: null, displayPictureUrl: null };
+      }
+
+      const data = await response.json() as { user: { username: string | null; displayPictureUrl: string | null } };
+      
+      if (data.user) {
+        return {
+          username: data.user.username || null,
+          displayPictureUrl: data.user.displayPictureUrl || null
+        };
+      }
+
+      return { username: null, displayPictureUrl: null };
+    } catch (error: any) {
+      // Graceful degradation - log error but return null values
+      this.logger.warn(`Error fetching user profile for ${userId}: ${error.message}`);
+      return { username: null, displayPictureUrl: null };
+    }
+  }
 }

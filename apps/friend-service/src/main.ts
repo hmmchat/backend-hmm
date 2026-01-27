@@ -9,7 +9,7 @@ async function bootstrap() {
     AppModule,
     new FastifyAdapter({ 
       logger: true,
-      requestTimeout: 8000  // 8 second request timeout (less than gateway's 10s)
+      requestTimeout: 30000  // 30 second request timeout (for image generation)
     })
   );
 

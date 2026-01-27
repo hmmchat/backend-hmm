@@ -99,6 +99,22 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Get all keys matching pattern
+   */
+  async keys(pattern: string): Promise<string[]> {
+    if (!this.client || !this.cacheEnabled) {
+      return [];
+    }
+
+    try {
+      return await this.client.keys(pattern);
+    } catch (error: any) {
+      this.logger.warn(`Redis keys error for pattern ${pattern}: ${error.message}`);
+      return [];
+    }
+  }
+
+  /**
    * Delete multiple keys matching pattern
    */
   async delPattern(pattern: string): Promise<void> {

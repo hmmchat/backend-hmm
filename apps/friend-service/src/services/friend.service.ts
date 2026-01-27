@@ -1643,4 +1643,20 @@ export class FriendService {
       };
     }
   }
+
+  /**
+   * Generate friends wall share image and return share data
+   * This method will be called by the controller and orchestrate image generation
+   * Note: This method should be moved to a separate service that handles image generation
+   * For now, keeping it here as a placeholder - actual implementation will use FriendsWallImageService
+   */
+  async generateFriendsWallShare(userId: string): Promise<{
+    imageUrl: string;
+    deepLink: string;
+    productLink: string;
+  }> {
+    // This will be implemented by injecting FriendsWallImageService and FilesClientService
+    // Placeholder for now
+    throw new Error("This method should be implemented using FriendsWallImageService");
+  }
 }

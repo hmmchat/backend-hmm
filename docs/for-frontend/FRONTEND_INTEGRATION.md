@@ -1448,6 +1448,96 @@ const fetchFriendsWall = async (cursor) => {
 - `hasMore` indicates if there are more friends to load
 - `pageSize` shows the current page size used (useful for UI display)
 
+### 8. Share Friends Wall
+
+**Endpoint:** `POST /me/friends/wall/share`
+
+**Description:** Generates a static JPEG image of the user's friend wall that can be shared on Instagram or WhatsApp statuses. The image is cached to avoid regenerating the same wall multiple times.
+
+**Request:**
+- No body required
+- Requires authentication header
+
+**Response:**
+```json
+{
+  "imageUrl": "https://r2.hmmchat.live/files/friends-wall-share/{userId}/{timestamp}.jpg",
+  "deepLink": "https://r2.hmmchat.live/files/friends-wall-share/{userId}/{timestamp}.jpg",
+  "productLink": "https://hmmchat.live"
+}
+```
+
+**Note:** `deepLink` and `imageUrl` are the same - both point directly to the public R2 URL. When anyone clicks the deep link, their browser will directly display or download the JPEG image.
+
+**Frontend Implementation:**
+```javascript
+const shareFriendsWall = async () => {
+  try {
+    // Show loading state
+    setLoading(true);
+    
+    const response = await fetch('http://localhost:3000/v1/friends/me/friends/wall/share', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`
+      }
+    });
+    
+    if (!response.ok) {
+      throw new Error('Failed to generate share image');
+    }
+    
+    const data = await response.json();
+    
+    // Use native sharing API or custom share sheet
+    if (navigator.share) {
+      await navigator.share({
+        title: 'My Friend Wall',
+        text: 'Check out my friend wall!',
+        url: data.deepLink
+      });
+    } else {
+      // Fallback: Copy link to clipboard or show share options
+      await navigator.clipboard.writeText(data.deepLink);
+      alert('Link copied to clipboard!');
+    }
+    
+    // For Instagram/WhatsApp: Download image and use their sharing APIs
+    // The imageUrl can be downloaded and shared directly
+    
+    return data;
+  } catch (error) {
+    console.error('Error sharing friend wall:', error);
+    // Show error message to user
+  } finally {
+    setLoading(false);
+  }
+};
+```
+
+**Error Handling:**
+- `429 Too Many Requests`: Rate limit exceeded (10 requests per minute)
+- `500 Internal Server Error`: Image generation failed (retryable)
+- `503 Service Unavailable`: Files service unavailable
+
+**Rate Limiting:**
+- 10 requests per 60 seconds per user
+- Rate limit headers included in response:
+  - `X-RateLimit-Limit`: Maximum requests allowed
+  - `X-RateLimit-Remaining`: Remaining requests in window
+  - `X-RateLimit-Reset`: Timestamp when limit resets
+
+**Performance:**
+- Image generation takes 5-10 seconds
+- Generated images are cached for 24 hours (or until friend list changes)
+- Subsequent requests for the same friend wall return cached image immediately
+
+**Deep Link Behavior:**
+- When anyone clicks the `deepLink`, the browser directly displays/downloads the JPEG image
+- No redirect or intermediate page - direct image access
+- Works on all platforms (web, mobile browsers, social media apps)
+- Image is publicly accessible (no authentication required)
+
 ---
 
 ### 7. Get Inbox Conversations

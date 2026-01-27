@@ -14,9 +14,14 @@ import { FriendService } from "../services/friend.service.js";
 import { RateLimitGuard } from "../guards/rate-limit.guard.js";
 import { ConversationRateLimitGuard } from "../guards/conversation-rate-limit.guard.js";
 import { NotificationRateLimitGuard } from "../guards/notification-rate-limit.guard.js";
+import { ShareRateLimitGuard } from "../guards/share-rate-limit.guard.js";
+import { FriendsWallImageService } from "../services/friends-wall-image.service.js";
+import { FilesClientService } from "../services/files-client.service.js";
+import { MetricsService } from "../services/metrics.service.js";
 import { z } from "zod";
 import { verifyToken, AccessPayload } from "@hmm/common";
 import { JWK } from "jose";
+import * as crypto from "crypto";
 
 const SendMessageSchema = z.object({
   message: z.string().max(1000).nullable().optional().transform((val) => {
@@ -55,7 +60,12 @@ export class FriendController {
   private publicJwk!: JWK;
   private jwtInitialized = false;
 
-  constructor(private readonly friendService: FriendService) {}
+  constructor(
+    private readonly friendService: FriendService,
+    private readonly friendsWallImageService: FriendsWallImageService,
+    private readonly filesClient: FilesClientService,
+    private readonly metrics: MetricsService
+  ) {}
 
   private async initializeJWT() {
     if (this.jwtInitialized) return;
@@ -233,6 +243,87 @@ export class FriendController {
     const limit = query?.limit ? parseInt(query.limit, 10) : undefined;
     const cursor = query?.cursor;
     return this.friendService.getFriendsWall(userId, limit, cursor);
+  }
+
+  /**
+   * Generate and share friends wall image
+   * POST /me/friends/wall/share
+   * Returns imageUrl, deepLink, and productLink for sharing
+   */
+  @Post("me/friends/wall/share")
+  @UseGuards(ShareRateLimitGuard)
+  async shareFriendsWall(@Headers("authorization") authz: string) {
+    const token = this.getTokenFromHeader(authz);
+    const userId = await this.verifyTokenAndGetUserId(token!);
+    const startTime = Date.now();
+
+    try {
+      // Get friends wall to generate hash for cache
+      const friendsWall = await this.friendService.getFriendsWall(userId, 35);
+      const friendIds = friendsWall.friends.map(f => f.friendId);
+      const friendsHash = crypto.createHash("md5").update([...friendIds].sort().join(",")).digest("hex");
+
+      // Check cache using FriendsWallImageService
+      const cached = await this.friendsWallImageService.getCachedImage(userId, friendsHash);
+      
+      if (cached) {
+        // Track cache hit
+        const duration = Date.now() - startTime;
+        this.metrics.incrementFriendsWallShareCacheHit();
+        this.metrics.incrementFriendsWallShareGenerated(true, duration);
+        
+        return {
+          imageUrl: cached.imageUrl,
+          deepLink: cached.deepLink,
+          productLink: this.friendsWallImageService.getProductLink()
+        };
+      }
+
+      // Generate image (metrics tracked inside generateImage)
+      const imageBuffer = await this.friendsWallImageService.generateImage(userId);
+
+      // Upload to files-service
+      const timestamp = Date.now();
+      const filename = `friends-wall-${userId}-${timestamp}.jpg`;
+      const uploadResult = await this.filesClient.uploadImage(imageBuffer, filename, userId);
+
+      // Cache the result using FriendsWallImageService
+      await this.friendsWallImageService.cacheImage(userId, friendsHash, uploadResult.url, uploadResult.url, uploadResult.fileId);
+
+      return {
+        imageUrl: uploadResult.url,
+        deepLink: uploadResult.url, // Deep link is same as image URL
+        productLink: this.friendsWallImageService.getProductLink()
+      };
+    } catch (error: any) {
+      const duration = Date.now() - startTime;
+      this.metrics.incrementFriendsWallShareGenerated(false, duration);
+      
+      // Determine error type for better error messages
+      let errorCode = "IMAGE_GENERATION_FAILED";
+      let retryable = true;
+      
+      if (error.message?.includes("Puppeteer") || error.message?.includes("browser")) {
+        errorCode = "PUPPETEER_FAILED";
+      } else if (error.message?.includes("upload") || error.message?.includes("files-service")) {
+        errorCode = "UPLOAD_FAILED";
+        retryable = true;
+      } else if (error.message?.includes("timeout")) {
+        errorCode = "TIMEOUT";
+        retryable = true;
+      }
+
+      throw new HttpException(
+        {
+          statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
+          message: "Failed to generate friend wall image. Please try again.",
+          error: "Image Generation Failed",
+          code: errorCode,
+          retryable
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
   }
 
   /**

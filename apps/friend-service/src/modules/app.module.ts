@@ -10,9 +10,12 @@ import { ConversationService } from "../services/conversation.service.js";
 import { GiftCatalogService } from "../services/gift-catalog.service.js";
 import { UserClientService } from "../services/user-client.service.js";
 import { StreamingClientService } from "../services/streaming-client.service.js";
+import { FilesClientService } from "../services/files-client.service.js";
+import { FriendsWallImageService } from "../services/friends-wall-image.service.js";
 import { RateLimitGuard } from "../guards/rate-limit.guard.js";
 import { ConversationRateLimitGuard } from "../guards/conversation-rate-limit.guard.js";
 import { NotificationRateLimitGuard } from "../guards/notification-rate-limit.guard.js";
+import { ShareRateLimitGuard } from "../guards/share-rate-limit.guard.js";
 import { FriendController } from "../routes/friend.controller.js";
 import { HealthController } from "../routes/health.controller.js";
 import { CleanupTasksService } from "../services/cleanup-tasks.service.js";
@@ -33,9 +36,12 @@ import { CleanupTasksService } from "../services/cleanup-tasks.service.js";
     GiftCatalogService,
     UserClientService,
     StreamingClientService,
+    FilesClientService,
+    FriendsWallImageService,
     RateLimitGuard,
     ConversationRateLimitGuard,
     NotificationRateLimitGuard,
+    ShareRateLimitGuard,
     CleanupTasksService
   ]
 })

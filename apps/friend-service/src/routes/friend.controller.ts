@@ -75,6 +75,22 @@ export class FriendController {
     return payload.sub;
   }
 
+  private verifyInternalServiceToken(serviceToken: string | undefined): void {
+    const isTestMode = process.env.NODE_ENV === "test" || process.env.TEST_MODE === "true";
+    const expectedToken = process.env.INTERNAL_SERVICE_TOKEN;
+    if (!isTestMode) {
+      if (!expectedToken) {
+        throw new HttpException(
+          "Internal service token not configured",
+          HttpStatus.INTERNAL_SERVER_ERROR
+        );
+      }
+      if (serviceToken !== expectedToken) {
+        throw new HttpException("Invalid service token", HttpStatus.UNAUTHORIZED);
+      }
+    }
+  }
+
   // NOTE: Friend requests can ONLY be sent during video calls via the "+" button
   // OR from OFFLINE cards section (new feature)
   // All other friend requests must go through the streaming-service WebSocket handler
@@ -471,27 +487,7 @@ export class FriendController {
     @Headers("x-service-token") serviceToken: string | undefined,
     @Query() query: any
   ) {
-    // Verify service token
-    // In test mode, allow requests without token
-    const isTestMode = process.env.NODE_ENV === "test" || process.env.TEST_MODE === "true";
-    const expectedToken = process.env.INTERNAL_SERVICE_TOKEN;
-    
-    if (!isTestMode) {
-      if (!expectedToken) {
-        throw new HttpException(
-          "Internal service token not configured",
-          HttpStatus.INTERNAL_SERVER_ERROR
-        );
-      }
-
-      if (serviceToken !== expectedToken) {
-        throw new HttpException(
-          "Invalid service token",
-          HttpStatus.UNAUTHORIZED
-        );
-      }
-    }
-
+    this.verifyInternalServiceToken(serviceToken);
     const { userId1, userId2 } = z.object({
       userId1: z.string(),
       userId2: z.string()
@@ -503,6 +499,43 @@ export class FriendController {
     return {
       areFriends
     };
+  }
+
+  /**
+   * Get relationship for History Hotline (internal)
+   * GET /internal/friends/relationship?userId=xxx&otherUserId=xxx
+   */
+  @Get("internal/friends/relationship")
+  async getRelationship(
+    @Headers("x-service-token") serviceToken: string | undefined,
+    @Query() query: any
+  ) {
+    this.verifyInternalServiceToken(serviceToken);
+    const { userId, otherUserId } = z
+      .object({ userId: z.string(), otherUserId: z.string() })
+      .parse(query);
+    return this.friendService.getRelationship(userId, otherUserId);
+  }
+
+  /**
+   * Get relationships batch for History (internal)
+   * POST /internal/friends/relationships
+   * Body: { userId: string, otherUserIds: string[] }
+   */
+  @Post("internal/friends/relationships")
+  async getRelationshipsBatch(
+    @Headers("x-service-token") serviceToken: string | undefined,
+    @Body() body: any
+  ) {
+    this.verifyInternalServiceToken(serviceToken);
+    const { userId, otherUserIds } = z
+      .object({
+        userId: z.string(),
+        otherUserIds: z.array(z.string())
+      })
+      .parse(body);
+    const map = await this.friendService.getRelationshipsBatch(userId, otherUserIds);
+    return Object.fromEntries(map);
   }
 
   /* ---------- Test Endpoints (No Auth Required) ---------- */

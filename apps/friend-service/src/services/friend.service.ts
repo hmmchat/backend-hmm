@@ -17,6 +17,10 @@ export class FriendService {
     process.env.FIRST_MESSAGE_COST_COINS || "10",
     10
   );
+  private readonly HOTLINE_MESSAGE_COST = parseInt(
+    process.env.HOTLINE_MESSAGE_COST || "10",
+    10
+  );
   private readonly MAX_MESSAGE_LENGTH = 1000;
   private readonly SPAM_DETECTION_WINDOW = 60; // seconds
   private readonly FRIENDS_WALL_PHOTOS_PER_PAGE = parseInt(
@@ -1044,6 +1048,48 @@ export class FriendService {
     }
 
     return areFriends;
+  }
+
+  /**
+   * Get relationship info for History Hotline (internal)
+   * Returns isFriend, conversationId, messageCost for messaging from history.
+   */
+  async getRelationship(
+    userId: string,
+    otherUserId: string
+  ): Promise<{ isFriend: boolean; conversationId: string; messageCost: number }> {
+    const isFriend = await this.areFriends(userId, otherUserId);
+    const { id: conversationId } = await this.conversationService.getOrCreateConversation(
+      userId,
+      otherUserId
+    );
+    const messageCost = isFriend ? 0 : this.HOTLINE_MESSAGE_COST;
+    return { isFriend, conversationId, messageCost };
+  }
+
+  /**
+   * Get relationship info for multiple users (batch, for History)
+   */
+  async getRelationshipsBatch(
+    userId: string,
+    otherUserIds: string[]
+  ): Promise<Map<string, { isFriend: boolean; conversationId: string; messageCost: number }>> {
+    const result = new Map<
+      string,
+      { isFriend: boolean; conversationId: string; messageCost: number }
+    >();
+    const unique = [...new Set(otherUserIds)];
+    await Promise.all(
+      unique.map(async (otherUserId) => {
+        try {
+          const rel = await this.getRelationship(userId, otherUserId);
+          result.set(otherUserId, rel);
+        } catch (e) {
+          this.logger.warn(`getRelationship failed for ${userId} vs ${otherUserId}: ${e}`);
+        }
+      })
+    );
+    return result;
   }
 
   /**

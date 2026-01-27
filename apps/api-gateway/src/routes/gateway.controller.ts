@@ -185,6 +185,7 @@ export class GatewayController {
 
       // Check authentication if required
       // Use middleware's requiresAuth method to check path (bypasses /test/ endpoints)
+      let userId: string | undefined;
       const pathRequiresAuth = this.authMiddleware.requiresAuth(path);
       if (pathRequiresAuth && route.requiresAuth) {
         const token = this.authMiddleware.extractToken(headers.authorization || headers.Authorization);
@@ -192,8 +193,13 @@ export class GatewayController {
           throw new HttpException("Missing authorization token", HttpStatus.UNAUTHORIZED);
         }
 
-        // Verify token
-        await this.authMiddleware.verifyToken(token);
+        const verified = await this.authMiddleware.verifyToken(token);
+        userId = verified.userId;
+      }
+
+      // Forward x-user-id to backend when auth was verified (e.g. for /streaming/history)
+      if (userId) {
+        headers["x-user-id"] = userId;
       }
 
       // Check rate limit

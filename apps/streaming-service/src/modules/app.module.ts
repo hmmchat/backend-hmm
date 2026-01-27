@@ -17,6 +17,7 @@ import { IcebreakerService } from "../services/icebreaker.service.js";
 import { WalletClientService } from "../services/wallet-client.service.js";
 import { DiscoveryClientService } from "../services/discovery-client.service.js";
 import { FriendClientService } from "../services/friend-client.service.js";
+import { HistoryService } from "../services/history.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 
 @Module({
@@ -41,6 +42,7 @@ import { PrismaService } from "../prisma/prisma.service.js";
     WalletClientService,
     DiscoveryClientService,
     FriendClientService,
+    HistoryService,
     StreamingGateway
   ]
 })

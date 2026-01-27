@@ -8,7 +8,7 @@ Complete API integration guide for all backend services. This document covers ev
 2. [Authentication & User Onboarding](#authentication--user-onboarding)
 3. [User Profile Management](#user-profile-management)
 4. [Discovery & Matching](#discovery--matching)
-5. [Streaming & Video Calls](#streaming--video-calls)
+5. [Streaming & Video Calls](#streaming--video-calls) — incl. [History](#7-history-call-history-section)
 6. [Friends & Messaging](#friends--messaging)
 7. [Wallet & Payments](#wallet--payments)
 8. [File Uploads](#file-uploads)
@@ -1015,6 +1015,87 @@ GET /users/{userId}?fields=username,photos,brandPreferences
 ```
 
 **Use Case:** User ends the call. Updates user status back to `IDLE` or `DISCOVERING`.
+
+### 7. History (Call History Section)
+
+**Endpoint:** `GET /v1/streaming/history`
+
+**Headers:** `Authorization: Bearer {accessToken}`
+
+**Query Parameters:**
+- `limit` (optional): Number of calls per page (default 20, max 100)
+- `cursor` (optional): Pagination cursor from previous response (`nextCursor`)
+
+**Response:**
+```json
+{
+  "calls": [
+    {
+      "sessionId": "string",
+      "roomId": "string",
+      "startedAt": "2025-08-25T17:04:00.000Z",
+      "endedAt": "2025-08-25T17:36:00.000Z",
+      "callType": "Squad",
+      "participants": [
+        {
+          "userId": "string",
+          "username": "string | null",
+          "displayPictureUrl": "string | null",
+          "role": "HOST",
+          "userStatus": "SQUAD",
+          "location": "Kolkata",
+          "durationSeconds": 1928,
+          "videoOn": null,
+          "isFriend": false,
+          "conversationId": "string | null",
+          "messageCost": 20
+        }
+      ]
+    }
+  ],
+  "nextCursor": "2025-08-25T17:04:00.000Z_sessionId",
+  "hasMore": false
+}
+```
+
+**Fields:**
+- `callType`: `"Squad"` or `"Broadcast"`
+- `userStatus` (per participant): `"SQUAD"` | `"BROADCAST"` | `"DROP_IN"` (joined mid-call)
+- `location`: User’s preferred city (e.g. `"Kolkata"`)
+- `videoOn`: `null` (not stored today)
+- `messageCost`: `0` for friends; coins to message non-friends (e.g. `20`). Use with `conversationId` for Hotline.
+
+**Pagination:**
+- `hasMore` is `true` only when `nextCursor` is present. Use `nextCursor` as the `cursor` query param for the next page.
+- If `cursor` is missing, invalid, or malformed, the API returns the first page.
+- First page: `GET /v1/streaming/history?limit=20`. Next page: `GET /v1/streaming/history?limit=20&cursor={nextCursor}`.
+
+**Use Case:** History list for the History screen. Use `conversationId` and `messageCost` for the **Hotline** button: message via `POST /v1/me/conversations/:conversationId/messages` (see Friends & Messaging).
+
+### 8. Get Call Detail (History Info Icon)
+
+**Endpoint:** `GET /v1/streaming/history/:sessionId`
+
+**Headers:** `Authorization: Bearer {accessToken}`
+
+**Response:** Same shape as a single `calls[]` item (one call with `participants`).
+
+**Use Case:** Extra details for a specific call when user taps the info icon.
+
+### 9. Hide Call from History (Trash Icon)
+
+**Endpoint:** `DELETE /v1/streaming/history/:sessionId`
+
+**Headers:** `Authorization: Bearer {accessToken}`
+
+**Response:**
+```json
+{
+  "ok": true
+}
+```
+
+**Use Case:** Hide a call from the current user’s history. Idempotent.
 
 ---
 
@@ -2081,6 +2162,20 @@ const retryRequest = async (fn, retries = 3) => {
 3. **Open Conversation** → `GET /me/conversations/:conversationId/messages`
 4. **Send Message** → `POST /me/conversations/:conversationId/messages`
 5. **Check Promotion** → If `promotedToInbox: true`, move to INBOX tab
+
+### Flow 7: History (Call History)
+
+1. **Open History** → User taps History in app.
+2. **Load History List** → `GET /v1/streaming/history?limit=20`
+   - Show each **call** (outer box): `startedAt`, `endedAt`, `callType` (Squad/Broadcast).
+   - For each **participant** (inner box): profile photo, `username`, `userStatus` (SQUAD/BROADCAST/DROP_IN), `location`, `durationSeconds`, Hotline action.
+3. **Paginate** → If `hasMore` is true, use `nextCursor` for next page:
+   - `GET /v1/streaming/history?limit=20&cursor={nextCursor}`
+4. **Info Icon** → `GET /v1/streaming/history/:sessionId` for extra call detail.
+5. **Trash Icon (Hide)** → `DELETE /v1/streaming/history/:sessionId`; then remove that call from the list (or refetch).
+6. **Hotline (Message Participant)**:
+   - Use `conversationId` from the participant. If `isFriend`: show “Hotline DM” (free). If not: show “{messageCost} / Hotline DM”.
+   - **Message** → `POST /v1/me/conversations/:conversationId/messages` with `{ message }` (or gift). See [Flow 5](#flow-5-messaging--conversations) for cost rules.
 
 ---
 

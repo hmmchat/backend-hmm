@@ -207,3 +207,15 @@ model CallWaitlist {
   @@index([userId])
   @@index([status])
 }
+
+// User-specific "hide this call from my history" for History section
+model UserHiddenCallHistory {
+  userId    String
+  sessionId String
+  createdAt DateTime @default(now())
+
+  @@unique([userId, sessionId])
+  @@map("user_hidden_call_history")
+  @@index([userId])
+  @@index([sessionId])
+}

@@ -62,4 +62,47 @@ export class FriendClientService {
       throw error;
     }
   }
+
+  /**
+   * Get relationship info batch for History Hotline (internal)
+   * Returns { [otherUserId]: { isFriend, conversationId, messageCost } }
+   */
+  async getRelationshipsBatch(
+    userId: string,
+    otherUserIds: string[]
+  ): Promise<Record<string, { isFriend: boolean; conversationId: string; messageCost: number }>> {
+    if (otherUserIds.length === 0) {
+      return {};
+    }
+    try {
+      const serviceToken = process.env.INTERNAL_SERVICE_TOKEN;
+      if (!serviceToken) {
+        this.logger.warn("INTERNAL_SERVICE_TOKEN not configured, skipping relationship fetch");
+        return {};
+      }
+      const response = await fetch(
+        `${this.friendServiceUrl}/internal/friends/relationships`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-service-token": serviceToken
+          },
+          body: JSON.stringify({ userId, otherUserIds })
+        }
+      );
+      if (!response.ok) {
+        const text = await response.text();
+        this.logger.warn(`Failed to fetch relationships batch: ${response.status} ${text}`);
+        return {};
+      }
+      return (await response.json()) as Record<
+        string,
+        { isFriend: boolean; conversationId: string; messageCost: number }
+      >;
+    } catch (error: any) {
+      this.logger.warn(`Error fetching relationships batch: ${error.message}`);
+      return {};
+    }
+  }
 }

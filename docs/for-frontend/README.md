@@ -22,6 +22,7 @@ Comprehensive API integration guide covering:
 - User profile management
 - Discovery & matching
 - Streaming & video calls
+- **History** (call history list, detail, hide, Hotline)
 - Friends & messaging
 - Wallet & payments
 - File uploads

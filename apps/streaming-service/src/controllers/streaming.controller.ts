@@ -1,8 +1,21 @@
-import { Controller, Get, Post, Param, Body, BadRequestException, Headers, Query } from "@nestjs/common";
+import {
+  Controller,
+  Get,
+  Post,
+  Delete,
+  Param,
+  Body,
+  BadRequestException,
+  Headers,
+  HttpException,
+  HttpStatus,
+  Query
+} from "@nestjs/common";
 import { RoomService } from "../services/room.service.js";
 import { ChatService } from "../services/chat.service.js";
 import { DiscoveryClientService } from "../services/discovery-client.service.js";
 import { GiftService } from "../services/gift.service.js";
+import { HistoryService } from "../services/history.service.js";
 import { z } from "zod";
 
 // Simple auth guard (you can enhance this later)
@@ -17,7 +30,8 @@ export class StreamingController {
     private roomService: RoomService,
     private chatService: ChatService,
     private discoveryClient: DiscoveryClientService,
-    private giftService: GiftService
+    private giftService: GiftService,
+    private historyService: HistoryService
   ) {}
 
   /**
@@ -50,6 +64,62 @@ export class StreamingController {
       return { exists: false };
     }
     return { exists: true, ...details };
+  }
+
+  /**
+   * Get call history (History section)
+   * GET /streaming/history?limit=20&cursor=...
+   * Requires x-user-id header (set by gateway when auth valid).
+   */
+  @Get("history")
+  async getHistory(
+    @Headers("x-user-id") xUserId: string | undefined,
+    @Query("limit") limitStr?: string,
+    @Query("cursor") cursor?: string
+  ) {
+    const userId = xUserId?.trim();
+    if (!userId) {
+      throw new HttpException("Missing x-user-id", HttpStatus.UNAUTHORIZED);
+    }
+    const limit = Math.min(Math.max(parseInt(limitStr ?? "20", 10) || 20, 1), 100);
+    return this.historyService.getCallHistory(userId, limit, cursor || undefined);
+  }
+
+  /**
+   * Get single call detail (History info icon)
+   * GET /streaming/history/:sessionId
+   */
+  @Get("history/:sessionId")
+  async getHistoryCall(
+    @Headers("x-user-id") xUserId: string | undefined,
+    @Param("sessionId") sessionId: string
+  ) {
+    const userId = xUserId?.trim();
+    if (!userId) {
+      throw new HttpException("Missing x-user-id", HttpStatus.UNAUTHORIZED);
+    }
+    const call = await this.historyService.getCallById(userId, sessionId);
+    if (!call) {
+      throw new HttpException("Call not found", HttpStatus.NOT_FOUND);
+    }
+    return call;
+  }
+
+  /**
+   * Hide call from history (History trash icon)
+   * DELETE /streaming/history/:sessionId
+   */
+  @Delete("history/:sessionId")
+  async hideHistoryCall(
+    @Headers("x-user-id") xUserId: string | undefined,
+    @Param("sessionId") sessionId: string
+  ) {
+    const userId = xUserId?.trim();
+    if (!userId) {
+      throw new HttpException("Missing x-user-id", HttpStatus.UNAUTHORIZED);
+    }
+    await this.historyService.hideFromHistory(userId, sessionId);
+    return { ok: true };
   }
 
   /**

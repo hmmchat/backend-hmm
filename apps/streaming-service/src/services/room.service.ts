@@ -1683,6 +1683,9 @@ export class RoomService {
       }
     });
 
+    // Check if user is anonymous
+    const isAnonymous = userId.startsWith('anonymous:');
+
     if (waitlistEntry) {
       // Remove from waitlist (mark as "cancelled")
       await this.prisma.callWaitlist.update({
@@ -1691,23 +1694,31 @@ export class RoomService {
       });
 
       // Update status: MATCHED → VIEWER (user still in HMM_TV, just scrolled to different broadcast)
-      this.discoveryClient.updateUserStatus(userId, "VIEWER").catch((err) => {
-        this.logger.error(`Failed to update user ${userId} status to VIEWER: ${err.message}`);
-      });
-
-      this.logger.log(`Viewer ${userId} removed from room ${roomId} and waitlist, status: MATCHED → VIEWER`);
+      // Skip status update for anonymous users
+      if (!isAnonymous) {
+        this.discoveryClient.updateUserStatus(userId, "VIEWER").catch((err) => {
+          this.logger.error(`Failed to update user ${userId} status to VIEWER: ${err.message}`);
+        });
+        this.logger.log(`Viewer ${userId} removed from room ${roomId} and waitlist, status: MATCHED → VIEWER`);
+      } else {
+        this.logger.log(`Anonymous viewer ${userId} removed from room ${roomId} and waitlist`);
+      }
     } else {
       // Not on waitlist - handle status based on context
-      if (leavingHMMTV) {
+      if (leavingHMMTV && !isAnonymous) {
+        // Only update status for authenticated users
         // User leaving HMM_TV section entirely → ONLINE
         this.discoveryClient.updateUserStatus(userId, "ONLINE").catch((err) => {
           this.logger.error(`Failed to update user ${userId} status to ONLINE: ${err.message}`);
         });
         this.logger.log(`Viewer ${userId} removed from room ${roomId}, status: VIEWER → ONLINE (leaving HMM_TV)`);
-      } else {
+      } else if (!isAnonymous) {
         // User still in HMM_TV, just scrolling to next broadcast → keep VIEWER
         // Status remains VIEWER (no change needed)
         this.logger.log(`Viewer ${userId} removed from room ${roomId}, status remains VIEWER (still in HMM_TV)`);
+      } else {
+        // Anonymous user - no status update needed
+        this.logger.log(`Anonymous viewer ${userId} removed from room ${roomId}`);
       }
     }
   }

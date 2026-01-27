@@ -556,7 +556,8 @@ export class DiscoveryController {
 
   /**
    * Get next broadcast in HMM_TV feed (for scrolling like TikTok/Reels)
-   * GET /discovery/broadcasts/feed?sessionId=xxx
+   * GET /discovery/broadcasts/feed?sessionId=xxx&deviceId=xxx
+   * Auth is optional - works for anonymous users using deviceId
    */
   @Get("broadcasts/feed")
   async getNextBroadcast(
@@ -564,50 +565,61 @@ export class DiscoveryController {
     @Query() query?: any
   ) {
     const token = this.getTokenFromHeader(authz);
-    if (!token) {
-      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
-    }
-
     const sessionId = query?.sessionId;
+    const deviceId = query?.deviceId;
+
     if (!sessionId) {
       throw new HttpException("sessionId is required", HttpStatus.BAD_REQUEST);
     }
 
-    return this.discoveryService.getNextBroadcast(token, sessionId);
+    // If authenticated, use token; otherwise use deviceId for anonymous access
+    if (token) {
+      return this.discoveryService.getNextBroadcast(token, sessionId);
+    } else {
+      if (!deviceId) {
+        throw new HttpException("deviceId is required for anonymous access", HttpStatus.BAD_REQUEST);
+      }
+      return this.discoveryService.getNextBroadcastAnonymous(sessionId, deviceId);
+    }
   }
 
   /**
    * Mark broadcast as viewed (swipe to next)
    * POST /discovery/broadcasts/viewed
+   * Auth is optional - works for anonymous users using deviceId
    */
   @Post("broadcasts/viewed")
   async markBroadcastViewed(
-    @Headers("authorization") authz: string,
-    @Body() body: any
+    @Headers("authorization") authz?: string,
+    @Body() body?: any
   ) {
     const token = this.getTokenFromHeader(authz);
-    if (!token) {
-      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
-    }
+    const { sessionId, roomId, deviceId, duration } = body || {};
 
-    const { sessionId, roomId } = body;
     if (!sessionId || !roomId) {
       throw new HttpException("sessionId and roomId are required", HttpStatus.BAD_REQUEST);
     }
 
-    // Get user ID from token
-    const { verifyToken } = await import("@hmm/common");
-    const jwkStr = process.env.JWT_PUBLIC_JWK;
-    if (!jwkStr || jwkStr === "undefined") {
-      throw new HttpException("Server configuration error", HttpStatus.INTERNAL_SERVER_ERROR);
-    }
-    const cleanedJwk = jwkStr.trim().replace(/^['"]|['"]$/g, "");
-    const publicJwk = JSON.parse(cleanedJwk);
-    const verifyAccess = await verifyToken(publicJwk);
-    const payload = await verifyAccess(token);
-    const userId = payload.sub;
+    // If authenticated, use token; otherwise use deviceId for anonymous access
+    if (token) {
+      const { verifyToken } = await import("@hmm/common");
+      const jwkStr = process.env.JWT_PUBLIC_JWK;
+      if (!jwkStr || jwkStr === "undefined") {
+        throw new HttpException("Server configuration error", HttpStatus.INTERNAL_SERVER_ERROR);
+      }
+      const cleanedJwk = jwkStr.trim().replace(/^['"]|['"]$/g, "");
+      const publicJwk = JSON.parse(cleanedJwk);
+      const verifyAccess = await verifyToken(publicJwk);
+      const payload = await verifyAccess(token);
+      const userId = payload.sub;
 
-    await this.discoveryService.markBroadcastViewed(userId, sessionId, roomId);
+      await this.discoveryService.markBroadcastViewed(userId, sessionId, roomId, duration);
+    } else {
+      if (!deviceId) {
+        throw new HttpException("deviceId is required for anonymous access", HttpStatus.BAD_REQUEST);
+      }
+      await this.discoveryService.markBroadcastViewedAnonymous(sessionId, roomId, deviceId, duration);
+    }
 
     return {
       success: true
@@ -727,32 +739,38 @@ export class DiscoveryController {
   /**
    * Share a broadcast
    * POST /discovery/broadcasts/:roomId/share
+   * Auth is optional - anonymous users can share too
    */
   @Post("broadcasts/:roomId/share")
   async shareBroadcast(
-    @Headers("authorization") authz: string,
+    @Headers("authorization") authz?: string,
     @Param("roomId") roomId: string,
-    @Body() body?: { shareType?: string }
+    @Body() body?: { shareType?: string; deviceId?: string }
   ) {
     const token = this.getTokenFromHeader(authz);
-    if (!token) {
-      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
-    }
-
-    const { verifyToken } = await import("@hmm/common");
-    const jwkStr = process.env.JWT_PUBLIC_JWK;
-    if (!jwkStr || jwkStr === "undefined") {
-      throw new HttpException("Server configuration error", HttpStatus.INTERNAL_SERVER_ERROR);
-    }
-    const cleanedJwk = jwkStr.trim().replace(/^['"]|['"]$/g, "");
-    const publicJwk = JSON.parse(cleanedJwk);
-    const verifyAccess = await verifyToken(publicJwk);
-    const payload = await verifyAccess(token);
-    const userId = payload.sub;
-
     const shareType = body?.shareType || "link";
-    const result = await this.discoveryService.shareBroadcast(roomId, userId, shareType);
-    return result;
+
+    // If authenticated, use userId; otherwise use deviceId for anonymous
+    if (token) {
+      const { verifyToken } = await import("@hmm/common");
+      const jwkStr = process.env.JWT_PUBLIC_JWK;
+      if (!jwkStr || jwkStr === "undefined") {
+        throw new HttpException("Server configuration error", HttpStatus.INTERNAL_SERVER_ERROR);
+      }
+      const cleanedJwk = jwkStr.trim().replace(/^['"]|['"]$/g, "");
+      const publicJwk = JSON.parse(cleanedJwk);
+      const verifyAccess = await verifyToken(publicJwk);
+      const payload = await verifyAccess(token);
+      const userId = payload.sub;
+
+      const result = await this.discoveryService.shareBroadcast(roomId, userId, shareType);
+      return result;
+    } else {
+      // Anonymous share - just track the share event without userId
+      const deviceId = body?.deviceId;
+      const result = await this.discoveryService.shareBroadcastAnonymous(roomId, shareType, deviceId);
+      return result;
+    }
   }
 
   /**

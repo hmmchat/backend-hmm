@@ -2547,6 +2547,62 @@ export class DiscoveryService implements OnModuleInit {
   }
 
   /**
+   * Get next broadcast for anonymous users (no auth required)
+   */
+  async getNextBroadcastAnonymous(
+    sessionId: string,
+    deviceId: string
+  ): Promise<{
+    broadcast: {
+      roomId: string;
+      participantCount: number;
+      viewerCount: number;
+      participants: Array<{
+        userId: string;
+        role: string;
+        joinedAt: Date;
+      }>;
+      startedAt: Date | null;
+      createdAt: Date;
+    } | null;
+    exhausted: boolean;
+  }> {
+    // Use anonymous userId format
+    const anonymousUserId = `anonymous:${deviceId}`;
+
+    // Get all active broadcasts
+    const broadcasts = await this.streamingClient.getActiveBroadcasts();
+
+    if (broadcasts.length === 0) {
+      return {
+        broadcast: null,
+        exhausted: true
+      };
+    }
+
+    // Get viewed broadcast roomIds for this anonymous session
+    const viewedRoomIds = await this.getViewedBroadcastRoomIds(anonymousUserId, sessionId);
+
+    // Filter out viewed broadcasts
+    const availableBroadcasts = broadcasts.filter(
+      b => !viewedRoomIds.includes(b.roomId)
+    );
+
+    if (availableBroadcasts.length === 0) {
+      return {
+        broadcast: null,
+        exhausted: true
+      };
+    }
+
+    // Return the first available broadcast (most recent)
+    return {
+      broadcast: availableBroadcasts[0],
+      exhausted: false
+    };
+  }
+
+  /**
    * Mark a broadcast as viewed (for session tracking)
    * Uses BroadcastViewHistory table instead of RaincheckSession hack
    */
@@ -2596,6 +2652,19 @@ export class DiscoveryService implements OnModuleInit {
       console.error("Error marking broadcast as viewed:", error);
       // Don't throw - this is not critical
     }
+  }
+
+  /**
+   * Mark broadcast as viewed for anonymous users
+   */
+  async markBroadcastViewedAnonymous(
+    sessionId: string,
+    roomId: string,
+    deviceId: string,
+    duration?: number
+  ): Promise<void> {
+    const anonymousUserId = `anonymous:${deviceId}`;
+    await this.markBroadcastViewed(anonymousUserId, sessionId, roomId, duration, deviceId);
   }
 
   /**
@@ -2956,6 +3025,31 @@ export class DiscoveryService implements OnModuleInit {
       console.error("Error sharing broadcast:", error);
       throw new HttpException("Failed to share broadcast", HttpStatus.INTERNAL_SERVER_ERROR);
     }
+  }
+
+  /**
+   * Share broadcast for anonymous users
+   */
+  async shareBroadcastAnonymous(
+    roomId: string,
+    shareType: string = "link",
+    deviceId?: string
+  ): Promise<{
+    shareableUrl: string;
+    success: boolean;
+  }> {
+    // Generate shareable URL
+    const baseUrl = process.env.APP_URL || "https://app.hmmchat.live";
+    const shareableUrl = `${baseUrl}/hmm_TV?roomId=${roomId}`;
+
+    // Track share event (optional - can be stored without userId for analytics)
+    // For now, we'll just return the URL without storing in DB for anonymous users
+    // If you want to track anonymous shares, you could create a separate table or use anonymous userId
+
+    return {
+      shareableUrl,
+      success: true
+    };
   }
 
   /**

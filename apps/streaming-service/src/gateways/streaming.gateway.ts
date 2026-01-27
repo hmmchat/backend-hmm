@@ -27,7 +27,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
   private wss: WebSocketServer | null = null;
   private verifyAccess!: (token: string) => Promise<AccessPayload>;
   private publicJwk!: JWK;
-  private connections = new Map<string, { ws: any; userId: string; roomId?: string }>();
+  private connections = new Map<string, { ws: any; userId: string; roomId?: string; isAnonymous?: boolean }>();
   private readonly testMode: boolean;
 
   constructor(
@@ -94,8 +94,9 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     const connectionId = this.generateConnectionId();
     let userId: string | null = null;
     let roomId: string | null = null;
+    let isAnonymous = false;
 
-    // Authenticate connection
+    // Authenticate connection (or allow anonymous)
     try {
       if (this.testMode) {
         // In test mode, get userId from query param or use default
@@ -135,17 +136,24 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
         this.logger.log(`[TEST MODE] WebSocket connection with userId: ${userId} (from url: ${urlString})`);
       } else {
         const token = this.extractToken(req);
-        if (!token) {
-          this.sendError(ws, "Authentication required");
-          ws.close();
-          return;
+        if (token) {
+          // Authenticated user
+          const payload = await this.verifyAccess(token);
+          userId = payload.sub;
+        } else {
+          // Anonymous user - get deviceId from query params
+          const deviceId = this.extractDeviceId(req);
+          if (!deviceId) {
+            this.sendError(ws, "Authentication required or deviceId must be provided");
+            ws.close();
+            return;
+          }
+          userId = `anonymous:${deviceId}`;
+          isAnonymous = true;
         }
-
-        const payload = await this.verifyAccess(token);
-        userId = payload.sub;
       }
       
-      this.connections.set(connectionId, { ws: ws, userId });
+      this.connections.set(connectionId, { ws: ws, userId, isAnonymous });
     } catch (error) {
       this.logger.error("WebSocket authentication failed:", error);
       this.sendError(ws, "Invalid or expired token");
@@ -179,6 +187,13 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Check if user is anonymous
+   */
+  private isAnonymousUser(userId: string): boolean {
+    return userId.startsWith('anonymous:');
+  }
+
+  /**
    * Handle incoming WebSocket messages
    */
   private async handleMessage(
@@ -193,88 +208,153 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       switch (type) {
         // Room management
         case "join-room":
+          if (this.isAnonymousUser(userId)) {
+            this.sendError(ws, "Authentication required. Please sign up to join rooms.");
+            return;
+          }
           await this.handleJoinRoom(connectionId, userId, data, ws);
           break;
 
         case "leave-room":
+          if (this.isAnonymousUser(userId)) {
+            this.sendError(ws, "Authentication required. Please sign up to leave rooms.");
+            return;
+          }
           await this.handleLeaveRoom(connectionId, userId, data);
           break;
 
         case "kick-user":
+          if (this.isAnonymousUser(userId)) {
+            this.sendError(ws, "Authentication required. Please sign up to use this feature.");
+            return;
+          }
           await this.handleKickUser(connectionId, userId, data, ws);
           break;
 
         // Call signaling (for participants)
         case "create-transport":
+          if (this.isAnonymousUser(userId)) {
+            this.sendError(ws, "Authentication required. Please sign up to participate in calls.");
+            return;
+          }
           await this.handleCreateTransport(connectionId, userId, data, ws);
           break;
 
         case "connect-transport":
+          if (this.isAnonymousUser(userId)) {
+            this.sendError(ws, "Authentication required. Please sign up to participate in calls.");
+            return;
+          }
           await this.handleConnectTransport(connectionId, userId, data);
           break;
 
         case "produce":
+          if (this.isAnonymousUser(userId)) {
+            this.sendError(ws, "Authentication required. Please sign up to participate in calls.");
+            return;
+          }
           await this.handleProduce(connectionId, userId, data, ws);
           break;
 
         case "consume":
+          if (this.isAnonymousUser(userId)) {
+            this.sendError(ws, "Authentication required. Please sign up to participate in calls.");
+            return;
+          }
           await this.handleConsume(connectionId, userId, data, ws);
           break;
 
         // Broadcasting
         case "start-broadcast":
+          if (this.isAnonymousUser(userId)) {
+            this.sendError(ws, "Authentication required. Please sign up to start broadcasting.");
+            return;
+          }
           await this.handleStartBroadcast(connectionId, userId, data, ws);
           break;
 
         case "stop-broadcast":
+          if (this.isAnonymousUser(userId)) {
+            this.sendError(ws, "Authentication required. Please sign up to use this feature.");
+            return;
+          }
           await this.handleStopBroadcast(connectionId, userId, data, ws);
           break;
 
         case "join-as-viewer":
+          // Allow anonymous users to join as viewers
           await this.handleJoinAsViewer(connectionId, userId, data, ws);
           break;
 
         case "create-viewer-transport":
+          // Allow anonymous users to create viewer transport
           await this.handleCreateViewerTransport(connectionId, userId, data, ws);
           break;
 
         case "connect-viewer-transport":
+          // Allow anonymous users to connect viewer transport
           await this.handleConnectViewerTransport(connectionId, userId, data);
           break;
 
         case "get-broadcast-producers":
+          // Allow anonymous users to get broadcast producers
           await this.handleGetBroadcastProducers(connectionId, userId, data, ws);
           break;
 
         case "consume-broadcast":
+          // Allow anonymous users to consume broadcast streams
           await this.handleConsumeBroadcast(connectionId, userId, data, ws);
           break;
 
         // Chat
         case "chat-message":
+          if (this.isAnonymousUser(userId)) {
+            this.sendError(ws, "Authentication required. Please sign up to send messages.");
+            return;
+          }
           await this.handleChatMessage(connectionId, userId, data, ws);
           break;
 
         // Dares
         case "dare-view":
+          if (this.isAnonymousUser(userId)) {
+            this.sendError(ws, "Authentication required. Please sign up to use this feature.");
+            return;
+          }
           await this.handleDareView(connectionId, userId, data, ws);
           break;
 
         case "dare-assign":
+          if (this.isAnonymousUser(userId)) {
+            this.sendError(ws, "Authentication required. Please sign up to use this feature.");
+            return;
+          }
           await this.handleDareAssign(connectionId, userId, data, ws);
           break;
 
         case "dare-send":
+          if (this.isAnonymousUser(userId)) {
+            this.sendError(ws, "Authentication required. Please sign up to use this feature.");
+            return;
+          }
           await this.handleDareSend(connectionId, userId, data, ws);
           break;
 
         // Icebreakers
         case "get-icebreaker":
+          if (this.isAnonymousUser(userId)) {
+            this.sendError(ws, "Authentication required. Please sign up to use this feature.");
+            return;
+          }
           await this.handleGetIcebreaker(connectionId, userId, data, ws);
           break;
 
         // Friend requests (during call)
         case "send-friend-request":
+          if (this.isAnonymousUser(userId)) {
+            this.sendError(ws, "Authentication required. Please sign up to send friend requests.");
+            return;
+          }
           await this.handleSendFriendRequest(connectionId, userId, data, ws);
           break;
 
@@ -1187,6 +1267,25 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith("Bearer ")) {
       return authHeader.substring(7);
+    }
+    return null;
+  }
+
+  /**
+   * Extract deviceId from WebSocket connection URL query params
+   */
+  private extractDeviceId(req: any): string | null {
+    const url = req?.url || '';
+    if (url.includes('?')) {
+      try {
+        const queryString = url.split('?')[1];
+        const params = new URLSearchParams(queryString);
+        return params.get("deviceId");
+      } catch (e) {
+        // If URL parsing fails, try manual regex parsing
+        const match = url.match(/[?&]deviceId=([^&]*)/);
+        return match ? decodeURIComponent(match[1]) : null;
+      }
     }
     return null;
   }

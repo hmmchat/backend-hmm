@@ -116,8 +116,13 @@ export class BroadcastService {
 
     await this.roomService.addViewer(roomId, userId);
 
-    // Update user status to VIEWER
-    await this.discoveryClient.updateUserStatus(userId, "VIEWER");
+    // Update user status to VIEWER (skip for anonymous users)
+    const isAnonymous = userId.startsWith('anonymous:');
+    if (!isAnonymous) {
+      await this.discoveryClient.updateUserStatus(userId, "VIEWER").catch((err) => {
+        this.logger.error(`Failed to update user ${userId} status to VIEWER: ${err.message}`);
+      });
+    }
 
     this.logger.log(`Viewer ${userId} added to broadcast ${roomId}`);
   }

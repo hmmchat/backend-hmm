@@ -13,6 +13,7 @@ import {
 import { FriendService } from "../services/friend.service.js";
 import { RateLimitGuard } from "../guards/rate-limit.guard.js";
 import { ConversationRateLimitGuard } from "../guards/conversation-rate-limit.guard.js";
+import { NotificationRateLimitGuard } from "../guards/notification-rate-limit.guard.js";
 import { z } from "zod";
 import { verifyToken, AccessPayload } from "@hmm/common";
 import { JWK } from "jose";
@@ -113,6 +114,8 @@ export class FriendController {
   async getPendingRequests(@Headers("authorization") authz?: string) {
     const token = this.getTokenFromHeader(authz);
     const userId = await this.verifyTokenAndGetUserId(token!);
+    // Auto-mark FRIEND_REQUESTS section as seen
+    await this.friendService.markSectionAsSeen(userId, "FRIEND_REQUESTS");
     return this.friendService.getPendingRequests(userId);
   }
 
@@ -308,6 +311,8 @@ export class FriendController {
   ) {
     const token = this.getTokenFromHeader(authz);
     const userId = await this.verifyTokenAndGetUserId(token!);
+    // Auto-mark INBOX section as seen
+    await this.friendService.markSectionAsSeen(userId, "INBOX");
     const pagination = PaginationSchema.parse(query);
     return this.friendService.getInboxConversations(userId, pagination.limit, pagination.cursor);
   }
@@ -324,6 +329,8 @@ export class FriendController {
   ) {
     const token = this.getTokenFromHeader(authz);
     const userId = await this.verifyTokenAndGetUserId(token!);
+    // Auto-mark RECEIVED_REQUESTS section as seen
+    await this.friendService.markSectionAsSeen(userId, "RECEIVED_REQUESTS");
     const parsed = ConversationQuerySchema.parse(query);
     return this.friendService.getReceivedRequestsConversations(
       userId,
@@ -345,6 +352,8 @@ export class FriendController {
   ) {
     const token = this.getTokenFromHeader(authz);
     const userId = await this.verifyTokenAndGetUserId(token!);
+    // Auto-mark SENT_REQUESTS section as seen
+    await this.friendService.markSectionAsSeen(userId, "SENT_REQUESTS");
     const parsed = ConversationQuerySchema.parse(query);
     return this.friendService.getSentRequestsConversations(
       userId,
@@ -391,6 +400,39 @@ export class FriendController {
     const userId = await this.verifyTokenAndGetUserId(token!);
     const pagination = PaginationSchema.parse(query);
     return this.friendService.getConversationMessages(userId, conversationId, pagination.limit, pagination.cursor);
+  }
+
+  /**
+   * Get notification counts
+   * GET /me/notifications/count
+   */
+  @Get("me/notifications/count")
+  @UseGuards(NotificationRateLimitGuard)
+  async getNotificationCounts(@Headers("authorization") authz?: string) {
+    const token = this.getTokenFromHeader(authz);
+    const userId = await this.verifyTokenAndGetUserId(token!);
+    return this.friendService.getNotificationCounts(userId);
+  }
+
+  /**
+   * Mark section as seen
+   * POST /me/notifications/mark-seen
+   */
+  @Post("me/notifications/mark-seen")
+  async markSectionAsSeen(
+    @Headers("authorization") authz: string,
+    @Body() body: any
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    const userId = await this.verifyTokenAndGetUserId(token!);
+    const sectionSchema = z.enum(["INBOX", "RECEIVED_REQUESTS", "SENT_REQUESTS", "FRIEND_REQUESTS"]);
+    const { section } = z.object({ section: sectionSchema }).parse(body);
+    const result = await this.friendService.markSectionAsSeen(userId, section);
+    return {
+      ok: true,
+      section,
+      lastSeenAt: result.lastSeenAt.toISOString()
+    };
   }
 
   /**

@@ -112,3 +112,16 @@ model Gift {
   @@map("gifts")
 }
 
+model SectionLastSeen {
+  id              String   @id @default(cuid())
+  userId          String
+  section         String   // "INBOX", "RECEIVED_REQUESTS", "SENT_REQUESTS", "FRIEND_REQUESTS"
+  lastSeenAt      DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  @@unique([userId, section])
+  @@index([userId])
+  @@map("section_last_seen")
+}
+

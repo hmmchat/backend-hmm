@@ -1103,6 +1103,124 @@ GET /users/{userId}?fields=username,photos,brandPreferences
 
 The messaging system is organized into **conversations** with three sections: **INBOX**, **RECEIVED_REQUESTS**, and **SENT_REQUESTS**. Messages can include text, gifts, or both.
 
+### 🔔 Notification Signal
+
+The notification signal glows green when there are new messages or friend requests in sections the user hasn't viewed yet. When clicked, it redirects users to the appropriate section.
+
+#### Get Notification Counts
+
+**Endpoint:** `GET /v1/friends/me/notifications/count`
+
+**Headers:** `Authorization: Bearer {accessToken}`
+
+**Response:**
+```json
+{
+  "hasNotifications": true,
+  "totalUnreadMessages": 5,
+  "pendingFriendRequests": 2,
+  "breakdown": {
+    "inbox": 3,
+    "receivedRequests": 2,
+    "sentRequests": 0,
+    "friendRequests": 2
+  }
+}
+```
+
+**Fields:**
+- `hasNotifications`: `true` if there are any unseen notifications (use this to show green glow)
+- `totalUnreadMessages`: Total unread messages in unseen sections
+- `pendingFriendRequests`: Pending friend requests in unseen section
+- `breakdown`: Counts per section (only includes items in sections not yet viewed)
+
+**Seen Tracking Behavior:**
+- Sections are automatically marked as "seen" when user navigates to them:
+  - `GET /me/conversations/inbox` → marks INBOX as seen
+  - `GET /me/conversations/received-requests` → marks RECEIVED_REQUESTS as seen
+  - `GET /me/conversations/sent-requests` → marks SENT_REQUESTS as seen
+  - `GET /me/friends/requests/pending` → marks FRIEND_REQUESTS as seen
+- Notification counts only include items that arrived **after** the section was last seen
+- If a section has never been viewed, all items in that section are counted
+
+**Performance & Caching:**
+- Results are cached for 30 seconds to reduce database load
+- Cache is automatically invalidated when:
+  - New messages are sent/received
+  - Friend requests are sent/accepted
+  - Sections are marked as seen
+- Rate limited to 60 requests per 60 seconds per user (configurable via `NOTIFICATION_RATE_LIMIT` env var)
+
+**Frontend Implementation:**
+```javascript
+// Poll notification counts every 30-60 seconds
+const pollNotifications = async () => {
+  const response = await fetch('http://localhost:3000/v1/friends/me/notifications/count', {
+    headers: {
+      'Authorization': `Bearer ${accessToken}`
+    }
+  });
+  const data = await response.json();
+  
+  // Show green glow when hasNotifications is true
+  if (data.hasNotifications) {
+    showNotificationGlow();
+  } else {
+    hideNotificationGlow();
+  }
+  
+  // Store breakdown for click handler
+  notificationBreakdown = data.breakdown;
+};
+
+// Click handler - redirect to appropriate section
+const handleNotificationClick = () => {
+  if (notificationBreakdown.inbox > 0) {
+    // Redirect to INBOX (auto-marks as seen)
+    navigate('/conversations/inbox');
+  } else if (notificationBreakdown.receivedRequests > 0) {
+    // Redirect to RECEIVED (auto-marks as seen)
+    navigate('/conversations/received-requests');
+  } else if (notificationBreakdown.sentRequests > 0) {
+    // Redirect to SENT (auto-marks as seen)
+    navigate('/conversations/sent-requests');
+  } else if (notificationBreakdown.friendRequests > 0) {
+    // Redirect to friend requests (auto-marks as seen)
+    navigate('/friends/requests/pending');
+  }
+};
+```
+
+**Scenarios:**
+1. **User clicks notification → redirected to INBOX → notification stops glowing** (if no other unseen sections)
+2. **User clicks notification → redirected to RECEIVED → notification continues glowing** (if INBOX still has unseen items) → stops only after viewing all sections with notifications
+
+#### Mark Section as Seen (Optional)
+
+**Endpoint:** `POST /v1/friends/me/notifications/mark-seen`
+
+**Headers:** `Authorization: Bearer {accessToken}`
+
+**Request:**
+```json
+{
+  "section": "INBOX" | "RECEIVED_REQUESTS" | "SENT_REQUESTS" | "FRIEND_REQUESTS"
+}
+```
+
+**Response:**
+```json
+{
+  "ok": true,
+  "section": "INBOX",
+  "lastSeenAt": "2025-01-28T10:30:00Z"
+}
+```
+
+**Note:** This endpoint is optional since sections are automatically marked as seen when you call the GET endpoints. Use this only if you need to manually mark a section as seen without fetching its data.
+
+---
+
 ### 📋 Conversation Sections Overview
 
 **INBOX:**

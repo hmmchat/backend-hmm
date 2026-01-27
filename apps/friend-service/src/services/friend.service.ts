@@ -99,6 +99,10 @@ export class FriendService {
 
     this.logger.log(`Friend request sent from ${fromUserId} to ${toUserId}`);
     this.metrics.incrementFriendRequestSent(false);
+    
+    // Invalidate notification cache for recipient (they have a new friend request)
+    await this.invalidateNotificationCache(toUserId);
+    
     return { requestId: request.id, autoAccepted: false };
   }
 
@@ -173,6 +177,9 @@ export class FriendService {
       this.metrics.incrementFriendshipCreated();
       // Invalidate friendship cache for both users
       await this.invalidateFriendshipCache(newFromUserId, newToUserId);
+      // Invalidate notification cache for both users (friend request count changed)
+      await this.invalidateNotificationCache(newFromUserId);
+      await this.invalidateNotificationCache(newToUserId);
       return { requestId: newRequest.id, autoAccepted: true };
     });
   }
@@ -239,6 +246,9 @@ export class FriendService {
     this.metrics.incrementFriendshipCreated();
     // Invalidate friendship cache for both users
     await this.invalidateFriendshipCache(request.fromUserId, request.toUserId);
+    // Invalidate notification cache for both users (friend request count changed)
+    await this.invalidateNotificationCache(request.fromUserId);
+    await this.invalidateNotificationCache(request.toUserId);
 
     this.logger.log(`Friend request ${requestId} accepted by ${userId}`);
   }
@@ -778,6 +788,9 @@ export class FriendService {
         `(type: ${messageType}, cost: ${cost || giftAmount || 0} coins)`
       );
 
+      // Invalidate notification cache for recipient (they have a new unread message)
+      await this.invalidateNotificationCache(toUserId);
+
       return {
         messageId: friendMessage.id,
         newBalance,
@@ -907,6 +920,9 @@ export class FriendService {
         `Message sent from ${fromUserId} to friend ${toUserId} ` +
         `(type: ${messageType}${giftAmount ? `, gift: ${giftAmount} coins` : ""})`
       );
+
+      // Invalidate notification cache for recipient (they have a new unread message)
+      await this.invalidateNotificationCache(toUserId);
 
       return {
         messageId: friendMessage.id,
@@ -1405,5 +1421,226 @@ export class FriendService {
    */
   getMetrics() {
     return this.metrics.getMetrics();
+  }
+
+  /**
+   * Mark a section as seen by updating lastSeenAt timestamp
+   * Invalidates notification cache for the user
+   */
+  async markSectionAsSeen(userId: string, section: string): Promise<{ lastSeenAt: Date }> {
+    try {
+      const now = new Date();
+      const result = await this.prisma.sectionLastSeen.upsert({
+        where: {
+          userId_section: {
+            userId,
+            section
+          }
+        },
+        update: {
+          lastSeenAt: now
+        },
+        create: {
+          userId,
+          section,
+          lastSeenAt: now
+        }
+      });
+
+      // Invalidate notification cache when section is marked as seen
+      if (this.redis.isAvailable()) {
+        const cacheKey = `notifications:${userId}`;
+        await this.redis.del(cacheKey);
+      }
+
+      this.logger.log(`Section ${section} marked as seen for user ${userId} at ${now.toISOString()}`);
+      return { lastSeenAt: result.lastSeenAt };
+    } catch (error: any) {
+      this.logger.error(`Failed to mark section ${section} as seen for user ${userId}: ${error.message}`, error.stack);
+      throw error;
+    }
+  }
+
+  /**
+   * Get last seen timestamp for a section (returns null if never seen)
+   */
+  async getSectionLastSeen(userId: string, section: string): Promise<Date | null> {
+    const lastSeen = await this.prisma.sectionLastSeen.findUnique({
+      where: {
+        userId_section: {
+          userId,
+          section
+        }
+      }
+    });
+
+    return lastSeen?.lastSeenAt || null;
+  }
+
+  /**
+   * Invalidate notification cache for a user
+   * Called when messages are sent/received or friend requests change
+   */
+  private async invalidateNotificationCache(userId: string): Promise<void> {
+    if (this.redis.isAvailable()) {
+      const cacheKey = `notifications:${userId}`;
+      await this.redis.del(cacheKey);
+      this.logger.debug(`Invalidated notification cache for user ${userId}`);
+    }
+  }
+
+  /**
+   * Get notification counts for unread messages and pending friend requests
+   * Only counts items in sections that haven't been seen since items arrived
+   * Uses Redis caching to reduce database load
+   */
+  async getNotificationCounts(userId: string): Promise<{
+    hasNotifications: boolean;
+    totalUnreadMessages: number;
+    pendingFriendRequests: number;
+    breakdown: {
+      inbox: number;
+      receivedRequests: number;
+      sentRequests: number;
+      friendRequests: number;
+    };
+  }> {
+    const cacheKey = `notifications:${userId}`;
+    const CACHE_TTL = 30; // 30 seconds cache
+
+    try {
+      // Try to get from cache first
+      if (this.redis.isAvailable()) {
+        const cached = await this.redis.get(cacheKey);
+        if (cached) {
+          this.logger.debug(`Notification counts cache hit for user ${userId}`);
+          return JSON.parse(cached);
+        }
+      }
+
+      // Optimize: Batch fetch all lastSeen records in a single query
+      const lastSeenRecords = await this.prisma.sectionLastSeen.findMany({
+        where: {
+          userId,
+          section: { in: ["INBOX", "RECEIVED_REQUESTS", "SENT_REQUESTS", "FRIEND_REQUESTS"] }
+        }
+      });
+
+      // Create a Map for O(1) lookup
+      const lastSeenMap = new Map<string, Date>();
+      lastSeenRecords.forEach(record => {
+        lastSeenMap.set(record.section, record.lastSeenAt);
+      });
+
+      const inboxLastSeen = lastSeenMap.get("INBOX") || null;
+      const receivedLastSeen = lastSeenMap.get("RECEIVED_REQUESTS") || null;
+      const sentLastSeen = lastSeenMap.get("SENT_REQUESTS") || null;
+      const friendRequestsLastSeen = lastSeenMap.get("FRIEND_REQUESTS") || null;
+
+      // Count unread messages by section (only those created after last seen)
+      // Add 1 second buffer to handle race conditions
+      const now = new Date();
+      const [inboxCount, receivedCount, sentCount] = await Promise.all([
+        // INBOX unread messages
+        this.prisma.friendMessage.count({
+          where: {
+            toUserId: userId,
+            isRead: false,
+            createdAt: inboxLastSeen 
+              ? { gt: new Date(inboxLastSeen.getTime() - 1000) } // 1 second buffer
+              : undefined,
+            conversation: {
+              OR: [
+                { userId1: userId, section: ConversationSection.INBOX },
+                { userId2: userId, section: ConversationSection.INBOX }
+              ]
+            }
+          }
+        }),
+        // RECEIVED_REQUESTS unread messages
+        this.prisma.friendMessage.count({
+          where: {
+            toUserId: userId,
+            isRead: false,
+            createdAt: receivedLastSeen 
+              ? { gt: new Date(receivedLastSeen.getTime() - 1000) } // 1 second buffer
+              : undefined,
+            conversation: {
+              OR: [
+                { userId1: userId, section: ConversationSection.RECEIVED_REQUESTS },
+                { userId2: userId, section: ConversationSection.RECEIVED_REQUESTS }
+              ]
+            }
+          }
+        }),
+        // SENT_REQUESTS unread messages
+        this.prisma.friendMessage.count({
+          where: {
+            toUserId: userId,
+            isRead: false,
+            createdAt: sentLastSeen 
+              ? { gt: new Date(sentLastSeen.getTime() - 1000) } // 1 second buffer
+              : undefined,
+            conversation: {
+              OR: [
+                { userId1: userId, section: ConversationSection.SENT_REQUESTS },
+                { userId2: userId, section: ConversationSection.SENT_REQUESTS }
+              ]
+            }
+          }
+        })
+      ]);
+
+      // Count pending friend requests (only those created after last seen)
+      const friendRequestsCount = await this.prisma.friendRequest.count({
+        where: {
+          toUserId: userId,
+          status: "PENDING",
+          createdAt: friendRequestsLastSeen 
+            ? { gt: new Date(friendRequestsLastSeen.getTime() - 1000) } // 1 second buffer
+            : undefined,
+          OR: [
+            { expiresAt: null },
+            { expiresAt: { gt: now } }
+          ]
+        }
+      });
+
+      const totalUnreadMessages = inboxCount + receivedCount + sentCount;
+      const hasNotifications = totalUnreadMessages > 0 || friendRequestsCount > 0;
+
+      const result = {
+        hasNotifications,
+        totalUnreadMessages,
+        pendingFriendRequests: friendRequestsCount,
+        breakdown: {
+          inbox: inboxCount,
+          receivedRequests: receivedCount,
+          sentRequests: sentCount,
+          friendRequests: friendRequestsCount
+        }
+      };
+
+      // Cache the result
+      if (this.redis.isAvailable()) {
+        await this.redis.set(cacheKey, JSON.stringify(result), CACHE_TTL);
+      }
+
+      return result;
+    } catch (error: any) {
+      this.logger.error(`Failed to get notification counts for user ${userId}: ${error.message}`, error.stack);
+      // Return safe default (no notifications) rather than failing
+      return {
+        hasNotifications: false,
+        totalUnreadMessages: 0,
+        pendingFriendRequests: 0,
+        breakdown: {
+          inbox: 0,
+          receivedRequests: 0,
+          sentRequests: 0,
+          friendRequests: 0
+        }
+      };
+    }
   }
 }

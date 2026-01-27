@@ -1,6 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service.js";
-import { ConversationSection } from "@prisma/client";
+import { ConversationSection, MessageType } from "@prisma/client";
 import { StreamingClientService } from "./streaming-client.service.js";
 
 @Injectable()
@@ -142,17 +142,28 @@ export class ConversationService {
   /**
    * Get conversations for a user by section with last message and unread count
    * Note: Section is stored from userId1's perspective, so we need to reverse for userId2
+   * 
+   * Filter options:
+   * - text_only: Only conversations with TEXT messages (filtered at DB level)
+   * - with_gift: Only conversations with GIFT or GIFT_WITH_MESSAGE (filtered at DB level)
+   * - only_follows: Only friend requests without messages (optimized single query)
    */
   async getConversationsBySection(
     userId: string,
     section: ConversationSection,
     limit: number = 50,
-    cursor?: string
+    cursor?: string,
+    filter?: "text_only" | "with_gift" | "only_follows"
   ): Promise<{
     conversations: any[];
     nextCursor?: string;
     hasMore: boolean;
   }> {
+    // Handle only_follows filter separately (friend requests without messages)
+    if (filter === "only_follows") {
+      return await this.getOnlyFollowsConversations(userId, section, limit, cursor);
+    }
+
     // Build where clause based on section and user perspective
     let whereClause: any;
 
@@ -184,11 +195,114 @@ export class ConversationService {
       };
     }
 
+    // Note: Conversations with lastMessage: null are automatically excluded from
+    // text_only and with_gift filters since these filters require a lastMessage to check messageType.
+    // Apply message type filter at database level if specified
+    if (filter === "text_only" || filter === "with_gift") {
+      // Since Prisma doesn't support filtering on related fields in WHERE easily,
+      // we'll fetch conversations and then filter by checking lastMessage.messageType
+      // But we'll optimize by fetching lastMessage in the same query using include
+      // Use composite sorting: lastMessageAt primary, createdAt fallback
+      // This ensures consistent ordering even after in-memory filtering
+      const conversations = await this.prisma.conversation.findMany({
+        where: {
+          ...whereClause,
+          lastMessageId: { not: null } // Must have a last message
+        },
+        orderBy: [
+          { lastMessageAt: "desc" },
+          { createdAt: "desc" }
+        ],
+        take: limit * 2, // Fetch more to account for filtering
+        ...(cursor && {
+          cursor: { id: cursor },
+          skip: 1
+        })
+      });
+
+      // Fetch last messages for all conversations in parallel
+      const lastMessageIds = conversations
+        .map(c => c.lastMessageId)
+        .filter((id): id is string => id !== null);
+
+      const lastMessages = await this.prisma.friendMessage.findMany({
+        where: {
+          id: { in: lastMessageIds }
+        },
+        select: {
+          id: true,
+          fromUserId: true,
+          toUserId: true,
+          message: true,
+          messageType: true,
+          giftId: true,
+          giftAmount: true,
+          createdAt: true
+        }
+      });
+
+      const lastMessageMap = new Map(lastMessages.map(m => [m.id, m]));
+
+      // Filter conversations by message type
+      // Edge case: Handle conversations where lastMessageId is stale or message was deleted
+      const filteredConversations = conversations.filter(conv => {
+        if (!conv.lastMessageId) return false;
+        
+        // If lastMessageId exists but message not found, try to get actual last message
+        let lastMessage = lastMessageMap.get(conv.lastMessageId);
+        if (!lastMessage) {
+          // Message was deleted, this conversation shouldn't match any filter
+          // (it will be handled by the stale message update above)
+          return false;
+        }
+        
+        if (filter === "text_only") {
+          return lastMessage.messageType === MessageType.TEXT;
+        } else if (filter === "with_gift") {
+          return lastMessage.messageType === MessageType.GIFT || 
+                 lastMessage.messageType === MessageType.GIFT_WITH_MESSAGE;
+        }
+        return true;
+      });
+
+      // After filtering, explicitly re-sort to ensure order is maintained
+      // This guarantees conversations remain sorted by latest message (newest first)
+      const sortedFilteredConversations = filteredConversations.sort((a, b) => {
+        const timeA = a.lastMessageAt?.getTime() ?? a.createdAt.getTime();
+        const timeB = b.lastMessageAt?.getTime() ?? b.createdAt.getTime();
+        return timeB - timeA; // Descending order (newest first)
+      });
+
+      // Take only the requested limit
+      const hasMore = sortedFilteredConversations.length > limit;
+      const resultConversations = hasMore ? sortedFilteredConversations.slice(0, limit) : sortedFilteredConversations;
+
+      // Get details for filtered conversations
+      const conversationsWithDetails = await this.getConversationDetails(
+        userId,
+        resultConversations,
+        lastMessageMap
+      );
+
+      const nextCursor = hasMore ? resultConversations[resultConversations.length - 1].id : undefined;
+
+      return {
+        conversations: conversationsWithDetails,
+        nextCursor,
+        hasMore
+      };
+    }
+
+    // No filter - standard query
+    // Use composite sorting: lastMessageAt primary, createdAt fallback
+    // This ensures conversations with messages are sorted by lastMessageAt (newest first)
+    // and conversations without messages are sorted by createdAt (newest first)
     const conversations = await this.prisma.conversation.findMany({
       where: whereClause,
-      orderBy: {
-        lastMessageAt: "desc"
-      },
+      orderBy: [
+        { lastMessageAt: "desc" },
+        { createdAt: "desc" }
+      ],
       take: limit + 1,
       ...(cursor && {
         cursor: { id: cursor },
@@ -199,83 +313,389 @@ export class ConversationService {
     const hasMore = conversations.length > limit;
     const resultConversations = hasMore ? conversations.slice(0, limit) : conversations;
 
-    // Get last message and unread count for each conversation
-    const conversationsWithDetails = await Promise.all(
-      resultConversations.map(async (conv) => {
-        const otherUserId = conv.userId1 === userId ? conv.userId2 : conv.userId1;
+    // Fetch last messages in batch
+    // Edge case: Handle stale lastMessageId (message might have been deleted)
+    const lastMessageIds = resultConversations
+      .map(c => c.lastMessageId)
+      .filter((id): id is string => id !== null);
 
-        // Get last message
-        const lastMessage = conv.lastMessageId
-          ? await this.prisma.friendMessage.findUnique({
-              where: { id: conv.lastMessageId },
-              select: {
-                id: true,
-                fromUserId: true,
-                toUserId: true,
-                message: true,
-                messageType: true,
-                giftId: true,
-                giftAmount: true,
-                createdAt: true
-              }
-            })
-          : null;
-
-        // Get unread count
-        const unreadCount = await this.prisma.friendMessage.count({
-          where: {
-            fromUserId: otherUserId,
-            toUserId: userId,
-            isRead: false
+    const lastMessages = lastMessageIds.length > 0
+      ? await this.prisma.friendMessage.findMany({
+          where: { id: { in: lastMessageIds } },
+          select: {
+            id: true,
+            fromUserId: true,
+            toUserId: true,
+            message: true,
+            messageType: true,
+            giftId: true,
+            giftAmount: true,
+            createdAt: true
           }
-        });
+        })
+      : [];
 
-        // Check if users are friends
-        const [id1, id2] = [userId, otherUserId].sort();
-        const friendship = await this.prisma.friend.findUnique({
-          where: {
-            userId1_userId2: {
-              userId1: id1,
-              userId2: id2
+    const lastMessageMap = new Map(lastMessages.map(m => [m.id, m]));
+
+    // Edge case: If lastMessageId exists but message was deleted, fetch the actual last message
+    const conversationsWithStaleLastMessage = resultConversations.filter(
+      conv => conv.lastMessageId && !lastMessageMap.has(conv.lastMessageId)
+    );
+
+    if (conversationsWithStaleLastMessage.length > 0) {
+      // Fetch actual last messages for conversations with stale lastMessageId
+      const actualLastMessages = await Promise.all(
+        conversationsWithStaleLastMessage.map(async (conv) => {
+          const otherUserId = conv.userId1 === userId ? conv.userId2 : conv.userId1;
+          const [id1, id2] = [userId, otherUserId].sort();
+          
+          return this.prisma.friendMessage.findFirst({
+            where: {
+              OR: [
+                { fromUserId: id1, toUserId: id2 },
+                { fromUserId: id2, toUserId: id1 }
+              ]
+            },
+            orderBy: { createdAt: "desc" },
+            select: {
+              id: true,
+              fromUserId: true,
+              toUserId: true,
+              message: true,
+              messageType: true,
+              giftId: true,
+              giftAmount: true,
+              createdAt: true
             }
+          });
+        })
+      );
+
+      // Update lastMessageMap and conversation lastMessageId
+      actualLastMessages.forEach((msg, index) => {
+        if (msg) {
+          lastMessageMap.set(msg.id, msg);
+          // Update conversation's lastMessageId if it changed
+          const conv = conversationsWithStaleLastMessage[index];
+          if (conv.lastMessageId !== msg.id) {
+            conv.lastMessageId = msg.id;
+            // Optionally update in DB (async, don't wait)
+            this.prisma.conversation.updateMany({
+              where: { id: conv.id },
+              data: { lastMessageId: msg.id, lastMessageAt: msg.createdAt }
+            }).catch(err => {
+              this.logger.warn(`Failed to update stale lastMessageId for conversation ${conv.id}: ${err.message}`);
+            });
           }
-        });
+        }
+      });
+    }
 
-        // Get user status and broadcast info
-        const userStatus = await this.streamingClient.getUserStatus(otherUserId);
-
-        return {
-          id: conv.id,
-          otherUserId,
-          section: conv.section,
-          lastMessage: lastMessage
-            ? {
-                id: lastMessage.id,
-                fromUserId: lastMessage.fromUserId,
-                message: lastMessage.message,
-                messageType: lastMessage.messageType,
-                giftId: lastMessage.giftId,
-                giftAmount: lastMessage.giftAmount,
-                createdAt: lastMessage.createdAt
-              }
-            : null,
-          unreadCount,
-          isFriend: friendship !== null,
-          // User status and broadcast info
-          userStatus: userStatus.status, // "online" | "offline" | "broadcasting"
-          isBroadcasting: userStatus.isBroadcasting,
-          broadcastRoomId: userStatus.roomId,
-          broadcastUrl: userStatus.broadcastUrl, // Deep link URL for broadcast
-          lastMessageAt: conv.lastMessageAt,
-          createdAt: conv.createdAt
-        };
-      })
+    // Get details for conversations
+    const conversationsWithDetails = await this.getConversationDetails(
+      userId,
+      resultConversations,
+      lastMessageMap
     );
 
     const nextCursor = hasMore ? resultConversations[resultConversations.length - 1].id : undefined;
 
     return {
       conversations: conversationsWithDetails,
+      nextCursor,
+      hasMore
+    };
+  }
+
+  /**
+   * Helper method to get conversation details (unread count, friendship, user status)
+   * Optimized to batch queries
+   */
+  private async getConversationDetails(
+    userId: string,
+    conversations: any[],
+    lastMessageMap: Map<string, any>
+  ): Promise<any[]> {
+    if (conversations.length === 0) {
+      return [];
+    }
+
+    // Get all other user IDs
+    const otherUserIds = conversations.map(conv => 
+      conv.userId1 === userId ? conv.userId2 : conv.userId1
+    );
+    const uniqueOtherUserIds = [...new Set(otherUserIds)];
+
+    // Batch fetch friendships
+    const friendshipPairs: Array<{ id1: string; id2: string }> = uniqueOtherUserIds.map(otherUserId => {
+      const [id1, id2] = [userId, otherUserId].sort();
+      return { id1, id2 };
+    });
+
+    const id1s = friendshipPairs.map(p => p.id1);
+    const id2s = friendshipPairs.map(p => p.id2);
+
+    const friendships = await this.prisma.friend.findMany({
+      where: {
+        OR: id1s.map((id1, i) => ({
+          userId1: id1,
+          userId2: id2s[i]
+        }))
+      }
+    });
+
+    const friendshipSet = new Set(
+      friendships.map(f => `${f.userId1}_${f.userId2}`)
+    );
+
+    // Batch fetch unread counts
+    const unreadCounts = await Promise.all(
+      conversations.map(async (conv) => {
+        const otherUserId = conv.userId1 === userId ? conv.userId2 : conv.userId1;
+        return {
+          conversationId: conv.id,
+          count: await this.prisma.friendMessage.count({
+            where: {
+              fromUserId: otherUserId,
+              toUserId: userId,
+              isRead: false
+            }
+          })
+        };
+      })
+    );
+
+    const unreadCountMap = new Map(
+      unreadCounts.map(uc => [uc.conversationId, uc.count])
+    );
+
+    // Get user statuses in parallel
+    const userStatusPromises = uniqueOtherUserIds.map(otherUserId =>
+      this.streamingClient.getUserStatus(otherUserId)
+    );
+    const userStatuses = await Promise.all(userStatusPromises);
+    const userStatusMap = new Map(
+      uniqueOtherUserIds.map((id, i) => [id, userStatuses[i]])
+    );
+
+    // Build response
+    return conversations.map((conv) => {
+      const otherUserId = conv.userId1 === userId ? conv.userId2 : conv.userId1;
+      const [id1, id2] = [userId, otherUserId].sort();
+      const isFriend = friendshipSet.has(`${id1}_${id2}`);
+      const lastMessage = conv.lastMessageId 
+        ? lastMessageMap.get(conv.lastMessageId) 
+        : null;
+      const userStatus = userStatusMap.get(otherUserId) || {
+        status: "offline",
+        isBroadcasting: false,
+        roomId: null,
+        broadcastUrl: null
+      };
+
+      return {
+        id: conv.id,
+        otherUserId,
+        section: conv.section,
+        lastMessage: lastMessage
+          ? {
+              id: lastMessage.id,
+              fromUserId: lastMessage.fromUserId,
+              message: lastMessage.message,
+              messageType: lastMessage.messageType,
+              giftId: lastMessage.giftId,
+              giftAmount: lastMessage.giftAmount,
+              createdAt: lastMessage.createdAt
+            }
+          : null,
+        unreadCount: unreadCountMap.get(conv.id) || 0,
+        isFriend,
+        userStatus: userStatus.status,
+        isBroadcasting: userStatus.isBroadcasting,
+        broadcastRoomId: userStatus.roomId,
+        broadcastUrl: userStatus.broadcastUrl,
+        lastMessageAt: conv.lastMessageAt,
+        createdAt: conv.createdAt
+      };
+    });
+  }
+
+  /**
+   * Get only friend requests without messages (only_follows filter)
+   * Optimized with a single query using Prisma for better performance
+   */
+  private async getOnlyFollowsConversations(
+    userId: string,
+    section: ConversationSection,
+    limit: number = 50,
+    cursor?: string
+  ): Promise<{
+    conversations: any[];
+    nextCursor?: string;
+    hasMore: boolean;
+  }> {
+    // Determine friend request direction based on section
+    const friendRequestWhere: any = {
+      status: "PENDING",
+      OR: [
+        { expiresAt: null },
+        { expiresAt: { gt: new Date() } }
+      ]
+    };
+
+    if (section === ConversationSection.RECEIVED_REQUESTS) {
+      friendRequestWhere.toUserId = userId;
+    } else {
+      friendRequestWhere.fromUserId = userId;
+    }
+
+    // Add cursor for pagination
+    // Handle cursor format: if it's "follow_{requestId}", extract the requestId
+    if (cursor) {
+      const requestId = cursor.startsWith("follow_") ? cursor.replace("follow_", "") : cursor;
+      friendRequestWhere.id = { lt: requestId };
+    }
+
+    // Get pending friend requests with pagination
+    // Note: We sort by createdAt (not lastMessageAt) because these are friend requests
+    // without messages - they don't have a lastMessageAt value
+    const friendRequests = await this.prisma.friendRequest.findMany({
+      where: friendRequestWhere,
+      orderBy: {
+        createdAt: "desc"
+      },
+      take: limit + 1
+    });
+
+    const hasMore = friendRequests.length > limit;
+    const resultRequests = hasMore ? friendRequests.slice(0, limit) : friendRequests;
+
+    if (resultRequests.length === 0) {
+      return {
+        conversations: [],
+        nextCursor: undefined,
+        hasMore: false
+      };
+    }
+
+    // Get all user pairs to check for messages
+    const userPairs = resultRequests.map(request => {
+      const otherUserId = section === ConversationSection.RECEIVED_REQUESTS
+        ? request.fromUserId
+        : request.toUserId;
+      return {
+        request,
+        otherUserId,
+        id1: [userId, otherUserId].sort()[0],
+        id2: [userId, otherUserId].sort()[1]
+      };
+    });
+
+    // Batch check for messages - use a single query to get all message counts
+    const messageCountQueries = userPairs.map(({ id1, id2 }) =>
+      this.prisma.friendMessage.count({
+        where: {
+          OR: [
+            { fromUserId: id1, toUserId: id2 },
+            { fromUserId: id2, toUserId: id1 }
+          ]
+        }
+      })
+    );
+
+    const messageCounts = await Promise.all(messageCountQueries);
+
+    // Filter out requests that have messages
+    const requestsWithoutMessages = userPairs
+      .map((pair, index) => ({
+        ...pair,
+        hasMessages: messageCounts[index] > 0
+      }))
+      .filter(pair => !pair.hasMessages);
+
+    if (requestsWithoutMessages.length === 0) {
+      return {
+        conversations: [],
+        nextCursor: hasMore ? resultRequests[resultRequests.length - 1].id : undefined,
+        hasMore: false
+      };
+    }
+
+    // Get unique other user IDs
+    const uniqueOtherUserIds = [...new Set(requestsWithoutMessages.map(r => r.otherUserId))];
+
+    // Batch fetch friendships - use a single query with OR conditions
+    const friendshipPairs = requestsWithoutMessages.map(({ id1, id2 }) => ({ id1, id2 }));
+    const uniquePairs = Array.from(
+      new Map(friendshipPairs.map(p => [`${p.id1}_${p.id2}`, p])).values()
+    );
+
+    const friendshipQueries = uniquePairs.map(({ id1, id2 }) =>
+      this.prisma.friend.findUnique({
+        where: {
+          userId1_userId2: {
+            userId1: id1,
+            userId2: id2
+          }
+        }
+      })
+    );
+
+    const friendships = await Promise.all(friendshipQueries);
+    const friendshipMap = new Map(
+      uniquePairs.map((pair, i) => [
+        `${pair.id1}_${pair.id2}`,
+        friendships[i] !== null
+      ])
+    );
+
+    // Batch fetch user statuses
+    const userStatusPromises = uniqueOtherUserIds.map(otherUserId =>
+      this.streamingClient.getUserStatus(otherUserId).catch(() => ({
+        status: "offline" as const,
+        isBroadcasting: false,
+        roomId: null,
+        broadcastUrl: null
+      }))
+    );
+    const userStatuses = await Promise.all(userStatusPromises);
+    const userStatusMap = new Map(
+      uniqueOtherUserIds.map((id, i) => [id, userStatuses[i]])
+    );
+
+    // Build conversation-like objects with consistent structure
+    const conversations = requestsWithoutMessages.map(({ request, otherUserId, id1, id2 }) => {
+      const userStatus = userStatusMap.get(otherUserId) || {
+        status: "offline" as const,
+        isBroadcasting: false,
+        roomId: null,
+        broadcastUrl: null
+      };
+      const isFriend = friendshipMap.get(`${id1}_${id2}`) || false;
+
+      return {
+        id: `follow_${request.id}`, // Consistent ID format for frontend
+        otherUserId,
+        section,
+        lastMessage: null, // No messages for follow requests
+        unreadCount: 0,
+        isFriend,
+        userStatus: userStatus.status,
+        isBroadcasting: userStatus.isBroadcasting,
+        broadcastRoomId: userStatus.roomId,
+        broadcastUrl: userStatus.broadcastUrl,
+        lastMessageAt: request.createdAt,
+        createdAt: request.createdAt,
+        isFollowRequest: true, // Flag to indicate this is a follow request
+        followRequestId: request.id // Include original request ID for reference
+      };
+    });
+
+    // Format nextCursor as "follow_{requestId}" for consistency with conversation.id format
+    const nextCursor = hasMore ? `follow_${resultRequests[resultRequests.length - 1].id}` : undefined;
+
+    return {
+      conversations,
       nextCursor,
       hasMore
     };

@@ -1372,23 +1372,109 @@ const fetchFriendsWall = async (cursor) => {
 }
 ```
 
+**Sorting Behavior:**
+- Conversations are sorted by `lastMessageAt` in descending order (newest messages first)
+- Conversations without messages are sorted by `createdAt` in descending order (newest conversations first)
+- Sorting is consistent across all sections (INBOX, RECEIVED_REQUESTS, SENT_REQUESTS)
+
+**Unread Message Indicators:**
+- Use `unreadCount` field to display unread message badges/indicators on conversation items
+- When `unreadCount > 0`, show a badge with the count or highlight the conversation
+- Example: Show "2" badge or bold conversation title when `unreadCount: 2`
+
 **Use Case:** Display main inbox with friends and two-sided conversations.
 
 ### 8. Get Received Requests Conversations
 
-**Endpoint:** `GET /me/conversations/received-requests?limit=50&cursor=xxx`
+**Endpoint:** `GET /me/conversations/received-requests?limit=50&cursor=xxx&filter=text_only|with_gift|only_follows`
+
+**Query Parameters:**
+- `limit` (optional, default: 50, max: 100): Number of conversations to return
+- `cursor` (optional): Pagination cursor from previous response
+- `filter` (optional): Filter conversations by type
+  - `text_only`: Only conversations with TEXT messages (excludes conversations with `lastMessage: null`)
+  - `with_gift`: Only conversations with GIFT or GIFT_WITH_MESSAGE types (excludes conversations with `lastMessage: null`)
+  - `only_follows`: Only friend requests without any messages (returns special format, see below)
 
 **Response:** Same format as inbox conversations, but `section: "RECEIVED_REQUESTS"`
 
-**Use Case:** Display conversations where someone messaged you.
+**Special Response Format for `only_follows` filter:**
+When using `filter=only_follows`, the response includes friend requests that have no messages. These items have:
+- `id: "follow_{requestId}"` (prefixed with "follow_")
+- `lastMessage: null`
+- `isFollowRequest: true`
+- `followRequestId: "{requestId}"` (the original friend request ID)
+- All other fields match the standard conversation format
+
+**Notes:**
+- Filters are only available for `RECEIVED_REQUESTS` and `SENT_REQUESTS` sections (not for `INBOX`)
+- Conversations with `lastMessage: null` are automatically excluded from `text_only` and `with_gift` filters
+- When using `only_follows`, the `cursor` parameter should use the `follow_{requestId}` format if provided from a previous response
+
+**Example Requests:**
+```
+GET /me/conversations/received-requests?limit=50&filter=text_only
+GET /me/conversations/received-requests?limit=50&filter=with_gift&cursor=abc123
+GET /me/conversations/received-requests?limit=50&filter=only_follows&cursor=follow_xyz789
+```
+
+**Sorting Behavior:**
+- Conversations are sorted by `lastMessageAt` in descending order (newest messages first)
+- Conversations without messages are sorted by `createdAt` in descending order (newest conversations first)
+- Sorting is consistent across all sections (INBOX, RECEIVED_REQUESTS, SENT_REQUESTS)
+
+**Unread Message Indicators:**
+- Use `unreadCount` field to display unread message badges/indicators on conversation items
+- When `unreadCount > 0`, show a badge with the count or highlight the conversation
+- Example: Show "2" badge or bold conversation title when `unreadCount: 2`
+
+**Use Case:** Display conversations where someone messaged you, with optional filtering.
 
 ### 9. Get Sent Requests Conversations
 
-**Endpoint:** `GET /me/conversations/sent-requests?limit=50&cursor=xxx`
+**Endpoint:** `GET /me/conversations/sent-requests?limit=50&cursor=xxx&filter=text_only|with_gift|only_follows`
+
+**Query Parameters:**
+- `limit` (optional, default: 50, max: 100): Number of conversations to return
+- `cursor` (optional): Pagination cursor from previous response
+- `filter` (optional): Filter conversations by type
+  - `text_only`: Only conversations with TEXT messages (excludes conversations with `lastMessage: null`)
+  - `with_gift`: Only conversations with GIFT or GIFT_WITH_MESSAGE types (excludes conversations with `lastMessage: null`)
+  - `only_follows`: Only friend requests without any messages (returns special format, see below)
 
 **Response:** Same format as inbox conversations, but `section: "SENT_REQUESTS"`
 
-**Use Case:** Display conversations where you messaged someone.
+**Special Response Format for `only_follows` filter:**
+When using `filter=only_follows`, the response includes friend requests that have no messages. These items have:
+- `id: "follow_{requestId}"` (prefixed with "follow_")
+- `lastMessage: null`
+- `isFollowRequest: true`
+- `followRequestId: "{requestId}"` (the original friend request ID)
+- All other fields match the standard conversation format
+
+**Notes:**
+- Filters are only available for `RECEIVED_REQUESTS` and `SENT_REQUESTS` sections (not for `INBOX`)
+- Conversations with `lastMessage: null` are automatically excluded from `text_only` and `with_gift` filters
+- When using `only_follows`, the `cursor` parameter should use the `follow_{requestId}` format if provided from a previous response
+
+**Example Requests:**
+```
+GET /me/conversations/sent-requests?limit=50&filter=text_only
+GET /me/conversations/sent-requests?limit=50&filter=with_gift&cursor=abc123
+GET /me/conversations/sent-requests?limit=50&filter=only_follows&cursor=follow_xyz789
+```
+
+**Sorting Behavior:**
+- Conversations are sorted by `lastMessageAt` in descending order (newest messages first)
+- Conversations without messages are sorted by `createdAt` in descending order (newest conversations first)
+- Sorting is consistent across all sections (INBOX, RECEIVED_REQUESTS, SENT_REQUESTS)
+
+**Unread Message Indicators:**
+- Use `unreadCount` field to display unread message badges/indicators on conversation items
+- When `unreadCount > 0`, show a badge with the count or highlight the conversation
+- Example: Show "2" badge or bold conversation title when `unreadCount: 2`
+
+**Use Case:** Display conversations where you messaged someone, with optional filtering.
 
 ---
 
@@ -1504,6 +1590,30 @@ const fetchFriendsWall = async (cursor) => {
 }
 ```
 
+**Displaying Unread Messages:**
+- Each message includes an `isRead` boolean field
+- **Unread messages** (`isRead: false`): Display in **bold** font weight (like other messaging apps)
+- **Read messages** (`isRead: true`): Display in normal font weight
+- Use `readAt` timestamp if you need to show when a message was read
+
+**Implementation Example:**
+```javascript
+// In your message component
+const messageStyle = {
+  fontWeight: message.isRead ? 'normal' : 'bold'
+};
+
+// Render message
+<div style={messageStyle}>
+  {message.message}
+</div>
+```
+
+**Best Practices:**
+1. When user opens a conversation, call `POST /me/friends/:friendId/messages/read` to mark all messages as read
+2. Update local state to set `isRead: true` for all messages after marking as read
+3. Refresh conversation list to update `unreadCount` after marking messages as read
+
 ### 14. Get Messages with Friend (Legacy)
 
 **Endpoint:** `GET /me/friends/:friendId/messages?limit=50&cursor=xxx`
@@ -1531,7 +1641,18 @@ const fetchFriendsWall = async (cursor) => {
 }
 ```
 
-**Note:** Marks all unread messages from that friend as read.
+**Note:** 
+- Marks all unread messages from that friend as read
+- Updates `isRead: true` and sets `readAt` timestamp for all unread messages
+- After calling this endpoint:
+  1. Refresh the conversation list to update `unreadCount` (should become 0)
+  2. Update local message state to reflect `isRead: true` for all messages
+  3. Remove bold styling from messages in the UI
+
+**When to Call:**
+- When user opens/clicks on a conversation
+- When user views messages in a conversation
+- Optionally: When message is visible in viewport (for auto-read feature)
 
 ---
 
@@ -1560,6 +1681,95 @@ const fetchFriendsWall = async (cursor) => {
 ```
 
 **Note:** Blocks user, removes friendship, and prevents messaging.
+
+---
+
+## Unread Messages Implementation Guide
+
+### Overview
+The API provides two levels of unread message tracking:
+1. **Conversation Level**: `unreadCount` - Total number of unread messages in a conversation
+2. **Message Level**: `isRead` - Individual message read status
+
+### Conversation List Display
+
+**Using `unreadCount` field:**
+- Show badge/indicator when `unreadCount > 0`
+- Display the count number (e.g., "3" badge)
+- Highlight or bold the conversation title
+- Sort conversations with unreads to the top (optional, backend already sorts by latest message)
+
+**Example UI:**
+```
+[Badge: 3] John Doe
+Latest message preview...
+```
+
+### Individual Message Display
+
+**Using `isRead` field:**
+- `isRead: false` → Display message in **bold** font
+- `isRead: true` → Display message in normal font
+- This matches standard messaging app behavior (WhatsApp, iMessage, etc.)
+
+**Implementation:**
+```javascript
+// React/React Native example
+const MessageBubble = ({ message, currentUserId }) => {
+  const isFromMe = message.fromUserId === currentUserId;
+  const isUnread = !message.isRead && !isFromMe; // Only show bold for received unread messages
+  
+  return (
+    <div style={{ fontWeight: isUnread ? 'bold' : 'normal' }}>
+      {message.message}
+    </div>
+  );
+};
+```
+
+### Marking Messages as Read
+
+**Endpoint:** `POST /me/friends/:friendId/messages/read`
+
+**When to call:**
+1. User opens a conversation
+2. User scrolls to view messages
+3. Message becomes visible in viewport (optional auto-read)
+
+**After marking as read:**
+1. Call the endpoint
+2. Update local state: Set all messages `isRead: true`
+3. Refresh conversation list to update `unreadCount`
+4. Update UI: Remove bold styling from messages
+
+### Complete Flow Example
+
+```javascript
+// 1. Fetch conversations (shows unreadCount)
+const conversations = await fetch('/me/conversations/inbox');
+// conversations[0].unreadCount = 2
+
+// 2. User clicks conversation
+const messages = await fetch(`/me/conversations/${conversationId}/messages`);
+// messages[0].isRead = false (show in bold)
+// messages[1].isRead = false (show in bold)
+
+// 3. Mark as read when user views
+await fetch(`/me/friends/${friendId}/messages/read`, { method: 'POST' });
+
+// 4. Update local state
+messages.forEach(msg => msg.isRead = true);
+
+// 5. Refresh conversation list
+const updatedConversations = await fetch('/me/conversations/inbox');
+// updatedConversations[0].unreadCount = 0
+```
+
+### Notes
+- `unreadCount` only counts messages received by the current user (from `otherUserId`)
+- Messages sent by the current user are always considered "read" from their perspective
+- The backend automatically updates `unreadCount` when messages are marked as read
+- Sorting is handled by the backend (newest messages first)
 
 ---
 

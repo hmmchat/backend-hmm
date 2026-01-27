@@ -71,6 +71,7 @@ model FriendMessage {
   @@index([fromUserId, toUserId, createdAt])
   @@index([toUserId, isRead])
   @@index([createdAt])
+  @@index([messageType]) // For filtering by message type
   @@map("friend_messages")
 }
 

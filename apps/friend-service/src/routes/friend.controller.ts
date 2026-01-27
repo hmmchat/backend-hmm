@@ -12,6 +12,7 @@ import {
 } from "@nestjs/common";
 import { FriendService } from "../services/friend.service.js";
 import { RateLimitGuard } from "../guards/rate-limit.guard.js";
+import { ConversationRateLimitGuard } from "../guards/conversation-rate-limit.guard.js";
 import { z } from "zod";
 import { verifyToken, AccessPayload } from "@hmm/common";
 import { JWK } from "jose";
@@ -37,6 +38,14 @@ const SendMessageSchema = z.object({
 const PaginationSchema = z.object({
   limit: z.string().optional().transform((val) => val ? Math.min(parseInt(val, 10), 100) : 50), // Max 100
   cursor: z.string().optional()
+});
+
+const ConversationFilterSchema = z.enum(["text_only", "with_gift", "only_follows"], {
+  errorMap: () => ({ message: "Filter must be one of: text_only, with_gift, or only_follows" })
+});
+
+const ConversationQuerySchema = PaginationSchema.extend({
+  filter: ConversationFilterSchema.optional()
 });
 
 @Controller()
@@ -291,6 +300,7 @@ export class FriendController {
    * Get inbox conversations
    * GET /me/conversations/inbox
    */
+  @UseGuards(ConversationRateLimitGuard)
   @Get("me/conversations/inbox")
   async getInboxConversations(
     @Headers("authorization") authz: string,
@@ -304,8 +314,9 @@ export class FriendController {
 
   /**
    * Get received requests conversations
-   * GET /me/conversations/received-requests
+   * GET /me/conversations/received-requests?filter=text_only|with_gift|only_follows
    */
+  @UseGuards(ConversationRateLimitGuard)
   @Get("me/conversations/received-requests")
   async getReceivedRequestsConversations(
     @Headers("authorization") authz: string,
@@ -313,14 +324,20 @@ export class FriendController {
   ) {
     const token = this.getTokenFromHeader(authz);
     const userId = await this.verifyTokenAndGetUserId(token!);
-    const pagination = PaginationSchema.parse(query);
-    return this.friendService.getReceivedRequestsConversations(userId, pagination.limit, pagination.cursor);
+    const parsed = ConversationQuerySchema.parse(query);
+    return this.friendService.getReceivedRequestsConversations(
+      userId,
+      parsed.limit,
+      parsed.cursor,
+      parsed.filter
+    );
   }
 
   /**
    * Get sent requests conversations
-   * GET /me/conversations/sent-requests
+   * GET /me/conversations/sent-requests?filter=text_only|with_gift|only_follows
    */
+  @UseGuards(ConversationRateLimitGuard)
   @Get("me/conversations/sent-requests")
   async getSentRequestsConversations(
     @Headers("authorization") authz: string,
@@ -328,8 +345,13 @@ export class FriendController {
   ) {
     const token = this.getTokenFromHeader(authz);
     const userId = await this.verifyTokenAndGetUserId(token!);
-    const pagination = PaginationSchema.parse(query);
-    return this.friendService.getSentRequestsConversations(userId, pagination.limit, pagination.cursor);
+    const parsed = ConversationQuerySchema.parse(query);
+    return this.friendService.getSentRequestsConversations(
+      userId,
+      parsed.limit,
+      parsed.cursor,
+      parsed.filter
+    );
   }
 
   /**
@@ -738,7 +760,7 @@ export class FriendController {
 
   /**
    * Test endpoint: Get received requests conversations (bypasses auth)
-   * GET /test/conversations/received-requests?userId=xxx&limit=50&cursor=xxx
+   * GET /test/conversations/received-requests?userId=xxx&limit=50&cursor=xxx&filter=text_only|with_gift|only_follows
    */
   @Get("test/conversations/received-requests")
   async getReceivedRequestsConversationsTest(@Query() query: any) {
@@ -748,12 +770,13 @@ export class FriendController {
     }
     const limit = query.limit ? Math.min(parseInt(query.limit, 10), 100) : 50;
     const cursor = query.cursor;
-    return this.friendService.getReceivedRequestsConversations(userId, limit, cursor);
+    const filter = query.filter;
+    return this.friendService.getReceivedRequestsConversations(userId, limit, cursor, filter);
   }
 
   /**
    * Test endpoint: Get sent requests conversations (bypasses auth)
-   * GET /test/conversations/sent-requests?userId=xxx&limit=50&cursor=xxx
+   * GET /test/conversations/sent-requests?userId=xxx&limit=50&cursor=xxx&filter=text_only|with_gift|only_follows
    */
   @Get("test/conversations/sent-requests")
   async getSentRequestsConversationsTest(@Query() query: any) {
@@ -763,7 +786,8 @@ export class FriendController {
     }
     const limit = query.limit ? Math.min(parseInt(query.limit, 10), 100) : 50;
     const cursor = query.cursor;
-    return this.friendService.getSentRequestsConversations(userId, limit, cursor);
+    const filter = query.filter;
+    return this.friendService.getSentRequestsConversations(userId, limit, cursor, filter);
   }
 
   /**

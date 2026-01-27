@@ -11,6 +11,7 @@ import { GiftCatalogService } from "../services/gift-catalog.service.js";
 import { UserClientService } from "../services/user-client.service.js";
 import { StreamingClientService } from "../services/streaming-client.service.js";
 import { RateLimitGuard } from "../guards/rate-limit.guard.js";
+import { ConversationRateLimitGuard } from "../guards/conversation-rate-limit.guard.js";
 import { FriendController } from "../routes/friend.controller.js";
 import { HealthController } from "../routes/health.controller.js";
 import { CleanupTasksService } from "../services/cleanup-tasks.service.js";
@@ -32,6 +33,7 @@ import { CleanupTasksService } from "../services/cleanup-tasks.service.js";
     UserClientService,
     StreamingClientService,
     RateLimitGuard,
+    ConversationRateLimitGuard,
     CleanupTasksService
   ]
 })

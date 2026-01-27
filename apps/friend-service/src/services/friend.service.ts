@@ -1237,7 +1237,8 @@ export class FriendService {
   async getReceivedRequestsConversations(
     userId: string,
     limit: number = 50,
-    cursor?: string
+    cursor?: string,
+    filter?: "text_only" | "with_gift" | "only_follows"
   ): Promise<{
     conversations: any[];
     nextCursor?: string;
@@ -1247,7 +1248,8 @@ export class FriendService {
       userId,
       ConversationSection.RECEIVED_REQUESTS,
       limit,
-      cursor
+      cursor,
+      filter
     );
   }
 
@@ -1257,7 +1259,8 @@ export class FriendService {
   async getSentRequestsConversations(
     userId: string,
     limit: number = 50,
-    cursor?: string
+    cursor?: string,
+    filter?: "text_only" | "with_gift" | "only_follows"
   ): Promise<{
     conversations: any[];
     nextCursor?: string;
@@ -1267,7 +1270,8 @@ export class FriendService {
       userId,
       ConversationSection.SENT_REQUESTS,
       limit,
-      cursor
+      cursor,
+      filter
     );
   }
 

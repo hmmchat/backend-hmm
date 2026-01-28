@@ -358,5 +358,49 @@ export class WalletService {
       createdAt: t.createdAt
     }));
   }
+
+  /**
+   * Award referral rewards to both referrer and referred user
+   * @param referrerId User who made the referral
+   * @param referredUserId User who was referred
+   * @param referrerReward Amount of coins for referrer
+   * @param referredReward Amount of coins for referred user
+   */
+  async awardReferralRewards(
+    referrerId: string,
+    referredUserId: string,
+    referrerReward: number,
+    referredReward: number
+  ): Promise<{
+    referrerTransactionId: string;
+    referredTransactionId: string;
+    referrerNewBalance: number;
+    referredNewBalance: number;
+  }> {
+    if (referrerReward <= 0 || referredReward <= 0) {
+      throw new Error("Reward amounts must be positive");
+    }
+
+    // Award coins to referrer
+    const referrerResult = await this.addCoinsForUser(
+      referrerId,
+      referrerReward,
+      `Referral reward: referred user ${referredUserId}`
+    );
+
+    // Award coins to referred user
+    const referredResult = await this.addCoinsForUser(
+      referredUserId,
+      referredReward,
+      `Referral reward: referred by user ${referrerId}`
+    );
+
+    return {
+      referrerTransactionId: referrerResult.transactionId,
+      referredTransactionId: referredResult.transactionId,
+      referrerNewBalance: referrerResult.newBalance,
+      referredNewBalance: referredResult.newBalance
+    };
+  }
 }
 

@@ -48,28 +48,31 @@ export class AuthController {
   @Post("google")
   async google(@Body() body: any) {
     const schema = z.object({
-      idToken: z.string().min(10)
+      idToken: z.string().min(10),
+      referralCode: z.string().optional()
     }).and(termsSchema);
     const dto = schema.parse(body);
-    return this.auth.loginWithGoogle(dto.idToken, dto.acceptedTermsVer);
+    return this.auth.loginWithGoogle(dto.idToken, dto.acceptedTermsVer, dto.referralCode);
   }
 
   @Post("apple")
   async apple(@Body() body: any) {
     const schema = z.object({
-      identityToken: z.string().min(10)
+      identityToken: z.string().min(10),
+      referralCode: z.string().optional()
     }).and(termsSchema);
     const dto = schema.parse(body);
-    return this.auth.loginWithApple(dto.identityToken, dto.acceptedTermsVer);
+    return this.auth.loginWithApple(dto.identityToken, dto.acceptedTermsVer, dto.referralCode);
   }
 
   @Post("facebook")
   async facebook(@Body() body: any) {
     const schema = z.object({
-      accessToken: z.string().min(10)
+      accessToken: z.string().min(10),
+      referralCode: z.string().optional()
     }).and(termsSchema);
     const dto = schema.parse(body);
-    return this.auth.loginWithFacebook(dto.accessToken, dto.acceptedTermsVer);
+    return this.auth.loginWithFacebook(dto.accessToken, dto.acceptedTermsVer, dto.referralCode);
   }
 
   @Post("phone/send-otp")
@@ -90,10 +93,11 @@ export class AuthController {
         .min(10)
         .refine((val) => val.startsWith("+91"), "Phone number must be from India (+91)")
         .refine((val) => /^\+91[6-9]\d{9}$/.test(val), "Invalid Indian phone number format. Must be +91 followed by 10 digits starting with 6-9"),
-      code: z.string().min(4).max(8)
+      code: z.string().min(4).max(8),
+      referralCode: z.string().optional()
     }).and(termsSchema);
     const dto = schema.parse(body);
-    return this.auth.verifyPhoneOtp(dto.phone, dto.code, dto.acceptedTermsVer);
+    return this.auth.verifyPhoneOtp(dto.phone, dto.code, dto.acceptedTermsVer, dto.referralCode);
   }
 
   @Post("refresh")
@@ -211,5 +215,69 @@ export class AuthController {
     const { reason } = z.object({ reason: z.string().min(1, "Ban reason is required") }).parse(body);
     await this.auth.banAccount(userId, reason);
     return { ok: true, message: `Account ${userId} banned: ${reason}` };
+  }
+
+  /* ---------- Referral Endpoints ---------- */
+
+  /**
+   * Get referral status for a user (internal endpoint for user-service)
+   * GET /auth/users/:userId/referral-status
+   */
+  @Get("users/:userId/referral-status")
+  async getReferralStatus(@Param("userId") userId: string) {
+    return this.auth.getReferralStatus(userId);
+  }
+
+  /**
+   * Get account status for a user (internal endpoint for user-service)
+   * GET /auth/users/:userId/account-status
+   */
+  @Get("users/:userId/account-status")
+  async getAccountStatusForUser(@Param("userId") userId: string) {
+    return this.auth.getAccountStatus(userId);
+  }
+
+  /**
+   * Mark referral reward as claimed (internal endpoint for user-service)
+   * POST /auth/users/:userId/mark-referral-claimed
+   */
+  @Post("users/:userId/mark-referral-claimed")
+  async markReferralClaimed(@Param("userId") userId: string) {
+    await this.auth.markReferralClaimed(userId);
+    return { ok: true };
+  }
+
+  /**
+   * Get current user's referral code
+   * GET /auth/me/referral-code
+   */
+  @Get("me/referral-code")
+  async getMyReferralCode(@Headers("authorization") authz: string) {
+    const token = this.getTokenFromHeader(authz);
+    const userId = await this.verifyTokenAndGetUserId(token!);
+    const referralCode = await this.auth.getReferralCode(userId);
+    return { referralCode };
+  }
+
+  /**
+   * Get list of users referred by current user
+   * GET /auth/me/referrals
+   */
+  @Get("me/referrals")
+  async getMyReferrals(@Headers("authorization") authz: string) {
+    const token = this.getTokenFromHeader(authz);
+    const userId = await this.verifyTokenAndGetUserId(token!);
+    return this.auth.getReferrals(userId);
+  }
+
+  /**
+   * Get referral statistics
+   * GET /auth/me/referral-stats
+   */
+  @Get("me/referral-stats")
+  async getMyReferralStats(@Headers("authorization") authz: string) {
+    const token = this.getTokenFromHeader(authz);
+    const userId = await this.verifyTokenAndGetUserId(token!);
+    return this.auth.getReferralStats(userId);
   }
 }

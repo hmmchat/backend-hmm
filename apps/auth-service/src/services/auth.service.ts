@@ -41,36 +41,39 @@ export class AuthService implements OnModuleInit {
 
   /* ---------- Auth flows ---------- */
 
-  async loginWithGoogle(idToken: string, termsVer: string) {
+  async loginWithGoogle(idToken: string, termsVer: string, referralCode?: string) {
     const g = await this.google.verify(idToken);
     return this.signInOrUp(
       {
         email: g.email,
         googleSub: g.sub
       },
-      termsVer
+      termsVer,
+      referralCode
     );
   }
 
-  async loginWithApple(identityToken: string, termsVer: string) {
+  async loginWithApple(identityToken: string, termsVer: string, referralCode?: string) {
     const a = await this.apple.verify(identityToken);
     return this.signInOrUp(
       {
         email: a.email,
         appleSub: a.sub
       },
-      termsVer
+      termsVer,
+      referralCode
     );
   }
 
-  async loginWithFacebook(accessToken: string, termsVer: string) {
+  async loginWithFacebook(accessToken: string, termsVer: string, referralCode?: string) {
     const f = await this.facebook.verify(accessToken);
     return this.signInOrUp(
       {
         email: f.email,
         facebookId: f.id
       },
-      termsVer
+      termsVer,
+      referralCode
     );
   }
 
@@ -86,9 +89,9 @@ export class AuthService implements OnModuleInit {
     }
   }
 
-  async verifyPhoneOtp(phone: string, code: string, termsVer: string) {
+  async verifyPhoneOtp(phone: string, code: string, termsVer: string, referralCode?: string) {
     await this.phone.verify(phone, code);
-    return this.signInOrUp({ phone }, termsVer);
+    return this.signInOrUp({ phone }, termsVer, referralCode);
   }
 
   /* ---------- Tokens ---------- */
@@ -137,21 +140,50 @@ export class AuthService implements OnModuleInit {
       appleSub: string | null;
       facebookId: string | null;
     }>,
-    termsVer: string
+    termsVer: string,
+    referralCode?: string
   ) {
-    const user =
-      (await this.prisma.user.findFirst({
-        where: {
-          OR: [
-            data.googleSub && { googleSub: data.googleSub },
-            data.appleSub && { appleSub: data.appleSub },
-            data.facebookId && { facebookId: data.facebookId },
-            data.email && { email: data.email },
-            data.phone && { phone: data.phone }
-          ].filter(Boolean) as any
+    const existingUser = await this.prisma.user.findFirst({
+      where: {
+        OR: [
+          data.googleSub && { googleSub: data.googleSub },
+          data.appleSub && { appleSub: data.appleSub },
+          data.facebookId && { facebookId: data.facebookId },
+          data.email && { email: data.email },
+          data.phone && { phone: data.phone }
+        ].filter(Boolean) as any
+      }
+    });
+
+    const isNewUser = !existingUser;
+    let user = existingUser;
+
+    if (isNewUser) {
+      // Handle referral code for new users only
+      let referredBy: string | null = null;
+      
+      if (referralCode) {
+        try {
+          // Find referrer by referral code
+          const referrer = await this.prisma.user.findUnique({
+            where: { referralCode },
+            select: { id: true, accountStatus: true }
+          });
+
+          if (referrer && referrer.accountStatus === "ACTIVE" && referrer.id) {
+            referredBy = referrer.id;
+          }
+          // If referrer not found or inactive, silently ignore (don't block signup)
+        } catch (error) {
+          // Log error but don't block signup
+          console.error("Error processing referral code:", error);
         }
-      })) ??
-      (await this.prisma.user.create({
+      }
+
+      // Generate referral code for new user
+      const newReferralCode = await this.generateUniqueReferralCode();
+
+      user = await this.prisma.user.create({
         data: {
           email: data.email ?? undefined,
           phone: data.phone ?? undefined,
@@ -160,9 +192,38 @@ export class AuthService implements OnModuleInit {
           facebookId: data.facebookId ?? undefined,
           acceptedTerms: true,
           acceptedTermsAt: new Date(),
-          acceptedTermsVer: termsVer
+          acceptedTermsVer: termsVer,
+          referralCode: newReferralCode,
+          referredBy: referredBy ?? undefined
         }
-      }));
+      });
+
+      // Create referral record if referredBy is set
+      // Prevent self-referral: check if referrer is the same as the new user
+      if (referredBy && referredBy !== user.id) {
+        try {
+          await this.prisma.referral.create({
+            data: {
+              referrerId: referredBy,
+              referredUserId: user.id,
+              rewardClaimed: false
+            }
+          });
+        } catch (error) {
+          // Log error but don't block signup
+          console.error("Error creating referral record:", error);
+        }
+      } else if (referredBy && referredBy === user.id) {
+        // Self-referral detected - clear referredBy and log warning
+        console.warn(`Self-referral attempt detected for user ${user.id}, ignoring referral code`);
+        await this.prisma.user.update({
+          where: { id: user.id },
+          data: { referredBy: null }
+        });
+      }
+    } else {
+      user = existingUser;
+    }
 
     // Check account status - prevent login for deactivated, suspended, banned, or deleted accounts
     if (user.accountStatus !== "ACTIVE" || user.deletedAt) {
@@ -201,6 +262,188 @@ export class AuthService implements OnModuleInit {
     });
 
     return { accessToken, refreshToken };
+  }
+
+  /* ---------- Referral Management ---------- */
+
+  /**
+   * Generate a unique referral code
+   */
+  private async generateUniqueReferralCode(): Promise<string> {
+    let code: string;
+    let isUnique = false;
+    let attempts = 0;
+    const maxAttempts = 10;
+
+    while (!isUnique && attempts < maxAttempts) {
+      // Generate a short, user-friendly code (8 characters, alphanumeric uppercase)
+      const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // Exclude confusing chars like 0, O, I, 1
+      code = "";
+      for (let i = 0; i < 8; i++) {
+        code += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+
+      const existing = await this.prisma.user.findUnique({
+        where: { referralCode: code },
+        select: { id: true }
+      });
+
+      if (!existing) {
+        isUnique = true;
+      }
+      attempts++;
+    }
+
+    if (!isUnique) {
+      // Fallback: use timestamp + random string if we can't generate a unique short code
+      code = `REF${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+    }
+
+    return code;
+  }
+
+  /**
+   * Get referral status for a user (for user-service to check)
+   */
+  async getReferralStatus(userId: string): Promise<{
+    referredBy: string | null;
+    referralRewardClaimed: boolean;
+    referralCode: string;
+  }> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        referredBy: true,
+        referralRewardClaimed: true,
+        referralCode: true
+      }
+    });
+
+    if (!user) {
+      throw new HttpException("User not found", HttpStatus.NOT_FOUND);
+    }
+
+    // Generate referral code if it doesn't exist (for existing users)
+    let referralCode = user.referralCode;
+    if (!referralCode) {
+      referralCode = await this.generateUniqueReferralCode();
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: { referralCode }
+      });
+    }
+
+    return {
+      referredBy: user.referredBy,
+      referralRewardClaimed: user.referralRewardClaimed ?? false,
+      referralCode
+    };
+  }
+
+  /**
+   * Mark referral reward as claimed (called by user-service after awarding rewards)
+   */
+  async markReferralClaimed(userId: string): Promise<void> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { referredBy: true }
+    });
+
+    if (!user) {
+      throw new HttpException("User not found", HttpStatus.NOT_FOUND);
+    }
+
+    if (!user.referredBy) {
+      return; // No referral to mark as claimed
+    }
+
+    // Update user's referralRewardClaimed flag
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { referralRewardClaimed: true }
+    });
+
+    // Update referral record
+    await this.prisma.referral.updateMany({
+      where: {
+        referredUserId: userId,
+        rewardClaimed: false
+      },
+      data: {
+        rewardClaimed: true,
+        claimedAt: new Date()
+      }
+    });
+  }
+
+  /**
+   * Get user's referral code
+   */
+  async getReferralCode(userId: string): Promise<string> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { referralCode: true }
+    });
+
+    if (!user) {
+      throw new HttpException("User not found", HttpStatus.NOT_FOUND);
+    }
+
+    // Generate referral code if it doesn't exist (for existing users)
+    if (!user.referralCode) {
+      const referralCode = await this.generateUniqueReferralCode();
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: { referralCode }
+      });
+      return referralCode;
+    }
+
+    return user.referralCode;
+  }
+
+  /**
+   * Get list of users referred by current user
+   */
+  async getReferrals(userId: string): Promise<Array<{
+    id: string;
+    referredUserId: string;
+    rewardClaimed: boolean;
+    claimedAt: Date | null;
+    createdAt: Date;
+  }>> {
+    const referrals = await this.prisma.referral.findMany({
+      where: { referrerId: userId },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        referredUserId: true,
+        rewardClaimed: true,
+        claimedAt: true,
+        createdAt: true
+      }
+    });
+
+    return referrals;
+  }
+
+  /**
+   * Get referral statistics
+   */
+  async getReferralStats(userId: string): Promise<{
+    totalReferred: number;
+    rewardsClaimed: number;
+    pendingRewards: number;
+  }> {
+    const referrals = await this.prisma.referral.findMany({
+      where: { referrerId: userId }
+    });
+
+    return {
+      totalReferred: referrals.length,
+      rewardsClaimed: referrals.filter(r => r.rewardClaimed).length,
+      pendingRewards: referrals.filter(r => !r.rewardClaimed).length
+    };
   }
 
   /* ---------- Account Management ---------- */

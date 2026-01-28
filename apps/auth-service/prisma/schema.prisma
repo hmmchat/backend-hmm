@@ -44,8 +44,15 @@ model User {
   suspensionReason String? // Reason for suspension/ban
   banReason        String? // Reason for ban
 
+  // Referral System
+  referralCode      String?  @unique
+  referredBy        String?
+  referralRewardClaimed Boolean @default(false)
+
   preferences Preference?
   sessions    Session[]
+  referrals   Referral[] @relation("Referrer")
+  referredReferral Referral? @relation("Referred")
 }
 
 model Preference {
@@ -69,6 +76,22 @@ model Session {
 
   @@index([userId])
   @@index([expiresAt])
+}
+
+model Referral {
+  id            String   @id @default(cuid())
+  referrerId    String
+  referredUserId String  @unique
+  rewardClaimed Boolean  @default(false)
+  claimedAt     DateTime?
+  createdAt     DateTime @default(now())
+
+  referrer User @relation("Referrer", fields: [referrerId], references: [id], onDelete: Cascade)
+  referredUser User @relation("Referred", fields: [referredUserId], references: [id], onDelete: Cascade)
+
+  @@index([referrerId])
+  @@index([referredUserId])
+  @@map("referrals")
 }
 
 // Live metrics: count of current active meetings

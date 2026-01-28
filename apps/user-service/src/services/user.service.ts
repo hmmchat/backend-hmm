@@ -4,6 +4,8 @@ import { PrismaService } from "../prisma/prisma.service.js";
 import { ProfileCompletionService } from "./profile-completion.service.js";
 import { ModerationClientService } from "./moderation-client.service.js";
 import { BrandService } from "./brand.service.js";
+import { WalletClientService } from "./wallet-client.service.js";
+import { AuthClientService } from "./auth-client.service.js";
 import { verifyToken, AccessPayload } from "@hmm/common";
 import { JWK } from "jose";
 import {
@@ -30,7 +32,9 @@ export class UserService implements OnModuleInit {
     private readonly prisma: PrismaService,
     private readonly profileCompletion: ProfileCompletionService,
     private readonly moderationClient: ModerationClientService,
-    private readonly brandService: BrandService
+    private readonly brandService: BrandService,
+    private readonly walletClient: WalletClientService,
+    private readonly authClient: AuthClientService
   ) {}
 
   async onModuleInit() {
@@ -142,6 +146,12 @@ export class UserService implements OnModuleInit {
       // Calculate profile completion percentage
       const completion = await this.profileCompletion.calculateCompletion(userId);
 
+      // Process referral reward (non-blocking - profile creation already succeeded)
+      this.processReferralReward(userId).catch((error) => {
+        // Log error but don't throw - profile creation already succeeded
+        console.error(`Error processing referral reward for user ${userId}:`, error);
+      });
+
       return { user, profileCompletion: completion };
     } catch (error) {
       // Log the actual error for debugging
@@ -169,6 +179,61 @@ export class UserService implements OnModuleInit {
         `Failed to create profile: ${errorMessage}`,
         HttpStatus.INTERNAL_SERVER_ERROR
       );
+    }
+  }
+
+  /**
+   * Process referral reward when profile is completed
+   * This is called asynchronously after profile creation succeeds
+   */
+  private async processReferralReward(userId: string): Promise<void> {
+    try {
+      // Get referral status from auth-service
+      const referralStatus = await this.authClient.getReferralStatus(userId);
+
+      // If no referral or already claimed, skip
+      if (!referralStatus || !referralStatus.referredBy || referralStatus.referralRewardClaimed) {
+        return;
+      }
+
+      // Verify referrer account is still active before awarding rewards
+      const referrerId = referralStatus.referredBy;
+      const isReferrerActive = await this.authClient.isAccountActive(referrerId);
+      
+      if (!isReferrerActive) {
+        console.warn(`Referrer ${referrerId} is not active, skipping referral reward for user ${userId}`);
+        // Mark as claimed to prevent retry attempts
+        await this.authClient.markReferralClaimed(userId);
+        return;
+      }
+
+      // Prevent self-referral (additional safety check)
+      if (referrerId === userId) {
+        console.warn(`Self-referral detected for user ${userId}, skipping reward`);
+        await this.authClient.markReferralClaimed(userId);
+        return;
+      }
+
+      // Get reward amounts from environment variables (with defaults)
+      const referrerReward = parseInt(process.env.REFERRAL_REWARD_REFERRER || "100", 10);
+      const referredReward = parseInt(process.env.REFERRAL_REWARD_REFERRED || "50", 10);
+
+      // Award coins to both referrer and referred user
+      await this.walletClient.awardReferralRewards(
+        referrerId,
+        userId,
+        referrerReward,
+        referredReward
+      );
+
+      // Mark referral as claimed in auth-service
+      await this.authClient.markReferralClaimed(userId);
+
+      console.log(`Referral rewards awarded: ${referrerReward} coins to ${referrerId}, ${referredReward} coins to ${userId}`);
+    } catch (error) {
+      // Log error but don't throw - this is non-blocking
+      console.error(`Error processing referral reward for user ${userId}:`, error);
+      // Don't re-throw - profile creation already succeeded
     }
   }
 

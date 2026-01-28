@@ -218,5 +218,38 @@ export class WalletController {
     const userId = await this.verifyTokenAndGetUserId(token);
     return this.walletService.getGiftTransactions(userId);
   }
+
+  /* ---------- Internal Endpoints (for other services) ---------- */
+
+  /**
+   * Award referral rewards (internal endpoint for user-service)
+   * POST /internal/referral-rewards
+   * Body: { referrerId: string, referredUserId: string, referrerReward: number, referredReward: number }
+   */
+  @Post("internal/referral-rewards")
+  async awardReferralRewards(@Body() body: any) {
+    const schema = z.object({
+      referrerId: z.string().min(1),
+      referredUserId: z.string().min(1),
+      referrerReward: z.number().positive(),
+      referredReward: z.number().positive()
+    });
+
+    const dto = schema.parse(body);
+
+    try {
+      return await this.walletService.awardReferralRewards(
+        dto.referrerId,
+        dto.referredUserId,
+        dto.referrerReward,
+        dto.referredReward
+      );
+    } catch (error) {
+      throw new HttpException(
+        error instanceof Error ? error.message : "Failed to award referral rewards",
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
 }
 

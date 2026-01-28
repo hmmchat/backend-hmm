@@ -11,11 +11,12 @@ import { MusicService } from "../services/music.service.js";
 import { BrandService } from "../services/brand.service.js";
 import { BadgeService } from "../services/badge.service.js";
 import { WalletClientService } from "../services/wallet-client.service.js";
+import { AuthClientService } from "../services/auth-client.service.js";
 
 @Module({
   imports: [ConfigModule.forRoot()],
   controllers: [UserController, BadgeController, HealthController],
-  providers: [PrismaService, UserService, ProfileCompletionService, ModerationClientService, MusicService, BrandService, BadgeService, WalletClientService]
+  providers: [PrismaService, UserService, ProfileCompletionService, ModerationClientService, MusicService, BrandService, BadgeService, WalletClientService, AuthClientService]
 })
 export class AppModule {}
 

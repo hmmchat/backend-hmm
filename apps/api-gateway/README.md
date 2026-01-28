@@ -45,6 +45,7 @@ WALLET_SERVICE_URL=http://localhost:3005
 FRIEND_SERVICE_URL=http://localhost:3009
 FILES_SERVICE_URL=http://localhost:3008
 PAYMENT_SERVICE_URL=http://localhost:3007
+ADS_SERVICE_URL=http://localhost:3010
 
 # JWT Authentication (same as other services)
 JWT_PUBLIC_JWK='{"kty":"RSA",...}'

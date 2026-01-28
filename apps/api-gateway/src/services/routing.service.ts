@@ -38,6 +38,7 @@ export class RoutingService implements OnModuleInit {
     const friendServiceUrl = this.configService.get<string>("FRIEND_SERVICE_URL") || "http://localhost:3009";
     const filesServiceUrl = this.configService.get<string>("FILES_SERVICE_URL") || "http://localhost:3008";
     const paymentServiceUrl = this.configService.get<string>("PAYMENT_SERVICE_URL") || "http://localhost:3007";
+    const adsServiceUrl = this.configService.get<string>("ADS_SERVICE_URL") || "http://localhost:3010";
 
     // Define routes (order matters - more specific routes first)
     this.routes.set("/me", {
@@ -128,6 +129,12 @@ export class RoutingService implements OnModuleInit {
     this.routes.set("/payments", {
       path: "/payments",
       serviceUrl: paymentServiceUrl,
+      requiresAuth: true
+    });
+
+    this.routes.set("/ads", {
+      path: "/ads",
+      serviceUrl: adsServiceUrl,
       requiresAuth: true
     });
 
@@ -233,6 +240,12 @@ export class RoutingService implements OnModuleInit {
     } else if (route.path === "/wallet" && cleanPath.startsWith("/wallet/")) {
       // Strip /wallet prefix for wallet service
       servicePath = cleanPath.substring("/wallet".length);
+      if (!servicePath) {
+        servicePath = "/";
+      }
+    } else if (route.path === "/ads" && cleanPath.startsWith("/ads/")) {
+      // Strip /ads prefix for ads service
+      servicePath = cleanPath.substring("/ads".length);
       if (!servicePath) {
         servicePath = "/";
       }

@@ -65,7 +65,8 @@ export class HealthService implements OnModuleDestroy {
       { name: "wallet-service", url: this.configService.get<string>("WALLET_SERVICE_URL") || "http://localhost:3005" },
       { name: "friend-service", url: this.configService.get<string>("FRIEND_SERVICE_URL") || "http://localhost:3009" },
       { name: "files-service", url: this.configService.get<string>("FILES_SERVICE_URL") || "http://localhost:3008" },
-      { name: "payment-service", url: this.configService.get<string>("PAYMENT_SERVICE_URL") || "http://localhost:3007", healthPath: "/v1/payments/health" }
+      { name: "payment-service", url: this.configService.get<string>("PAYMENT_SERVICE_URL") || "http://localhost:3007", healthPath: "/v1/payments/health" },
+      { name: "ads-service", url: this.configService.get<string>("ADS_SERVICE_URL") || "http://localhost:3010" }
     ];
 
     const healthChecks = await Promise.all(

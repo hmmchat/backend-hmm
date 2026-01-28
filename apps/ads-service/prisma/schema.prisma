@@ -1,0 +1,52 @@
+// Prisma schema for ads-service
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+// Tables owned and managed by ads-service
+// These tables are in the shared hmm_user database but owned by ads-service
+
+model AdReward {
+  id          String   @id @default(cuid())
+  userId      String
+  adUnitId    String   // Ad Manager/AdSense ad unit path or ID
+  adNetwork   String?  // Which network served the ad (AdManager, AdSense, etc.)
+  coinsAwarded Int
+  eCPM        Float?   // Revenue data if available
+  revenue     Float?   // Actual revenue earned (in INR)
+  status      AdRewardStatus @default(PENDING)
+  verifiedAt  DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
+  @@index([status])
+  @@map("ad_rewards")
+}
+
+enum AdRewardStatus {
+  PENDING     // Ad viewed, reward pending verification
+  VERIFIED    // Reward verified and coins credited
+  FAILED      // Verification failed or fraud detected
+  REVOKED     // Reward revoked (fraud, abuse)
+}
+
+model AdRewardConfig {
+  id          String   @id @default(cuid())
+  adType      String   @default("rewarded_video") // rewarded_video, rewarded_interstitial
+  coinsPerAd  Int      @default(10)
+  isActive    Boolean  @default(true)
+  minCooldown Int      @default(300) // Seconds between ads (5 minutes default)
+  maxAdsPerDay Int?    // Optional daily limit
+  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now())
+
+  @@unique([adType])
+  @@map("ad_reward_configs")
+}

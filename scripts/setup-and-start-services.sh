@@ -52,6 +52,9 @@ get_service_config() {
         "friend-service")
             echo "3009:/health"
             ;;
+        "ads-service")
+            echo "3010:/health"
+            ;;
         *)
             echo ""
             ;;
@@ -589,6 +592,7 @@ main() {
         "payment-service"
         "friend-service"
         "moderation-service"
+        "ads-service"
     )
     
     local prisma_failed=0
@@ -621,7 +625,7 @@ main() {
     sleep 2
     
     # Kill processes on service ports
-    for port in 3000 3001 3002 3003 3004 3005 3006 3007 3008 3009; do
+    for port in 3000 3001 3002 3003 3004 3005 3006 3007 3008 3009 3010; do
         local pids=$(lsof -ti:$port 2>/dev/null || echo "")
         if [ -n "$pids" ]; then
             for pid in $pids; do
@@ -658,6 +662,7 @@ main() {
     tier2_services=(
         "user-service"      # depends on: moderation-service, wallet-service
         "payment-service"   # depends on: wallet-service
+        "ads-service"        # depends on: wallet-service
     )
     
     # Tier 3: Services that depend on Tier 2

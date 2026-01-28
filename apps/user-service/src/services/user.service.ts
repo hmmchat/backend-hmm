@@ -944,6 +944,21 @@ export class UserService implements OnModuleInit {
 
   /* ---------- Reporting ---------- */
 
+  /**
+   * Report a user
+   * 
+   * This method allows any authenticated user to report another user.
+   * It increments the reportCount on the reported user's profile.
+   * 
+   * Note: This reports the user themselves, not any stream, broadcast, or room they may be in.
+   * The report count is stored on the user's profile and affects their visibility
+   * across the platform when it exceeds the threshold.
+   * 
+   * @param accessToken - JWT token of the reporting user
+   * @param reportedUserId - ID of the user being reported
+   * @returns Object with success status and updated reportCount
+   * @throws HttpException if user tries to report themselves or reported user doesn't exist
+   */
   async reportUser(accessToken: string, reportedUserId: string) {
     const reporterUserId = await this.verifyAccessToken(accessToken);
 
@@ -960,7 +975,8 @@ export class UserService implements OnModuleInit {
       throw new HttpException("Reported user not found", HttpStatus.NOT_FOUND);
     }
 
-    // Increment report count
+    // Increment report count on the user's profile
+    // This reports the user, not any stream or broadcast they may be in
     const updatedUser = await this.prisma.user.update({
       where: { id: reportedUserId },
       data: {

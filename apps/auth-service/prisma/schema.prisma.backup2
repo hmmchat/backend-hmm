@@ -1,0 +1,79 @@
+// Prisma 6.0.0 Schema
+// Note: This schema uses Prisma 6 syntax. The `url` in datasource is required and correct for Prisma 6.
+generator client {
+  output   = "../node_modules/.prisma/client"
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum AccountStatus {
+  ACTIVE
+  DEACTIVATED
+  SUSPENDED
+  BANNED
+}
+
+model User {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  email    String? @unique
+  phone    String? @unique
+  name     String?
+  photoUrl String?
+
+  googleSub  String? @unique
+  appleSub   String? @unique
+  facebookId String? @unique
+
+  acceptedTerms    Boolean   @default(false)
+  acceptedTermsAt  DateTime?
+  acceptedTermsVer String?
+
+  // Account Management
+  accountStatus AccountStatus @default(ACTIVE)
+  deactivatedAt DateTime?
+  suspendedAt   DateTime?
+  bannedAt      DateTime?
+  deletedAt     DateTime? // Soft delete - account marked for deletion
+  suspensionReason String? // Reason for suspension/ban
+  banReason        String? // Reason for ban
+
+  preferences Preference?
+  sessions    Session[]
+}
+
+model Preference {
+  userId       String  @id
+  videoEnabled Boolean @default(true)
+  meetMode     String  @default("both")
+  latitude     Float?
+  longitude    Float?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Session {
+  id          String   @id @default(cuid())
+  userId      String
+  refreshHash String
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+// Live metrics: count of current active meetings
+model MeetingCounter {
+  id        String   @id @default(cuid())
+  count     Int      @default(0)
+  updatedAt DateTime @updatedAt
+}

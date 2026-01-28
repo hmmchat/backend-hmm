@@ -638,10 +638,16 @@ export class StreamingController {
   }
 
   /**
-   * Report a user
-   * POST /streaming/report
+   * Report a user (not a stream)
+   * This endpoint allows any authenticated user to report another user.
+   * Reports are tracked per user, not per stream/broadcast.
+   * POST /streaming/users/report
+   * 
+   * Note: This reports the user themselves, not the stream or broadcast they are in.
+   * The report count is stored on the user's profile and affects their visibility
+   * across the platform when it exceeds the threshold.
    */
-  @Post("report")
+  @Post("users/report")
   async reportUser(
     @Body() body: { reportedUserId: string },
     @Headers("authorization") authz?: string
@@ -671,7 +677,8 @@ export class StreamingController {
       throw new BadRequestException("Cannot report yourself");
     }
 
-    // Call user service to increment report count
+    // Call user service to increment report count on the user's profile
+    // This reports the user, not any stream or broadcast they may be in
     const result = await this.discoveryClient.reportUser(token, body.reportedUserId);
 
     return {

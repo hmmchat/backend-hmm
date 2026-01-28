@@ -332,6 +332,17 @@ export class UserController {
 
   /* ---------- Reporting ---------- */
 
+  /**
+   * Report a user
+   * POST /users/report
+   * 
+   * Allows any authenticated user to report another user.
+   * Reports are tracked per user (incrementing reportCount on the user's profile).
+   * Users cannot report themselves.
+   * 
+   * When a user's reportCount exceeds the threshold (default: 5),
+   * they are filtered out from discovery results.
+   */
   @Post("users/report")
   async reportUser(@Headers("authorization") authz: string, @Body() body: any) {
     const token = this.getTokenFromHeader(authz);

@@ -243,6 +243,12 @@ export class RoutingService implements OnModuleInit {
       servicePath = "/health";
     } else if (cleanPath === "/moderation/health" && route.path === "/moderation") {
       servicePath = "/health";
+    } else if (route.path === "/files" && cleanPath.startsWith("/files/me/")) {
+      // Strip /files prefix for /me/* paths (files service expects /me/files, not /files/me/files)
+      servicePath = cleanPath.substring("/files".length);
+      if (!servicePath) {
+        servicePath = "/";
+      }
     } else if (route.path === "/wallet" && cleanPath.startsWith("/wallet/")) {
       // Strip /wallet prefix for wallet service
       servicePath = cleanPath.substring("/wallet".length);
@@ -255,6 +261,15 @@ export class RoutingService implements OnModuleInit {
       if (!servicePath) {
         servicePath = "/";
       }
+    } else if (route.path === "/friends" && cleanPath.startsWith("/friends/")) {
+      // Strip /friends prefix for friend service (expects /me/... paths)
+      servicePath = cleanPath.substring("/friends".length);
+      if (!servicePath) {
+        servicePath = "/";
+      }
+    } else if (route.path === "/payments" && (cleanPath.startsWith("/payments/") || cleanPath === "/payments")) {
+      // Payment service expects /v1/payments/... paths (Controller("v1/payments"))
+      servicePath = "/v1" + cleanPath;
     } else if (cleanPath.startsWith(route.path + "/")) {
       // Path starts with route path + /, keep route prefix (most services expect it)
       servicePath = cleanPath;

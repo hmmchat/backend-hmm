@@ -26,6 +26,7 @@ Comprehensive API integration guide covering:
 - Friends & messaging
 - Wallet & payments
 - File uploads
+- Ads & rewards
 - Error handling
 - Complete user flows
 

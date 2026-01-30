@@ -12,7 +12,8 @@ Complete API integration guide for all backend services. This document covers ev
 6. [Friends & Messaging](#friends--messaging)
 7. [Wallet & Payments](#wallet--payments)
 8. [File Uploads](#file-uploads)
-9. [Error Handling](#error-handling)
+9. [Ads & Rewards](#ads--rewards)
+10. [Error Handling](#error-handling)
 
 ---
 
@@ -34,6 +35,7 @@ Complete API integration guide for all backend services. This document covers ev
 - Payment: `http://localhost:3007`
 - Friend: `http://localhost:3009`
 - Files: `http://localhost:3008`
+- Ads: `http://localhost:3010`
 
 **Note:** Video calls use WebSocket to the **streaming service** directly (the API gateway does not proxy WebSockets). Use the streaming service base URL for the WebSocket connection (e.g. `ws://localhost:3006/streaming/ws`).
 
@@ -1126,7 +1128,7 @@ See `apps/streaming-service/README.md` in the backend repo for the full WebSocke
 - If `cursor` is missing, invalid, or malformed, the API returns the first page.
 - First page: `GET /v1/streaming/history?limit=20`. Next page: `GET /v1/streaming/history?limit=20&cursor={nextCursor}`.
 
-**Use Case:** History list for the History screen. Use `conversationId` and `messageCost` for the **Hotline** button: message via `POST /v1/me/conversations/:conversationId/messages` (see Friends & Messaging).
+**Use Case:** History list for the History screen. Use `conversationId` and `messageCost` for the **Hotline** button: message via `POST /v1/friends/me/conversations/:conversationId/messages` (see Friends & Messaging).
 
 ### 8. Get Call Detail (History Info Icon)
 
@@ -1158,6 +1160,8 @@ See `apps/streaming-service/README.md` in the backend repo for the full WebSocke
 ## Friends & Messaging
 
 The messaging system is organized into **conversations** with three sections: **INBOX**, **RECEIVED_REQUESTS**, and **SENT_REQUESTS**. Messages can include text, gifts, or both.
+
+**Gateway paths:** When using the API Gateway, prefix all friend endpoints with `/v1/friends` (e.g. `GET /v1/friends/me/conversations/inbox`).
 
 ### 🔔 Notification Signal
 
@@ -2276,11 +2280,79 @@ switch (message.messageType) {
 
 ---
 
+## Ads & Rewards
+
+Rewarded video ads allow users to earn coins by watching ads. Use the API Gateway base URL.
+
+### 1. Verify Ad Completion & Award Coins
+
+**Endpoint:** `POST /v1/ads/me/ads/reward/verify`
+
+**Headers:** `Authorization: Bearer {accessToken}`
+
+**Request:**
+```json
+{
+  "adUnitId": "string (required)",
+  "adNetwork": "string (optional)"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "coinsAwarded": 10,
+  "newBalance": 1010,
+  "transactionId": "string"
+}
+```
+
+**Use Case:** Call after user completes a rewarded video ad. The backend validates and credits coins. Enforces cooldown and daily limits.
+
+**Errors:**
+- `400` - Ad rewards disabled
+- `403` - Cooldown period; wait before next ad
+- `400` - Daily limit reached
+
+### 2. Get Ad Reward History
+
+**Endpoint:** `GET /v1/ads/me/ads/reward/history?limit=50&offset=0`
+
+**Headers:** `Authorization: Bearer {accessToken}`
+
+**Query Parameters:**
+- `limit` (optional): 1-100, default 50
+- `offset` (optional): Pagination offset, default 0
+
+### 3. Get Reward Config (Public)
+
+**Endpoint:** `GET /v1/ads/ads/reward/config`
+
+**Response:**
+```json
+{
+  "coinsPerAd": 10,
+  "isActive": true,
+  "minCooldown": 60,
+  "maxAdsPerDay": 10
+}
+```
+
+**Use Case:** Display "Watch ad for X coins" and cooldown info in the UI.
+
+---
+
 ## File Uploads
+
+File uploads work through **both** the API Gateway and direct service access. Use the gateway for consistency with other endpoints; use direct access if you need to bypass the gateway (e.g., for very large uploads).
+
+- **Via API Gateway:** `POST /v1/files/upload` → `http://localhost:3000/v1/files/upload`
+- **Direct (Files Service):** `POST /files/upload` → `http://localhost:3008/files/upload`
 
 ### 1. Upload File
 
-**Endpoint:** `POST /files/upload`
+**Endpoint:** `POST /v1/files/upload` (gateway) or `POST /files/upload` (direct to files service on port 3008)
 
 **Content-Type:** `multipart/form-data`
 
@@ -2315,22 +2387,27 @@ switch (message.messageType) {
 
 **Frontend Implementation:**
 ```javascript
-const uploadFile = async (file) => {
+const uploadFile = async (file, useGateway = true) => {
   const formData = new FormData();
   formData.append('file', file);
   formData.append('folder', 'profile-pictures');
   formData.append('processImage', 'true');
   formData.append('maxWidth', '800');
   formData.append('maxHeight', '800');
-  
-  const response = await fetch('http://localhost:3008/files/upload', {
+
+  // Use API Gateway (recommended) or direct files service
+  const url = useGateway
+    ? 'http://localhost:3000/v1/files/upload'
+    : 'http://localhost:3008/files/upload';
+
+  const response = await fetch(url, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${accessToken}`
     },
     body: formData
   });
-  
+
   const data = await response.json();
   return data.file.url;  // Use this URL in profile creation
 };
@@ -2364,7 +2441,7 @@ const uploadFile = async (file) => {
 
 ### 3. Get User Files
 
-**Endpoint:** `GET /me/files`
+**Endpoint:** `GET /v1/files/me/files` (gateway) or `GET /me/files` (direct to files service on port 3008)
 
 **Query Parameters:**
 - `limit` (optional): Number of files
@@ -2537,39 +2614,41 @@ const retryRequest = async (fn, retries = 3) => {
 
 ## Complete User Flows
 
+All paths below use the **API Gateway** prefix `/v1/`. Friend-related endpoints use `/v1/friends/me/...` (see [Friends & Messaging](#friends--messaging)).
+
 ### Flow 1: New User Onboarding
 
 1. **Sign Up** → `POST /v1/auth/google` (or other auth methods)
 2. **Get Tokens** → Store `accessToken` and `refreshToken`
-3. **Upload Photo** → `POST /files/upload`
-4. **Create Profile** → `POST /users/:userId/profile` (with photo URL)
-5. **Add More Photos** → `POST /me/photos` (repeat as needed)
+3. **Upload Photo** → `POST /v1/files/upload`
+4. **Create Profile** → `POST /v1/users/:userId/profile` (with photo URL)
+5. **Add More Photos** → `POST /v1/me/photos` (repeat as needed)
 6. **Set Preferences** → Update music, brands, interests, values
-7. **Start Discovery** → `GET /discovery/card`
+7. **Start Discovery** → `GET /v1/discovery/card`
 
 ### Flow 2: Discovery & Matching
 
-1. **Get Card** → `GET /discovery/card?sessionId={id}`
+1. **Get Card** → `GET /v1/discovery/card?sessionId={id}`
 2. **User Swipes**:
-   - **Left (Pass)** → `POST /discovery/raincheck`
-   - **Right (Like)** → `POST /discovery/proceed`
+   - **Left (Pass)** → `POST /v1/discovery/raincheck`
+   - **Right (Like)** → `POST /v1/discovery/proceed`
 3. **If Match** (both proceed):
    - Both users' status → `IN_SQUAD` (backend sets this)
-   - Create room → `POST /streaming/rooms` with matched user IDs
+   - Create room → `POST /v1/streaming/rooms` with matched user IDs
    - Start video call via WebSocket + Mediasoup (see [Streaming & Video Calls](#streaming--video-calls))
 
 ### Flow 3: Video Call
 
-1. **Create Room** → `POST /streaming/rooms` (after match); get `roomId` and `sessionId`
-2. **Get Room Info** → `GET /streaming/rooms/:roomId` (optional)
+1. **Create Room** → `POST /v1/streaming/rooms` (after match); get `roomId` and `sessionId`
+2. **Get Room Info** → `GET /v1/streaming/rooms/:roomId` (optional)
 3. **Join Call** → Connect WebSocket to streaming service (`ws://.../streaming/ws`), send `join-room` with `roomId`, then use mediasoup-client for create-transport, connect-transport, produce, consume (see [Video Call: WebSocket and Mediasoup](#1a-video-call-websocket-and-mediasoup))
-4. **Chat** → Send `chat-message` over WebSocket or `GET /streaming/rooms/:roomId/chat` (optional)
-5. **End Call** → `POST /streaming/rooms/:roomId/end` with `userId`; or send `leave-room` over WebSocket
-6. **Update Status** → Backend updates status; optionally refresh with `PATCH /me/status` → `IDLE` or `DISCOVERING`
+4. **Chat** → Send `chat-message` over WebSocket or `GET /v1/streaming/rooms/:roomId/chat` (optional)
+5. **End Call** → `POST /v1/streaming/rooms/:roomId/end` with `userId`; or send `leave-room` over WebSocket
+6. **Update Status** → Backend updates status; optionally refresh with `PATCH /v1/me/status` → `IDLE` or `DISCOVERING`
 
 ### Flow 4: Purchase Coins
 
-1. **Get Balance** → `GET /me/balance`
+1. **Get Balance** → `GET /v1/wallet/me/balance`
 2. **Initiate Purchase** → `POST /v1/payments/purchase/initiate`
 3. **Complete Payment** → Use Razorpay SDK on frontend
 4. **Verify Purchase** → `POST /v1/payments/purchase/verify`
@@ -2579,62 +2658,62 @@ const retryRequest = async (fn, retries = 3) => {
 
 #### 5a. Send First Message to Non-Friend
 
-1. **View Offline Card** → `GET /discovery/offline-cards/card`
-2. **Send Friend Request** → `POST /me/friends/offline-cards/request` with `{ toUserId }`
-3. **Get Request ID** → From response or `GET /me/friends/requests/sent`
-4. **Check Balance** → `GET /me/balance` (need 10 coins minimum)
-5. **Send First Message** → `POST /me/friends/requests/:requestId/messages` with `{ message: "Hello!" }`
+1. **View Offline Card** → `GET /v1/discovery/offline-cards/card`
+2. **Send Friend Request** → `POST /v1/friends/me/friends/offline-cards/request` with `{ toUserId }`
+3. **Get Request ID** → From response or `GET /v1/friends/me/friends/requests/sent`
+4. **Check Balance** → `GET /v1/wallet/me/balance` (need 10 coins minimum)
+5. **Send First Message** → `POST /v1/friends/me/friends/requests/:requestId/messages` with `{ message: "Hello!" }`
    - Costs **10 coins** (or send gift instead)
 6. **Conversation Created** → Appears in **SENT_REQUESTS** section
 7. **If Recipient Replies** → Conversation moves to **INBOX** automatically
 
 #### 5b. Reply to Received Message
 
-1. **Get Received Requests** → `GET /me/conversations/received-requests`
-2. **View Conversation** → `GET /me/conversations/:conversationId/messages`
-3. **Send Reply** → `POST /me/conversations/:conversationId/messages` with `{ message: "Hi!" }`
+1. **Get Received Requests** → `GET /v1/friends/me/conversations/received-requests`
+2. **View Conversation** → `GET /v1/friends/me/conversations/:conversationId/messages`
+3. **Send Reply** → `POST /v1/friends/me/conversations/:conversationId/messages` with `{ message: "Hi!" }`
    - **FREE** (first reply is free)
 4. **Conversation Promoted** → Moves to **INBOX** (two-sided conversation)
 
 #### 5c. Message a Friend (Free)
 
-1. **Get Inbox** → `GET /me/conversations/inbox`
+1. **Get Inbox** → `GET /v1/friends/me/conversations/inbox`
 2. **Select Friend** → Find conversation with `isFriend: true`
-3. **Send Message** → `POST /me/friends/:friendId/messages` with `{ message: "Hey!" }`
+3. **Send Message** → `POST /v1/friends/me/friends/:friendId/messages` with `{ message: "Hey!" }`
    - **FREE** (unlimited free messaging)
-4. **Or Send Gift** → `POST /me/friends/:friendId/messages` with `{ giftId, giftAmount }`
+4. **Or Send Gift** → `POST /v1/friends/me/friends/:friendId/messages` with `{ giftId, giftAmount }`
    - Costs coins (transferred to friend)
 
 #### 5d. Send Gift to Non-Friend
 
-1. **Get Sent Requests** → `GET /me/conversations/sent-requests`
+1. **Get Sent Requests** → `GET /v1/friends/me/conversations/sent-requests`
 2. **Select Conversation** → Find conversation with non-friend
-3. **Check Balance** → `GET /me/balance`
-4. **Send Gift** → `POST /me/conversations/:conversationId/messages` with `{ giftId, giftAmount, message: "Optional message" }`
+3. **Check Balance** → `GET /v1/wallet/me/balance`
+4. **Send Gift** → `POST /v1/friends/me/conversations/:conversationId/messages` with `{ giftId, giftAmount, message: "Optional message" }`
    - Costs gift amount in coins
    - Text-only messages not allowed after first message
 
 #### 5e. Accept Friend Request & Message
 
-1. **Get Pending Requests** → `GET /me/friends/requests/pending`
-2. **View Request Messages** → `GET /me/friends/requests/:requestId/messages`
-3. **Accept Request** → `POST /me/friends/requests/:requestId/accept`
+1. **Get Pending Requests** → `GET /v1/friends/me/friends/requests/pending`
+2. **View Request Messages** → `GET /v1/friends/me/friends/requests/:requestId/messages`
+3. **Accept Request** → `POST /v1/friends/me/friends/requests/:requestId/accept`
 4. **Conversation Moved** → Automatically moves to **INBOX**
-5. **Message Freely** → `POST /me/friends/:friendId/messages` (all messages free)
+5. **Message Freely** → `POST /v1/friends/me/friends/:friendId/messages` (all messages free)
 
 ### Flow 6: View Conversations by Section
 
 1. **Get All Sections** → Load three tabs:
-   - `GET /me/conversations/inbox`
-   - `GET /me/conversations/received-requests`
-   - `GET /me/conversations/sent-requests`
+   - `GET /v1/friends/me/conversations/inbox`
+   - `GET /v1/friends/me/conversations/received-requests`
+   - `GET /v1/friends/me/conversations/sent-requests`
 2. **Display Conversations** → Show with:
    - Last message preview
    - Unread count badge
    - User status (online/offline/broadcasting)
    - Broadcast indicator (if live)
-3. **Open Conversation** → `GET /me/conversations/:conversationId/messages`
-4. **Send Message** → `POST /me/conversations/:conversationId/messages`
+3. **Open Conversation** → `GET /v1/friends/me/conversations/:conversationId/messages`
+4. **Send Message** → `POST /v1/friends/me/conversations/:conversationId/messages`
 5. **Check Promotion** → If `promotedToInbox: true`, move to INBOX tab
 
 ### Flow 7: History (Call History)
@@ -2649,7 +2728,7 @@ const retryRequest = async (fn, retries = 3) => {
 5. **Trash Icon (Hide)** → `DELETE /v1/streaming/history/:sessionId`; then remove that call from the list (or refetch).
 6. **Hotline (Message Participant)**:
    - Use `conversationId` from the participant. If `isFriend`: show “Hotline DM” (free). If not: show “{messageCost} / Hotline DM”.
-   - **Message** → `POST /v1/me/conversations/:conversationId/messages` with `{ message }` (or gift). See [Flow 5](#flow-5-messaging--conversations) for cost rules.
+   - **Message** → `POST /v1/friends/me/conversations/:conversationId/messages` with `{ message }` (or gift). See [Flow 5](#flow-5-messaging--conversations) for cost rules.
 
 ---
 

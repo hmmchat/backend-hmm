@@ -73,43 +73,47 @@ npm run dev
 ```bash
 # Terminal 1 - API Gateway
 cd apps/api-gateway
-npm run dev
+npm run start:dev
 
 # Terminal 2 - Auth Service
 cd apps/auth-service
-npm run dev
+npm run start:dev
 
 # Terminal 3 - User Service
 cd apps/user-service
-npm run dev
+npm run start:dev
 
 # Terminal 4 - Discovery Service
 cd apps/discovery-service
-npm run dev
+npm run start:dev
 
 # Terminal 5 - Streaming Service
 cd apps/streaming-service
-npm run dev
+npm run start:dev
 
 # Terminal 6 - Files Service
 cd apps/files-service
-npm run dev
+npm run start:dev
 
 # Terminal 7 - Wallet Service
 cd apps/wallet-service
-npm run dev
+npm run start:dev
 
 # Terminal 8 - Payment Service
 cd apps/payment-service
-npm run dev
+npm run start:dev
 
 # Terminal 9 - Friend Service
 cd apps/friend-service
-npm run dev
+npm run start:dev
 
 # Terminal 10 - Moderation Service
 cd apps/moderation-service
-npm run dev
+npm run start:dev
+
+# Terminal 11 - Ads Service
+cd apps/ads-service
+npm run start:dev
 ```
 
 ## 🌐 Service Ports
@@ -126,6 +130,7 @@ npm run dev
 | Payment Service | 3007 | `http://localhost:3007` |
 | Friend Service | 3009 | `http://localhost:3009` |
 | Files Service | 3008 | `http://localhost:3008` |
+| Ads Service | 3010 | `http://localhost:3010` |
 
 ## 🔧 Configuration
 

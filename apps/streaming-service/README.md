@@ -51,7 +51,7 @@ Create a `.env` file:
 
 ```env
 # Server
-PORT=3005
+PORT=3006
 ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
 
 # Database
@@ -181,7 +181,7 @@ Content-Type: application/json
 
 ### WebSocket API
 
-Connect to: `ws://localhost:3005/streaming/ws`
+Connect to: `ws://localhost:3006/streaming/ws`
 
 #### Authentication
 Include JWT token in `Authorization: Bearer <token>` header.

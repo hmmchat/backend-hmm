@@ -46,16 +46,18 @@ Backend service for hmmchat.live
 
 ### Architecture
 - **Monorepo**: npm workspaces
-- **Microservices**: 9 services
+- **Microservices**: 11 services
   - **api-gateway** - API Gateway service
   - **auth-service** - Authentication & authorization (Google, Apple, Facebook, Phone OTP)
   - **user-service** - User profile management & preferences
   - **moderation-service** - Content moderation (NSFW image checks)
   - **discovery-service** - User discovery & matching
-  - **files-service** - File upload & storage (Cloudflare R2, image processing)
-  - **payment-service** - Payment processing
   - **streaming-service** - Video/audio streaming
+  - **friend-service** - Friends, messaging, conversations
+  - **files-service** - File upload & storage (Cloudflare R2, image processing)
   - **wallet-service** - Wallet management
+  - **payment-service** - Payment processing
+  - **ads-service** - Rewarded video ads
 - **Shared Packages**: 5 packages (common, config, logger, openapi, redis)
 
 ## Quick start (local)
@@ -343,30 +345,17 @@ backend-hmm/
 - TypeScript path aliases: @common/*, @config/*, @logger/*, @redis/*
 
 **Implemented Services:**
+- ✅ api-gateway - API Gateway (routing, auth, rate limiting)
 - ✅ auth-service - Authentication (OAuth + Phone OTP)
 - ✅ user-service - User profile management
 - ✅ moderation-service - Content moderation (NSFW checks)
-
-**Services in Development:**
-- 🚧 discovery-service
-- 🚧 files-service
-- 🚧 payment-service
-- 🚧 streaming-service
-- 🚧 wallet-service
-- 🚧 api-gateway
-
-**Implemented Services:**
-- ✅ auth-service - Authentication (OAuth + Phone OTP)
-- ✅ user-service - User profile management
-- ✅ moderation-service - Content moderation (NSFW checks)
-
-**Services in Development:**
-- 🚧 discovery-service
-- 🚧 files-service
-- 🚧 payment-service
-- 🚧 streaming-service
-- 🚧 wallet-service
-- 🚧 api-gateway
+- ✅ discovery-service - User discovery & matching
+- ✅ streaming-service - Video calls & broadcasting (Mediasoup)
+- ✅ friend-service - Friends, messaging, conversations
+- ✅ files-service - File uploads (Cloudflare R2)
+- ✅ wallet-service - Wallet management
+- ✅ payment-service - Payments (Razorpay)
+- ✅ ads-service - Rewarded video ads
 
 [Your specific question or issue here]
 ```

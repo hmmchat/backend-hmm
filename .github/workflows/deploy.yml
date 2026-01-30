@@ -24,6 +24,7 @@ on:
           - files-service
           - streaming-service
           - moderation-service
+          - ads-service
           - api-gateway
 
 env:

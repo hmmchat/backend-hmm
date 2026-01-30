@@ -5,6 +5,23 @@ import { GenderFilterService } from "./gender-filter.service.js";
 import { LocationService } from "./location.service.js";
 import { MatchingService } from "./matching.service.js";
 import { StreamingClientService } from "./streaming-client.service.js";
+import {
+  MATCH_SCORE_BRAND,
+  MATCH_SCORE_INTEREST_EXACT,
+  MATCH_SCORE_INTEREST_GENRE,
+  MATCH_SCORE_VALUE,
+  MATCH_SCORE_MUSIC,
+  MATCH_SCORE_SAME_CITY,
+  MATCH_SCORE_VIDEO,
+  MATCH_SCORE_BROADCAST_TRENDING,
+  MATCH_SCORE_BROADCAST_POPULARITY_CAP,
+  MATCH_SCORE_BROADCAST_VIEWERS_CAP,
+  MATCH_SCORE_BROADCAST_RECENCY_VERY,
+  MATCH_SCORE_BROADCAST_RECENCY_RECENT,
+  MATCH_SCORE_BROADCAST_RECENCY_TODAY,
+  MATCH_SCORE_BROADCAST_TAG
+} from "../config/scoring.config.js";
+import { DISCOVERY_POOL_LIMIT, CITIES_MAX_USERS_LIMIT } from "../config/limits.config.js";
 
 // DiscoveryUser interface is imported from user-client.service.ts
 // Import it to avoid duplication
@@ -407,7 +424,7 @@ export class DiscoveryService implements OnModuleInit {
       statuses,
       genders,
       excludeUserIds: excludeIds,
-      limit: 500 // Get a large pool for matching
+      limit: DISCOVERY_POOL_LIMIT
     });
 
     return users;
@@ -476,9 +493,9 @@ export class DiscoveryService implements OnModuleInit {
       targetUser.brandPreferences.map((bp) => bp.brand.id)
     );
     const commonBrands = [...userBrandIds].filter((id) => targetBrandIds.has(id));
-    score += commonBrands.length * 10;
+    score += commonBrands.length * MATCH_SCORE_BRAND;
 
-    // Interests: sub-genre match = 15pts, genre match (different sub-genre) = 10pts
+    // Interests: sub-genre match = MATCH_SCORE_INTEREST_EXACT, genre match = MATCH_SCORE_INTEREST_GENRE
     const userInterests = (user.interests || []).map((i) => ({
       id: i.interest.id,
       name: i.interest.name,
@@ -494,13 +511,13 @@ export class DiscoveryService implements OnModuleInit {
     const matchedUserInterestIds = new Set<string>();
     const matchedTargetInterestIds = new Set<string>();
 
-    // First pass: Check for exact sub-genre matches (15 points each)
+    // First pass: Check for exact sub-genre matches
     for (const userInterest of userInterests) {
       for (const targetInterest of targetInterests) {
         if (userInterest.id === targetInterest.id) {
           // Exact match (same sub-genre)
           if (!matchedUserInterestIds.has(userInterest.id) && !matchedTargetInterestIds.has(targetInterest.id)) {
-            score += 15;
+            score += MATCH_SCORE_INTEREST_EXACT;
             matchedUserInterestIds.add(userInterest.id);
             matchedTargetInterestIds.add(targetInterest.id);
           }
@@ -519,7 +536,7 @@ export class DiscoveryService implements OnModuleInit {
         if (userInterest.genre && targetInterest.genre && 
             userInterest.genre === targetInterest.genre && 
             userInterest.id !== targetInterest.id) {
-          score += 10;
+          score += MATCH_SCORE_INTEREST_GENRE;
           matchedUserInterestIds.add(userInterest.id);
           matchedTargetInterestIds.add(targetInterest.id);
           break; // Only match once per user interest
@@ -535,37 +552,37 @@ export class DiscoveryService implements OnModuleInit {
       targetUser.values.map((v) => v.value.id)
     );
     const commonValues = [...userValueIds].filter((id) => targetValueIds.has(id));
-    score += commonValues.length * 20;
+    score += commonValues.length * MATCH_SCORE_VALUE;
 
-    // Music preference: 30 points
+    // Music preference
     if (
       user.musicPreference?.id &&
       targetUser.musicPreference?.id &&
       user.musicPreference.id === targetUser.musicPreference.id
     ) {
-      score += 30;
+      score += MATCH_SCORE_MUSIC;
     }
 
-    // Same city: 50 points (only when viewer's preferredCity is null - "anywhere" mode)
+    // Same city (only when viewer's preferredCity is null - "anywhere" mode)
     // When viewer has a city preference, all candidates are already from that city (filtered),
     // so this scoring would be redundant. Only applies when viewer is in "anywhere" mode.
     if (user.preferredCity === null && user.actualCity && targetUser.preferredCity) {
       // Viewer is in "anywhere" mode, compare viewer's actual city (from location) 
       // with target user's preferredCity
       if (user.actualCity.toLowerCase() === targetUser.preferredCity.toLowerCase()) {
-        score += 50;
+        score += MATCH_SCORE_SAME_CITY;
       }
     }
     // Note: When user.preferredCity is not null, all candidates are already filtered to that city,
-    // so same city scoring is redundant (all would get +50, making it meaningless for ranking)
+    // so same city scoring is redundant.
 
-    // Video preference: 100 points (if both have same preference)
+    // Video preference (if both have same preference)
     if (
       user.videoEnabled !== undefined &&
       targetUser.videoEnabled !== undefined &&
       user.videoEnabled === targetUser.videoEnabled
     ) {
-      score += 100;
+      score += MATCH_SCORE_VIDEO;
     }
 
     return score;
@@ -1083,7 +1100,7 @@ export class DiscoveryService implements OnModuleInit {
     excludeCities: string[] = []
   ): Promise<LocationCard[]> {
     // Get top cities (more than needed for randomization)
-    const allCities = await this.locationService.getCitiesWithMaxUsers(100);
+    const allCities = await this.locationService.getCitiesWithMaxUsers(CITIES_MAX_USERS_LIMIT);
     
     // Calculate "Anywhere" count:
     // - Users with preferredCity = null (didn't select a city)
@@ -2018,7 +2035,7 @@ export class DiscoveryService implements OnModuleInit {
         statuses,
         genders,
         excludeUserIds: excludeIds,
-        limit: 500
+        limit: DISCOVERY_POOL_LIMIT
       }
     );
 
@@ -2241,7 +2258,7 @@ export class DiscoveryService implements OnModuleInit {
       statuses: statuses as ("AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE" | "ONLINE" | "OFFLINE" | "VIEWER" | "MATCHED")[],
       genders,
       excludeUserIds: excludeIds,
-      limit: 500 // Get a large pool
+      limit: DISCOVERY_POOL_LIMIT
     });
 
     return users;
@@ -2844,26 +2861,26 @@ export class DiscoveryService implements OnModuleInit {
 
           // 1. Trending boost (high priority)
           if (broadcast.isTrending) {
-            score += 50;
+            score += MATCH_SCORE_BROADCAST_TRENDING;
           }
 
           // 2. Popularity score (normalized)
           if (broadcast.popularityScore) {
-            score += Math.min(broadcast.popularityScore / 10, 30); // Cap at 30 points
+            score += Math.min(broadcast.popularityScore / 10, MATCH_SCORE_BROADCAST_POPULARITY_CAP);
           }
 
           // 3. Viewer count (engagement indicator)
-          score += Math.min(broadcast.viewerCount / 5, 20); // Cap at 20 points
+          score += Math.min(broadcast.viewerCount / 5, MATCH_SCORE_BROADCAST_VIEWERS_CAP);
 
           // 4. Recency (recent broadcasts get boost)
           if (broadcast.startedAt) {
             const hoursSinceStart = (Date.now() - new Date(broadcast.startedAt).getTime()) / (1000 * 60 * 60);
             if (hoursSinceStart < 1) {
-              score += 15; // Very recent
+              score += MATCH_SCORE_BROADCAST_RECENCY_VERY;
             } else if (hoursSinceStart < 6) {
-              score += 10; // Recent
+              score += MATCH_SCORE_BROADCAST_RECENCY_RECENT;
             } else if (hoursSinceStart < 24) {
-              score += 5; // Today
+              score += MATCH_SCORE_BROADCAST_RECENCY_TODAY;
             }
           }
 
@@ -2873,7 +2890,7 @@ export class DiscoveryService implements OnModuleInit {
             const matchingTags = broadcast.broadcastTags.filter(tag => 
               userInterests.some(interest => interest.includes(tag.toLowerCase()) || tag.toLowerCase().includes(interest))
             );
-            score += matchingTags.length * 5; // 5 points per matching tag
+            score += matchingTags.length * MATCH_SCORE_BROADCAST_TAG;
           }
 
           return { broadcast, score };
@@ -3032,8 +3049,8 @@ export class DiscoveryService implements OnModuleInit {
    */
   async shareBroadcastAnonymous(
     roomId: string,
-    shareType: string = "link",
-    deviceId?: string
+    _shareType: string = "link",
+    _deviceId?: string
   ): Promise<{
     shareableUrl: string;
     success: boolean;

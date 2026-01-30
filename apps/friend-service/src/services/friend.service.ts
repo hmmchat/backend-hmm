@@ -21,8 +21,18 @@ export class FriendService {
     process.env.HOTLINE_MESSAGE_COST || "10",
     10
   );
-  private readonly MAX_MESSAGE_LENGTH = 1000;
-  private readonly SPAM_DETECTION_WINDOW = 60; // seconds
+  private readonly MAX_MESSAGE_LENGTH = parseInt(
+    process.env.MAX_MESSAGE_LENGTH || "1000",
+    10
+  );
+  private readonly SPAM_DETECTION_WINDOW = parseInt(
+    process.env.SPAM_DETECTION_WINDOW_SECONDS || "60",
+    10
+  );
+  private readonly NOTIFICATION_COUNT_CACHE_TTL = parseInt(
+    process.env.NOTIFICATION_COUNT_CACHE_TTL_SECONDS || "30",
+    10
+  );
   private readonly FRIENDS_WALL_PHOTOS_PER_PAGE = parseInt(
     process.env.FRIENDS_WALL_PHOTOS_PER_PAGE || "35",
     10
@@ -1506,7 +1516,6 @@ export class FriendService {
     };
   }> {
     const cacheKey = `notifications:${userId}`;
-    const CACHE_TTL = 30; // 30 seconds cache
 
     try {
       // Try to get from cache first
@@ -1537,59 +1546,62 @@ export class FriendService {
       const sentLastSeen = lastSeenMap.get("SENT_REQUESTS") || null;
       const friendRequestsLastSeen = lastSeenMap.get("FRIEND_REQUESTS") || null;
 
-      // Count unread messages by section (only those created after last seen)
-      // Add 1 second buffer to handle race conditions
+      // Count unread messages by section (only those created after last seen).
+      // Note: FriendMessage has no Conversation relation in schema; we count by matching
+      // (fromUserId, toUserId) pairs that exist in Conversation for each section.
       const now = new Date();
-      const [inboxCount, receivedCount, sentCount] = await Promise.all([
-        // INBOX unread messages
-        this.prisma.friendMessage.count({
-          where: {
-            toUserId: userId,
-            isRead: false,
-            createdAt: inboxLastSeen 
-              ? { gt: new Date(inboxLastSeen.getTime() - 1000) } // 1 second buffer
-              : undefined,
-            conversation: {
-              OR: [
-                { userId1: userId, section: ConversationSection.INBOX },
-                { userId2: userId, section: ConversationSection.INBOX }
-              ]
-            }
-          }
-        }),
-        // RECEIVED_REQUESTS unread messages
-        this.prisma.friendMessage.count({
-          where: {
-            toUserId: userId,
-            isRead: false,
-            createdAt: receivedLastSeen 
-              ? { gt: new Date(receivedLastSeen.getTime() - 1000) } // 1 second buffer
-              : undefined,
-            conversation: {
-              OR: [
-                { userId1: userId, section: ConversationSection.RECEIVED_REQUESTS },
-                { userId2: userId, section: ConversationSection.RECEIVED_REQUESTS }
-              ]
-            }
-          }
-        }),
-        // SENT_REQUESTS unread messages
-        this.prisma.friendMessage.count({
-          where: {
-            toUserId: userId,
-            isRead: false,
-            createdAt: sentLastSeen 
-              ? { gt: new Date(sentLastSeen.getTime() - 1000) } // 1 second buffer
-              : undefined,
-            conversation: {
-              OR: [
-                { userId1: userId, section: ConversationSection.SENT_REQUESTS },
-                { userId2: userId, section: ConversationSection.SENT_REQUESTS }
-              ]
-            }
-          }
-        })
-      ]);
+      const inboxConvs = await this.prisma.conversation.findMany({
+        where: {
+          OR: [{ userId1: userId }, { userId2: userId }],
+          section: ConversationSection.INBOX
+        },
+        select: { userId1: true, userId2: true }
+      });
+      const receivedConvs = await this.prisma.conversation.findMany({
+        where: {
+          OR: [{ userId1: userId }, { userId2: userId }],
+          section: ConversationSection.RECEIVED_REQUESTS
+        },
+        select: { userId1: true, userId2: true }
+      });
+      const sentConvs = await this.prisma.conversation.findMany({
+        where: {
+          OR: [{ userId1: userId }, { userId2: userId }],
+          section: ConversationSection.SENT_REQUESTS
+        },
+        select: { userId1: true, userId2: true }
+      });
+      const pair = (a: string, b: string) => (a < b ? `${a}:${b}` : `${b}:${a}`);
+      const inboxPairs = new Set(inboxConvs.map((c) => pair(c.userId1, c.userId2)));
+      const receivedPairs = new Set(receivedConvs.map((c) => pair(c.userId1, c.userId2)));
+      const sentPairs = new Set(sentConvs.map((c) => pair(c.userId1, c.userId2)));
+
+      const minLastSeen = Math.min(
+        inboxLastSeen?.getTime() ?? 0,
+        receivedLastSeen?.getTime() ?? 0,
+        sentLastSeen?.getTime() ?? Infinity
+      );
+      const allUnread = await this.prisma.friendMessage.findMany({
+        where: {
+          toUserId: userId,
+          isRead: false,
+          createdAt: minLastSeen > 0 ? { gt: new Date(minLastSeen - 1000) } : undefined
+        },
+        select: { fromUserId: true, toUserId: true, createdAt: true }
+      });
+      let inboxCount = 0;
+      let receivedCount = 0;
+      let sentCount = 0;
+      const inboxCutoff = inboxLastSeen ? inboxLastSeen.getTime() - 1000 : 0;
+      const receivedCutoff = receivedLastSeen ? receivedLastSeen.getTime() - 1000 : 0;
+      const sentCutoff = sentLastSeen ? sentLastSeen.getTime() - 1000 : 0;
+      for (const m of allUnread) {
+        const t = m.createdAt.getTime();
+        const p = pair(m.fromUserId, m.toUserId);
+        if (inboxPairs.has(p) && t > inboxCutoff) inboxCount++;
+        else if (receivedPairs.has(p) && t > receivedCutoff) receivedCount++;
+        else if (sentPairs.has(p) && t > sentCutoff) sentCount++;
+      }
 
       // Count pending friend requests (only those created after last seen)
       const friendRequestsCount = await this.prisma.friendRequest.count({
@@ -1623,7 +1635,7 @@ export class FriendService {
 
       // Cache the result
       if (this.redis.isAvailable()) {
-        await this.redis.set(cacheKey, JSON.stringify(result), CACHE_TTL);
+        await this.redis.set(cacheKey, JSON.stringify(result), this.NOTIFICATION_COUNT_CACHE_TTL);
       }
 
       return result;
@@ -1650,7 +1662,7 @@ export class FriendService {
    * Note: This method should be moved to a separate service that handles image generation
    * For now, keeping it here as a placeholder - actual implementation will use FriendsWallImageService
    */
-  async generateFriendsWallShare(userId: string): Promise<{
+  async generateFriendsWallShare(_userId: string): Promise<{
     imageUrl: string;
     deepLink: string;
     productLink: string;

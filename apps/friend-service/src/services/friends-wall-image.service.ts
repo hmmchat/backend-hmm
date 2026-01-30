@@ -1,6 +1,5 @@
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from "@nestjs/common";
 import puppeteer, { Browser, Page } from "puppeteer";
-import * as crypto from "crypto";
 import sharp from "sharp";
 import { FriendService } from "./friend.service.js";
 import { UserClientService } from "./user-client.service.js";
@@ -67,14 +66,6 @@ export class FriendsWallImageService implements OnModuleInit, OnModuleDestroy {
       await this.browser.close();
       this.logger.log("Puppeteer browser closed");
     }
-  }
-
-  /**
-   * Generate hash of friends list for cache key
-   */
-  private generateFriendsHash(friendIds: string[]): string {
-    const sortedIds = [...friendIds].sort().join(",");
-    return crypto.createHash("md5").update(sortedIds).digest("hex");
   }
 
   /**
@@ -219,7 +210,7 @@ export class FriendsWallImageService implements OnModuleInit, OnModuleDestroy {
     
     // Generate friend grid HTML
     const friendGrid = friends
-      .map((friend, index) => {
+      .map((friend, _index) => {
         const photo = friend.photoUrl || this.getPlaceholderImage();
         return `<div class="friend-item" style="background-image: url('${photo}');"></div>`;
       })
@@ -454,15 +445,17 @@ export class FriendsWallImageService implements OnModuleInit, OnModuleDestroy {
       );
 
       // Create new page
+      if (!this.browser) {
+        throw new Error("Puppeteer browser not available");
+      }
       page = await this.browser.newPage();
       await page.setViewport({ width: 1080, height: 1920 });
       await page.setDefaultTimeout(15000);
 
       // Set content and wait for load
       await page.setContent(html, { waitUntil: "load" });
-      
-      // Wait a bit for any images to load
-      await page.waitForTimeout(1000);
+      // Wait a bit for any images to load (waitForTimeout removed in newer Puppeteer)
+      await new Promise((r) => setTimeout(r, 1000));
 
       // Take screenshot
       let imageBuffer = await page.screenshot({

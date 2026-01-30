@@ -20,7 +20,7 @@ export class WalletClientService {
     for (let attempt = 1; attempt <= retries; attempt++) {
       try {
         const response = await fetch(`${this.walletServiceUrl}/test/balance?userId=${userId}`, {
-          signal: AbortSignal.timeout(5000) // 5 second timeout
+          signal: AbortSignal.timeout(this.configService.getWalletClientGetBalanceTimeoutMs())
         });
         
         if (!response.ok) {
@@ -87,7 +87,7 @@ export class WalletClientService {
             amount,
             description: description || `Coin purchase: ${amount} coins`
           }),
-          signal: AbortSignal.timeout(10000) // 10 second timeout
+          signal: AbortSignal.timeout(this.configService.getWalletClientRequestTimeoutMs())
         });
 
         if (!response.ok) {
@@ -167,7 +167,7 @@ export class WalletClientService {
             amount,
             description: description || `Coin redemption: ${amount} coins`
           }),
-          signal: AbortSignal.timeout(10000) // 10 second timeout
+          signal: AbortSignal.timeout(this.configService.getWalletClientRequestTimeoutMs())
         });
 
         if (!response.ok) {

@@ -5,12 +5,10 @@ import { ConfigService } from "@nestjs/config";
 import { ZodExceptionFilter } from "./filters/zod-exception.filter.js";
 
 async function bootstrap() {
+  const requestTimeout = parseInt(process.env.AUTH_REQUEST_TIMEOUT_MS || "8000", 10);
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
-    new FastifyAdapter({ 
-      logger: true,
-      requestTimeout: 8000  // 8 second request timeout (less than gateway's 10s)
-    })
+    new FastifyAdapter({ logger: true, requestTimeout })
   );
 
   const config = app.get(ConfigService);

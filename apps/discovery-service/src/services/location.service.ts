@@ -2,6 +2,7 @@ import { Injectable, HttpException, HttpStatus, OnModuleInit } from "@nestjs/com
 import fetch from "node-fetch";
 import { AccessPayload } from "@hmm/common";
 import { JWK } from "jose";
+import { CITIES_MAX_USERS_LIMIT } from "../config/limits.config.js";
 
 interface CityWithUserCount {
   city: string;
@@ -32,9 +33,11 @@ export class LocationService implements OnModuleInit {
   private verifyAccess!: (token: string) => Promise<AccessPayload>;
   private publicJwk!: JWK;
   private readonly geocodingApiUrl: string;
+  private readonly citiesMaxUsersLimit: number;
 
   constructor() {
     this.userServiceUrl = process.env.USER_SERVICE_URL || "http://localhost:3002";
+    this.citiesMaxUsersLimit = CITIES_MAX_USERS_LIMIT;
     // Use OpenStreetMap Nominatim API (free, no API key required)
     // Can be overridden with environment variable for other services
     // Note: Nominatim requires a User-Agent header (set in fetch calls)
@@ -110,7 +113,7 @@ export class LocationService implements OnModuleInit {
       }
 
       // Get all cities with their counts (sum them up)
-      const allCities = await this.getCitiesWithMaxUsers(100);
+      const allCities = await this.getCitiesWithMaxUsers(this.citiesMaxUsersLimit);
       const totalCityUsers = allCities.reduce((sum, city) => sum + city.availableCount, 0);
 
       // "Anywhere" = users with null city + all users from all cities
@@ -121,7 +124,7 @@ export class LocationService implements OnModuleInit {
       console.error("Failed to get anywhere users count:", error);
       // Fallback: just return sum of all city counts
       try {
-        const allCities = await this.getCitiesWithMaxUsers(100);
+        const allCities = await this.getCitiesWithMaxUsers(this.citiesMaxUsersLimit);
         return allCities.reduce((sum, city) => sum + city.availableCount, 0);
       } catch (fallbackError) {
         return 0;

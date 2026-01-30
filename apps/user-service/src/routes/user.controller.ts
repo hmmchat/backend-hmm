@@ -27,6 +27,13 @@ import {
   CreateMusicPreferenceSchema
 } from "../dtos/profile.dto.js";
 import { UserStatus } from "@prisma/client";
+import {
+  NEARBY_DEFAULT_RADIUS_KM,
+  NEARBY_DEFAULT_LIMIT,
+  CITIES_MAX_USERS_DEFAULT_LIMIT,
+  DISCOVERY_USERS_DEFAULT_LIMIT,
+  SEARCH_DEFAULT_LIMIT
+} from "../config/limits.config.js";
 
 @Controller()
 export class UserController {
@@ -154,7 +161,7 @@ export class UserController {
     if (!query || query.trim().length === 0) {
       throw new HttpException("Search query (q) is required", HttpStatus.BAD_REQUEST);
     }
-    const limitNum = limit ? parseInt(limit, 10) : 20;
+    const limitNum = limit !== undefined && limit !== "" ? parseInt(limit, 10) : SEARCH_DEFAULT_LIMIT;
     if (isNaN(limitNum) || limitNum < 1 || limitNum > 50) {
       throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);
     }
@@ -184,7 +191,7 @@ export class UserController {
     if (!query || query.trim().length === 0) {
       throw new HttpException("Search query (q) is required", HttpStatus.BAD_REQUEST);
     }
-    const limitNum = limit ? parseInt(limit, 10) : 20;
+    const limitNum = limit !== undefined && limit !== "" ? parseInt(limit, 10) : SEARCH_DEFAULT_LIMIT;
     if (isNaN(limitNum) || limitNum < 1 || limitNum > 50) {
       throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);
     }
@@ -376,8 +383,8 @@ export class UserController {
   ) {
     const lat = parseFloat(latitude);
     const lng = parseFloat(longitude);
-    const radiusKm = radius ? parseFloat(radius) : 10;
-    const limitNum = limit ? parseInt(limit, 10) : 50;
+    const radiusKm = radius !== undefined && radius !== "" ? parseFloat(radius) : NEARBY_DEFAULT_RADIUS_KM;
+    const limitNum = limit !== undefined && limit !== "" ? parseInt(limit, 10) : NEARBY_DEFAULT_LIMIT;
 
     if (isNaN(lat) || isNaN(lng)) {
       throw new HttpException("Valid latitude and longitude are required", HttpStatus.BAD_REQUEST);
@@ -390,7 +397,7 @@ export class UserController {
 
   @Get("metrics/cities")
   async getCitiesWithMaxUsers(@Query("limit") limit?: string) {
-    const limitNum = limit ? parseInt(limit, 10) : 20;
+    const limitNum = limit !== undefined && limit !== "" ? parseInt(limit, 10) : CITIES_MAX_USERS_DEFAULT_LIMIT;
     if (isNaN(limitNum) || limitNum < 1 || limitNum > 100) {
       throw new HttpException("Limit must be between 1 and 100", HttpStatus.BAD_REQUEST);
     }
@@ -436,7 +443,7 @@ export class UserController {
       );
     }
 
-    const limitNum = limit ? parseInt(String(limit), 10) : 100;
+    const limitNum = limit !== undefined && limit !== "" ? parseInt(String(limit), 10) : DISCOVERY_USERS_DEFAULT_LIMIT;
     if (isNaN(limitNum) || limitNum < 1 || limitNum > 500) {
       throw new HttpException("Limit must be between 1 and 500", HttpStatus.BAD_REQUEST);
     }

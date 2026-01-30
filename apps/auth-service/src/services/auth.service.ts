@@ -253,11 +253,12 @@ export class AuthService implements OnModuleInit {
       uid: user.id
     });
 
+    const refreshExpiryDays = parseInt(process.env.REFRESH_TOKEN_EXPIRY_DAYS || "30", 10);
     await this.prisma.session.create({
       data: {
         userId: user.id,
         refreshHash: await argon2.hash(refreshToken),
-        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+        expiresAt: new Date(Date.now() + refreshExpiryDays * 24 * 60 * 60 * 1000)
       }
     });
 
@@ -270,10 +271,10 @@ export class AuthService implements OnModuleInit {
    * Generate a unique referral code
    */
   private async generateUniqueReferralCode(): Promise<string> {
-    let code: string;
+    let code = "";
     let isUnique = false;
     let attempts = 0;
-    const maxAttempts = 10;
+    const maxAttempts = parseInt(process.env.REFERRAL_CODE_MAX_GENERATION_ATTEMPTS || "10", 10);
 
     while (!isUnique && attempts < maxAttempts) {
       // Generate a short, user-friendly code (8 characters, alphanumeric uppercase)

@@ -10,13 +10,17 @@ export class MediasoupService implements OnModuleInit {
   private readonly numWorkers: number;
   private readonly listenIp: string;
   private readonly announcedIp: string;
-  private readonly MAX_RESTART_ATTEMPTS = 5;
-  private readonly RESTART_BACKOFF_BASE = 2000; // 2 seconds base delay
+  private readonly maxRestartAttempts: number;
+  private readonly restartBackoffBaseMs: number;
+  private readonly restartBackoffMaxMs: number;
 
   constructor() {
     this.numWorkers = parseInt(process.env.MEDIASOUP_WORKERS || "4", 10);
     this.listenIp = process.env.MEDIASOUP_LISTEN_IP || "0.0.0.0";
     this.announcedIp = process.env.MEDIASOUP_ANNOUNCED_IP || "127.0.0.1";
+    this.maxRestartAttempts = parseInt(process.env.MEDIASOUP_MAX_RESTART_ATTEMPTS || "5", 10);
+    this.restartBackoffBaseMs = parseInt(process.env.MEDIASOUP_RESTART_BACKOFF_BASE_MS || "2000", 10);
+    this.restartBackoffMaxMs = parseInt(process.env.MEDIASOUP_RESTART_BACKOFF_MAX_MS || "32000", 10);
   }
 
   async onModuleInit() {
@@ -200,21 +204,21 @@ export class MediasoupService implements OnModuleInit {
   private async restartWorker(workerIndex: number): Promise<void> {
     const attempts = this.workerRestartAttempts.get(workerIndex) || 0;
     
-    if (attempts >= this.MAX_RESTART_ATTEMPTS) {
-      this.logger.error(`Worker ${workerIndex} exceeded max restart attempts (${this.MAX_RESTART_ATTEMPTS}), giving up`);
+    if (attempts >= this.maxRestartAttempts) {
+      this.logger.error(`Worker ${workerIndex} exceeded max restart attempts (${this.maxRestartAttempts}), giving up`);
       // Remove worker from pool but don't crash service
       this.workers[workerIndex] = null as any;
       return;
     }
 
-    // Exponential backoff: 2s, 4s, 8s, 16s, 32s
+    // Exponential backoff
     const backoffDelay = Math.min(
-      this.RESTART_BACKOFF_BASE * Math.pow(2, attempts),
-      32000
+      this.restartBackoffBaseMs * Math.pow(2, attempts),
+      this.restartBackoffMaxMs
     );
     
     this.workerRestartAttempts.set(workerIndex, attempts + 1);
-    this.logger.log(`Restarting worker ${workerIndex} (attempt ${attempts + 1}/${this.MAX_RESTART_ATTEMPTS}) after ${backoffDelay}ms`);
+    this.logger.log(`Restarting worker ${workerIndex} (attempt ${attempts + 1}/${this.maxRestartAttempts}) after ${backoffDelay}ms`);
     
     await new Promise(resolve => setTimeout(resolve, backoffDelay));
 

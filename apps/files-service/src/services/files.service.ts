@@ -26,11 +26,15 @@ export interface FileInfo {
 
 @Injectable()
 export class FilesService {
+  private readonly defaultListLimit: number;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly r2Service: R2Service,
     private readonly imageProcessing: ImageProcessingService
-  ) {}
+  ) {
+    this.defaultListLimit = parseInt(process.env.FILES_LIST_DEFAULT_LIMIT || "50", 10);
+  }
 
   /**
    * Upload a file
@@ -206,11 +210,13 @@ export class FilesService {
   /**
    * Get user's files
    */
-  async getUserFiles(userId: string, limit: number = 50): Promise<FileInfo[]> {
+  async getUserFiles(userId: string, limit?: number): Promise<FileInfo[]> {
+    const take =
+      limit != null && !Number.isNaN(limit) && limit > 0 ? limit : this.defaultListLimit;
     const files = await this.prisma.file.findMany({
       where: { userId },
       orderBy: { createdAt: "desc" },
-      take: limit
+      take
     });
 
     return files.map((file) => ({

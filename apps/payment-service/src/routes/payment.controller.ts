@@ -145,7 +145,11 @@ export class PaymentController {
     }
 
     const userId = await this.verifyTokenAndGetUserId(token);
-    const dto = HistoryQuerySchema.parse(query);
+    const queryWithDefault = {
+      ...query,
+      limit: query?.limit ?? String(this.configService.getHistoryDefaultLimit())
+    };
+    const dto = HistoryQuerySchema.parse(queryWithDefault);
 
     try {
       const orders = await this.paymentService.getPurchaseHistory(userId, dto.limit);
@@ -273,7 +277,11 @@ export class PaymentController {
     }
 
     const userId = await this.verifyTokenAndGetUserId(token);
-    const dto = HistoryQuerySchema.parse(query);
+    const queryWithDefault = {
+      ...query,
+      limit: query?.limit ?? String(this.configService.getHistoryDefaultLimit())
+    };
+    const dto = HistoryQuerySchema.parse(queryWithDefault);
 
     try {
       const requests = await this.paymentService.getRedemptionHistory(userId, dto.limit);

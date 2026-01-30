@@ -1,5 +1,6 @@
 import { Injectable, HttpException, HttpStatus, OnModuleInit } from "@nestjs/common";
 import fetch from "node-fetch";
+import { SEARCH_DEFAULT_LIMIT } from "../config/limits.config.js";
 
 interface BrandfetchBrandResponse {
   name: string;
@@ -113,12 +114,13 @@ export class BrandService implements OnModuleInit {
    * Search for brands by domain or brand name
    * Brandfetch API works with domain lookups - this tries domain lookup first, then converts name to domain
    */
-  async searchBrands(query: string, limit: number = 20): Promise<SearchBrandResult[]> {
+  async searchBrands(query: string, limit?: number): Promise<SearchBrandResult[]> {
+    const effectiveLimit = limit ?? SEARCH_DEFAULT_LIMIT;
     if (!query || query.trim().length === 0) {
       throw new HttpException("Search query (domain or brand name) is required", HttpStatus.BAD_REQUEST);
     }
 
-    if (limit < 1 || limit > 50) {
+    if (effectiveLimit < 1 || effectiveLimit > 50) {
       throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);
     }
 

@@ -1,5 +1,6 @@
 import { Injectable, HttpException, HttpStatus, OnModuleInit } from "@nestjs/common";
 import fetch from "node-fetch";
+import { SEARCH_DEFAULT_LIMIT } from "../config/limits.config.js";
 
 interface SpotifyTrack {
   id: string;
@@ -112,12 +113,13 @@ export class MusicService implements OnModuleInit {
    * Search for songs on Spotify
    * FREE to use - just requires free Spotify Developer account registration
    */
-  async searchSongs(query: string, limit: number = 20): Promise<SearchSongResult[]> {
+  async searchSongs(query: string, limit?: number): Promise<SearchSongResult[]> {
+    const effectiveLimit = limit ?? SEARCH_DEFAULT_LIMIT;
     if (!query || query.trim().length === 0) {
       throw new HttpException("Search query is required", HttpStatus.BAD_REQUEST);
     }
 
-    if (limit < 1 || limit > 50) {
+    if (effectiveLimit < 1 || effectiveLimit > 50) {
       throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);
     }
 
@@ -132,7 +134,7 @@ export class MusicService implements OnModuleInit {
     try {
       const token = await this.getAccessToken();
       const encodedQuery = encodeURIComponent(query);
-      const url = `https://api.spotify.com/v1/search?q=${encodedQuery}&type=track&limit=${limit}`;
+      const url = `https://api.spotify.com/v1/search?q=${encodedQuery}&type=track&limit=${effectiveLimit}`;
 
       const response = await fetch(url, {
         headers: {

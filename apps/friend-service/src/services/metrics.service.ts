@@ -25,12 +25,7 @@ export class MetricsService {
   private friendsWallShareGenerated = 0;
   private friendsWallShareFailed = 0;
   private friendsWallShareCacheHit = 0;
-  private friendsWallShareDurations: number[] = []; // For calculating percentiles
-  // Friends wall share metrics
-  private friendsWallShareGenerated = 0;
-  private friendsWallShareFailed = 0;
-  private friendsWallShareCacheHit = 0;
-  private friendsWallShareDuration: number[] = []; // Store durations for percentile calculation
+  private friendsWallShareDurations: number[] = []; // Store durations for percentile calculation
 
   /**
    * Increment friend request sent counter

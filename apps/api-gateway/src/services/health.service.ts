@@ -24,16 +24,24 @@ interface CircuitBreakerState {
 export class HealthService implements OnModuleDestroy {
   private readonly logger = new Logger(HealthService.name);
   private healthCache: CachedHealth | null = null;
-  private readonly CACHE_TTL = 8000; // 8 seconds
+  private readonly CACHE_TTL: number;
   private circuitBreakers: Map<string, CircuitBreakerState> = new Map();
-  private readonly CIRCUIT_BREAKER_THRESHOLD = 5; // Increased from 3 to 5 to be less aggressive
-  private readonly CIRCUIT_BREAKER_WINDOW = 60000; // 1 minute
-  private readonly CIRCUIT_BREAKER_RECOVERY = 15000; // Reduced to 15 seconds for faster recovery
+  private readonly CIRCUIT_BREAKER_THRESHOLD: number;
+  private readonly CIRCUIT_BREAKER_WINDOW: number;
+  private readonly CIRCUIT_BREAKER_RECOVERY: number;
+  private readonly HEALTH_CHECK_TIMEOUT_SIMPLE_MS: number;
+  private readonly HEALTH_CHECK_TIMEOUT_WITH_DEPS_MS: number;
   private backgroundUpdateInterval: NodeJS.Timeout | null = null;
 
   constructor(
     private configService: ConfigService
   ) {
+    this.CACHE_TTL = parseInt(this.configService.get<string>("HEALTH_CACHE_TTL_MS") || "8000", 10);
+    this.CIRCUIT_BREAKER_THRESHOLD = parseInt(this.configService.get<string>("CIRCUIT_BREAKER_THRESHOLD") || "5", 10);
+    this.CIRCUIT_BREAKER_WINDOW = parseInt(this.configService.get<string>("CIRCUIT_BREAKER_WINDOW_MS") || "60000", 10);
+    this.CIRCUIT_BREAKER_RECOVERY = parseInt(this.configService.get<string>("CIRCUIT_BREAKER_RECOVERY_MS") || "15000", 10);
+    this.HEALTH_CHECK_TIMEOUT_SIMPLE_MS = parseInt(this.configService.get<string>("HEALTH_CHECK_TIMEOUT_SIMPLE_MS") || "5000", 10);
+    this.HEALTH_CHECK_TIMEOUT_WITH_DEPS_MS = parseInt(this.configService.get<string>("HEALTH_CHECK_TIMEOUT_WITH_DEPS_MS") || "15000", 10);
     // Start background health check updates
     this.startBackgroundUpdates();
   }
@@ -136,12 +144,10 @@ export class HealthService implements OnModuleDestroy {
     }
 
     try {
-      // Use longer timeout for services with dependency checks
-      // Services like streaming-service, user-service, discovery-service check dependencies
-      // and can take 5-10 seconds when all services are starting up
-      const timeout = name.includes("streaming") || name.includes("user") || name.includes("discovery") 
-        ? 15000  // 15s for services with dependency checks
-        : 5000;  // 5s for simple services
+      // Use longer timeout for services with dependency checks (tune via env)
+      const timeout = name.includes("streaming") || name.includes("user") || name.includes("discovery")
+        ? this.HEALTH_CHECK_TIMEOUT_WITH_DEPS_MS
+        : this.HEALTH_CHECK_TIMEOUT_SIMPLE_MS;
       const response = await fetch(`${url}${path}`, {
         method: "GET",
         signal: AbortSignal.timeout(timeout) as any

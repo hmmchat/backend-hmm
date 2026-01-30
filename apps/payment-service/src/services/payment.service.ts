@@ -231,7 +231,7 @@ export class PaymentService {
         throw new BadRequestException(`Failed to credit coins: ${error.message}`);
       }
     }, {
-      timeout: 30000, // 30 second timeout for transaction
+      timeout: this.configService.getTransactionTimeoutMs(),
       isolationLevel: "Serializable" // Highest isolation level to prevent race conditions
     });
   }
@@ -456,7 +456,7 @@ export class PaymentService {
 
       return request;
     }, {
-      timeout: 30000,
+      timeout: this.configService.getTransactionTimeoutMs(),
       isolationLevel: "Serializable"
     });
 
@@ -549,22 +549,24 @@ export class PaymentService {
   /**
    * Get user's purchase history
    */
-  async getPurchaseHistory(userId: string, limit: number = 50): Promise<any[]> {
+  async getPurchaseHistory(userId: string, limit?: number): Promise<any[]> {
+    const take = limit ?? this.configService.getHistoryDefaultLimit();
     return this.prisma.paymentOrder.findMany({
       where: { userId },
       orderBy: { createdAt: "desc" },
-      take: limit
+      take
     });
   }
 
   /**
    * Get user's redemption history
    */
-  async getRedemptionHistory(userId: string, limit: number = 50): Promise<any[]> {
+  async getRedemptionHistory(userId: string, limit?: number): Promise<any[]> {
+    const take = limit ?? this.configService.getHistoryDefaultLimit();
     return this.prisma.redemptionRequest.findMany({
       where: { userId },
       orderBy: { createdAt: "desc" },
-      take: limit
+      take
     });
   }
 }

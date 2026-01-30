@@ -119,4 +119,24 @@ export class PaymentConfigService {
   getWalletServiceUrl(): string {
     return process.env.WALLET_SERVICE_URL || "http://localhost:3005";
   }
+
+  // Transaction timeout for Prisma $transaction (ms)
+  getTransactionTimeoutMs(): number {
+    return parseInt(process.env.PAYMENT_TRANSACTION_TIMEOUT_MS || "30000", 10);
+  }
+
+  // Default limit for purchase/redemption history
+  getHistoryDefaultLimit(): number {
+    return parseInt(process.env.PAYMENT_HISTORY_DEFAULT_LIMIT || "50", 10);
+  }
+
+  // Wallet client: get balance timeout (ms)
+  getWalletClientGetBalanceTimeoutMs(): number {
+    return parseInt(process.env.WALLET_CLIENT_GET_BALANCE_TIMEOUT_MS || "5000", 10);
+  }
+
+  // Wallet client: add/deduct coins timeout (ms)
+  getWalletClientRequestTimeoutMs(): number {
+    return parseInt(process.env.WALLET_CLIENT_REQUEST_TIMEOUT_MS || "10000", 10);
+  }
 }

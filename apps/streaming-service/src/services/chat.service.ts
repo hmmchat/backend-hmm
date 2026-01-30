@@ -13,8 +13,15 @@ export interface ChatMessage {
 export class ChatService {
   private readonly logger = new Logger(ChatService.name);
   private readonly messageHistory: Map<string, ChatMessage[]> = new Map(); // roomId -> messages
+  private readonly maxMessageLength: number;
+  private readonly historyMemoryLimit: number;
+  private readonly historyDefaultLimit: number;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) {
+    this.maxMessageLength = parseInt(process.env.CHAT_MAX_MESSAGE_LENGTH || "1000", 10);
+    this.historyMemoryLimit = parseInt(process.env.CHAT_HISTORY_MEMORY_LIMIT || "100", 10);
+    this.historyDefaultLimit = parseInt(process.env.CHAT_HISTORY_DEFAULT_LIMIT || "50", 10);
+  }
 
   /**
    * Send a chat message
@@ -24,8 +31,8 @@ export class ChatService {
       throw new Error("Message cannot be empty");
     }
 
-    if (message.length > 1000) {
-      throw new Error("Message too long (max 1000 characters)");
+    if (message.length > this.maxMessageLength) {
+      throw new Error(`Message too long (max ${this.maxMessageLength} characters)`);
     }
 
     // Verify room exists
@@ -60,9 +67,9 @@ export class ChatService {
     }
     this.messageHistory.get(roomId)!.push(chatMessage);
 
-    // Keep only last 100 messages in memory
+    // Keep only last N messages in memory
     const messages = this.messageHistory.get(roomId)!;
-    if (messages.length > 100) {
+    if (messages.length > this.historyMemoryLimit) {
       messages.shift();
     }
 
@@ -74,14 +81,15 @@ export class ChatService {
   /**
    * Get chat message history for a room
    */
-  async getMessageHistory(roomId: string, limit: number = 50): Promise<ChatMessage[]> {
-    return this.getChatHistory(roomId, limit);
+  async getMessageHistory(roomId: string, limit?: number): Promise<ChatMessage[]> {
+    return this.getChatHistory(roomId, limit ?? this.historyDefaultLimit);
   }
 
   /**
    * Get chat history for a room
    */
-  async getChatHistory(roomId: string, limit: number = 50): Promise<ChatMessage[]> {
+  async getChatHistory(roomId: string, limit?: number): Promise<ChatMessage[]> {
+    const takeLimit = limit ?? this.historyDefaultLimit;
     const room = await this.prisma.callSession.findUnique({
       where: { roomId },
     });
@@ -92,8 +100,8 @@ export class ChatService {
 
     // Try to get from memory first
     const cachedMessages = this.messageHistory.get(roomId);
-    if (cachedMessages && cachedMessages.length >= limit) {
-      return cachedMessages.slice(-limit);
+    if (cachedMessages && cachedMessages.length >= takeLimit) {
+      return cachedMessages.slice(-takeLimit);
     }
 
     // Otherwise, fetch from database
@@ -104,7 +112,7 @@ export class ChatService {
       orderBy: {
         createdAt: "asc",
       },
-      take: limit,
+      take: takeLimit,
     });
 
     const messages: ChatMessage[] = messageRecords.map((msg) => ({

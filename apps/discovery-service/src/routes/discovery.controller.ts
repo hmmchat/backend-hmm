@@ -743,8 +743,8 @@ export class DiscoveryController {
    */
   @Post("broadcasts/:roomId/share")
   async shareBroadcast(
-    @Headers("authorization") authz?: string,
     @Param("roomId") roomId: string,
+    @Headers("authorization") authz?: string,
     @Body() body?: { shareType?: string; deviceId?: string }
   ) {
     const token = this.getTokenFromHeader(authz);

@@ -10,10 +10,7 @@ docs/
 └── for-frontend/          # Documentation for frontend team
     ├── README.md
     ├── FRONTEND_SETUP.md
-    ├── FRONTEND_INTEGRATION.md
-    ├── FRONTEND_SUMMARY.md
-    ├── DEPLOYMENT_GUIDE.md
-    └── NEXT_STEPS.md
+    └── FRONTEND_INTEGRATION.md
 ```
 
 ## 🎯 For Frontend Team

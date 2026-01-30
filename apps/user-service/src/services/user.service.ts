@@ -22,6 +22,12 @@ import {
   CreateMusicPreferenceDto
 } from "../dtos/profile.dto.js";
 import { Gender, UserStatus } from "@prisma/client";
+import {
+  NEARBY_DEFAULT_RADIUS_KM,
+  NEARBY_DEFAULT_LIMIT,
+  CITIES_MAX_USERS_DEFAULT_LIMIT,
+  DISCOVERY_USERS_DEFAULT_LIMIT
+} from "../config/limits.config.js";
 
 @Injectable()
 export class UserService implements OnModuleInit {
@@ -1049,7 +1055,14 @@ export class UserService implements OnModuleInit {
     return { profileCompletion: completion };
   }
 
-  async getUsersNearby(latitude: number, longitude: number, radiusKm: number = 10, limit: number = 50) {
+  async getUsersNearby(
+    latitude: number,
+    longitude: number,
+    radiusKm?: number,
+    limit?: number
+  ) {
+    const r = radiusKm ?? NEARBY_DEFAULT_RADIUS_KM;
+    const l = limit ?? NEARBY_DEFAULT_LIMIT;
     // Using Haversine formula for distance calculation
     // This is a simplified version - for production, consider using PostGIS extension
     // Note: Raw SQL queries in Prisma return unknown type, so we cast it
@@ -1084,9 +1097,9 @@ export class UserService implements OnModuleInit {
           AND longitude IS NOT NULL
           AND "profileCompleted" = true
       ) AS distance_query
-      WHERE distance_km <= ${radiusKm}
+      WHERE distance_km <= ${r}
       ORDER BY distance_km ASC
-      LIMIT ${limit}
+      LIMIT ${l}
     `;
 
     return { users };
@@ -1097,7 +1110,10 @@ export class UserService implements OnModuleInit {
    * Returns cities sorted by available user count (descending)
    * Counts users with any available status: AVAILABLE, IN_SQUAD_AVAILABLE, IN_BROADCAST_AVAILABLE
    */
-  async getCitiesWithMaxUsers(limit: number = 20): Promise<Array<{ city: string; availableCount: number }>> {
+  async getCitiesWithMaxUsers(
+    limit?: number
+  ): Promise<Array<{ city: string; availableCount: number }>> {
+    const l = limit ?? CITIES_MAX_USERS_DEFAULT_LIMIT;
     // Query to get cities with available user counts (all available statuses)
     const cities = await this.prisma.$queryRaw<Array<{ city: string; count: bigint }>>`
       SELECT 
@@ -1110,7 +1126,7 @@ export class UserService implements OnModuleInit {
         AND status IN ('AVAILABLE', 'IN_SQUAD_AVAILABLE', 'IN_BROADCAST_AVAILABLE')
       GROUP BY "preferredCity"
       ORDER BY count DESC
-      LIMIT ${limit}
+      LIMIT ${l}
     `;
 
     // Map to response format
@@ -1220,7 +1236,7 @@ export class UserService implements OnModuleInit {
           orderBy: { order: "asc" }
         }
       },
-      take: filters.limit || 100
+      take: filters.limit ?? DISCOVERY_USERS_DEFAULT_LIMIT
     });
 
     return { users };

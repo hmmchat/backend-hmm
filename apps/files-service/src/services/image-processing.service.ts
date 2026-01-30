@@ -15,10 +15,10 @@ export interface ProcessedImage {
 
 @Injectable()
 export class ImageProcessingService {
-  // Maximum dimensions for images
-  private readonly MAX_WIDTH = 2000;
-  private readonly MAX_HEIGHT = 2000;
-  private readonly MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+  private readonly maxWidth: number;
+  private readonly maxHeight: number;
+  private readonly maxFileSize: number;
+  private readonly thumbnailSize: number;
 
   // Allowed image MIME types
   private readonly ALLOWED_TYPES = [
@@ -28,6 +28,14 @@ export class ImageProcessingService {
     "image/webp",
     "image/gif"
   ];
+
+  constructor() {
+    this.maxWidth = parseInt(process.env.IMAGE_MAX_WIDTH || "2000", 10);
+    this.maxHeight = parseInt(process.env.IMAGE_MAX_HEIGHT || "2000", 10);
+    const maxSizeMb = parseInt(process.env.IMAGE_MAX_FILE_SIZE_MB || "10", 10);
+    this.maxFileSize = maxSizeMb * 1024 * 1024;
+    this.thumbnailSize = parseInt(process.env.IMAGE_THUMBNAIL_SIZE || "200", 10);
+  }
 
   /**
    * Check if MIME type is an image
@@ -47,9 +55,9 @@ export class ImageProcessingService {
       );
     }
 
-    if (buffer.length > this.MAX_FILE_SIZE) {
+    if (buffer.length > this.maxFileSize) {
       throw new HttpException(
-        `Image too large. Maximum size: ${this.MAX_FILE_SIZE / 1024 / 1024}MB`,
+        `Image too large. Maximum size: ${this.maxFileSize / 1024 / 1024}MB`,
         HttpStatus.BAD_REQUEST
       );
     }
@@ -75,8 +83,8 @@ export class ImageProcessingService {
     }
   ): Promise<ProcessedImage> {
     try {
-      const maxWidth = options?.maxWidth || this.MAX_WIDTH;
-      const maxHeight = options?.maxHeight || this.MAX_HEIGHT;
+      const maxWidth = options?.maxWidth ?? this.maxWidth;
+      const maxHeight = options?.maxHeight ?? this.maxHeight;
       const quality = options?.quality || 85;
       const format = options?.format || "jpeg";
 
@@ -147,10 +155,11 @@ export class ImageProcessingService {
   /**
    * Generate thumbnail
    */
-  async generateThumbnail(buffer: Buffer, size: number = 200): Promise<Buffer> {
+  async generateThumbnail(buffer: Buffer, size?: number): Promise<Buffer> {
+    const thumbSize = size ?? this.thumbnailSize;
     try {
       return await sharp(buffer)
-        .resize(size, size, {
+        .resize(thumbSize, thumbSize, {
           fit: "cover",
           position: "center"
         })

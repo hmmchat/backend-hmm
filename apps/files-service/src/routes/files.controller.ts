@@ -199,7 +199,7 @@ export class FilesController {
     }
 
     const userId = await this.verifyTokenAndGetUserId(token);
-    const limitNum = limit ? parseInt(limit, 10) : 50;
+    const limitNum = limit !== undefined && limit !== "" ? parseInt(limit, 10) : undefined;
 
     const files = await this.filesService.getUserFiles(userId, limitNum);
     return { files };

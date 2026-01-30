@@ -2,6 +2,16 @@ import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { UserClientService, DiscoveryUser } from "./user-client.service.js";
 import { CacheService } from "./cache.service.js";
+import {
+  MATCH_SCORE_BRAND,
+  MATCH_SCORE_INTEREST_EXACT,
+  MATCH_SCORE_INTEREST_GENRE,
+  MATCH_SCORE_VALUE,
+  MATCH_SCORE_MUSIC,
+  MATCH_SCORE_SAME_CITY,
+  MATCH_SCORE_VIDEO
+} from "../config/scoring.config.js";
+import { DISCOVERY_POOL_LIMIT } from "../config/limits.config.js";
 import fetch from "node-fetch";
 
 interface UserProfile {
@@ -116,9 +126,9 @@ export class MatchingService {
       targetUser.brandPreferences.map((bp) => bp.brand.id)
     );
     const commonBrands = [...userBrandIds].filter((id) => targetBrandIds.has(id));
-    score += commonBrands.length * 10;
+    score += commonBrands.length * MATCH_SCORE_BRAND;
 
-    // Interests: sub-genre match = 15pts, genre match (different sub-genre) = 10pts
+    // Interests: sub-genre match = MATCH_SCORE_INTEREST_EXACT, genre match = MATCH_SCORE_INTEREST_GENRE
     const userInterests = (user.interests || []).map((i) => ({
       id: i.interest.id,
       name: i.interest.name,
@@ -140,7 +150,7 @@ export class MatchingService {
         if (userInterest.id === targetInterest.id) {
           // Exact match (same sub-genre)
           if (!matchedUserInterestIds.has(userInterest.id) && !matchedTargetInterestIds.has(targetInterest.id)) {
-            score += 15;
+            score += MATCH_SCORE_INTEREST_EXACT;
             matchedUserInterestIds.add(userInterest.id);
             matchedTargetInterestIds.add(targetInterest.id);
           }
@@ -159,7 +169,7 @@ export class MatchingService {
         if (userInterest.genre && targetInterest.genre && 
             userInterest.genre === targetInterest.genre && 
             userInterest.id !== targetInterest.id) {
-          score += 10;
+          score += MATCH_SCORE_INTEREST_GENRE;
           matchedUserInterestIds.add(userInterest.id);
           matchedTargetInterestIds.add(targetInterest.id);
           break; // Only match once per user interest
@@ -175,31 +185,31 @@ export class MatchingService {
       targetUser.values.map((v) => v.value.id)
     );
     const commonValues = [...userValueIds].filter((id) => targetValueIds.has(id));
-    score += commonValues.length * 20;
+    score += commonValues.length * MATCH_SCORE_VALUE;
 
-    // Music preference: 30 points
+    // Music preference
     if (
       user.musicPreference?.id &&
       targetUser.musicPreference?.id &&
       user.musicPreference.id === targetUser.musicPreference.id
     ) {
-      score += 30;
+      score += MATCH_SCORE_MUSIC;
     }
 
-    // Same city: 50 points (only when viewer's preferredCity is null - "anywhere" mode)
+    // Same city (only when viewer's preferredCity is null - "anywhere" mode)
     if (user.preferredCity === null && user.actualCity && targetUser.preferredCity) {
       if (user.actualCity.toLowerCase() === targetUser.preferredCity.toLowerCase()) {
-        score += 50;
+        score += MATCH_SCORE_SAME_CITY;
       }
     }
 
-    // Video preference: 100 points (if both have same preference)
+    // Video preference (if both have same preference)
     if (
       user.videoEnabled !== undefined &&
       targetUser.videoEnabled !== undefined &&
       user.videoEnabled === targetUser.videoEnabled
     ) {
-      score += 100;
+      score += MATCH_SCORE_VIDEO;
     }
 
     return score;
@@ -220,13 +230,12 @@ export class MatchingService {
       "IN_BROADCAST_AVAILABLE"
     ];
 
-    // Get all users in pool
     const allUsers = await this.userClient.getUsersForDiscoveryById("", {
       city,
       statuses,
       genders,
       excludeUserIds,
-      limit: 500 // Get large pool (max allowed by user-service)
+      limit: DISCOVERY_POOL_LIMIT
     });
 
     console.log(`[DEBUG] getPoolUsers - allUsers from user-service: ${allUsers.length}`);

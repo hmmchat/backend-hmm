@@ -29,11 +29,13 @@ Complete API integration guide for all backend services. This document covers ev
 - Auth: `http://localhost:3001`
 - User: `http://localhost:3002`
 - Discovery: `http://localhost:3004`
-- Streaming: `http://localhost:3006`
+- Streaming: `http://localhost:3006` (HTTP and **WebSocket** for video: `ws://localhost:3006/streaming/ws`)
 - Wallet: `http://localhost:3005`
 - Payment: `http://localhost:3007`
 - Friend: `http://localhost:3009`
 - Files: `http://localhost:3008`
+
+**Note:** Video calls use WebSocket to the **streaming service** directly (the API gateway does not proxy WebSockets). Use the streaming service base URL for the WebSocket connection (e.g. `ws://localhost:3006/streaming/ws`).
 
 ### Authentication Header
 
@@ -901,9 +903,11 @@ GET /users/{userId}?fields=username,photos,brandPreferences
 
 ## Streaming & Video Calls
 
+Video calls use **Mediasoup** (WebRTC SFU) and **WebSocket** for signaling. The backend does not use Agora.
+
 ### 1. Create Room
 
-**Endpoint:** `POST /streaming/rooms`
+**Endpoint:** `POST /streaming/rooms` (or `POST /v1/streaming/rooms` via gateway)
 
 **Request:**
 ```json
@@ -917,39 +921,91 @@ GET /users/{userId}?fields=username,photos,brandPreferences
 ```json
 {
   "roomId": "string",
-  "token": "string",  // Agora token for video call
-  "channelName": "string",  // Agora channel name
-  "appId": "string",  // Agora app ID
-  "userIds": ["user-id-1", "user-id-2"],
-  "hostId": "user-id-1",  // First user is host
-  "callType": "matched"
+  "sessionId": "string"
 }
 ```
 
 **Use Case:** 
-- Called automatically when users match (both proceed)
-- Or when creating a squad call
+- Called when users match (both proceed) or when creating a squad call
+- Store `roomId` and `sessionId`; use `roomId` for the WebSocket video flow below
 
 **Important:** 
-- Store `token`, `channelName`, and `appId` for Agora SDK
-- Use these to join video call
+- Only users with status `MATCHED` can create rooms (enforced by backend)
+- After room creation, join the call via **WebSocket + Mediasoup** (see next section), not a third-party SDK
+
+### 1a. Video Call: WebSocket and Mediasoup
+
+Video is delivered by the backend using **Mediasoup**. Connect to the **streaming service** WebSocket (the API gateway does not proxy WebSockets).
+
+**WebSocket URL:** `ws://localhost:3006/streaming/ws` (direct to streaming service). In production, use your streaming service base URL (e.g. `wss://streaming.yourdomain.com/streaming/ws`).
+
+**Authentication:** Send the JWT in the `Authorization: Bearer <accessToken>` header when opening the WebSocket.
+
+**Flow:**
+
+1. **Open WebSocket** to the streaming service with your access token.
+2. **Join room** — send:
+   ```json
+   { "type": "join-room", "data": { "roomId": "<roomId from create room>" } }
+   ```
+   Server responds with:
+   ```json
+   { "type": "room-joined", "data": { "roomId": "...", "rtpCapabilities": { ... } } }
+   ```
+3. **Create transport** (for sending and receiving) — send:
+   ```json
+   { "type": "create-transport", "data": { "roomId": "...", "producing": true, "consuming": true } }
+   ```
+   Server returns transport id and ICE/DTLS parameters; connect it using **mediasoup-client**.
+4. **Connect transport** — after the client connects the transport, send:
+   ```json
+   { "type": "connect-transport", "data": { "roomId": "...", "transportId": "...", "dtlsParameters": { ... } } }
+   ```
+5. **Produce** (send your audio/video) — send:
+   ```json
+   { "type": "produce", "data": { "roomId": "...", "transportId": "...", "kind": "video", "rtpParameters": { ... } } }
+   ```
+   (Repeat for `kind`: `"audio"` if needed.)
+6. **Consume** (receive remote tracks) — for each remote producer, send:
+   ```json
+   { "type": "consume", "data": { "roomId": "...", "transportId": "...", "producerId": "...", "rtpCapabilities": { ... } } }
+   ```
+
+Use the **mediasoup-client** library on the frontend to create `Device`, load `rtpCapabilities`, create send/recv transports, and produce/consume tracks. The WebSocket messages above are the signaling protocol the backend expects.
+
+**In-call features (same WebSocket):**
+- **Chat:** `{ "type": "chat-message", "data": { "roomId": "...", "message": "Hello!" } }`
+- **Leave:** `{ "type": "leave-room", "data": { "roomId": "..." } }`
+- **Broadcasting:** `{ "type": "start-broadcast", "data": { "roomId": "..." } }` (host only); viewers use `join-as-viewer`, `create-viewer-transport`, `connect-viewer-transport`, `get-broadcast-producers`, `consume-broadcast`
+
+See `apps/streaming-service/README.md` in the backend repo for the full WebSocket message reference.
 
 ### 2. Get Room Info
 
-**Endpoint:** `GET /streaming/rooms/:roomId`
+**Endpoint:** `GET /streaming/rooms/:roomId` (or `GET /v1/streaming/rooms/:roomId` via gateway)
 
-**Response:**
+**Response (room exists):**
 ```json
 {
   "exists": true,
+  "id": "string",
   "roomId": "string",
-  "userIds": ["user-id-1", "user-id-2"],
-  "hostId": "user-id-1",
-  "callType": "matched",
-  "status": "active",  // "active" | "ended"
-  "createdAt": "string"
+  "status": "IN_SQUAD",
+  "isBroadcasting": false,
+  "participantCount": 2,
+  "viewerCount": 0,
+  "participants": [
+    { "userId": "string", "role": "HOST", "joinedAt": "string" }
+  ],
+  "viewers": [],
+  "createdAt": "string",
+  "startedAt": "string"
 }
 ```
+
+**Response (room not found):** `{ "exists": false }`
+
+**Note:** `status` is `IN_SQUAD` (call active) or `IN_BROADCAST` (broadcasting) or `ENDED`. Participant `role` is `HOST` or `PARTICIPANT`.
 
 ### 3. Get Chat History
 
@@ -2498,18 +2554,18 @@ const retryRequest = async (fn, retries = 3) => {
    - **Left (Pass)** → `POST /discovery/raincheck`
    - **Right (Like)** → `POST /discovery/proceed`
 3. **If Match** (both proceed):
-   - Both users' status → `IN_SQUAD`
-   - Create room → `POST /streaming/rooms`
-   - Start video call with Agora SDK
+   - Both users' status → `IN_SQUAD` (backend sets this)
+   - Create room → `POST /streaming/rooms` with matched user IDs
+   - Start video call via WebSocket + Mediasoup (see [Streaming & Video Calls](#streaming--video-calls))
 
 ### Flow 3: Video Call
 
-1. **Create Room** → `POST /streaming/rooms` (after match)
-2. **Get Room Info** → `GET /streaming/rooms/:roomId`
-3. **Join Call** → Use Agora SDK with `token`, `channelName`, `appId`
-4. **Chat** → `GET /streaming/rooms/:roomId/chat` (optional)
-5. **End Call** → `POST /streaming/rooms/:roomId/end`
-6. **Update Status** → `PATCH /me/status` → `IDLE` or `DISCOVERING`
+1. **Create Room** → `POST /streaming/rooms` (after match); get `roomId` and `sessionId`
+2. **Get Room Info** → `GET /streaming/rooms/:roomId` (optional)
+3. **Join Call** → Connect WebSocket to streaming service (`ws://.../streaming/ws`), send `join-room` with `roomId`, then use mediasoup-client for create-transport, connect-transport, produce, consume (see [Video Call: WebSocket and Mediasoup](#1a-video-call-websocket-and-mediasoup))
+4. **Chat** → Send `chat-message` over WebSocket or `GET /streaming/rooms/:roomId/chat` (optional)
+5. **End Call** → `POST /streaming/rooms/:roomId/end` with `userId`; or send `leave-room` over WebSocket
+6. **Update Status** → Backend updates status; optionally refresh with `PATCH /me/status` → `IDLE` or `DISCOVERING`
 
 ### Flow 4: Purchase Coins
 

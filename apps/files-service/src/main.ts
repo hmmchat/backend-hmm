@@ -14,11 +14,12 @@ async function bootstrap() {
     })
   );
 
-  // Register multipart plugin for file uploads
+  // Register multipart plugin for file uploads (align max size with IMAGE_MAX_FILE_SIZE_MB)
+  const uploadMaxMb = parseInt(process.env.FILE_UPLOAD_MAX_SIZE_MB || "10", 10);
   await app.register(multipart, {
     limits: {
-      fileSize: 10 * 1024 * 1024, // 10MB max file size
-      files: 1 // Only one file per request
+      fileSize: uploadMaxMb * 1024 * 1024,
+      files: 1
     }
   });
 

@@ -235,9 +235,11 @@ services:
       - PORT=3009
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/friend-service?schema=public
       - REDIS_URL=redis://redis:6379
+      - AUTH_SERVICE_URL=http://auth-service:3001
       - USER_SERVICE_URL=http://user-service:3002
       - WALLET_SERVICE_URL=http://wallet-service:3005
       - STREAMING_SERVICE_URL=http://streaming-service:3006
+      - FILES_SERVICE_URL=http://files-service:3008
     ports:
       - "3009:3009"
     depends_on:
@@ -249,6 +251,30 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "node", "-e", "require('http').get('http://localhost:3009/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  # Ads Service
+  ads-service:
+    build:
+      context: .
+      dockerfile: apps/ads-service/Dockerfile
+    container_name: hmm-ads-service
+    environment:
+      - NODE_ENV=production
+      - PORT=3010
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/ads-service?schema=public
+      - WALLET_SERVICE_URL=http://wallet-service:3005
+    ports:
+      - "3010:3010"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      wallet-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3010/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
       interval: 30s
       timeout: 3s
       retries: 3
@@ -271,6 +297,7 @@ services:
       - PAYMENT_SERVICE_URL=http://payment-service:3007
       - FILES_SERVICE_URL=http://files-service:3008
       - FRIEND_SERVICE_URL=http://friend-service:3009
+      - ADS_SERVICE_URL=http://ads-service:3010
     ports:
       - "3000:3000"
     depends_on:

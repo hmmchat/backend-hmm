@@ -21,11 +21,17 @@ export class RoutingService implements OnModuleInit {
   private readonly logger = new Logger(RoutingService.name);
   private routes: Map<string, RouteConfig> = new Map();
   private circuitBreakers: Map<string, CircuitBreakerState> = new Map();
-  private readonly CIRCUIT_BREAKER_THRESHOLD = 5; // Open after 5 failures (less aggressive)
-  private readonly CIRCUIT_BREAKER_TIMEOUT = 15000; // 15 seconds before attempting recovery (faster recovery)
-  private readonly CIRCUIT_BREAKER_WINDOW = 60000; // 1 minute window for failure counting
+  private readonly CIRCUIT_BREAKER_THRESHOLD: number;
+  private readonly CIRCUIT_BREAKER_TIMEOUT: number;
+  private readonly CIRCUIT_BREAKER_WINDOW: number;
+  private readonly PROXY_DEFAULT_TIMEOUT_MS: number;
 
-  constructor(private configService: ConfigService) {}
+  constructor(private configService: ConfigService) {
+    this.CIRCUIT_BREAKER_THRESHOLD = parseInt(this.configService.get<string>("CIRCUIT_BREAKER_THRESHOLD") || "5", 10);
+    this.CIRCUIT_BREAKER_TIMEOUT = parseInt(this.configService.get<string>("CIRCUIT_BREAKER_RECOVERY_MS") || "15000", 10);
+    this.CIRCUIT_BREAKER_WINDOW = parseInt(this.configService.get<string>("CIRCUIT_BREAKER_WINDOW_MS") || "60000", 10);
+    this.PROXY_DEFAULT_TIMEOUT_MS = parseInt(this.configService.get<string>("PROXY_DEFAULT_TIMEOUT_MS") || "10000", 10);
+  }
 
   async onModuleInit() {
     // Load service URLs from environment variables
@@ -267,7 +273,7 @@ export class RoutingService implements OnModuleInit {
     }
 
     const url = `${route.serviceUrl}${servicePath}`;
-    const timeout = route.timeout || 10000; // 10 second default timeout (reduced from 30s)
+    const timeout = route.timeout || this.PROXY_DEFAULT_TIMEOUT_MS;
 
     // Prepare headers
     const requestHeaders: Record<string, string> = {

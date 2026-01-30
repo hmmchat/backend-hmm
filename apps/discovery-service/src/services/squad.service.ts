@@ -7,14 +7,17 @@ import { randomBytes } from "crypto";
 @Injectable()
 export class SquadService {
   private readonly logger = new Logger(SquadService.name);
-  private readonly INVITATION_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
-  private readonly MAX_SQUAD_SIZE = 3; // 1 inviter + 2 invitees
+  private readonly INVITATION_TIMEOUT_MS: number;
+  private readonly MAX_SQUAD_SIZE: number;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly userClient: UserClientService,
     private readonly friendClient: FriendClientService
-  ) {}
+  ) {
+    this.INVITATION_TIMEOUT_MS = parseInt(process.env.SQUAD_INVITATION_TIMEOUT_MS || "600000", 10); // 10 min default
+    this.MAX_SQUAD_SIZE = parseInt(process.env.MAX_SQUAD_SIZE || "3", 10); // 1 inviter + 2 invitees
+  }
 
   /**
    * Validate that invitee has ONLINE status (or is external user with link)

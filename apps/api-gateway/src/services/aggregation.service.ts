@@ -68,7 +68,7 @@ export class AggregationService {
   }
 
   /**
-   * Get coins balance from wallet service
+   * Get coins and diamonds balance from wallet service
    */
   private async getCoins(token: string): Promise<{ coins: number; diamonds: number }> {
     try {
@@ -84,10 +84,10 @@ export class AggregationService {
         throw new Error(`Wallet service returned ${response.status}`);
       }
 
-      const data = await response.json() as any;
+      const data = await response.json() as { balance?: number; coins?: number; diamonds?: number };
       return {
-        coins: data.coins || 0,
-        diamonds: data.diamonds || 0
+        coins: data.coins ?? data.balance ?? 0,
+        diamonds: data.diamonds ?? 0
       };
     } catch (error: any) {
       this.logger.warn(`Failed to fetch coins: ${error.message}`);

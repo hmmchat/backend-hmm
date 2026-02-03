@@ -55,7 +55,8 @@ model RedemptionRequest {
   userId              String
   originalDiamonds    Int              // Original diamonds user wanted to redeem
   finalDiamonds       Int              // Final diamonds after upsell (if any)
-  coinsDeducted       Int              // Coins deducted for diamonds (including upsell)
+  coinsDeducted       Int              // Legacy: 0 for new flow; kept for backward compatibility
+  diamondsDeducted    Int              @default(0) // Diamonds deducted (new decoupled flow)
   inrAmount           Int              // INR amount in paise to be paid out
   upsellLevel         Int              @default(0) // 0 = no upsell, 1-3 = upsell levels
   status              RedemptionStatus @default(PENDING)

@@ -256,16 +256,13 @@ export class DareService {
       throw new NotFoundException(`Dare ${dareId} not found or not assigned`);
     }
 
-    // Convert diamonds to coins
-    const totalCoins = this.walletClient.diamondsToCoins(gift.diamonds);
-
-    // Transfer 100% to assigned user immediately with gift information
-    const paymentResult = await this.walletClient.transferCoins(
+    // Transfer diamonds from sender to assigned user (gifts/dares use diamonds)
+    const paymentResult = await this.walletClient.transferDiamonds(
       senderId,
       dareRecord.assignedTo,
-      totalCoins,
+      gift.diamonds,
       `Dare ${dareId} with gift ${giftId}`,
-      giftId // Pass giftId to wallet service
+      giftId
     );
 
     // Update dare record
@@ -283,13 +280,13 @@ export class DareService {
 
     this.logger.log(
       `Dare ${dareId} sent by ${senderId} to ${dareRecord.assignedTo} with gift ${giftId}. ` +
-      `Paid ${totalCoins} coins (${gift.diamonds} diamonds) - 100%` +
+      `Paid ${gift.diamonds} diamonds - 100%` +
       (wasAutoAssigned ? " (auto-assigned in 2-user call)" : "")
     );
 
     return {
       transactionId: paymentResult.transactionId,
-      newBalance: paymentResult.newBalance,
+      newBalance: paymentResult.newDiamondBalance,
       assignedTo: dareRecord.assignedTo,
       wasAutoAssigned
     };

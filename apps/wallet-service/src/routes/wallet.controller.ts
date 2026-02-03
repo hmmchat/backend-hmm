@@ -40,7 +40,7 @@ export class WalletController {
   }
 
   /**
-   * Get current user's coin balance
+   * Get current user's coin and diamond balance
    * GET /me/balance
    */
   @Get("me/balance")
@@ -52,6 +52,37 @@ export class WalletController {
 
     const userId = await this.verifyTokenAndGetUserId(token);
     return this.walletService.getBalance(userId);
+  }
+
+  /**
+   * Purchase diamonds with coins (explicit conversion)
+   * POST /me/diamonds/purchase
+   * Body: { diamondAmount: number }
+   */
+  @Post("me/diamonds/purchase")
+  async purchaseDiamonds(@Headers("authorization") authz: string, @Body() body: any) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+
+    const schema = z.object({
+      diamondAmount: z.number().positive().int()
+    });
+    const dto = schema.parse(body);
+
+    const userId = await this.verifyTokenAndGetUserId(token);
+    try {
+      return await this.walletService.purchaseDiamondsFromCoins(userId, dto.diamondAmount);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("Insufficient coins")) {
+        throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
+      }
+      throw new HttpException(
+        "Failed to purchase diamonds",
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
   }
 
   /**
@@ -217,6 +248,83 @@ export class WalletController {
 
     const userId = await this.verifyTokenAndGetUserId(token);
     return this.walletService.getGiftTransactions(userId);
+  }
+
+  /**
+   * Test endpoint: Add diamonds (for testing / internal)
+   * POST /test/wallet/add-diamonds
+   * Body: { userId: string, amount: number, description?: string, giftId?: string }
+   */
+  @Post("test/wallet/add-diamonds")
+  async addDiamondsTest(@Body() body: any) {
+    const { userId, amount, description, giftId } = body;
+    if (!userId || !amount) {
+      throw new HttpException("userId and amount are required", HttpStatus.BAD_REQUEST);
+    }
+    if (amount <= 0) {
+      throw new HttpException("Amount must be positive", HttpStatus.BAD_REQUEST);
+    }
+    return this.walletService.addDiamondsForUser(userId, amount, description, giftId);
+  }
+
+  /**
+   * Test endpoint: Deduct diamonds (for testing / internal)
+   * POST /test/wallet/deduct-diamonds
+   * Body: { userId: string, amount: number, description?: string }
+   */
+  @Post("test/wallet/deduct-diamonds")
+  async deductDiamondsTest(@Body() body: any) {
+    const { userId, amount, description } = body;
+    if (!userId || !amount) {
+      throw new HttpException("userId and amount are required", HttpStatus.BAD_REQUEST);
+    }
+    if (amount <= 0) {
+      throw new HttpException("Amount must be positive", HttpStatus.BAD_REQUEST);
+    }
+    try {
+      return await this.walletService.deductDiamondsForUser(userId, amount, description);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("Insufficient diamonds")) {
+        throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
+      }
+      throw new HttpException(
+        "Failed to deduct diamonds",
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  /**
+   * Test endpoint: Transfer diamonds (for testing / internal)
+   * POST /test/wallet/transfer-diamonds
+   * Body: { fromUserId: string, toUserId: string, amount: number, description?: string, giftId?: string }
+   */
+  @Post("test/wallet/transfer-diamonds")
+  async transferDiamondsTest(@Body() body: any) {
+    const { fromUserId, toUserId, amount, description, giftId } = body;
+    if (!fromUserId || !toUserId || !amount) {
+      throw new HttpException("fromUserId, toUserId and amount are required", HttpStatus.BAD_REQUEST);
+    }
+    if (amount <= 0) {
+      throw new HttpException("Amount must be positive", HttpStatus.BAD_REQUEST);
+    }
+    try {
+      return await this.walletService.transferDiamonds(
+        fromUserId,
+        toUserId,
+        amount,
+        description,
+        giftId
+      );
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("Insufficient diamonds")) {
+        throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
+      }
+      throw new HttpException(
+        "Failed to transfer diamonds",
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
   }
 
   /* ---------- Internal Endpoints (for other services) ---------- */

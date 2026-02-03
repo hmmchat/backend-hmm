@@ -424,34 +424,32 @@ export class PaymentService {
 
     // Encrypt sensitive bank account information
     const encryptedAccountNumber = this.encryptionService.encrypt(bankAccountDetails.accountNumber);
-    const coinsToDeduct = this.walletClient.convertDiamondsToCoins(finalDiamonds);
 
     // Use transaction to ensure atomicity of redemption request creation
     const redemptionRequest = await this.prisma.$transaction(async (tx) => {
-      // Get user balance with lock to prevent race conditions
-      const userBalance = await this.walletClient.getBalance(userId);
-
-      // Verify balance again within transaction (double-check)
-      if (userBalance < coinsToDeduct) {
+      // Verify diamond balance again within transaction (double-check)
+      const userDiamonds = await this.walletClient.getDiamondBalance(userId);
+      if (userDiamonds < finalDiamonds) {
         throw new BadRequestException(
-          `Insufficient coins. Available: ${userBalance}, Required: ${coinsToDeduct}`
+          `Insufficient diamonds. Available: ${userDiamonds}, Required: ${finalDiamonds}`
         );
       }
 
-      // Create redemption request
+      // Create redemption request (diamonds deducted; coinsDeducted kept 0 for new flow)
       const request = await tx.redemptionRequest.create({
         data: {
           userId,
           originalDiamonds: baseDiamonds,
           finalDiamonds,
-          coinsDeducted: coinsToDeduct,
+          coinsDeducted: 0,
+          diamondsDeducted: finalDiamonds,
           inrAmount: inrAmountInPaise,
           upsellLevel,
           status: "PENDING",
           bankAccountNumber: encryptedAccountNumber, // Encrypted
           bankIfsc: bankAccountDetails.ifsc, // IFSC is public info, no need to encrypt
           bankAccountName: bankAccountDetails.name // Name is public info, no need to encrypt
-        }
+        } as any // diamondsDeducted added for decoupled coins/diamonds; Prisma client may need regenerate
       });
 
       return request;
@@ -461,10 +459,10 @@ export class PaymentService {
     });
 
     try {
-      // Deduct coins (outside transaction but will be refunded if payout fails)
-      await this.walletClient.deductCoins(
+      // Deduct diamonds (outside transaction but will be refunded if payout fails)
+      await this.walletClient.deductDiamonds(
         userId,
-        coinsToDeduct,
+        finalDiamonds,
         `Redemption: ${finalDiamonds} diamonds (${baseDiamonds} base + upsell level ${upsellLevel})`
       );
 
@@ -501,12 +499,12 @@ export class PaymentService {
           `Redemption initiated: Request ${redemptionRequest.id}, ${finalDiamonds} diamonds, ₹${inrAmount}, Payout ${payoutId}`
         );
       } catch (payoutError: any) {
-        // Payout failed, refund coins
+        // Payout failed, refund diamonds
         this.logger.error(`Payout failed for request ${redemptionRequest.id}: ${payoutError.message}`);
         
-        await this.walletClient.addCoins(
+        await this.walletClient.addDiamonds(
           userId,
-          coinsToDeduct,
+          finalDiamonds,
           `Refund: Failed payout for redemption request ${redemptionRequest.id}`
         );
 

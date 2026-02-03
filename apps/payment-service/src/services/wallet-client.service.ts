@@ -41,7 +41,7 @@ export class WalletClientService {
           throw lastError;
         }
 
-        const data = await response.json() as { balance: number };
+        const data = await response.json() as { balance: number; diamonds?: number };
         return data.balance || 0;
       } catch (error: any) {
         lastError = error;
@@ -239,10 +239,154 @@ export class WalletClientService {
   }
 
   /**
-   * Get diamond balance (calculated from coins)
+   * Get diamond balance (real balance from wallet, not derived from coins)
    */
-  async getDiamondBalance(userId: string): Promise<number> {
-    const coins = await this.getBalance(userId);
-    return this.convertCoinsToDiamonds(coins);
+  async getDiamondBalance(userId: string, retries: number = 3): Promise<number> {
+    let lastError: any;
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        const response = await fetch(`${this.walletServiceUrl}/test/balance?userId=${userId}`, {
+          signal: AbortSignal.timeout(this.configService.getWalletClientGetBalanceTimeoutMs())
+        });
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({ message: "Unknown error" })) as { message?: string };
+          lastError = new BadRequestException(
+            `Failed to get balance for user ${userId}: ${errorData.message || "Unknown error"}`
+          );
+          if (response.status >= 400 && response.status < 500) throw lastError;
+          if (attempt < retries) {
+            await this.delay(1000 * attempt);
+            continue;
+          }
+          throw lastError;
+        }
+        const data = await response.json() as { balance: number; diamonds?: number };
+        return data.diamonds ?? 0;
+      } catch (error: any) {
+        lastError = error;
+        if (error instanceof BadRequestException && error.message.includes("Failed to get balance")) throw error;
+        if (attempt < retries && (error.name === "AbortError" || error.code === "ECONNREFUSED" || error.code === "ETIMEDOUT")) {
+          this.logger.warn(`Attempt ${attempt} failed to get diamond balance for ${userId}, retrying...`);
+          await this.delay(1000 * attempt);
+          continue;
+        }
+        if (attempt === retries) {
+          this.logger.error(`Error getting diamond balance for ${userId} after ${retries} attempts: ${error.message}`);
+          throw new BadRequestException(`Failed to get diamond balance after ${retries} attempts: ${error.message}`);
+        }
+      }
+    }
+    throw lastError || new BadRequestException("Failed to get diamond balance: Unknown error");
+  }
+
+  /**
+   * Deduct diamonds from user wallet (for redemption) with retry logic
+   */
+  async deductDiamonds(
+    userId: string,
+    amount: number,
+    description?: string,
+    retries: number = 3
+  ): Promise<{ newDiamondBalance: number; transactionId: string }> {
+    let lastError: any;
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        const response = await fetch(`${this.walletServiceUrl}/test/wallet/deduct-diamonds`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId,
+            amount,
+            description: description || `Diamond redemption: ${amount} diamonds`
+          }),
+          signal: AbortSignal.timeout(this.configService.getWalletClientRequestTimeoutMs())
+        });
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({ message: "Unknown error" })) as { message?: string };
+          if (errorData.message?.includes("Insufficient diamonds")) {
+            throw new BadRequestException(`Insufficient diamonds: ${errorData.message}`);
+          }
+          lastError = new BadRequestException(
+            `Failed to deduct diamonds from user ${userId}: ${errorData.message || "Unknown error"}`
+          );
+          if (response.status >= 400 && response.status < 500) throw lastError;
+          if (attempt < retries) {
+            await this.delay(1000 * attempt);
+            continue;
+          }
+          throw lastError;
+        }
+        const result = await response.json() as { newDiamondBalance: number; transactionId: string };
+        this.logger.log(`Deducted ${amount} diamonds from user ${userId}. New diamond balance: ${result.newDiamondBalance}`);
+        return result;
+      } catch (error: any) {
+        lastError = error;
+        if (error instanceof BadRequestException && (error.message.includes("Insufficient diamonds") || error.message.includes("Failed to deduct diamonds"))) throw error;
+        if (attempt < retries && (error.name === "AbortError" || error.code === "ECONNREFUSED" || error.code === "ETIMEDOUT")) {
+          this.logger.warn(`Attempt ${attempt} failed to deduct diamonds from ${userId}, retrying...`);
+          await this.delay(1000 * attempt);
+          continue;
+        }
+        if (attempt === retries) {
+          this.logger.error(`Error deducting diamonds from ${userId} after ${retries} attempts: ${error.message}`);
+          throw new BadRequestException(`Failed to deduct diamonds after ${retries} attempts: ${error.message}`);
+        }
+      }
+    }
+    throw lastError || new BadRequestException("Failed to deduct diamonds: Unknown error");
+  }
+
+  /**
+   * Add diamonds to user wallet (e.g. refund on payout failure) with retry logic
+   */
+  async addDiamonds(
+    userId: string,
+    amount: number,
+    description?: string,
+    retries: number = 3
+  ): Promise<{ newDiamondBalance: number; transactionId: string }> {
+    let lastError: any;
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        const response = await fetch(`${this.walletServiceUrl}/test/wallet/add-diamonds`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId,
+            amount,
+            description: description || `Diamond refund: ${amount} diamonds`
+          }),
+          signal: AbortSignal.timeout(this.configService.getWalletClientRequestTimeoutMs())
+        });
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({ message: "Unknown error" })) as { message?: string };
+          lastError = new BadRequestException(
+            `Failed to add diamonds to user ${userId}: ${errorData.message || "Unknown error"}`
+          );
+          if (response.status >= 400 && response.status < 500) throw lastError;
+          if (attempt < retries) {
+            await this.delay(1000 * attempt);
+            continue;
+          }
+          throw lastError;
+        }
+        const result = await response.json() as { newDiamondBalance: number; transactionId: string };
+        this.logger.log(`Added ${amount} diamonds to user ${userId}. New diamond balance: ${result.newDiamondBalance}`);
+        return result;
+      } catch (error: any) {
+        lastError = error;
+        if (error instanceof BadRequestException && error.message.includes("Failed to add diamonds")) throw error;
+        if (attempt < retries && (error.name === "AbortError" || error.code === "ECONNREFUSED" || error.code === "ETIMEDOUT")) {
+          this.logger.warn(`Attempt ${attempt} failed to add diamonds to ${userId}, retrying...`);
+          await this.delay(1000 * attempt);
+          continue;
+        }
+        if (attempt === retries) {
+          this.logger.error(`Error adding diamonds to ${userId} after ${retries} attempts: ${error.message}`);
+          throw new BadRequestException(`Failed to add diamonds after ${retries} attempts: ${error.message}`);
+        }
+      }
+    }
+    throw lastError || new BadRequestException("Failed to add diamonds: Unknown error");
   }
 }

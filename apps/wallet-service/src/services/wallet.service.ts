@@ -1,15 +1,21 @@
 import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service.js";
+import { TransactionKind } from "@prisma/client";
 
 @Injectable()
 export class WalletService {
   constructor(private readonly prisma: PrismaService) {}
 
+  /** Coins per 1 diamond (e.g. 100 = 100 coins for 1 diamond). Aligns with payment service DIAMOND_TO_COIN_RATE. */
+  private getCoinsPerDiamond(): number {
+    return parseInt(process.env.DIAMOND_TO_COIN_RATE || "100", 10);
+  }
+
   /**
-   * Get wallet balance for a user
+   * Get wallet balance for a user (coins and diamonds)
    * Creates wallet if it doesn't exist (lazy initialization)
    */
-  async getBalance(userId: string): Promise<{ balance: number }> {
+  async getBalance(userId: string): Promise<{ balance: number; diamonds: number }> {
     let wallet = await this.prisma.wallet.findUnique({
       where: { id: userId }
     });
@@ -19,12 +25,16 @@ export class WalletService {
       wallet = await this.prisma.wallet.create({
         data: {
           id: userId,
-          balance: 0
+          balance: 0,
+          diamonds: 0
         } as any // Type assertion for Prisma client type resolution
       });
     }
 
-    return { balance: wallet.balance };
+    return {
+      balance: wallet.balance,
+      diamonds: wallet.diamonds ?? 0
+    };
   }
 
   /**
@@ -46,7 +56,8 @@ export class WalletService {
         await this.prisma.wallet.create({
           data: {
             id: userId,
-            balance: 0
+            balance: 0,
+            diamonds: 0
           } as any // Type assertion for Prisma client type resolution
         });
         // Fetch with transactions after creation
@@ -70,7 +81,8 @@ export class WalletService {
         wallet = await this.prisma.wallet.create({
           data: {
             id: userId,
-            balance: 0
+            balance: 0,
+            diamonds: 0
           } as any // Type assertion for Prisma client type resolution
         });
       }
@@ -102,7 +114,8 @@ export class WalletService {
       wallet = await this.prisma.wallet.create({
         data: {
           id: userId,
-          balance: 0
+          balance: 0,
+          diamonds: 0
         } as any // Type assertion for Prisma client type resolution
       });
     }
@@ -127,7 +140,8 @@ export class WalletService {
         walletId: wallet.id,
         amount: -amount, // Negative for debit
         type: "DEBIT",
-        description: `Gender filter: ${screens} screens`
+        description: `Gender filter: ${screens} screens`,
+        transactionKind: TransactionKind.COINS
       }
     });
 
@@ -160,7 +174,8 @@ export class WalletService {
       wallet = await this.prisma.wallet.create({
         data: {
           id: userId,
-          balance: 0
+          balance: 0,
+          diamonds: 0
         } as any // Type assertion for Prisma client type resolution
       });
     }
@@ -225,7 +240,8 @@ export class WalletService {
           walletId: wallet.id,
           amount: amount, // Positive for credit
           type: "CREDIT",
-          description: description || `Test credit: ${amount} coins`
+          description: description || `Test credit: ${amount} coins`,
+          transactionKind: TransactionKind.COINS
         }
       });
       transactionId = transaction.id;
@@ -261,7 +277,8 @@ export class WalletService {
       wallet = await this.prisma.wallet.create({
         data: {
           id: userId,
-          balance: 0
+          balance: 0,
+          diamonds: 0
         } as any
       });
     }
@@ -286,12 +303,235 @@ export class WalletService {
         walletId: wallet.id,
         amount: -amount, // Negative for debit
         type: "DEBIT",
-        description: description || `Dare payment: ${amount} coins`
+        description: description || `Dare payment: ${amount} coins`,
+        transactionKind: TransactionKind.COINS
       }
     });
 
     return {
       newBalance: updatedWallet.balance,
+      transactionId: transaction.id
+    };
+  }
+
+  /**
+   * Add diamonds to wallet (for conversion, gifts/dares received)
+   */
+  async addDiamondsForUser(
+    userId: string,
+    amount: number,
+    description?: string,
+    giftId?: string
+  ): Promise<{ newDiamondBalance: number; transactionId: string }> {
+    if (amount <= 0) {
+      throw new Error("Amount must be positive");
+    }
+
+    let wallet = await this.prisma.wallet.findUnique({
+      where: { id: userId }
+    });
+
+    if (!wallet) {
+      wallet = await this.prisma.wallet.create({
+        data: {
+          id: userId,
+          balance: 0,
+          diamonds: 0
+        } as any
+      });
+    }
+
+    const updatedWallet = await this.prisma.wallet.update({
+      where: { id: userId },
+      data: {
+        diamonds: {
+          increment: amount
+        }
+      }
+    });
+
+    const transaction = await this.prisma.transaction.create({
+      data: {
+        walletId: wallet.id,
+        amount: 0,
+        type: "CREDIT",
+        description: description || `Diamond credit: ${amount} diamonds`,
+        giftId: giftId ?? undefined,
+        diamondAmount: amount,
+        transactionKind: TransactionKind.DIAMONDS
+      }
+    });
+
+    return {
+      newDiamondBalance: updatedWallet.diamonds,
+      transactionId: transaction.id
+    };
+  }
+
+  /**
+   * Deduct diamonds from wallet (for gifts/dares sent, redemption)
+   */
+  async deductDiamondsForUser(
+    userId: string,
+    amount: number,
+    description?: string
+  ): Promise<{ newDiamondBalance: number; transactionId: string }> {
+    if (amount <= 0) {
+      throw new Error("Amount must be positive");
+    }
+
+    let wallet = await this.prisma.wallet.findUnique({
+      where: { id: userId }
+    });
+
+    if (!wallet) {
+      wallet = await this.prisma.wallet.create({
+        data: {
+          id: userId,
+          balance: 0,
+          diamonds: 0
+        } as any
+      });
+    }
+
+    const currentDiamonds = wallet.diamonds ?? 0;
+    if (currentDiamonds < amount) {
+      throw new Error(
+        `Insufficient diamonds. Required: ${amount}, Available: ${currentDiamonds}`
+      );
+    }
+
+    const updatedWallet = await this.prisma.wallet.update({
+      where: { id: userId },
+      data: {
+        diamonds: {
+          decrement: amount
+        }
+      }
+    });
+
+    const transaction = await this.prisma.transaction.create({
+      data: {
+        walletId: wallet.id,
+        amount: 0,
+        type: "DEBIT",
+        description: description || `Diamond debit: ${amount} diamonds`,
+        diamondAmount: -amount,
+        transactionKind: TransactionKind.DIAMONDS
+      }
+    });
+
+    return {
+      newDiamondBalance: updatedWallet.diamonds,
+      transactionId: transaction.id
+    };
+  }
+
+  /**
+   * Transfer diamonds from one user to another (gifts/dares)
+   */
+  async transferDiamonds(
+    fromUserId: string,
+    toUserId: string,
+    amount: number,
+    description?: string,
+    giftId?: string
+  ): Promise<{ transactionId: string; newDiamondBalance: number }> {
+    if (amount <= 0) {
+      throw new Error("Amount must be positive");
+    }
+
+    const deductResult = await this.deductDiamondsForUser(
+      fromUserId,
+      amount,
+      description || `Diamond transfer to user ${toUserId}`
+    );
+
+    try {
+      await this.addDiamondsForUser(
+        toUserId,
+        amount,
+        `Diamond transfer from user ${fromUserId}` + (description ? `: ${description}` : ""),
+        giftId
+      );
+    } catch (error) {
+      await this.addDiamondsForUser(
+        fromUserId,
+        amount,
+        `Refund: failed diamond transfer to user ${toUserId}`
+      );
+      throw error;
+    }
+
+    return {
+      transactionId: deductResult.transactionId,
+      newDiamondBalance: deductResult.newDiamondBalance
+    };
+  }
+
+  /**
+   * Purchase diamonds with coins (explicit conversion)
+   */
+  async purchaseDiamondsFromCoins(
+    userId: string,
+    diamondAmount: number,
+    rate?: number
+  ): Promise<{
+    newBalance: number;
+    newDiamondBalance: number;
+    coinsSpent: number;
+    transactionId: string;
+  }> {
+    if (diamondAmount <= 0) {
+      throw new Error("Diamond amount must be positive");
+    }
+
+    const coinsPerDiamond = rate ?? this.getCoinsPerDiamond();
+    const coinsNeeded = diamondAmount * coinsPerDiamond;
+
+    let wallet = await this.prisma.wallet.findUnique({
+      where: { id: userId }
+    });
+
+    if (!wallet) {
+      wallet = await this.prisma.wallet.create({
+        data: {
+          id: userId,
+          balance: 0,
+          diamonds: 0
+        } as any
+      });
+    }
+
+    if (wallet.balance < coinsNeeded) {
+      throw new Error(
+        `Insufficient coins. Need ${coinsNeeded} coins for ${diamondAmount} diamonds (${coinsPerDiamond} coins per diamond), available: ${wallet.balance}`
+      );
+    }
+
+    const updatedWallet = await this.prisma.wallet.update({
+      where: { id: userId },
+      data: {
+        balance: { decrement: coinsNeeded },
+        diamonds: { increment: diamondAmount }
+      }
+    });
+
+    const transaction = await this.prisma.transaction.create({
+      data: {
+        walletId: wallet.id,
+        amount: -coinsNeeded,
+        type: "DEBIT",
+        description: `Converted ${coinsNeeded} coins to ${diamondAmount} diamonds`,
+        diamondAmount,
+        transactionKind: TransactionKind.CONVERSION
+      }
+    });
+
+    return {
+      newBalance: updatedWallet.balance,
+      newDiamondBalance: updatedWallet.diamonds,
+      coinsSpent: coinsNeeded,
       transactionId: transaction.id
     };
   }

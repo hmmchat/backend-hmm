@@ -102,7 +102,8 @@ model Gift {
   giftId       String   @unique // e.g., "monkey", "pikachu"
   name          String   // Display name
   emoji         String   // Emoji representation
-  coins         Int      // Cost in coins
+  coins         Int      // Legacy/display (optional)
+  diamonds      Int      @default(0) // Cost in diamonds (used for gifting)
   isActive      Boolean  @default(true)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt

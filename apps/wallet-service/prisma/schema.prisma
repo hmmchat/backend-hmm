@@ -19,6 +19,7 @@ generator client {
 model Wallet {
   id        String   @id // Links to auth-service User.id (must match auth-service user id)
   balance   Int      @default(0) // Coin balance (non-negative)
+  diamonds Int      @default(0) // Diamond balance (non-negative); separate from coins
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -29,14 +30,16 @@ model Wallet {
 }
 
 model Transaction {
-  id        String   @id @default(cuid())
-  walletId  String
-  wallet    Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
-  amount    Int      // Positive for credits, negative for debits
-  type      TransactionType
-  description String?
-  giftId    String?  // Gift sticker ID (monkey, pikachu, etc.) - only for CREDIT transactions from gifts
-  createdAt DateTime @default(now())
+  id               String            @id @default(cuid())
+  walletId         String
+  wallet           Wallet            @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  amount           Int               // Positive for credits, negative for debits (coins)
+  type             TransactionType
+  description      String?
+  giftId           String?           // Gift sticker ID (monkey, pikachu, etc.) - only for CREDIT transactions from gifts
+  diamondAmount    Int?              // Delta for diamonds (positive credit, negative debit); used when transactionKind is DIAMONDS or CONVERSION
+  transactionKind  TransactionKind? // COINS = coin-only, DIAMONDS = diamond-only, CONVERSION = coins->diamonds purchase
+  createdAt        DateTime         @default(now())
 
   @@index([walletId])
   @@index([createdAt])
@@ -49,4 +52,10 @@ enum TransactionType {
   DEBIT       // Coins spent (e.g., premium features, gifts)
   REFUND      // Refund for a previous transaction
   ADJUSTMENT  // Manual adjustment by admin
+}
+
+enum TransactionKind {
+  COINS       // Coin-only transaction
+  DIAMONDS    // Diamond-only transaction
+  CONVERSION  // Coins to diamonds purchase (coin debit + diamond credit)
 }

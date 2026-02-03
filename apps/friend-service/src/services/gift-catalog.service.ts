@@ -17,8 +17,9 @@ export class GiftCatalogService {
         name: true,
         emoji: true,
         coins: true,
+        diamonds: true,
         isActive: true
-      }
+      } as any // diamonds added for decoupled coins/diamonds; Prisma client may need regenerate
     });
 
     if (!gift) {
@@ -33,14 +34,15 @@ export class GiftCatalogService {
   }
 
   /**
-   * Validate gift ID and amount match
+   * Validate gift ID and amount match (amount is in diamonds)
    */
   async validateGift(giftId: string, amount: number): Promise<void> {
-    const gift = await this.getGift(giftId);
+    const gift = await this.getGift(giftId) as unknown as { coins: number; diamonds?: number };
+    const diamondCost = gift.diamonds ?? gift.coins ?? 0;
 
-    if (gift.coins !== amount) {
+    if (diamondCost !== amount) {
       throw new BadRequestException(
-        `Gift amount mismatch. Gift ${giftId} costs ${gift.coins} coins, but ${amount} was provided`
+        `Gift amount mismatch. Gift ${giftId} costs ${diamondCost} diamonds, but ${amount} was provided`
       );
     }
   }
@@ -56,11 +58,12 @@ export class GiftCatalogService {
         giftId: true,
         name: true,
         emoji: true,
-        coins: true
-      },
+        coins: true,
+        diamonds: true
+      } as any,
       orderBy: {
-        coins: "asc"
-      }
+        diamonds: "asc"
+      } as any
     });
   }
 

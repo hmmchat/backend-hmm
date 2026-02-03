@@ -685,8 +685,8 @@ export class FriendService {
         transactionId = result.transactionId;
         newBalance = result.newBalance;
       } else if (giftId && giftAmount) {
-        // Transfer coins for gift
-        const result = await this.walletClient.transferCoins(
+        // Transfer diamonds for gift (gifts give diamonds)
+        const result = await this.walletClient.transferDiamonds(
           fromUserId,
           toUserId,
           giftAmount,
@@ -876,9 +876,9 @@ export class FriendService {
       let transactionId: string | undefined;
       let newBalance: number | undefined;
 
-      // If gift is sent, transfer coins
+      // If gift is sent, transfer diamonds (gifts give diamonds)
       if (giftId && giftAmount) {
-        const result = await this.walletClient.transferCoins(
+        const result = await this.walletClient.transferDiamonds(
           fromUserId,
           toUserId,
           giftAmount,

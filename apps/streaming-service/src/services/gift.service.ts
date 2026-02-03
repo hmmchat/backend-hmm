@@ -12,8 +12,9 @@ export class GiftService {
   ) {}
 
   /**
-   * Send a gift (transfer coins) in a room
+   * Send a gift (transfer diamonds) in a room
    * @param giftId Gift sticker ID (monkey, pikachu, etc.) - required
+   * @param amount Amount in diamonds (gifts give diamonds)
    */
   async sendGift(
     roomId: string,
@@ -60,13 +61,13 @@ export class GiftService {
       throw new BadRequestException("Recipient is not in the room");
     }
 
-    // Transfer coins from sender to receiver via wallet-service
-    const result = await this.walletClient.transferCoins(
+    // Transfer diamonds from sender to receiver (gifts give diamonds)
+    const result = await this.walletClient.transferDiamonds(
       fromUserId,
       toUserId,
       amount,
       `Gift to user ${toUserId} in room ${roomId}`,
-      giftId // Pass giftId to wallet service
+      giftId
     );
 
     // Create gift record
@@ -81,11 +82,11 @@ export class GiftService {
       }
     });
 
-    this.logger.log(`Gift sent: ${fromUserId} -> ${toUserId} (${amount} coins) in room ${roomId}`);
+    this.logger.log(`Gift sent: ${fromUserId} -> ${toUserId} (${amount} diamonds) in room ${roomId}`);
 
     return {
       transactionId: result.transactionId,
-      newBalance: result.newBalance
+      newBalance: result.newDiamondBalance
     };
   }
 
@@ -123,8 +124,9 @@ export class GiftService {
 
   /**
    * Send a gift without room context (for OFFLINE cards)
-   * Transfers coins and creates badge, but does NOT create CallGift record
+   * Transfers diamonds and creates badge, but does NOT create CallGift record
    * @param giftId Gift sticker ID (monkey, pikachu, etc.) - required
+   * @param amount Amount in diamonds
    */
   async sendGiftDirect(
     fromUserId: string,
@@ -144,25 +146,24 @@ export class GiftService {
       throw new BadRequestException("Cannot send gift to yourself");
     }
 
-    // Transfer coins from sender to receiver via wallet-service
-    // This will create the badge automatically when giftId is passed
-    const result = await this.walletClient.transferCoins(
+    // Transfer diamonds from sender to receiver (gifts give diamonds)
+    const result = await this.walletClient.transferDiamonds(
       fromUserId,
       toUserId,
       amount,
       `Gift to user ${toUserId} (from OFFLINE cards)`,
-      giftId // Pass giftId to wallet service - this creates the badge
+      giftId
     );
 
     // NOTE: We do NOT create a CallGift record here because there's no room/session
     // The badge is created by wallet-service when giftId is passed
     // This is intentional - OFFLINE cards gifts don't need room tracking
 
-    this.logger.log(`Direct gift sent: ${fromUserId} -> ${toUserId} (${amount} coins, giftId: ${giftId}) from OFFLINE cards`);
+    this.logger.log(`Direct gift sent: ${fromUserId} -> ${toUserId} (${amount} diamonds, giftId: ${giftId}) from OFFLINE cards`);
 
     return {
       transactionId: result.transactionId,
-      newBalance: result.newBalance
+      newBalance: result.newDiamondBalance
     };
   }
 }

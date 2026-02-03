@@ -10,6 +10,69 @@ export class WalletClientService {
     this.walletServiceUrl = process.env.WALLET_SERVICE_URL || "http://localhost:3005";
   }
 
+  /**
+   * Get user diamond balance (separate from coins)
+   */
+  async getDiamondBalance(userId: string): Promise<number> {
+    try {
+      const response = await fetch(`${this.walletServiceUrl}/test/balance?userId=${userId}`);
+      if (!response.ok) {
+        throw new Error(`Failed to get balance for user ${userId}`);
+      }
+      const data = await response.json() as { balance: number; diamonds?: number };
+      return data.diamonds ?? 0;
+    } catch (error: any) {
+      this.logger.error(`Error getting diamond balance for ${userId}: ${error.message}`);
+      throw new BadRequestException(`Failed to get diamond balance: ${error.message}`);
+    }
+  }
+
+  /**
+   * Transfer diamonds between users (for gifts). Sender pays diamonds; receiver gets diamonds.
+   */
+  async transferDiamonds(
+    fromUserId: string,
+    toUserId: string,
+    diamonds: number,
+    description: string,
+    giftId: string
+  ): Promise<{ transactionId: string; newBalance: number }> {
+    try {
+      const response = await fetch(`${this.walletServiceUrl}/test/wallet/transfer-diamonds`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fromUserId,
+          toUserId,
+          amount: diamonds,
+          description,
+          giftId
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ message: "Unknown error" })) as { message?: string };
+        throw new BadRequestException(
+          `Failed to transfer diamonds from ${fromUserId} to ${toUserId}: ${errorData.message || "Insufficient diamonds"}`
+        );
+      }
+
+      const result = await response.json() as { transactionId: string; newDiamondBalance: number };
+      this.logger.log(`Transferred ${diamonds} diamonds from ${fromUserId} to ${toUserId} for gift`);
+
+      return {
+        transactionId: result.transactionId,
+        newBalance: result.newDiamondBalance
+      };
+    } catch (error: any) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      this.logger.error(`Error transferring diamonds: ${error.message}`);
+      throw new BadRequestException(`Failed to transfer diamonds: ${error.message}`);
+    }
+  }
+
   async deductCoins(
     userId: string,
     amount: number,

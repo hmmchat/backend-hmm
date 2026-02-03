@@ -23,6 +23,7 @@ Comprehensive API integration guide covering:
 - Discovery & matching
 - Streaming & video calls
 - **History** (call history list, detail, hide, Hotline)
+- **Favourites** (mark participants as favourite, favourite section — who is live)
 - Friends & messaging
 - Wallet & payments
 - File uploads

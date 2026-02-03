@@ -219,3 +219,15 @@ model UserHiddenCallHistory {
   @@index([userId])
   @@index([sessionId])
 }
+
+// Viewer favourites a participant/broadcaster (for favourite section)
+model UserFavouriteBroadcaster {
+  userId      String
+  targetUserId String
+  createdAt   DateTime @default(now())
+
+  @@unique([userId, targetUserId])
+  @@map("user_favourite_broadcaster")
+  @@index([userId])
+  @@index([targetUserId])
+}

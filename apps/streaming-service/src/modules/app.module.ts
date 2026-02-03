@@ -18,6 +18,7 @@ import { WalletClientService } from "../services/wallet-client.service.js";
 import { DiscoveryClientService } from "../services/discovery-client.service.js";
 import { FriendClientService } from "../services/friend-client.service.js";
 import { HistoryService } from "../services/history.service.js";
+import { FavouriteService } from "../services/favourite.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 
 @Module({
@@ -43,6 +44,7 @@ import { PrismaService } from "../prisma/prisma.service.js";
     DiscoveryClientService,
     FriendClientService,
     HistoryService,
+    FavouriteService,
     StreamingGateway
   ]
 })

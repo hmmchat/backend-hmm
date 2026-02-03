@@ -16,6 +16,7 @@ import { ChatService } from "../services/chat.service.js";
 import { DiscoveryClientService } from "../services/discovery-client.service.js";
 import { GiftService } from "../services/gift.service.js";
 import { HistoryService } from "../services/history.service.js";
+import { FavouriteService } from "../services/favourite.service.js";
 import { z } from "zod";
 
 // Simple auth guard (you can enhance this later)
@@ -31,7 +32,8 @@ export class StreamingController {
     private chatService: ChatService,
     private discoveryClient: DiscoveryClientService,
     private giftService: GiftService,
-    private historyService: HistoryService
+    private historyService: HistoryService,
+    private favouriteService: FavouriteService
   ) {}
 
   /**
@@ -120,6 +122,60 @@ export class StreamingController {
     }
     await this.historyService.hideFromHistory(userId, sessionId);
     return { ok: true };
+  }
+
+  /**
+   * Add a participant to favourites (viewer marks favourite while watching).
+   * POST /streaming/favourites
+   */
+  @Post("favourites")
+  async addFavourite(
+    @Headers("x-user-id") xUserId: string | undefined,
+    @Body() body: { targetUserId?: string }
+  ) {
+    const userId = xUserId?.trim();
+    if (!userId) {
+      throw new HttpException("Missing x-user-id", HttpStatus.UNAUTHORIZED);
+    }
+    if (!body?.targetUserId?.trim()) {
+      throw new BadRequestException("targetUserId is required");
+    }
+    await this.favouriteService.addFavourite(userId, body.targetUserId.trim());
+    return { success: true };
+  }
+
+  /**
+   * Remove a participant from favourites.
+   * DELETE /streaming/favourites/:targetUserId
+   */
+  @Delete("favourites/:targetUserId")
+  async removeFavourite(
+    @Headers("x-user-id") xUserId: string | undefined,
+    @Param("targetUserId") targetUserId: string
+  ) {
+    const userId = xUserId?.trim();
+    if (!userId) {
+      throw new HttpException("Missing x-user-id", HttpStatus.UNAUTHORIZED);
+    }
+    await this.favouriteService.removeFavourite(userId, targetUserId);
+    return { success: true };
+  }
+
+  /**
+   * Get favourite users who are currently broadcasting (favourite section).
+   * GET /streaming/favourites/broadcasting
+   */
+  @Get("favourites/broadcasting")
+  async getFavouriteBroadcasters(
+    @Headers("x-user-id") xUserId: string | undefined,
+    @Query("limit") limitStr?: string
+  ) {
+    const userId = xUserId?.trim();
+    if (!userId) {
+      throw new HttpException("Missing x-user-id", HttpStatus.UNAUTHORIZED);
+    }
+    const limit = Math.min(Math.max(parseInt(limitStr ?? "20", 10) || 20, 1), 100);
+    return this.favouriteService.getFavouriteBroadcasters(userId, limit);
   }
 
   /**

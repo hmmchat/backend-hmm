@@ -8,7 +8,7 @@ Complete API integration guide for all backend services. This document covers ev
 2. [Authentication & User Onboarding](#authentication--user-onboarding)
 3. [User Profile Management](#user-profile-management)
 4. [Discovery & Matching](#discovery--matching)
-5. [Streaming & Video Calls](#streaming--video-calls) — incl. [History](#7-history-call-history-section)
+5. [Streaming & Video Calls](#streaming--video-calls) — incl. [History](#7-history-call-history-section), [Favourites](#10-favourites-mark-participants--favourite-section)
 6. [Friends & Messaging](#friends--messaging)
 7. [Wallet & Payments](#wallet--payments)
 8. [File Uploads](#file-uploads)
@@ -1154,6 +1154,90 @@ See `apps/streaming-service/README.md` in the backend repo for the full WebSocke
 ```
 
 **Use Case:** Hide a call from the current user’s history. Idempotent.
+
+### 10. Favourites (Mark participants & Favourite section)
+
+A viewer watching a broadcast can mark individual participants as favourites. A **Favourite section** shows all favourited users who are **currently broadcasting** (e.g. a grid of profile pictures with "Beamcasting rn" style). All favourite endpoints require authentication; the gateway sets `x-user-id` when the request is authenticated.
+
+#### Add Favourite (Mark participant as favourite)
+
+**Endpoint:** `POST /v1/streaming/favourites`
+
+**Headers:** `Authorization: Bearer {accessToken}`
+
+**Body:**
+```json
+{
+  "targetUserId": "string"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true
+}
+```
+
+**Use Case:** Viewer taps the heart on a participant while watching a broadcast. Idempotent (calling again with the same `targetUserId` is a no-op). Cannot favourite yourself (`targetUserId` must not equal the current user).
+
+#### Remove Favourite
+
+**Endpoint:** `DELETE /v1/streaming/favourites/:targetUserId`
+
+**Headers:** `Authorization: Bearer {accessToken}`
+
+**Response:**
+```json
+{
+  "success": true
+}
+```
+
+**Use Case:** Remove a user from the current user's favourites.
+
+#### Get Favourite Broadcasters (Favourite section list)
+
+**Endpoint:** `GET /v1/streaming/favourites/broadcasting`
+
+**Headers:** `Authorization: Bearer {accessToken}`
+
+**Query Parameters:**
+- `limit` (optional): Max number of broadcasts to return (default 20, max 100)
+
+**Response:** Same shape as the active broadcasts list (e.g. `GET /v1/streaming/broadcasts`):
+```json
+{
+  "broadcasts": [
+    {
+      "roomId": "string",
+      "participantCount": 2,
+      "viewerCount": 11,
+      "participants": [
+        {
+          "userId": "string",
+          "role": "HOST",
+          "joinedAt": "2025-08-25T17:04:00.000Z",
+          "username": "string | null",
+          "displayPictureUrl": "string | null",
+          "age": 25
+        }
+      ],
+      "startedAt": "2025-08-25T17:04:00.000Z",
+      "createdAt": "2025-08-25T17:04:00.000Z",
+      "broadcastTitle": "string | null",
+      "broadcastDescription": "string | null",
+      "broadcastTags": [],
+      "isTrending": false,
+      "popularityScore": 0
+    }
+  ],
+  "nextCursor": "string | undefined",
+  "hasMore": false
+}
+```
+
+**Use Case:** When the user opens the "Favourite section" (e.g. from a heart/favourites entry point during a broadcast), call this to show only favourited users who are currently live. Use `roomId` to deep link into the broadcast (same shareable link format: e.g. `/broadcast/:roomId` or `hmm_TV?roomId=...`).
 
 ---
 

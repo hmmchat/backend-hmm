@@ -2128,6 +2128,7 @@ export class RoomService {
     sort?: 'recent' | 'viewers' | 'popular' | 'trending';
     filter?: {
       participantCount?: { min?: number; max?: number };
+      participantUserIds?: string[];
       gender?: string[];
       city?: string;
       tags?: string[];
@@ -2177,6 +2178,11 @@ export class RoomService {
     if (filter.tags && filter.tags.length > 0) {
       where.broadcastTags = {
         hasSome: filter.tags
+      };
+    }
+    if (filter.participantUserIds && filter.participantUserIds.length > 0) {
+      where.participants = {
+        some: { userId: { in: filter.participantUserIds } }
       };
     }
 

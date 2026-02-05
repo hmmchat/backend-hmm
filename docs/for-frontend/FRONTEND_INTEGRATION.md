@@ -665,6 +665,34 @@ Search queries the self-managed brand catalog (case-insensitive partial match on
 
 **Note:** You can also update intent via `PATCH /me/profile` with `{ "intent": "..." }`, but this dedicated endpoint is more focused.
 
+#### Report User (Universal API)
+
+**Endpoint:** `POST /v1/users/report` (via API Gateway)
+
+**Alternative:** `POST /v1/streaming/users/report` (same request/response; use when already talking to streaming service).
+
+**Description:** Report a user. Use this from any screen (discovery, streaming, face cards, offline cards, etc.). Optional `reportType` maps to a configurable weight on the backend; when a user's total report score exceeds the threshold, they are filtered from discovery.
+
+**Request:**
+```json
+{
+  "reportedUserId": "uuid",
+  "reportType": "face_card"   // optional; omit for default weight
+}
+```
+
+**Report types (optional):** `default`, `face_card`, `offline_card`, `host`, `participant_host`, `participant`. Weights are configurable on the backend; unknown or missing `reportType` uses the default weight.
+
+**Response:**
+```json
+{
+  "success": true,
+  "reportCount": 12
+}
+```
+
+`reportCount` is the reported user's total report score (weighted sum) after this report.
+
 ---
 
 ## Discovery & Matching

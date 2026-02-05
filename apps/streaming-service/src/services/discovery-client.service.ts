@@ -204,17 +204,25 @@ export class DiscoveryClientService {
   }
 
   /**
-   * Report a user (increment report count)
+   * Report a user (forwards to user-service with optional reportType for configurable weight)
    */
-  async reportUser(token: string, reportedUserId: string): Promise<{ reportCount: number }> {
+  async reportUser(
+    token: string,
+    reportedUserId: string,
+    reportType?: string
+  ): Promise<{ reportCount: number }> {
     try {
+      const body: { reportedUserId: string; reportType?: string } = { reportedUserId };
+      if (reportType !== undefined && reportType !== "") {
+        body.reportType = reportType;
+      }
       const response = await fetch(`${this.userServiceUrl}/users/report`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${token}`
         },
-        body: JSON.stringify({ reportedUserId })
+        body: JSON.stringify(body)
       });
 
       if (!response.ok) {

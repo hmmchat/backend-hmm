@@ -64,7 +64,7 @@ model User {
   status        UserStatus @default(ONLINE)
   
   // Moderation & Flags
-  reportCount   Int      @default(0) // Number of reports on this user
+  reportCount   Int      @default(0) // Total report score (weighted sum); discovery compares to REPORT_THRESHOLD
   badgeMember   Boolean  @default(false) // 1 = yes, 0 = no
   
   // Intent/Bio (max 50 characters)

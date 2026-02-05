@@ -694,18 +694,13 @@ export class StreamingController {
   }
 
   /**
-   * Report a user (not a stream)
-   * This endpoint allows any authenticated user to report another user.
-   * Reports are tracked per user, not per stream/broadcast.
+   * Report a user (universal API: same shape as POST /v1/users/report)
    * POST /streaming/users/report
-   * 
-   * Note: This reports the user themselves, not the stream or broadcast they are in.
-   * The report count is stored on the user's profile and affects their visibility
-   * across the platform when it exceeds the threshold.
+   * Forwards to user-service with optional reportType for configurable weight.
    */
   @Post("users/report")
   async reportUser(
-    @Body() body: { reportedUserId: string },
+    @Body() body: { reportedUserId: string; reportType?: string },
     @Headers("authorization") authz?: string
   ) {
     if (!authz) {
@@ -716,8 +711,10 @@ export class StreamingController {
     if (!body.reportedUserId) {
       throw new BadRequestException("reportedUserId is required");
     }
+    if (body.reportType !== undefined && typeof body.reportType !== "string") {
+      throw new BadRequestException("reportType must be a string if provided");
+    }
 
-    // Get reporter user ID from token
     const { verifyToken } = await import("@hmm/common");
     const jwkStr = process.env.JWT_PUBLIC_JWK;
     if (!jwkStr || jwkStr === "undefined") {
@@ -733,9 +730,11 @@ export class StreamingController {
       throw new BadRequestException("Cannot report yourself");
     }
 
-    // Call user service to increment report count on the user's profile
-    // This reports the user, not any stream or broadcast they may be in
-    const result = await this.discoveryClient.reportUser(token, body.reportedUserId);
+    const result = await this.discoveryClient.reportUser(
+      token,
+      body.reportedUserId,
+      body.reportType
+    );
 
     return {
       success: true,

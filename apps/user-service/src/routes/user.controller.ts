@@ -340,27 +340,27 @@ export class UserController {
   /* ---------- Reporting ---------- */
 
   /**
-   * Report a user
+   * Report a user (universal API: use from any screen)
    * POST /users/report
-   * 
+   *
    * Allows any authenticated user to report another user.
-   * Reports are tracked per user (incrementing reportCount on the user's profile).
-   * Users cannot report themselves.
-   * 
-   * When a user's reportCount exceeds the threshold (default: 5),
-   * they are filtered out from discovery results.
+   * Optional reportType maps to a configurable weight (env REPORT_WEIGHT_*).
+   * reportCount stores the weighted sum; when it exceeds REPORT_THRESHOLD, user is filtered from discovery.
    */
   @Post("users/report")
   async reportUser(@Headers("authorization") authz: string, @Body() body: any) {
     const token = this.getTokenFromHeader(authz);
     if (!token) throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
-    
-    const { reportedUserId } = body;
+
+    const { reportedUserId, reportType } = body;
     if (!reportedUserId || typeof reportedUserId !== "string") {
       throw new HttpException("reportedUserId is required", HttpStatus.BAD_REQUEST);
     }
-    
-    return this.userService.reportUser(token, reportedUserId);
+    if (reportType !== undefined && typeof reportType !== "string") {
+      throw new HttpException("reportType must be a string if provided", HttpStatus.BAD_REQUEST);
+    }
+
+    return this.userService.reportUser(token, reportedUserId, reportType);
   }
 
   /* ---------- Batch Operations ---------- */

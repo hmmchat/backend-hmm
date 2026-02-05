@@ -28,6 +28,7 @@ import {
   CITIES_MAX_USERS_DEFAULT_LIMIT,
   DISCOVERY_USERS_DEFAULT_LIMIT
 } from "../config/limits.config.js";
+import { getReportWeight } from "../config/report-weights.config.js";
 
 @Injectable()
 export class UserService implements OnModuleInit {
@@ -892,20 +893,20 @@ export class UserService implements OnModuleInit {
 
   /**
    * Report a user
-   * 
+   *
    * This method allows any authenticated user to report another user.
-   * It increments the reportCount on the reported user's profile.
-   * 
+   * It increments the reportCount (report score) on the reported user's profile by a configurable weight.
+   *
    * Note: This reports the user themselves, not any stream, broadcast, or room they may be in.
-   * The report count is stored on the user's profile and affects their visibility
-   * across the platform when it exceeds the threshold.
-   * 
+   * reportCount stores the weighted sum; discovery compares it to REPORT_THRESHOLD.
+   *
    * @param accessToken - JWT token of the reporting user
    * @param reportedUserId - ID of the user being reported
-   * @returns Object with success status and updated reportCount
+   * @param reportType - Optional type (e.g. face_card, offline_card, host) for configurable weight; unknown/missing uses default weight
+   * @returns Object with success status and updated reportCount (total score)
    * @throws HttpException if user tries to report themselves or reported user doesn't exist
    */
-  async reportUser(accessToken: string, reportedUserId: string) {
+  async reportUser(accessToken: string, reportedUserId: string, reportType?: string) {
     const reporterUserId = await this.verifyAccessToken(accessToken);
 
     if (reporterUserId === reportedUserId) {
@@ -921,20 +922,21 @@ export class UserService implements OnModuleInit {
       throw new HttpException("Reported user not found", HttpStatus.NOT_FOUND);
     }
 
-    // Increment report count on the user's profile
-    // This reports the user, not any stream or broadcast they may be in
+    const weight = getReportWeight(reportType);
+
+    // Increment report score (weighted sum) on the user's profile
     const updatedUser = await this.prisma.user.update({
       where: { id: reportedUserId },
       data: {
         reportCount: {
-          increment: 1
+          increment: weight
         }
       }
     });
 
-    return { 
-      success: true, 
-      reportCount: updatedUser.reportCount 
+    return {
+      success: true,
+      reportCount: updatedUser.reportCount
     };
   }
 

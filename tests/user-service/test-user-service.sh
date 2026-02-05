@@ -363,20 +363,17 @@ EOF
     http_request "POST" "${SERVICE_URL}/users/${TEST_USER_3}/profile" "${invalid_data}" 400 "Create profile with invalid username (should fail)"
 }
 
-# Test: Search brands
+# Test: Search brands (self-managed catalog, no external API)
 test_search_brands() {
     log_test "Search Brands"
     
-    # Brand search may return 503 if Brandfetch API is not configured (expected in local testing)
-    local response=$(curl -s -w "\n%{http_code}" -X GET "${SERVICE_URL}/brands/search?q=test" 2>&1)
+    local response=$(curl -s -w "\n%{http_code}" -X GET "${SERVICE_URL}/brands/search?q=apple" 2>&1)
     local status_code=$(echo "$response" | tail -n1)
     
     if [ "$status_code" -eq 200 ]; then
         log_success "Search brands (200)"
-    elif [ "$status_code" -eq 503 ]; then
-        log_success "Search brands (503 - Brandfetch not configured, expected in local testing)"
     else
-        log_error "Search brands - Expected 200/503, got ${status_code}"
+        log_error "Search brands - Expected 200, got ${status_code}"
         return 1
     fi
 }

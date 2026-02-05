@@ -130,9 +130,9 @@ model Song {
 model Brand {
   id          String   @id @default(cuid())
   name        String   @unique // Brand name (e.g., "JBL", "Apple", "Nike", "BMW")
-  domain      String?  // Optional: Domain name for Brandfetch API (e.g., "apple.com", "nike.com")
-  logoUrl     String?  // Optional: Brand logo URL (fetched from Brandfetch API)
-  brandfetchId String? // Optional: Brandfetch brand ID for reference
+  domain      String?  // Optional: Domain for logo URL slug (e.g., "apple.com" -> apple.png)
+  logoUrl     String?  // Optional: Brand logo URL (self-hosted via BRAND_LOGO_BASE_URL)
+  brandfetchId String? // Deprecated: kept for backward compat, no longer used
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   

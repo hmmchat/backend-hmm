@@ -741,53 +741,19 @@ export class UserService implements OnModuleInit {
     const brands = await this.prisma.brand.findMany({
       orderBy: { name: "asc" }
     });
-    
-    // Auto-fetch logos for brands that don't have them
-    const brandsWithLogos = await Promise.all(
-      brands.map(async (brand) => {
-        // If brand already has logo, return as-is
-        if (brand.logoUrl) {
-          return brand;
-        }
-        
-        // Try to fetch logo from Brandfetch if domain is available
-        const domain = brand.domain || this.brandService.nameToDomain(brand.name);
-        
-        try {
-          const brandData = await this.brandService.getBrandLogo(domain);
-          if (brandData?.logoUrl) {
-            // Update brand with logo URL
-            const updated = await this.prisma.brand.update({
-              where: { id: brand.id },
-              data: {
-                logoUrl: brandData.logoUrl,
-                domain: brandData.domain,
-                brandfetchId: brandData.brandfetchId
-              }
-            });
-            return updated;
-          }
-        } catch (error) {
-          // If Brandfetch fails, continue without logo
-          console.warn(`Failed to fetch logo for brand ${brand.name}:`, error);
-        }
-        
-        return brand;
-      })
-    );
-    
-    return { brands: brandsWithLogos };
+    return { brands };
   }
 
   /**
-   * Search for brands using Brandfetch API
+   * Search brands by name (from self-managed catalog)
    */
   async searchBrands(query: string, limit: number = 20) {
     return this.brandService.searchBrands(query, limit);
   }
 
   /**
-   * Fetch and update brand logo from Brandfetch
+   * Get brand by ID (kept for backward compat with POST /brands/:brandId/fetch-logo).
+   * Logos are now self-managed; this returns the brand as-is.
    */
   async fetchBrandLogo(brandId: string) {
     const brand = await this.prisma.brand.findUnique({
@@ -798,33 +764,7 @@ export class UserService implements OnModuleInit {
       throw new HttpException("Brand not found", HttpStatus.NOT_FOUND);
     }
 
-    const domain = brand.domain || this.brandService.nameToDomain(brand.name);
-    
-    try {
-      const brandData = await this.brandService.getBrandLogo(domain);
-      
-      if (brandData?.logoUrl) {
-        const updated = await this.prisma.brand.update({
-          where: { id: brandId },
-          data: {
-            logoUrl: brandData.logoUrl,
-            domain: brandData.domain,
-            brandfetchId: brandData.brandfetchId
-          }
-        });
-        return { brand: updated };
-      }
-      
-      throw new HttpException("Logo not found for this brand", HttpStatus.NOT_FOUND);
-    } catch (error) {
-      if (error instanceof HttpException) {
-        throw error;
-      }
-      throw new HttpException(
-        "Failed to fetch brand logo. Please try again later.",
-        HttpStatus.INTERNAL_SERVER_ERROR
-      );
-    }
+    return { brand };
   }
 
   async getInterests() {

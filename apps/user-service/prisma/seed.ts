@@ -1,34 +1,17 @@
 import { PrismaClient } from "@prisma/client";
-import fetch from "node-fetch";
 
 const prisma = new PrismaClient();
 
-// Helper function to fetch brand logo from Brandfetch (optional)
-async function fetchBrandLogo(domain: string): Promise<string | null> {
-  const apiKey = process.env.BRANDFETCH_API_KEY;
-  if (!apiKey) {
-    return null; // Brandfetch not configured, skip logo fetching
-  }
-
-  try {
-    const url = `https://api.brandfetch.io/v2/brands/${domain}`;
-    const response = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json"
-      }
-    });
-
-    if (!response.ok) {
-      return null;
-    }
-
-    const data = await response.json() as { images?: { logo?: string; icon?: string }; logo?: string };
-    return data.images?.logo || data.images?.icon || data.logo || null;
-  } catch (error) {
-    console.warn(`Failed to fetch logo for ${domain}:`, error);
-    return null;
-  }
+/**
+ * Get logo URL for a brand. Uses BRAND_LOGO_BASE_URL when set.
+ * Example: BRAND_LOGO_BASE_URL=https://cdn.example.com/brand-logos
+ * -> apple.com yields https://cdn.example.com/brand-logos/apple.png
+ */
+function getLogoUrl(domain: string): string | null {
+  const base = process.env.BRAND_LOGO_BASE_URL;
+  if (!base || !domain) return null;
+  const slug = domain.replace(/\.(com|io|co|org|net)$/, "").replace(/\./g, "-");
+  return `${base.replace(/\/$/, "")}/${slug}.png`;
 }
 
 async function main() {
@@ -36,7 +19,6 @@ async function main() {
 
   // Seed Brands
   console.log("📦 Seeding brands...");
-  // Brand name to domain mapping for Brandfetch API
   const brands = [
     { name: "JBL", domain: "jbl.com" },
     { name: "Apple", domain: "apple.com" },
@@ -55,25 +37,12 @@ async function main() {
     { name: "Google", domain: "google.com" }
   ];
 
-  const hasBrandfetch = !!process.env.BRANDFETCH_API_KEY;
-  if (hasBrandfetch) {
-    console.log("🔍 Fetching brand logos from Brandfetch...");
-  } else {
-    console.log("⚠️  BRANDFETCH_API_KEY not set - logos will be fetched automatically when brands are accessed");
-  }
-
   for (const brand of brands) {
-    let logoUrl: string | null = null;
-    
-    // Try to fetch logo if Brandfetch is configured
-    if (hasBrandfetch) {
-      logoUrl = await fetchBrandLogo(brand.domain);
-      if (logoUrl) {
-        console.log(`  ✓ Fetched logo for ${brand.name}`);
-      }
+    const logoUrl = getLogoUrl(brand.domain);
+    if (logoUrl) {
+      console.log(`  ✓ Logo URL for ${brand.name}: ${logoUrl}`);
     }
 
-    // Check if brand exists to see if it has a logo already
     const existing = await prisma.brand.findUnique({
       where: { name: brand.name }
     });
@@ -82,7 +51,6 @@ async function main() {
       where: { name: brand.name },
       update: {
         domain: brand.domain,
-        // Only update logoUrl if we fetched a new one OR if brand doesn't have one
         ...(logoUrl && !existing?.logoUrl ? { logoUrl } : {})
       },
       create: {
@@ -92,7 +60,9 @@ async function main() {
       }
     });
   }
-  console.log(`✅ Seeded ${brands.length} brands${hasBrandfetch ? ' with logos' : ''}`);
+  console.log(
+    `✅ Seeded ${brands.length} brands${process.env.BRAND_LOGO_BASE_URL ? " with logo URLs" : " (set BRAND_LOGO_BASE_URL to add logos)"}`
+  );
 
   // Seed Interests
   console.log("🎯 Seeding interests...");
@@ -173,4 +143,3 @@ main()
   .finally(async () => {
     await prisma.$disconnect();
   });
-

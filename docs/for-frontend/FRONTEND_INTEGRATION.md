@@ -518,6 +518,22 @@ GET /users/{userId}?fields=username,photos,brandPreferences
 
 **Endpoint:** `GET /brands/search?q={query}&limit={limit}`
 
+**Response:**
+```json
+{
+  "brands": [
+    {
+      "id": "string",
+      "name": "string",
+      "domain": "string | null",
+      "logoUrl": "string | null"
+    }
+  ]
+}
+```
+
+Search queries the self-managed brand catalog (case-insensitive partial match on name).
+
 #### Update Brand Preferences
 
 **Endpoint:** `PATCH /me/brand-preferences`

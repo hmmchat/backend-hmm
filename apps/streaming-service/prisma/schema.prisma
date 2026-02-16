@@ -195,6 +195,23 @@ model DareCatalog {
   @@index([category])
 }
 
+// Loading screen memes (text + image) shown while waiting for call to connect
+model LoadingScreenMeme {
+  id        String   @id @default(cuid())
+  text      String   // Meme text/question shown to user
+  imageUrl  String   // URL to meme image (hosted via files-service/CDN)
+  category  String?  // Optional category: funny, philosophical, relatable, etc.
+  isActive  Boolean  @default(true) // Inactive memes are hidden from loading screens
+  order     Int?     // Optional ordering for UI
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy String?  // Optional: track who added it (admin userId)
+
+  @@map("loading_screen_memes")
+  @@index([isActive])
+  @@index([category])
+}
+
 // User's personal custom dares collection
 model UserCustomDare {
   id          String   @id @default(cuid())

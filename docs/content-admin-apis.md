@@ -314,12 +314,81 @@ These feed discovery/matching and profile UI.
 
 ---
 
-### 7. Quick reference table
+### 7. Loading Screen Memes (streaming-service)
+
+**Purpose:** Manage memes (text + image) shown to users while waiting for a call to connect (loading screens).
+
+**Base path:** `STREAMING_SERVICE_URL/streaming/admin/loading-memes`
+
+**Public endpoint (for frontend):**
+- **GET** `/streaming/loading-memes/random` - Returns a random active meme for display on loading screens
+
+**Admin endpoints:**
+
+- **List all memes (active + inactive)**
+  - **GET** `/streaming/admin/loading-memes`
+
+- **List only active memes**
+  - **GET** `/streaming/admin/loading-memes/active`
+
+- **Create a new meme**
+  - **POST** `/streaming/admin/loading-memes`
+  - **Body:**
+    ```json
+    {
+      "text": "You can be an asshole. But what's the reason? why?",
+      "imageUrl": "https://cdn.hmmchat.live/memes/disaster-girl.jpg",
+      "category": "funny",
+      "order": 1,
+      "createdBy": "admin-user-id-123"
+    }
+    ```
+  - **Required fields:** `text`, `imageUrl`
+  - **Optional fields:** `category`, `order`, `createdBy`
+
+- **Update a meme**
+  - **PATCH** `/streaming/admin/loading-memes/:id`
+  - **Body (any subset):**
+    ```json
+    {
+      "text": "Updated meme text",
+      "imageUrl": "https://cdn.hmmchat.live/memes/new-meme.jpg",
+      "category": "philosophical",
+      "isActive": true,
+      "order": 2
+    }
+    ```
+
+- **Soft delete / deactivate a meme**
+  - **DELETE** `/streaming/admin/loading-memes/:id`  (sets `isActive = false`)
+
+- **Hard delete a meme**
+  - **DELETE** `/streaming/admin/loading-memes/:id/hard`
+
+**Meme images:**
+
+1. Upload the meme image to files-service:
+   - `POST FILES_SERVICE_URL/files/upload` with e.g. `folder=loading-memes`
+   - Copy the `file.url` from the response.
+2. Create or update the meme with the image URL:
+   - `POST STREAMING_SERVICE_URL/streaming/admin/loading-memes` (create)
+   - `PATCH STREAMING_SERVICE_URL/streaming/admin/loading-memes/:id` (update)
+   - Body: `{ "text": "...", "imageUrl": "<uploaded file url>" }`
+
+**Notes:**
+- Frontend should call `/streaming/loading-memes/random` whenever showing a loading screen to get a random meme.
+- The service falls back to a default list if the database is empty (useful during migrations).
+- Memes are randomly selected from active entries only.
+
+---
+
+### 8. Quick reference table
 
 | Content type | Service | List | Create | Update | Soft delete | Hard delete |
 |-------------|---------|------|--------|--------|-------------|-------------|
 | Icebreakers | streaming-service | `GET /streaming/admin/icebreakers`, `GET /streaming/admin/icebreakers/active` | `POST /streaming/admin/icebreakers` | `PATCH /streaming/admin/icebreakers/:id` | `DELETE /streaming/admin/icebreakers/:id` | `DELETE /streaming/admin/icebreakers/:id/hard` |
 | Dares | streaming-service | `GET /streaming/admin/dares`, `GET /streaming/admin/dares/active` | `POST /streaming/admin/dares` | `PATCH /streaming/admin/dares/:id` | `DELETE /streaming/admin/dares/:id` | `DELETE /streaming/admin/dares/:id/hard` |
+| Loading Screen Memes | streaming-service | `GET /streaming/admin/loading-memes`, `GET /streaming/admin/loading-memes/active` | `POST /streaming/admin/loading-memes` | `PATCH /streaming/admin/loading-memes/:id` | `DELETE /streaming/admin/loading-memes/:id` | `DELETE /streaming/admin/loading-memes/:id/hard` |
 | Interests | user-service | `GET /admin/interests` | `POST /admin/interests` | `PATCH /admin/interests/:id` | – (no soft-delete flag) | `DELETE /admin/interests/:id` |
 | Values | user-service | `GET /admin/values` | `POST /admin/values` | `PATCH /admin/values/:id` | – (no soft-delete flag) | `DELETE /admin/values/:id` |
 | Gifts | friend-service | `GET /admin/gifts`, `GET /admin/gifts/active` | `POST /admin/gifts` | `PATCH /admin/gifts/:id` | `DELETE /admin/gifts/:id` | `DELETE /admin/gifts/:id/hard` |

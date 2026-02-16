@@ -4,6 +4,7 @@ import { StreamingController } from "../controllers/streaming.controller.js";
 import { DareController } from "../controllers/dare.controller.js";
 import { GiftController } from "../controllers/gift.controller.js";
 import { IcebreakerAdminController } from "../controllers/icebreaker-admin.controller.js";
+import { DareAdminController } from "../controllers/dare-admin.controller.js";
 import { HealthController } from "../controllers/health.controller.js";
 import { StreamingGateway } from "../gateways/streaming.gateway.js";
 import { MediasoupService } from "../services/mediasoup.service.js";
@@ -28,6 +29,7 @@ import { PrismaService } from "../prisma/prisma.service.js";
     DareController,
     GiftController,
     IcebreakerAdminController,
+    DareAdminController,
     HealthController
   ],
   providers: [

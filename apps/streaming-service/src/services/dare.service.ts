@@ -2,8 +2,8 @@ import { Injectable, Logger, NotFoundException, BadRequestException } from "@nes
 import { PrismaService } from "../prisma/prisma.service.js";
 import { WalletClientService } from "./wallet-client.service.js";
 
-// Predefined dare list
-const DARE_LIST = [
+// Default dare list (used for initial seeding / fallback when DB is empty)
+const DEFAULT_DARE_LIST = [
   { id: "dare-1", text: "Eat a chilli", category: "fun" },
   { id: "dare-2", text: "Do your best impression of a celebrity", category: "fun" },
   { id: "dare-3", text: "Sing a song in a funny voice", category: "fun" },
@@ -30,15 +30,89 @@ export class DareService {
   private readonly logger = new Logger(DareService.name);
 
   constructor(
-    private prisma: PrismaService,
+    private readonly prisma: PrismaService,
     private walletClient: WalletClientService
   ) {}
 
   /**
-   * Get list of available dares
+   * Helper: map DareCatalog records to simple dare objects
+   */
+  private mapCatalogToDare(catalog: { dareId: string; text: string; category: string | null }) {
+    return {
+      id: catalog.dareId,
+      text: catalog.text,
+      category: catalog.category || "general"
+    };
+  }
+
+  /**
+   * Helper: fetch all active dares from catalog (with fallback to default list)
+   */
+  private async getActiveDaresInternal(): Promise<Array<{ id: string; text: string; category: string }>> {
+    const catalog = await (this.prisma as any).dareCatalog.findMany({
+      where: { isActive: true },
+      orderBy: [
+        { order: "asc" },
+        { createdAt: "asc" }
+      ]
+    });
+
+    if (catalog.length === 0) {
+      // Fallback to default static list (no DB records yet)
+      this.logger.warn("No active dares in catalog, using DEFAULT_DARE_LIST fallback");
+      return DEFAULT_DARE_LIST.map((d) => ({
+        id: d.id,
+        text: d.text,
+        category: d.category
+      }));
+    }
+
+    return catalog.map((d: { dareId: string; text: string; category: string | null }) =>
+      this.mapCatalogToDare(d)
+    );
+  }
+
+  /**
+   * Helper: fetch a single dare by dareId from catalog, falling back to default list
+   */
+  private async getDareById(dareId: string): Promise<{ id: string; text: string; category: string }> {
+    const catalog = await (this.prisma as any).dareCatalog.findUnique({
+      where: { dareId }
+    });
+
+    if (catalog && catalog.isActive) {
+      return this.mapCatalogToDare(catalog);
+    }
+
+    const fallback = DEFAULT_DARE_LIST.find((d) => d.id === dareId);
+    if (fallback) {
+      return {
+        id: fallback.id,
+        text: fallback.text,
+        category: fallback.category
+      };
+    }
+
+    throw new NotFoundException(`Dare ${dareId} not found`);
+  }
+
+  /**
+   * Get list of available dares (for user-facing UI)
    */
   getDareList(): Array<{ id: string; text: string; category: string }> {
-    return DARE_LIST;
+    // This method is kept synchronous for backward compatibility with existing controller.
+    // It will be backed by the async internal method exposed via getDareListAsync.
+    // For new code paths, prefer getDareListAsync.
+    // NOTE: This small sync wrapper uses de-async via execSync-like pattern is not ideal,
+    // so we expose an async version below and keep this for existing HTTP handler only.
+    throw new Error("Use getDareListAsync() instead of getDareList()");
+  }
+
+  /**
+   * Async version used by controllers (recommended)
+   */
+  async getDareListAsync(): Promise<Array<{ id: string; text: string; category: string }>> {
+    return await this.getActiveDaresInternal();
   }
 
   /**
@@ -53,10 +127,8 @@ export class DareService {
    * When user scrolls through dares, other participants see the same dare
    */
   async viewDare(roomId: string, userId: string, dareId: string): Promise<void> {
-    const dare = DARE_LIST.find(d => d.id === dareId);
-    if (!dare) {
-      throw new NotFoundException(`Dare ${dareId} not found`);
-    }
+    // Validate dare exists (in catalog or fallback list)
+    await this.getDareById(dareId);
 
     const session = await this.prisma.callSession.findUnique({
       where: { roomId }
@@ -99,10 +171,8 @@ export class DareService {
    * Assign a dare to a specific user
    */
   async assignDare(roomId: string, assignerId: string, assignedToUserId: string, dareId: string): Promise<void> {
-    const dare = DARE_LIST.find(d => d.id === dareId);
-    if (!dare) {
-      throw new NotFoundException(`Dare ${dareId} not found`);
-    }
+    // Validate dare exists (in catalog or fallback list)
+    await this.getDareById(dareId);
 
     const session = await this.prisma.callSession.findUnique({
       where: { roomId }
@@ -161,10 +231,8 @@ export class DareService {
     dareId: string,
     giftId: string
   ): Promise<{ transactionId: string; newBalance: number; assignedTo: string; wasAutoAssigned: boolean }> {
-    const dare = DARE_LIST.find(d => d.id === dareId);
-    if (!dare) {
-      throw new NotFoundException(`Dare ${dareId} not found`);
-    }
+    // Validate dare exists (in catalog or fallback list)
+    await this.getDareById(dareId);
 
     const gift = GIFT_LIST.find(g => g.id === giftId);
     if (!gift) {
@@ -359,12 +427,32 @@ export class DareService {
       orderBy: { createdAt: "desc" }
     });
 
+    const dareMap: Record<string, { text: string }> = {};
+
+    // Preload catalog dares referenced in this room for better labels
+    const uniqueDareIds = Array.from(new Set(dares.map((d) => d.dareId)));
+    if (uniqueDareIds.length > 0) {
+      const catalogDares = await (this.prisma as any).dareCatalog.findMany({
+        where: {
+          dareId: { in: uniqueDareIds }
+        }
+      });
+      for (const d of catalogDares as Array<{ dareId: string; text: string }>) {
+        dareMap[d.dareId] = { text: d.text };
+      }
+    }
+
     return dares.map(dare => {
-      const dareInfo = DARE_LIST.find(d => d.id === dare.dareId);
+      let dareText = dareMap[dare.dareId]?.text;
+      if (!dareText) {
+        const fallback = DEFAULT_DARE_LIST.find((d) => d.id === dare.dareId);
+        dareText = fallback?.text || "Unknown dare";
+      }
+
       return {
         id: dare.id,
         dareId: dare.dareId,
-        dareText: dareInfo?.text || "Unknown dare",
+        dareText,
         selectedBy: dare.selectedBy,
         assignedTo: dare.assignedTo || null,
         performedBy: dare.performedBy || null,
@@ -407,10 +495,20 @@ export class DareService {
       return null;
     }
 
-    const dareInfo = DARE_LIST.find(d => d.id === viewingDare.dareId);
+    let dareText: string | undefined;
+    const catalog = await (this.prisma as any).dareCatalog.findUnique({
+      where: { dareId: viewingDare.dareId }
+    });
+    if (catalog && catalog.isActive) {
+      dareText = catalog.text;
+    } else {
+      const fallback = DEFAULT_DARE_LIST.find((d) => d.id === viewingDare.dareId);
+      dareText = fallback?.text;
+    }
+
     return {
       dareId: viewingDare.dareId,
-      dareText: dareInfo?.text || "Unknown dare"
+      dareText: dareText || "Unknown dare"
     };
   }
 
@@ -481,8 +579,9 @@ export class DareService {
     isCustom: boolean;
     customDareId?: string;
   }>> {
-    // Get random dares from predefined list
-    const shuffled = [...DARE_LIST].sort(() => Math.random() - 0.5);
+    // Get random dares from catalog (fallback to default list)
+    const availableDares = await this.getActiveDaresInternal();
+    const shuffled = [...availableDares].sort(() => Math.random() - 0.5);
     const selectedDares = shuffled.slice(0, count);
     
     // Get user's custom dares

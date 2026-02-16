@@ -179,6 +179,22 @@ model Icebreaker {
   @@index([category])
 }
 
+// Master catalog of predefined dares shown in calls
+model DareCatalog {
+  id        String   @id @default(cuid())
+  dareId    String   @unique // Stable identifier used in CallDare (e.g. "dare-1")
+  text      String   // Dare text shown to users
+  category  String?  // Optional category: fun, personal, physical, etc.
+  isActive  Boolean  @default(true) // Inactive dares are hidden from UI
+  order     Int?     // Optional ordering for UI
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("dare_catalog")
+  @@index([isActive])
+  @@index([category])
+}
+
 // User's personal custom dares collection
 model UserCustomDare {
   id          String   @id @default(cuid())

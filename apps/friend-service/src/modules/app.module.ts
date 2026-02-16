@@ -18,6 +18,7 @@ import { NotificationRateLimitGuard } from "../guards/notification-rate-limit.gu
 import { ShareRateLimitGuard } from "../guards/share-rate-limit.guard.js";
 import { FriendController } from "../routes/friend.controller.js";
 import { HealthController } from "../routes/health.controller.js";
+import { GiftAdminController } from "../routes/gift-admin.controller.js";
 import { CleanupTasksService } from "../services/cleanup-tasks.service.js";
 
 @Module({
@@ -25,7 +26,7 @@ import { CleanupTasksService } from "../services/cleanup-tasks.service.js";
     ConfigModule.forRoot(),
     ScheduleModule.forRoot() // Enable cron jobs
   ],
-  controllers: [FriendController, HealthController],
+  controllers: [FriendController, HealthController, GiftAdminController],
   providers: [
     PrismaService,
     FriendService,

@@ -16,18 +16,18 @@
     "postinstall": "node scripts/postinstall-prisma.js"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.700.0",
+    "@aws-sdk/s3-request-presigner": "^3.700.0",
     "@hmm/common": "*",
     "@nestjs/common": "^10.4.20",
     "@nestjs/config": "^4.0.2",
     "@nestjs/core": "^10.4.20",
     "@nestjs/platform-fastify": "^10.4.20",
     "@prisma/client": "^6.0.0",
-    "@aws-sdk/client-s3": "^3.700.0",
-    "@aws-sdk/s3-request-presigner": "^3.700.0",
     "fastify-multipart": "^5.4.0",
     "sharp": "^0.33.5",
-    "zod": "^3.23.8",
-    "uuid": "^11.0.3"
+    "uuid": "^11.0.3",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.4.5",

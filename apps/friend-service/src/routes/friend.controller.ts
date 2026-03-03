@@ -65,11 +65,11 @@ export class FriendController {
     private readonly friendsWallImageService: FriendsWallImageService,
     private readonly filesClient: FilesClientService,
     private readonly metrics: MetricsService
-  ) {}
+  ) { }
 
   private async initializeJWT() {
     if (this.jwtInitialized) return;
-    
+
     const jwkStr = process.env.JWT_PUBLIC_JWK;
     if (!jwkStr || jwkStr === "undefined") {
       throw new Error("JWT_PUBLIC_JWK environment variable is not set or is invalid");
@@ -91,8 +91,15 @@ export class FriendController {
       throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
     }
     await this.initializeJWT();
-    const payload = await this.verifyAccess(token);
-    return payload.sub;
+    try {
+      const payload = await this.verifyAccess(token);
+      return payload.sub;
+    } catch (error: any) {
+      if (error.code === 'ERR_JWT_EXPIRED') {
+        throw new HttpException("Token expired", HttpStatus.UNAUTHORIZED);
+      }
+      throw new HttpException("Invalid token", HttpStatus.UNAUTHORIZED);
+    }
   }
 
   private verifyInternalServiceToken(serviceToken: string | undefined): void {
@@ -265,13 +272,13 @@ export class FriendController {
 
       // Check cache using FriendsWallImageService
       const cached = await this.friendsWallImageService.getCachedImage(userId, friendsHash);
-      
+
       if (cached) {
         // Track cache hit
         const duration = Date.now() - startTime;
         this.metrics.incrementFriendsWallShareCacheHit();
         this.metrics.incrementFriendsWallShareGenerated(true, duration);
-        
+
         return {
           imageUrl: cached.imageUrl,
           deepLink: cached.deepLink,
@@ -298,11 +305,11 @@ export class FriendController {
     } catch (error: any) {
       const duration = Date.now() - startTime;
       this.metrics.incrementFriendsWallShareGenerated(false, duration);
-      
+
       // Determine error type for better error messages
       let errorCode = "IMAGE_GENERATION_FAILED";
       let retryable = true;
-      
+
       if (error.message?.includes("Puppeteer") || error.message?.includes("browser")) {
         errorCode = "PUPPETEER_FAILED";
       } else if (error.message?.includes("upload") || error.message?.includes("files-service")) {
@@ -602,7 +609,7 @@ export class FriendController {
     // In test mode, allow requests without token
     const isTestMode = process.env.NODE_ENV === "test" || process.env.TEST_MODE === "true";
     const expectedToken = process.env.INTERNAL_SERVICE_TOKEN;
-    
+
     if (!isTestMode) {
       if (!expectedToken) {
         throw new HttpException(
@@ -650,7 +657,7 @@ export class FriendController {
 
     // Check friendship using friend service method
     const areFriends = await this.friendService.areFriends(userId1, userId2);
-    
+
     return {
       areFriends
     };
@@ -791,7 +798,7 @@ export class FriendController {
     // In test mode, allow requests without token
     const isTestMode = process.env.NODE_ENV === "test" || process.env.TEST_MODE === "true";
     const expectedToken = process.env.INTERNAL_SERVICE_TOKEN;
-    
+
     if (!isTestMode) {
       if (!expectedToken) {
         throw new HttpException(
@@ -845,7 +852,7 @@ export class FriendController {
     // In test mode, allow requests without token
     const isTestMode = process.env.NODE_ENV === "test" || process.env.TEST_MODE === "true";
     const expectedToken = process.env.INTERNAL_SERVICE_TOKEN;
-    
+
     if (!isTestMode) {
       if (!expectedToken) {
         throw new HttpException(
@@ -868,7 +875,7 @@ export class FriendController {
     }).parse(query);
 
     const result = await this.friendService.getFriends(userId, limit || 50);
-    
+
     return {
       friends: result.friends
     };

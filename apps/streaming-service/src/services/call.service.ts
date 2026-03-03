@@ -10,7 +10,7 @@ export class CallService {
   constructor(
     private roomService: RoomService,
     private mediasoup: MediasoupService
-  ) {}
+  ) { }
 
   /**
    * Create a WebRTC transport for a participant
@@ -25,20 +25,22 @@ export class CallService {
     if (!roomExists) {
       throw new NotFoundException(`Room ${roomId} not found`);
     }
-    
+
     const room = this.roomService.getRoom(roomId);
     const transport = await this.mediasoup.createWebRtcTransport(room.router, options);
 
     // Store transport in participant state
     const participant = this.roomService.getParticipant(roomId, userId);
     if (participant) {
-      participant.transport = transport;
+      participant.transports.set(transport.id, transport);
       this.roomService.setParticipant(roomId, userId, participant);
     } else {
       // Create new participant state
+      const transports = new Map<string, any>();
+      transports.set(transport.id, transport);
       this.roomService.setParticipant(roomId, userId, {
         userId,
-        transport,
+        transports,
         producer: {},
         consumers: new Map()
       });
@@ -61,7 +63,7 @@ export class CallService {
     if (!roomExists) {
       throw new NotFoundException(`Room ${roomId} not found`);
     }
-    
+
     const participant = this.roomService.getParticipant(roomId, userId);
     if (!participant) {
       // Participant might exist in database but not have transport yet
@@ -73,11 +75,12 @@ export class CallService {
       throw new NotFoundException(`Participant ${userId} transport not initialized. Please create transport first.`);
     }
 
-    if (participant.transport.id !== transportId) {
+    const transport = participant.transports.get(transportId);
+    if (!transport) {
       throw new NotFoundException(`Transport ${transportId} not found`);
     }
 
-    await participant.transport.connect({ dtlsParameters });
+    await transport.connect({ dtlsParameters });
     this.logger.log(`Transport ${transportId} connected for user ${userId}`);
   }
 
@@ -96,7 +99,7 @@ export class CallService {
     if (!roomExists) {
       throw new NotFoundException(`Room ${roomId} not found`);
     }
-    
+
     const participant = this.roomService.getParticipant(roomId, userId);
     if (!participant) {
       // Participant might exist in database but not have transport yet
@@ -107,12 +110,13 @@ export class CallService {
       throw new NotFoundException(`Participant ${userId} transport not initialized. Please create transport first.`);
     }
 
-    if (participant.transport.id !== transportId) {
+    const transport = participant.transports.get(transportId);
+    if (!transport) {
       throw new NotFoundException(`Transport ${transportId} not found`);
     }
 
     const producer = await this.mediasoup.createProducer(
-      participant.transport,
+      transport,
       rtpParameters,
       kind
     );
@@ -146,7 +150,7 @@ export class CallService {
     if (!roomExists) {
       throw new NotFoundException(`Room ${roomId} not found`);
     }
-    
+
     const participant = this.roomService.getParticipant(roomId, userId);
     if (!participant) {
       // Participant might exist in database but not have transport yet
@@ -157,14 +161,15 @@ export class CallService {
       throw new NotFoundException(`Participant ${userId} transport not initialized. Please create transport first.`);
     }
 
-    if (participant.transport.id !== transportId) {
+    const transport = participant.transports.get(transportId);
+    if (!transport) {
       throw new NotFoundException(`Transport ${transportId} not found`);
     }
 
     const room = this.roomService.getRoom(roomId);
     const consumer = await this.mediasoup.createConsumer(
       room.router,
-      participant.transport,
+      transport,
       producerId,
       rtpCapabilities
     );
@@ -191,7 +196,7 @@ export class CallService {
     if (!roomExists) {
       throw new NotFoundException(`Room ${roomId} not found`);
     }
-    
+
     const room = this.roomService.getRoom(roomId);
     const producers: Array<{
       userId: string;

@@ -3,15 +3,21 @@ import { FastifyAdapter, NestFastifyApplication } from "@nestjs/platform-fastify
 import { AppModule } from "./modules/app.module.js";
 import { ConfigService } from "@nestjs/config";
 import { ZodExceptionFilter } from "./filters/zod-exception.filter.js";
+import multipart from "@fastify/multipart";
 
 async function bootstrap() {
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
-    new FastifyAdapter({ 
+    new FastifyAdapter({
       logger: true,
       requestTimeout: 12000  // 12 second request timeout (slightly more than proxy timeout)
     })
   );
+
+  // Register multipart plugin for file uploads
+  await app.register(multipart, {
+    attachFieldsToBody: true
+  });
 
   const config = app.get(ConfigService);
   const port = config.get<number>("PORT") || 3000;
@@ -22,11 +28,11 @@ async function bootstrap() {
   app.enableCors({
     origin: origins.length
       ? (origin: string | undefined, cb: (err: Error | null, allow: boolean) => void) => {
-          // Allow requested origin if in whitelist; also allow null (file://) in dev
-          if ((!origin || origin === "null") && isDev) return cb(null, true);
-          if (origin && origins.includes(origin)) return cb(null, true);
-          cb(null, false);
-        }
+        // Allow requested origin if in whitelist; also allow null (file://) in dev
+        if ((!origin || origin === "null") && isDev) return cb(null, true);
+        if (origin && origins.includes(origin)) return cb(null, true);
+        cb(null, false);
+      }
       : true,
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],

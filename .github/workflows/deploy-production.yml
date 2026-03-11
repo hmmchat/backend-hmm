@@ -1,0 +1,45 @@
+name: Deploy to Production
+
+# Manual deployment only. Run from Actions tab when you want to deploy.
+# Images must already be built (via Build and Push workflow).
+on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: 'Service to deploy'
+        required: true
+        type: choice
+        options:
+          - auth-service
+          - user-service
+          - discovery-service
+          - wallet-service
+          - payment-service
+          - friend-service
+          - files-service
+          - streaming-service
+          - moderation-service
+          - ads-service
+          - api-gateway
+      tag:
+        description: 'Image tag (default: latest)'
+        required: false
+        default: 'latest'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy ${{ github.event.inputs.service }} to production
+        env:
+          IMAGE_TAG: ${{ github.event.inputs.tag || 'latest' }}
+        run: |
+          echo "Deploying ${{ github.event.inputs.service }}"
+          echo "Image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ github.event.inputs.service }}:${IMAGE_TAG}"
+          # Add your deployment logic here, e.g.:
+          # kubectl set image deployment/${{ github.event.inputs.service }} \
+          #   ${{ github.event.inputs.service }}=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ github.event.inputs.service }}:${IMAGE_TAG}

@@ -43,7 +43,7 @@ jobs:
         id: changes
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.service }}" ]; then
-            echo "services=${{ github.event.inputs.service }}" >> $GITHUB_OUTPUT
+            CHANGED="${{ github.event.inputs.service }}"
           else
             # Detect changed services from git diff
             CHANGED=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep -E '^apps/([^/]+)/' | sed 's|apps/\([^/]*\)/.*|\1|' | sort -u | tr '\n' ',' | sed 's/,$//')
@@ -51,8 +51,10 @@ jobs:
               # If no changes detected, check all services
               CHANGED=$(ls -d apps/*/ | sed 's|apps/\(.*\)/|\1|' | tr '\n' ',' | sed 's/,$//')
             fi
-            echo "services=$CHANGED" >> $GITHUB_OUTPUT
           fi
+          # Output as JSON array for matrix (e.g. ["ads-service","api-gateway"])
+          CHANGED_JSON=$(echo "$CHANGED" | sed 's/,/","/g' | sed 's/^/["/' | sed 's/$/"]/')
+          echo "services=$CHANGED_JSON" >> $GITHUB_OUTPUT
           echo "Detected services: $CHANGED"
 
   build-and-push:
@@ -60,7 +62,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        service: ${{ fromJson(format('["{0}"]', needs.detect-changes.outputs.services)) }}
+        service: ${{ fromJson(needs.detect-changes.outputs.services) }}
       fail-fast: false
     steps:
       - name: Checkout
@@ -103,7 +105,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
     strategy:
       matrix:
-        service: ${{ fromJson(format('["{0}"]', needs.detect-changes.outputs.services)) }}
+        service: ${{ fromJson(needs.detect-changes.outputs.services) }}
     steps:
       - name: Deploy ${{ matrix.service }}
         run: |

@@ -1,5 +1,9 @@
 # Multi-stage build for streaming-service
 FROM node:22-alpine AS base
+# Python + build deps for mediasoup (postinstall + native worker build)
+RUN apk add --no-cache python3 py3-pip make g++ \
+    openssl-dev libvpx-dev opus-dev libsrtp-dev \
+    && ln -sf /usr/bin/python3 /usr/bin/python
 
 # Install dependencies only when needed
 FROM base AS deps

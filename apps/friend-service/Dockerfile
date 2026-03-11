@@ -1,5 +1,7 @@
 # Multi-stage build for friend-service
 FROM node:22-alpine AS base
+# Python required for mediasoup postinstall (used by streaming-service in monorepo)
+RUN apk add --no-cache python3 py3-pip && ln -sf /usr/bin/python3 /usr/bin/python
 
 # Install dependencies only when needed
 FROM base AS deps

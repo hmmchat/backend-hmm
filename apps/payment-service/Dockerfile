@@ -5,10 +5,10 @@ FROM node:22-alpine AS base
 FROM base AS deps
 WORKDIR /app
 
-# Copy workspace configuration
+# Copy workspace configuration (full dirs to preserve npm workspace structure)
 COPY package.json package-lock.json* ./
-COPY packages/*/package.json ./packages/
-COPY apps/*/package.json ./apps/
+COPY packages ./packages
+COPY apps ./apps
 
 # Install dependencies
 RUN npm ci

@@ -1,5 +1,10 @@
 name: Deploy Services
 
+# Required for pushing images to ghcr.io (GitHub Container Registry)
+permissions:
+  contents: read
+  packages: write
+
 on:
   push:
     branches: [ main ]

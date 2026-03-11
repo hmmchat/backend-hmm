@@ -30,8 +30,10 @@ COPY tsconfig.base.json ./
 COPY apps/discovery-service ./apps/discovery-service
 COPY packages ./packages
 
-# Build the service
+# Build shared packages and generate Prisma client
+RUN npm run build -w @hmm/common
 WORKDIR /app/apps/discovery-service
+RUN npx prisma generate --schema=prisma/schema.prisma
 RUN npm run build
 
 # Production stage

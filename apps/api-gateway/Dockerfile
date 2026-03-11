@@ -31,10 +31,9 @@ COPY tsconfig.base.json ./
 COPY apps/api-gateway ./apps/api-gateway
 COPY packages ./packages
 
-# Build shared packages and generate Prisma client
+# Build shared packages (api-gateway has no Prisma schema - it's commented out)
 RUN npm run build -w @hmm/common
 WORKDIR /app/apps/api-gateway
-RUN npx prisma generate --schema=prisma/schema.prisma
 RUN npm run build
 
 # Production stage
@@ -50,7 +49,6 @@ COPY --from=builder /app/apps/api-gateway/package.json ./
 # Copy shared packages and node_modules (builder has full deps; no npm ci in runner)
 COPY --from=builder /app/packages ./packages
 COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/apps/api-gateway/node_modules/.prisma ./node_modules/.prisma
 
 # Expose port
 EXPOSE 3000

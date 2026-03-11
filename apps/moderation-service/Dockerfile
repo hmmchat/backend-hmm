@@ -21,7 +21,8 @@ RUN npm ci
 FROM base AS builder
 WORKDIR /app
 
-# Copy dependencies
+# Copy dependencies and workspace config (required for -w @hmm/common)
+COPY --from=deps /app/package.json /app/package-lock.json* ./
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/packages ./packages
 

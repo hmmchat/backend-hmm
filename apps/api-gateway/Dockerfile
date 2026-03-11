@@ -26,9 +26,9 @@ COPY --from=deps /app/package.json /app/package-lock.json* ./
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/packages ./packages
 
-# Copy source code
+# Copy source code (from deps to include apps/api-gateway/node_modules with @fastify/*)
 COPY tsconfig.base.json ./
-COPY apps/api-gateway ./apps/api-gateway
+COPY --from=deps /app/apps/api-gateway ./apps/api-gateway
 COPY packages ./packages
 
 # Build shared packages (api-gateway has no Prisma schema - it's commented out)

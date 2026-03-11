@@ -21,7 +21,7 @@ import {
   UpdateIntentDto,
   CreateMusicPreferenceDto
 } from "../dtos/profile.dto.js";
-import { Gender, UserStatus } from "@prisma/client";
+import { Gender, UserStatus } from "../../node_modules/.prisma/client/index.js";
 import {
   NEARBY_DEFAULT_RADIUS_KM,
   NEARBY_DEFAULT_LIMIT,
@@ -42,7 +42,7 @@ export class UserService implements OnModuleInit {
     private readonly brandService: BrandService,
     private readonly walletClient: WalletClientService,
     private readonly authClient: AuthClientService
-  ) {}
+  ) { }
 
   async onModuleInit() {
     // Validate database schema exists
@@ -82,9 +82,12 @@ export class UserService implements OnModuleInit {
   /* ---------- Token Verification ---------- */
   private async verifyAccessToken(accessToken: string): Promise<string> {
     try {
+      console.log(`[UserService] Verifying token: ${accessToken.substring(0, 20)}...`);
       const payload = await this.verifyAccess(accessToken);
+      console.log(`[UserService] Token verified for user: ${payload.sub}`);
       return payload.sub; // user id
-    } catch (error) {
+    } catch (error: any) {
+      console.error(`[UserService] Token verification failed:`, error.message || error);
       throw new HttpException("Invalid or expired token", HttpStatus.UNAUTHORIZED);
     }
   }
@@ -116,11 +119,11 @@ export class UserService implements OnModuleInit {
         await this.moderationClient.checkImage(data.displayPictureUrl);
       } catch (error) {
         // In dev/test mode, allow images if moderation check fails
-        const isDevOrTest = 
-          process.env.NODE_ENV === "test" || 
+        const isDevOrTest =
+          process.env.NODE_ENV === "test" ||
           process.env.NODE_ENV === "development" ||
           !process.env.NODE_ENV;
-        
+
         if (isDevOrTest) {
           console.warn(`Moderation check failed in dev/test mode, allowing image: ${error instanceof Error ? error.message : String(error)}`);
           // Continue with profile creation
@@ -168,7 +171,7 @@ export class UserService implements OnModuleInit {
       }
       // Re-throw as HttpException with proper status
       const errorMessage = error instanceof Error ? error.message : String(error);
-      
+
       // Provide helpful error message if database schema is missing
       if (errorMessage.includes("does not exist") || errorMessage.includes("relation") || errorMessage.includes("table")) {
         throw new HttpException(
@@ -181,7 +184,7 @@ export class UserService implements OnModuleInit {
           HttpStatus.INTERNAL_SERVER_ERROR
         );
       }
-      
+
       throw new HttpException(
         `Failed to create profile: ${errorMessage}`,
         HttpStatus.INTERNAL_SERVER_ERROR
@@ -206,7 +209,7 @@ export class UserService implements OnModuleInit {
       // Verify referrer account is still active before awarding rewards
       const referrerId = referralStatus.referredBy;
       const isReferrerActive = await this.authClient.isAccountActive(referrerId);
-      
+
       if (!isReferrerActive) {
         console.warn(`Referrer ${referrerId} is not active, skipping referral reward for user ${userId}`);
         // Mark as claimed to prevent retry attempts
@@ -297,7 +300,7 @@ export class UserService implements OnModuleInit {
       }
     }
     // If user has no activeBadgeId, activeBadge is already null
-    
+
     // Add activeBadge to user object (null if no badge or fetch failed)
     (user as any).activeBadge = activeBadge;
 
@@ -310,7 +313,7 @@ export class UserService implements OnModuleInit {
     // Calculate profile completion percentage (only if not filtering or if completion is requested)
     let completion;
     const shouldIncludeCompletion = !fields || fields.length === 0 || fields.includes("profileCompletion");
-    
+
     if (shouldIncludeCompletion) {
       try {
         completion = await this.profileCompletion.calculateCompletion(userId);
@@ -438,6 +441,7 @@ export class UserService implements OnModuleInit {
       updateData.gender = data.gender as Gender;
       updateData.genderChanged = true;
     }
+    if (data.displayPictureUrl !== undefined) updateData.displayPictureUrl = data.displayPictureUrl;
     if (data.intent !== undefined) updateData.intent = data.intent;
     if (data.musicPreferenceId !== undefined) updateData.musicPreferenceId = data.musicPreferenceId;
     if (data.videoEnabled !== undefined) updateData.videoEnabled = data.videoEnabled;
@@ -491,7 +495,7 @@ export class UserService implements OnModuleInit {
       }
     }
     // If user has no activeBadgeId, activeBadge is already null
-    
+
     // Add activeBadge to user object (null if no badge or fetch failed)
     (user as any).activeBadge = activeBadge;
 
@@ -515,29 +519,37 @@ export class UserService implements OnModuleInit {
   async addPhoto(accessToken: string, data: CreatePhotoDto) {
     const userId = await this.verifyAccessToken(accessToken);
 
-    // Check current photo count
-    const photoCount = await this.prisma.userPhoto.count({
-      where: { userId }
+    // Check current photo count (only for new photos, not updates)
+    const existingPhoto = await this.prisma.userPhoto.findFirst({
+      where: { userId, order: data.order }
     });
 
-    if (photoCount >= 4) {
-      throw new HttpException("Maximum 4 photos allowed", HttpStatus.BAD_REQUEST);
+    if (!existingPhoto) {
+      // Creating new photo - check if we're at the limit
+      const photoCount = await this.prisma.userPhoto.count({
+        where: { userId }
+      });
+
+      if (photoCount >= 4) {
+        throw new HttpException("Maximum 4 photos allowed", HttpStatus.BAD_REQUEST);
+      }
     }
 
     // Validate photo URL for NSFW content
     await this.moderationClient.checkImage(data.url);
 
-    // Check if order is already taken
-    const existingPhoto = await this.prisma.userPhoto.findFirst({
-      where: { userId, order: data.order }
-    });
-
-    if (existingPhoto) {
-      throw new HttpException(`Photo with order ${data.order} already exists`, HttpStatus.CONFLICT);
-    }
-
-    const photo = await this.prisma.userPhoto.create({
-      data: {
+    // Upsert: Update existing photo or create new one
+    const photo = await this.prisma.userPhoto.upsert({
+      where: {
+        userId_order: {
+          userId,
+          order: data.order
+        }
+      },
+      update: {
+        url: data.url
+      },
+      create: {
         userId,
         url: data.url,
         order: data.order
@@ -1195,7 +1207,7 @@ export class UserService implements OnModuleInit {
     const day = dateOfBirth.getDate();
 
     let horoscope: string;
-    
+
     // Determine zodiac sign based on month and day
     if ((month === 3 && day >= 21) || (month === 4 && day <= 19)) horoscope = "Aries";
     else if ((month === 4 && day >= 20) || (month === 5 && day <= 20)) horoscope = "Taurus";

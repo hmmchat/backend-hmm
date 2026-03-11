@@ -25,6 +25,7 @@ export const CreateProfileSchema = z.object({
 export const UpdateProfileSchema = z.object({
   username: z.string().min(3).max(30).regex(/^[a-zA-Z0-9_]+$/).optional(),
   gender: GenderEnum.optional(),
+  displayPictureUrl: z.string().url().optional(),
   intent: z.string().max(50).optional(),
   musicPreferenceId: z.string().optional(),
   videoEnabled: z.boolean().optional()

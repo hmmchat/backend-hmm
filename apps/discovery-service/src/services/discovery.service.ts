@@ -5,6 +5,7 @@ import { GenderFilterService } from "./gender-filter.service.js";
 import { LocationService } from "./location.service.js";
 import { MatchingService } from "./matching.service.js";
 import { StreamingClientService } from "./streaming-client.service.js";
+import { CacheService } from "./cache.service.js";
 import {
   MATCH_SCORE_BRAND,
   MATCH_SCORE_INTEREST_EXACT,
@@ -97,8 +98,9 @@ export class DiscoveryService implements OnModuleInit {
     private readonly genderFilterService: GenderFilterService,
     private readonly locationService: LocationService,
     private readonly matchingService: MatchingService,
-    private readonly streamingClient: StreamingClientService
-  ) {}
+    private readonly streamingClient: StreamingClientService,
+    private readonly cache: CacheService
+  ) { }
 
   /**
    * Get next face card for user
@@ -115,7 +117,7 @@ export class DiscoveryService implements OnModuleInit {
     // Get user's preferred city
     const cityResponse = await this.locationService.getPreferredCity(token);
     const preferredCity = cityResponse.city;
-    
+
     // Get viewer's actual city from location if in "anywhere" mode
     let actualCity: string | null = null;
     if (preferredCity === null && (userProfileResponse as any).latitude && (userProfileResponse as any).longitude) {
@@ -130,7 +132,7 @@ export class DiscoveryService implements OnModuleInit {
         console.warn("Failed to get actual city from location:", error);
       }
     }
-    
+
     // Convert to UserProfile interface
     const currentUser: UserProfile = {
       id: userProfileResponse.id,
@@ -150,7 +152,7 @@ export class DiscoveryService implements OnModuleInit {
       const matchedUserId = existingMatch.user1Id === userId ? existingMatch.user2Id : existingMatch.user1Id;
       const matchedUser = await this.userClient.getUserFullProfileById(matchedUserId);
       const card = await this.buildCard(this.convertToDiscoveryUser(matchedUser), preferredCity, currentUser);
-      
+
       // Decrement gender filter if active
       const genderFilter = await this.genderFilterService.getCurrentPreference(userId);
       const hasActiveGenderFilter = genderFilter && genderFilter.screensRemaining > 0;
@@ -194,7 +196,7 @@ export class DiscoveryService implements OnModuleInit {
 
     if (matchedUser) {
       const card = await this.buildCard(matchedUser, preferredCity, currentUser);
-      
+
       if (hasActiveGenderFilter) {
         await this.genderFilterService.decrementScreen(userId);
       }
@@ -211,7 +213,7 @@ export class DiscoveryService implements OnModuleInit {
     const statuses: ("AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE")[] = soloOnly
       ? ["AVAILABLE"]
       : ["AVAILABLE", "IN_SQUAD_AVAILABLE", "IN_BROADCAST_AVAILABLE"];
-    
+
     // If no matches found, check if we should show fallback
     if (true) {
       // If gender filter is active (screensRemaining > 0), check other cities with same gender
@@ -231,7 +233,7 @@ export class DiscoveryService implements OnModuleInit {
         if (usersInOtherCities.length > 0) {
           const selectedUser = this.selectBestMatch(usersInOtherCities, currentUser);
           const card = await this.buildCard(selectedUser, preferredCity, currentUser);
-          
+
           if (hasActiveGenderFilter) {
             await this.genderFilterService.decrementScreen(userId);
           }
@@ -241,7 +243,7 @@ export class DiscoveryService implements OnModuleInit {
             exhausted: false
           };
         }
-        
+
         // If no users of this gender exist anywhere, check without gender filter
         const usersWithoutGenderFilter = await this.findMatchingUsers(
           token,
@@ -256,7 +258,7 @@ export class DiscoveryService implements OnModuleInit {
         if (usersWithoutGenderFilter.length > 0) {
           const selectedUser = this.selectBestMatch(usersWithoutGenderFilter, currentUser);
           const card = await this.buildCard(selectedUser, preferredCity, currentUser);
-          
+
           return {
             card,
             exhausted: false
@@ -266,7 +268,7 @@ export class DiscoveryService implements OnModuleInit {
 
       // Before showing location cards, check if users are available (they might have just become available)
       // Check for users in preferred city first
-      const usersBeforeLocation = preferredCity 
+      const usersBeforeLocation = preferredCity
         ? await this.findMatchingUsers(
           token,
           userId,
@@ -274,17 +276,17 @@ export class DiscoveryService implements OnModuleInit {
           statuses,
           genders,
           soloOnly,
-            raincheckedUserIds
-          )
+          raincheckedUserIds
+        )
         : await this.findMatchingUsers(
-            token,
-            userId,
-            null,
-            statuses,
-            genders,
-            soloOnly,
-            [] // Don't exclude rainchecked for "anywhere"
-          );
+          token,
+          userId,
+          null,
+          statuses,
+          genders,
+          soloOnly,
+          [] // Don't exclude rainchecked for "anywhere"
+        );
 
       console.log(`[DEBUG] getNextCardForUser - usersBeforeLocation: ${usersBeforeLocation.length} users found for city ${preferredCity || 'null (Anywhere)'}`);
 
@@ -294,7 +296,7 @@ export class DiscoveryService implements OnModuleInit {
           // Use selectBestMatchAndCreate to ensure matches are created before showing card
           const selectedUser = await this.selectBestMatchAndCreate(userId, usersBeforeLocation, currentUser);
           const card = await this.buildCard(selectedUser, preferredCity, currentUser);
-          
+
           if (hasActiveGenderFilter) {
             await this.genderFilterService.decrementScreen(userId);
           }
@@ -313,25 +315,25 @@ export class DiscoveryService implements OnModuleInit {
       // No users available - show location cards (never exhausted)
       // BUT FIRST: Double-check if users became available (they might have just become available after rainchecking)
       // Check for users again (this time don't exclude rainchecked to give fresh chances)
-      const usersRecheck = preferredCity 
+      const usersRecheck = preferredCity
         ? await this.findMatchingUsers(
-            token,
-            userId,
-            preferredCity,
-            statuses,
-            genders,
-            soloOnly,
-            [] // Don't exclude rainchecked - give users another chance
-          )
+          token,
+          userId,
+          preferredCity,
+          statuses,
+          genders,
+          soloOnly,
+          [] // Don't exclude rainchecked - give users another chance
+        )
         : await this.findMatchingUsers(
-            token,
-            userId,
-            null, // anywhere - will now return users from ALL cities (not just preferredCity=null)
-            statuses,
-            genders,
-            soloOnly,
-            [] // Don't exclude rainchecked for "anywhere"
-          );
+          token,
+          userId,
+          null, // anywhere - will now return users from ALL cities (not just preferredCity=null)
+          statuses,
+          genders,
+          soloOnly,
+          [] // Don't exclude rainchecked for "anywhere"
+        );
 
       console.log(`[DEBUG] getNextCardForUser - usersRecheck: ${usersRecheck.length} users found for city ${preferredCity || 'null (Anywhere)'}`);
 
@@ -341,7 +343,7 @@ export class DiscoveryService implements OnModuleInit {
           // Use selectBestMatchAndCreate to ensure matches are created before showing card
           const selectedUser = await this.selectBestMatchAndCreate(userId, usersRecheck, currentUser);
           const card = await this.buildCard(selectedUser, preferredCity, currentUser);
-          
+
           if (hasActiveGenderFilter) {
             await this.genderFilterService.decrementScreen(userId);
           }
@@ -356,37 +358,37 @@ export class DiscoveryService implements OnModuleInit {
           // Continue to location cards if match creation fails
         }
       }
-      
+
       // Still no users available - show location cards (never exhausted)
       // Get location cards already shown
       const locationCardsShown = await this.getLocationCardsShown(userId, sessionId);
-      
+
       // Get available location cards
       let locationCards = await this.getLocationCards(locationCardsShown);
-      
+
       // If all location cards are shown, clear them and cycle through again (make it feel infinite)
       if (locationCards.length === 0) {
         await this.clearLocationCards(userId, sessionId);
         // After clearing, get fresh location cards (all cities + anywhere should be available again)
         locationCards = await this.getLocationCards([]);
       }
-      
+
       // Always return a location card (never exhausted)
       if (locationCards.length > 0) {
         const selectedLocationCard = locationCards[0];
-        
+
         // Mark as shown
         await this.markLocationCardShown(userId, sessionId, selectedLocationCard.city);
-        
+
         return {
           card: selectedLocationCard,
           exhausted: false,
           isLocationCard: true
         };
       }
-      
+
       // Fallback: if somehow no location cards (should never happen), return "anywhere"
-        return {
+      return {
         card: {
           type: "LOCATION" as const,
           city: null, // "Anywhere"
@@ -528,14 +530,14 @@ export class DiscoveryService implements OnModuleInit {
     // Second pass: Check for genre matches (different sub-genres, same genre) = 10 points each
     for (const userInterest of userInterests) {
       if (matchedUserInterestIds.has(userInterest.id)) continue; // Already matched
-      
+
       for (const targetInterest of targetInterests) {
         if (matchedTargetInterestIds.has(targetInterest.id)) continue; // Already matched
-        
+
         // Same genre but different sub-genre
-        if (userInterest.genre && targetInterest.genre && 
-            userInterest.genre === targetInterest.genre && 
-            userInterest.id !== targetInterest.id) {
+        if (userInterest.genre && targetInterest.genre &&
+          userInterest.genre === targetInterest.genre &&
+          userInterest.id !== targetInterest.id) {
           score += MATCH_SCORE_INTEREST_GENRE;
           matchedUserInterestIds.add(userInterest.id);
           matchedTargetInterestIds.add(targetInterest.id);
@@ -604,10 +606,10 @@ export class DiscoveryService implements OnModuleInit {
         console.log(`[INFO] Match already exists between ${userId} and ${matchedUserId}`);
         return;
       }
-      
+
       // Calculate match score
       const matchScore = this.calculateMatchScore(currentUser, matchedUser);
-      
+
       // Create match - check if it actually succeeded
       const result = await this.matchingService.createMatch(userId, matchedUserId, matchScore) as unknown as { success: boolean; error?: any };
       if (!result.success) {
@@ -619,16 +621,16 @@ export class DiscoveryService implements OnModuleInit {
         (error as any).error = result.error?.message || result.error;
         throw error;
       }
-      
+
       // Wait a bit for database consistency
       await new Promise(resolve => setTimeout(resolve, 200));
-      
+
       // Verify match was created
       let verifyMatch = await this.matchingService.getMatchForUser(userId);
       if (!verifyMatch || (verifyMatch.user1Id !== matchedUserId && verifyMatch.user2Id !== matchedUserId)) {
         verifyMatch = await this.matchingService.getMatchForUser(matchedUserId);
       }
-      
+
       if (!verifyMatch || (verifyMatch.user1Id !== matchedUserId && verifyMatch.user2Id !== matchedUserId)) {
         console.warn(`[WARN] Match creation may have failed for ${userId} and ${matchedUserId} - match not found after creation`);
         // Try one more time with direct query
@@ -656,13 +658,13 @@ export class DiscoveryService implements OnModuleInit {
       } else {
         console.log(`[INFO] Verified match created between ${userId} and ${matchedUserId}`);
       }
-      
+
       // Update both users' status to MATCHED
       await Promise.all([
         this.matchingService.updateUserStatus(userId, "MATCHED"),
         this.matchingService.updateUserStatus(matchedUserId, "MATCHED")
       ]);
-      
+
       console.log(`[INFO] Created match between ${userId} and ${matchedUserId} when showing card`);
     } catch (error: any) {
       console.error(`[ERROR] Failed to create match when showing card:`, error?.message || error);
@@ -730,9 +732,9 @@ export class DiscoveryService implements OnModuleInit {
       candidate,
       score: this.calculateMatchScore(currentUser, candidate)
     })).sort((a, b) => b.score - a.score);
-    
+
     const errors: any[] = [];
-    
+
     // Try each candidate until we find one where match creation succeeds
     for (const { candidate } of scoredCandidates) {
       try {
@@ -747,7 +749,7 @@ export class DiscoveryService implements OnModuleInit {
         const errorMessage = error?.message || error?.details?.message || error?.response?.data?.message || actualError?.message || actualError;
         const errorDetail = error?.details || actualError?.details || actualError?.detail || actualError;
         const errorHint = error?.hint || actualError?.hint;
-        
+
         const errorDetails = {
           candidateId: candidate.id,
           error: errorMessage,
@@ -763,14 +765,14 @@ export class DiscoveryService implements OnModuleInit {
         continue;
       }
     }
-    
+
     // If all candidates failed, throw error with actual database error details
     const firstError = errors[0];
     const errorMessage = firstError?.error || 'Match creation failed for all available users';
     const errorCode = firstError?.code || 'MATCH_CREATION_FAILED_ALL';
     const errorDetails = firstError?.details || {};
     const errorHint = firstError?.hint;
-    
+
     // Build detailed suggestion based on error code
     let suggestion = `Database error occurred. Please check:`;
     if (errorCode === '42P01' || errorMessage?.includes('does not exist')) {
@@ -787,7 +789,7 @@ export class DiscoveryService implements OnModuleInit {
     if (errorHint) {
       suggestion += `\n\nDatabase hint: ${errorHint}`;
     }
-    
+
     throw new HttpException(
       {
         message: `Failed to create match for any candidate (tried ${errors.length} candidates)`,
@@ -819,7 +821,7 @@ export class DiscoveryService implements OnModuleInit {
    * Build card response from user data
    */
   private async buildCard(
-    user: DiscoveryUser, 
+    user: DiscoveryUser,
     _currentCity: string | null,
     currentUser?: UserProfile
   ): Promise<Card> {
@@ -889,10 +891,10 @@ export class DiscoveryService implements OnModuleInit {
       })),
       musicPreference: user.musicPreference
         ? {
-            name: user.musicPreference.name,
-            artist: user.musicPreference.artist,
-            albumArtUrl: user.musicPreference.albumArtUrl || undefined
-          }
+          name: user.musicPreference.name,
+          artist: user.musicPreference.artist,
+          albumArtUrl: user.musicPreference.albumArtUrl || undefined
+        }
         : undefined,
       pages,
       status: user.status as "AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE" | "ONLINE" | "OFFLINE" | "VIEWER",
@@ -1018,12 +1020,12 @@ export class DiscoveryService implements OnModuleInit {
             }
           }
         },
-      select: {
-        raincheckedUserId: true
-      }
-    });
+        select: {
+          raincheckedUserId: true
+        }
+      });
 
-    return rainchecks.map((r: { raincheckedUserId: string }) => r.raincheckedUserId);
+      return rainchecks.map((r: { raincheckedUserId: string }) => r.raincheckedUserId);
     } catch (error: any) {
       // If table doesn't exist or other Prisma error, return empty array
       if (error?.code === 'P2021' || error?.message?.includes('does not exist')) {
@@ -1057,7 +1059,7 @@ export class DiscoveryService implements OnModuleInit {
       }
     });
 
-    return locationRainchecks.map((r: { raincheckedUserId: string }) => 
+    return locationRainchecks.map((r: { raincheckedUserId: string }) =>
       r.raincheckedUserId.replace("LOCATION:", "")
     );
   }
@@ -1071,7 +1073,7 @@ export class DiscoveryService implements OnModuleInit {
     city: string | null
   ): Promise<void> {
     const locationId = `LOCATION:${city || "ANYWHERE"}`;
-    
+
     const existing = await (this.prisma as any).raincheckSession.findFirst({
       where: {
         userId,
@@ -1101,7 +1103,7 @@ export class DiscoveryService implements OnModuleInit {
   ): Promise<LocationCard[]> {
     // Get top cities (more than needed for randomization)
     const allCities = await this.locationService.getCitiesWithMaxUsers(CITIES_MAX_USERS_LIMIT);
-    
+
     // Calculate "Anywhere" count:
     // - Users with preferredCity = null (didn't select a city)
     // - PLUS all available users from all cities (because "Anywhere" sees everyone)
@@ -1111,21 +1113,21 @@ export class DiscoveryService implements OnModuleInit {
     // Note: Users with null city are NOT included in city counts (city query filters WHERE preferredCity IS NOT NULL)
     // So we need to add them separately
     const anywhereCount = nullCityUsersCount + totalCityUsers;
-    
+
     // Check if "anywhere" was already shown (it's stored as "ANYWHERE" in excludeCities)
     const anywhereShown = excludeCities.includes("ANYWHERE") || excludeCities.includes(null as any);
-    
+
     // Filter out excluded cities (include "anywhere" in exclusion if it was shown)
     const excludeCitiesFiltered = excludeCities.filter(c => c !== "ANYWHERE" && c !== null);
     const availableCities = allCities.filter(
       c => !excludeCitiesFiltered.includes(c.city)
     );
-    
+
     // Randomly select 8-10 cities
     const count = Math.min(8 + Math.floor(Math.random() * 3), availableCities.length); // 8-10 cities
     const shuffled = [...availableCities].sort(() => Math.random() - 0.5);
     const selectedCities = shuffled.slice(0, count);
-    
+
     // Build location cards
     const locationCards: LocationCard[] = [
       ...selectedCities.map(c => ({
@@ -1134,7 +1136,7 @@ export class DiscoveryService implements OnModuleInit {
         availableCount: c.availableCount
       }))
     ];
-    
+
     // Always include "Anywhere" to make location cards feel infinite
     // After clearing (when excludeCities is empty), all location cards cycle back including "anywhere"
     // The check ensures we don't show "anywhere" twice in the same cycle, but it will reappear after clearing
@@ -1148,7 +1150,7 @@ export class DiscoveryService implements OnModuleInit {
         availableCount: anywhereCount // Users with null city + all users from all cities
       });
     }
-    
+
     // Shuffle again to randomize "Anywhere" position (if it's included)
     return locationCards.sort(() => Math.random() - 0.5);
   }
@@ -1181,7 +1183,7 @@ export class DiscoveryService implements OnModuleInit {
           await this.matchingService.updateUserStatus(raincheckedUserId, "AVAILABLE");
           console.log(`[DEBUG] Status reset completed for rainchecked user ${raincheckedUserId}`);
         }
-        
+
         // Also reset current user to AVAILABLE (they rainchecked, so they want to see new cards)
         const currentUserProfile = await this.userClient.getUserFullProfileById(userId);
         if (currentUserProfile.status === 'MATCHED') {
@@ -1240,7 +1242,7 @@ export class DiscoveryService implements OnModuleInit {
       // Get user profiles for rematching
       const user1Profile = await this.userClient.getUserFullProfileById(userId);
       const user2Profile = await this.userClient.getUserFullProfileById(raincheckedUserId);
-      
+
       const user1ProfileData: UserProfile = {
         id: user1Profile.id,
         preferredCity: user1Profile.preferredCity,
@@ -1266,7 +1268,7 @@ export class DiscoveryService implements OnModuleInit {
       // Get rainchecked users for both
       const rainchecked1 = await this.getRaincheckedUserIds(userId, sessionId, user1Profile.preferredCity);
       const rainchecked2 = await this.getRaincheckedUserIds(raincheckedUserId, sessionId, user2Profile.preferredCity);
-      
+
       console.log(`[DEBUG] Rematching after raincheck - User ${userId} rainchecked list:`, rainchecked1);
       console.log(`[DEBUG] Rematching after raincheck - User ${raincheckedUserId} rainchecked list:`, rainchecked2);
 
@@ -1378,15 +1380,15 @@ export class DiscoveryService implements OnModuleInit {
    * Proceed with matched user (both users proceed to IN_SQUAD)
    * Removes the match and updates both users' status to IN_SQUAD
    */
-  async proceedWithMatch(userId: string, matchedUserId: string, timeoutSeconds?: number): Promise<{ 
-    roomId?: string; 
+  async proceedWithMatch(userId: string, matchedUserId: string, timeoutSeconds?: number): Promise<{
+    roomId?: string;
     sessionId?: string;
     waiting?: boolean;
     message?: string;
   }> {
     // Verify that users are actually matched
     let match = await this.matchingService.getMatchForUser(userId);
-    
+
     // If no match exists, create one (for test flow - allows proceeding with any card)
     // In production, matches are created when cards are shown via findMatchForUser
     if (!match || (match.user1Id !== matchedUserId && match.user2Id !== matchedUserId)) {
@@ -1398,7 +1400,7 @@ export class DiscoveryService implements OnModuleInit {
           HttpStatus.BAD_REQUEST
         );
       }
-      
+
       // Create a match with a default score (for test flow)
       // This allows proceeding with any card shown, even if mutual matching didn't create it
       try {
@@ -1415,10 +1417,10 @@ export class DiscoveryService implements OnModuleInit {
             HttpStatus.BAD_REQUEST
           );
         }
-        
+
         // Wait a bit for database consistency
         await new Promise(resolve => setTimeout(resolve, 300));
-        
+
         // Get the newly created match
         match = await this.matchingService.getMatchForUser(userId);
         if (!match || (match.user1Id !== matchedUserId && match.user2Id !== matchedUserId)) {
@@ -1432,11 +1434,11 @@ export class DiscoveryService implements OnModuleInit {
           match = await this.matchingService.getMatchForUser(matchedUserId);
         }
       }
-      
-        // If match still doesn't exist after retries, create it with more attempts
+
+      // If match still doesn't exist after retries, create it with more attempts
       if (!match || (match.user1Id !== matchedUserId && match.user2Id !== matchedUserId)) {
         console.warn(`[WARN] Match not found, creating it now for ${userId} and ${matchedUserId}`);
-        
+
         // Try multiple times with increasing delays
         for (let attempt = 0; attempt < 3; attempt++) {
           try {
@@ -1454,13 +1456,13 @@ export class DiscoveryService implements OnModuleInit {
               );
             }
             await new Promise(resolve => setTimeout(resolve, 300 * (attempt + 1))); // 300ms, 600ms, 900ms
-            
+
             // Try to get match by both user IDs
             match = await this.matchingService.getMatchForUser(userId);
             if (!match || (match.user1Id !== matchedUserId && match.user2Id !== matchedUserId)) {
               match = await this.matchingService.getMatchForUser(matchedUserId);
             }
-            
+
             // If we found the match, break out of retry loop
             if (match && (match.user1Id === matchedUserId || match.user2Id === matchedUserId)) {
               console.log(`[INFO] Match created successfully on attempt ${attempt + 1}`);
@@ -1489,7 +1491,7 @@ export class DiscoveryService implements OnModuleInit {
           }
         }
       }
-      
+
       // Update statuses to MATCHED if not already
       if (match && (match.user1Id === matchedUserId || match.user2Id === matchedUserId)) {
         await Promise.all([
@@ -1503,20 +1505,20 @@ export class DiscoveryService implements OnModuleInit {
     if (!match || (match.user1Id !== matchedUserId && match.user2Id !== matchedUserId)) {
       console.error(`[ERROR] Match still not found after all attempts for ${userId} and ${matchedUserId}`);
       console.error(`[DEBUG] Attempting direct database query...`);
-      
+
       // Try to query the database directly to see if match exists
       try {
         const [id1, id2] = [userId, matchedUserId].sort();
         const escapedId1 = id1.replace(/'/g, "''");
         const escapedId2 = id2.replace(/'/g, "''");
-        
+
         const directMatch = await (this.prisma as any).$queryRawUnsafe(
           `SELECT "user1Id", "user2Id", score FROM active_matches 
            WHERE ("user1Id" = '${escapedId1}' AND "user2Id" = '${escapedId2}')
            OR ("user1Id" = '${escapedId2}' AND "user2Id" = '${escapedId1}')
            LIMIT 1`
         );
-        
+
         if (directMatch && directMatch.length > 0) {
           match = directMatch[0];
           console.log(`[INFO] Found match via direct database query`);
@@ -1543,13 +1545,13 @@ export class DiscoveryService implements OnModuleInit {
               );
             }
             await new Promise(resolve => setTimeout(resolve, 400));
-            
+
             // Try to get it again
             match = await this.matchingService.getMatchForUser(userId);
             if (!match || (match.user1Id !== matchedUserId && match.user2Id !== matchedUserId)) {
               match = await this.matchingService.getMatchForUser(matchedUserId);
             }
-            
+
             // Try direct query one more time
             if (!match || (match.user1Id !== matchedUserId && match.user2Id !== matchedUserId)) {
               const directMatch2 = await (this.prisma as any).$queryRawUnsafe(
@@ -1561,7 +1563,7 @@ export class DiscoveryService implements OnModuleInit {
                 match = directMatch2[0];
               }
             }
-            
+
             if (!match || (match.user1Id !== matchedUserId && match.user2Id !== matchedUserId)) {
               throw new HttpException(
                 {
@@ -1574,7 +1576,7 @@ export class DiscoveryService implements OnModuleInit {
                 HttpStatus.BAD_REQUEST
               );
             }
-            
+
             // Update statuses
             await Promise.all([
               this.matchingService.updateUserStatus(userId, "MATCHED"),
@@ -1643,7 +1645,7 @@ export class DiscoveryService implements OnModuleInit {
       // Both users have accepted - proceed to IN_SQUAD
       await this.matchingService.removeMatch(match.user1Id, match.user2Id);
       await this.matchingService.removeMatchAcceptances(match.user1Id, match.user2Id);
-      
+
       // IMPORTANT: Create room FIRST while users are still MATCHED status
       // Room service expects users to be MATCHED when creating rooms
       let roomResult: { roomId?: string; sessionId?: string } = {};
@@ -1655,14 +1657,23 @@ export class DiscoveryService implements OnModuleInit {
         // Don't throw - room creation failure shouldn't block the match
         // Frontend can create room separately if needed
       }
-      
+
       // THEN update both users' status to IN_SQUAD (after room is created)
       // Note: Room service will also update statuses, but we do it here too for consistency
       await this.matchingService.updateUserStatus(match.user1Id, "IN_SQUAD");
       await this.matchingService.updateUserStatus(match.user2Id, "IN_SQUAD");
-      
+
+      // Store room assignment in Redis so waiting pollers can retrieve it
+      // without re-calling proceed (which would delete the already-consumed match)
+      if (roomResult.roomId) {
+        const roomData = { roomId: roomResult.roomId, sessionId: roomResult.sessionId };
+        await this.cache.set(`room:${match.user1Id}`, roomData, 300); // 5 min TTL
+        await this.cache.set(`room:${match.user2Id}`, roomData, 300);
+        console.log(`[INFO] Stored room ${roomResult.roomId} in Redis for both users`);
+      }
+
       console.log(`[INFO] Both users accepted match - ${match.user1Id} and ${match.user2Id} moved to IN_SQUAD`);
-      
+
       return roomResult;
     } else {
       // Only one user has accepted - wait for the other user
@@ -1686,10 +1697,10 @@ export class DiscoveryService implements OnModuleInit {
   ): Promise<CardResponse> {
     // Get current user profile directly by userId
     const userProfileResponse = await this.userClient.getUserFullProfileById(userId);
-    
+
     // Get user's preferred city directly
     const preferredCity = await this.userClient.getPreferredCityById(userId);
-    
+
     // Get viewer's actual city from location if in "anywhere" mode
     let actualCity: string | null = null;
     if (preferredCity === null && (userProfileResponse as any).latitude && (userProfileResponse as any).longitude) {
@@ -1704,7 +1715,7 @@ export class DiscoveryService implements OnModuleInit {
         console.warn("Failed to get actual city from location:", error);
       }
     }
-    
+
     // Convert to UserProfile interface
     const currentUser: UserProfile = {
       id: userProfileResponse.id,
@@ -1724,7 +1735,7 @@ export class DiscoveryService implements OnModuleInit {
       const matchedUserId = existingMatch.user1Id === userId ? existingMatch.user2Id : existingMatch.user1Id;
       const matchedUser = await this.userClient.getUserFullProfileById(matchedUserId);
       const card = await this.buildCard(this.convertToDiscoveryUser(matchedUser), preferredCity, currentUser);
-      
+
       // Decrement gender filter if active
       const genderFilter = await this.genderFilterService.getCurrentPreference(userId);
       const hasActiveGenderFilter = genderFilter && genderFilter.screensRemaining > 0;
@@ -1793,9 +1804,9 @@ export class DiscoveryService implements OnModuleInit {
           HttpStatus.INTERNAL_SERVER_ERROR
         );
       }
-      
+
       const card = await this.buildCard(matchedUser, preferredCity, currentUser);
-      
+
       if (hasActiveGenderFilter) {
         await this.genderFilterService.decrementScreen(userId);
       }
@@ -1808,7 +1819,7 @@ export class DiscoveryService implements OnModuleInit {
 
     // No mutual match found, use fallback logic
     console.log(`[DEBUG] getNextCardForUser - No mutual match found, using fallback logic. preferredCity: ${preferredCity}`);
-    
+
     // Determine statuses to filter
     const statuses: ("AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE")[] = soloOnly
       ? ["AVAILABLE"]
@@ -1831,7 +1842,7 @@ export class DiscoveryService implements OnModuleInit {
       console.log(`[DEBUG] getNextCardForUser - Found ${matchingUsers.length} users, selecting best match`);
       const selectedUser = await this.selectBestMatchAndCreate(userId, matchingUsers, currentUser);
       const card = await this.buildCard(selectedUser, preferredCity, currentUser);
-      
+
       if (hasActiveGenderFilter) {
         await this.genderFilterService.decrementScreen(userId);
       }
@@ -1848,7 +1859,7 @@ export class DiscoveryService implements OnModuleInit {
       // User has no city preference - try searching in cities with available users
       const suggestedCities = await this.locationService.getCitiesWithMaxUsers(5);
       console.log(`[DEBUG] getNextCardForUser - Got ${suggestedCities.length} suggested cities:`, suggestedCities.map(c => `${c.city} (${c.availableCount})`).join(', '));
-      
+
       for (const cityInfo of suggestedCities) {
         if (cityInfo.availableCount > 0) {
           console.log(`[DEBUG] getNextCardForUser - Trying city: ${cityInfo.city} (${cityInfo.availableCount} available)`);
@@ -1861,12 +1872,12 @@ export class DiscoveryService implements OnModuleInit {
             raincheckedUserIds
           );
           console.log(`[DEBUG] getNextCardForUser - City ${cityInfo.city} returned ${usersInCity.length} users`);
-          
+
           if (usersInCity.length > 0) {
             console.log(`[DEBUG] getNextCardForUser - Found users in ${cityInfo.city}, creating match and card`);
             const selectedUser = await this.selectBestMatchAndCreate(userId, usersInCity, currentUser);
             const card = await this.buildCard(selectedUser, cityInfo.city, currentUser);
-            
+
             if (hasActiveGenderFilter) {
               await this.genderFilterService.decrementScreen(userId);
             }
@@ -1899,7 +1910,7 @@ export class DiscoveryService implements OnModuleInit {
         if (usersInOtherCities.length > 0) {
           const selectedUser = this.selectBestMatch(usersInOtherCities, currentUser);
           const card = await this.buildCard(selectedUser, preferredCity, currentUser);
-          
+
           if (hasActiveGenderFilter) {
             await this.genderFilterService.decrementScreen(userId);
           }
@@ -1909,7 +1920,7 @@ export class DiscoveryService implements OnModuleInit {
             exhausted: false
           };
         }
-        
+
         // If no users of this gender exist anywhere, check without gender filter
         const usersWithoutGenderFilter = await this.findMatchingUsersForUser(
           userId,
@@ -1923,7 +1934,7 @@ export class DiscoveryService implements OnModuleInit {
         if (usersWithoutGenderFilter.length > 0) {
           const selectedUser = this.selectBestMatch(usersWithoutGenderFilter, currentUser);
           const card = await this.buildCard(selectedUser, preferredCity, currentUser);
-          
+
           return {
             card,
             exhausted: false
@@ -1933,29 +1944,29 @@ export class DiscoveryService implements OnModuleInit {
 
       // Before showing location cards, check if users are available (they might have just become available)
       // Check for users in preferred city first
-      const usersBeforeLocation = preferredCity 
+      const usersBeforeLocation = preferredCity
         ? await this.findMatchingUsersForUser(
-            userId,
-            preferredCity,
-            statuses,
-            genders,
-            soloOnly,
-            raincheckedUserIds
-          )
+          userId,
+          preferredCity,
+          statuses,
+          genders,
+          soloOnly,
+          raincheckedUserIds
+        )
         : await this.findMatchingUsersForUser(
-            userId,
-            null,
-            statuses,
-            genders,
-            soloOnly,
-            [] // Don't exclude rainchecked for "anywhere"
-          );
+          userId,
+          null,
+          statuses,
+          genders,
+          soloOnly,
+          [] // Don't exclude rainchecked for "anywhere"
+        );
 
       // If users are available, show them instead of location cards
       if (usersBeforeLocation.length > 0) {
         const selectedUser = this.selectBestMatch(usersBeforeLocation, currentUser);
         const card = await this.buildCard(selectedUser, preferredCity, currentUser);
-        
+
         if (hasActiveGenderFilter) {
           await this.genderFilterService.decrementScreen(userId);
         }
@@ -1969,30 +1980,30 @@ export class DiscoveryService implements OnModuleInit {
       // No users available - show location cards (never exhausted)
       // Get location cards already shown
       const locationCardsShown = await this.getLocationCardsShown(userId, sessionId);
-      
+
       // Get available location cards
       let locationCards = await this.getLocationCards(locationCardsShown);
-      
+
       // If all location cards are shown, clear them and cycle through again
       if (locationCards.length === 0) {
         await this.clearLocationCards(userId, sessionId);
         locationCards = await this.getLocationCards([]);
       }
-      
+
       // Always return a location card (never exhausted)
       if (locationCards.length > 0) {
         const selectedLocationCard = locationCards[0];
-        
+
         // Mark as shown
         await this.markLocationCardShown(userId, sessionId, selectedLocationCard.city);
-        
+
         return {
           card: selectedLocationCard,
           exhausted: false,
           isLocationCard: true
         };
       }
-      
+
       // Fallback: if somehow no location cards (should never happen), return "anywhere"
       return {
         card: {
@@ -2064,7 +2075,7 @@ export class DiscoveryService implements OnModuleInit {
     // Get cleanup interval from environment (default 2 seconds)
     // Since acceptance timeout is 5 seconds, checking every 2 seconds is sufficient
     const cleanupIntervalMs = parseInt(process.env.CLEANUP_INTERVAL_MS || "2000", 10);
-    
+
     // Clean up expired acceptances periodically
     setInterval(async () => {
       try {
@@ -2073,7 +2084,7 @@ export class DiscoveryService implements OnModuleInit {
         console.error("[ERROR] Failed to cleanup expired matches:", error);
       }
     }, cleanupIntervalMs);
-    
+
     console.log(`[INFO] Cleanup interval initialized: checking expired acceptances every ${cleanupIntervalMs}ms`);
   }
 
@@ -2084,12 +2095,12 @@ export class DiscoveryService implements OnModuleInit {
   async handleRoomCreated(roomId: string, userIds: string[]): Promise<void> {
     try {
       console.log(`[INFO] Room ${roomId} created with users: ${userIds.join(", ")} - updating to IN_SQUAD`);
-      
+
       // Update all users to IN_SQUAD status
       await Promise.all(
         userIds.map((userId) => this.matchingService.updateUserStatus(userId, "IN_SQUAD"))
       );
-      
+
       console.log(`[INFO] Successfully updated ${userIds.length} users to IN_SQUAD for room ${roomId}`);
     } catch (error: any) {
       console.error(`[ERROR] Failed to handle room created for room ${roomId}:`, error.message);
@@ -2104,12 +2115,12 @@ export class DiscoveryService implements OnModuleInit {
   async handleBroadcastStarted(roomId: string, userIds: string[]): Promise<void> {
     try {
       console.log(`[INFO] Broadcast started for room ${roomId} with users: ${userIds.join(", ")} - updating to IN_BROADCAST`);
-      
+
       // Update all users to IN_BROADCAST status
       await Promise.all(
         userIds.map((userId) => this.matchingService.updateUserStatus(userId, "IN_BROADCAST"))
       );
-      
+
       console.log(`[INFO] Successfully updated ${userIds.length} users to IN_BROADCAST for room ${roomId}`);
     } catch (error: any) {
       console.error(`[ERROR] Failed to handle broadcast started for room ${roomId}:`, error.message);
@@ -2124,12 +2135,12 @@ export class DiscoveryService implements OnModuleInit {
   async handleCallEnded(roomId: string, userIds: string[]): Promise<void> {
     try {
       console.log(`[INFO] Call ended for room ${roomId} with users: ${userIds.join(", ")} - updating to AVAILABLE`);
-      
+
       // Update all users to AVAILABLE status
       await Promise.all(
         userIds.map((userId) => this.matchingService.updateUserStatus(userId, "AVAILABLE"))
       );
-      
+
       console.log(`[INFO] Successfully updated ${userIds.length} users to AVAILABLE after call ended in room ${roomId}`);
     } catch (error: any) {
       console.error(`[ERROR] Failed to handle call ended for room ${roomId}:`, error.message);
@@ -2154,7 +2165,7 @@ export class DiscoveryService implements OnModuleInit {
     // Get user's preferred city
     const cityResponse = await this.locationService.getPreferredCity(token);
     const preferredCity = cityResponse.city;
-    
+
     // Get viewer's actual city from location if in "anywhere" mode
     let actualCity: string | null = null;
     if (preferredCity === null && (userProfileResponse as any).latitude && (userProfileResponse as any).longitude) {
@@ -2168,7 +2179,7 @@ export class DiscoveryService implements OnModuleInit {
         console.warn("Failed to get actual city from location:", error);
       }
     }
-    
+
     // Convert to UserProfile interface
     const currentUser: UserProfile = {
       id: userProfileResponse.id,
@@ -2220,7 +2231,7 @@ export class DiscoveryService implements OnModuleInit {
     if (matchingUsers.length > 0) {
       const selectedUser = this.selectBestMatch(matchingUsers, currentUser);
       const card = await this.buildCard(selectedUser, preferredCity, currentUser);
-      
+
       if (hasActiveGenderFilter) {
         await this.genderFilterService.decrementScreen(userId);
       }
@@ -2377,10 +2388,10 @@ export class DiscoveryService implements OnModuleInit {
   ): Promise<CardResponse> {
     // Get current user profile directly by userId
     const userProfileResponse = await this.userClient.getUserFullProfileById(userId);
-    
+
     // Get user's preferred city directly
     const preferredCity = await this.userClient.getPreferredCityById(userId);
-    
+
     // Get viewer's actual city from location if in "anywhere" mode
     let actualCity: string | null = null;
     if (preferredCity === null && (userProfileResponse as any).latitude && (userProfileResponse as any).longitude) {
@@ -2394,7 +2405,7 @@ export class DiscoveryService implements OnModuleInit {
         console.warn("Failed to get actual city from location:", error);
       }
     }
-    
+
     // Convert to UserProfile interface
     const currentUser: UserProfile = {
       id: userProfileResponse.id,
@@ -2445,7 +2456,7 @@ export class DiscoveryService implements OnModuleInit {
     if (matchingUsers.length > 0) {
       const selectedUser = this.selectBestMatch(matchingUsers, currentUser);
       const card = await this.buildCard(selectedUser, preferredCity, currentUser);
-      
+
       if (hasActiveGenderFilter) {
         await this.genderFilterService.decrementScreen(userId);
       }
@@ -2725,7 +2736,7 @@ export class DiscoveryService implements OnModuleInit {
         }
       });
 
-      return rainchecks.map((r: { raincheckedUserId: string }) => 
+      return rainchecks.map((r: { raincheckedUserId: string }) =>
         r.raincheckedUserId.replace("BROADCAST:", "")
       );
     } catch (error: any) {
@@ -2746,7 +2757,7 @@ export class DiscoveryService implements OnModuleInit {
               raincheckedUserId: true
             }
           });
-          return rainchecks.map((r: { raincheckedUserId: string }) => 
+          return rainchecks.map((r: { raincheckedUserId: string }) =>
             r.raincheckedUserId.replace("BROADCAST:", "")
           );
         } catch (fallbackError) {
@@ -2853,7 +2864,7 @@ export class DiscoveryService implements OnModuleInit {
     try {
       // Get user profile for preferences
       const userProfile = await this.userClient.getUserProfileById(userId).catch(() => null);
-      
+
       // Score each broadcast
       const scoredBroadcasts = await Promise.all(
         availableBroadcasts.map(async (broadcast) => {
@@ -2887,7 +2898,7 @@ export class DiscoveryService implements OnModuleInit {
           // 5. Tags/interests matching (if user profile available)
           if (userProfile && broadcast.broadcastTags && broadcast.broadcastTags.length > 0) {
             const userInterests = userProfile.interests?.map(i => i.interest?.name?.toLowerCase()) || [];
-            const matchingTags = broadcast.broadcastTags.filter(tag => 
+            const matchingTags = broadcast.broadcastTags.filter(tag =>
               userInterests.some(interest => interest.includes(tag.toLowerCase()) || tag.toLowerCase().includes(interest))
             );
             score += matchingTags.length * MATCH_SCORE_BROADCAST_TAG;
@@ -3115,7 +3126,7 @@ export class DiscoveryService implements OnModuleInit {
       // Get participant profiles (if not already included)
       const participantUserIds = broadcast.participants?.map((p: any) => p.userId) || [];
       const participantProfiles = new Map<string, { username: string | null; displayPictureUrl: string | null; age: number | null }>();
-      
+
       // Only fetch profiles if they're not already included in the broadcast data
       const needsProfileFetch = broadcast.participants?.some((p: any) => !p.username);
       if (needsProfileFetch && participantUserIds.length > 0) {
@@ -3133,7 +3144,7 @@ export class DiscoveryService implements OnModuleInit {
           const profileResults = await Promise.all(profilePromises);
           profileResults.forEach(({ userId, profile }) => {
             if (profile) {
-              const age = profile.dateOfBirth 
+              const age = profile.dateOfBirth
                 ? Math.floor((Date.now() - new Date(profile.dateOfBirth).getTime()) / (365.25 * 24 * 60 * 60 * 1000))
                 : null;
               participantProfiles.set(userId, {
@@ -3151,7 +3162,7 @@ export class DiscoveryService implements OnModuleInit {
       // Get additional metadata from database if not in broadcast
       const session = await (this.prisma as any).callSession.findUnique({
         where: { roomId },
-        select: { 
+        select: {
           popularityScore: true,
           isTrending: true,
           broadcastTitle: true,

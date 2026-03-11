@@ -40,7 +40,7 @@ export async function signAccessToken(
     .setIssuer(JWT_ISSUER)
     .setAudience(JWT_AUDIENCE)
     .setIssuedAt()
-    .setExpirationTime("15m")
+    .setExpirationTime("24h")
     .sign(pk);
 }
 

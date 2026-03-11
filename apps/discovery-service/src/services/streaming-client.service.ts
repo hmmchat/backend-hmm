@@ -8,7 +8,7 @@ export class StreamingClientService {
   private readonly requestTimeoutMs: number;
 
   constructor() {
-    this.streamingServiceUrl = process.env.STREAMING_SERVICE_URL || "http://localhost:3006";
+    this.streamingServiceUrl = process.env.STREAMING_SERVICE_URL || "http://localhost:3005";
     this.requestTimeoutMs = parseInt(process.env.STREAMING_SERVICE_TIMEOUT_MS || "5000", 10);
   }
 
@@ -116,8 +116,8 @@ export class StreamingClientService {
 
       const result: any = await response.json();
       // Handle both array response and object with broadcasts property
-      const broadcasts = Array.isArray(result) 
-        ? result 
+      const broadcasts = Array.isArray(result)
+        ? result
         : (result.broadcasts || []);
       this.logger.log(`Retrieved ${broadcasts.length} active broadcasts`);
       return broadcasts;

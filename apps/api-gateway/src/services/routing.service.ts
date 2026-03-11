@@ -178,7 +178,7 @@ export class RoutingService implements OnModuleInit {
   findRoute(path: string): RouteConfig | null {
     // Remove leading /v1 if present
     let cleanPath = path.replace(/^\/v1/, "");
-    
+
     // Ensure path starts with /
     if (!cleanPath.startsWith("/")) {
       cleanPath = "/" + cleanPath;
@@ -225,7 +225,7 @@ export class RoutingService implements OnModuleInit {
 
     // Remove /v1 prefix from path for service routing
     let cleanPath = path.replace(/^\/v1/, "");
-    
+
     // Ensure path starts with /
     if (!cleanPath.startsWith("/")) {
       cleanPath = "/" + cleanPath;
@@ -274,10 +274,12 @@ export class RoutingService implements OnModuleInit {
       // Path starts with route path + /, keep route prefix (most services expect it)
       servicePath = cleanPath;
     } else if (cleanPath === route.path) {
-      // Path exactly matches route path, use root
-      servicePath = "/";
+      // Path exactly matches route path.
+      // If it's a root route like /me, /brands, etc. on the backend, we should use exactly that.
+      // THE PREVIOUS LOGIC WAS REWRITING TO "/" WHICH CAUSED 404s.
+      servicePath = cleanPath;
     } else if (cleanPath.startsWith(route.path)) {
-      // Path starts with route path (but no trailing /), use as-is (for routes like /me where service expects /me prefix)
+      // Path starts with route path (but no trailing /), use as-is
       servicePath = cleanPath;
     } else {
       // Remove first segment if it doesn't match route path
@@ -319,7 +321,7 @@ export class RoutingService implements OnModuleInit {
     // Retry logic with exponential backoff
     const maxRetries = 2;
     let lastError: any = null;
-    
+
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       if (attempt > 0) {
         const backoffDelay = Math.min(100 * Math.pow(2, attempt - 1), 200); // 100ms, 200ms
@@ -338,7 +340,14 @@ export class RoutingService implements OnModuleInit {
         };
 
         if (body && (method === "POST" || method === "PUT" || method === "PATCH")) {
-          if (typeof body === "string") {
+          const contentType = (requestHeaders["content-type"] || "").toLowerCase();
+
+          if (contentType.includes("multipart/form-data")) {
+            // Support multipart proxying
+            fetchOptions.body = body;
+            // Remove content-length so fetch can calculate it or use chunked encoding
+            delete requestHeaders["content-length"];
+          } else if (typeof body === "string") {
             requestHeaders["content-type"] = "application/json";
             fetchOptions.body = body;
           } else {
@@ -364,7 +373,7 @@ export class RoutingService implements OnModuleInit {
 
         const responseData = await response.json().catch(() => ({}));
         const responseHeaders: Record<string, string> = {};
-        
+
         // Copy relevant headers
         response.headers.forEach((value, key) => {
           if (key.toLowerCase() !== "transfer-encoding") {
@@ -379,7 +388,7 @@ export class RoutingService implements OnModuleInit {
         };
       } catch (error: any) {
         lastError = error;
-        
+
         // Don't retry on certain errors (4xx client errors, AbortError on last attempt)
         if (error.name === "AbortError" && attempt === maxRetries) {
           // Final timeout - record failure and throw
@@ -389,7 +398,7 @@ export class RoutingService implements OnModuleInit {
             HttpStatus.GATEWAY_TIMEOUT
           );
         }
-        
+
         // Check if error is retryable (network errors, timeouts)
         const isRetryable = this.isRetryableError(error);
         if (!isRetryable || attempt === maxRetries) {
@@ -400,13 +409,13 @@ export class RoutingService implements OnModuleInit {
             error.message.includes("fetch failed") ||
             error.message.includes("network")
           );
-          
+
           if (!isTransientNetworkError || attempt === maxRetries) {
             this.recordFailure(route.serviceUrl);
           }
           throw this.createErrorResponse(error, url, timeout);
         }
-        
+
         // Retryable error - continue to next attempt
         this.logger.warn(`Retryable error on attempt ${attempt + 1} for ${url}: ${error.message}`);
       }
@@ -437,15 +446,15 @@ export class RoutingService implements OnModuleInit {
   private recordFailure(serviceUrl: string): void {
     const breaker = this.getCircuitBreaker(serviceUrl);
     const now = Date.now();
-    
+
     // Reset failure count if outside the time window
     if (now - breaker.lastFailure > this.CIRCUIT_BREAKER_WINDOW) {
       breaker.failures = 0;
     }
-    
+
     breaker.failures++;
     breaker.lastFailure = now;
-    
+
     // Open circuit breaker if threshold exceeded
     // Only open if we have persistent failures (not just startup issues)
     if (breaker.failures >= this.CIRCUIT_BREAKER_THRESHOLD && breaker.state !== 'open') {
@@ -463,22 +472,22 @@ export class RoutingService implements OnModuleInit {
     if (error.name === "AbortError") {
       return true; // Timeout - retryable
     }
-    
+
     if (error.message) {
       const msg = error.message.toLowerCase();
-      if (msg.includes('econnrefused') || msg.includes('enotfound') || 
-          msg.includes('etimedout') || msg.includes('network') ||
-          msg.includes('fetch failed')) {
+      if (msg.includes('econnrefused') || msg.includes('enotfound') ||
+        msg.includes('etimedout') || msg.includes('network') ||
+        msg.includes('fetch failed')) {
         return true; // Network error - retryable
       }
     }
-    
+
     // Check if it's an HttpException with 5xx status
     if (error instanceof HttpException) {
       const status = error.getStatus();
       return status >= 500 && status < 600; // 5xx errors are retryable
     }
-    
+
     return false;
   }
 
@@ -492,7 +501,7 @@ export class RoutingService implements OnModuleInit {
         HttpStatus.GATEWAY_TIMEOUT
       );
     }
-    
+
     // Check for connection refused errors
     if (error.message) {
       const msg = error.message.toLowerCase();
@@ -509,12 +518,12 @@ export class RoutingService implements OnModuleInit {
         );
       }
     }
-    
+
     // Check if it's already an HttpException
     if (error instanceof HttpException) {
       return error;
     }
-    
+
     // Default error
     this.logger.error(`Error proxying request to ${url}: ${error.message}`);
     return new HttpException(

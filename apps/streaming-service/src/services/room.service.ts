@@ -14,7 +14,7 @@ interface RoomState {
 
 interface ParticipantState {
   userId: string;
-  transport: MediasoupTypes.WebRtcTransport;
+  transports: Map<string, MediasoupTypes.WebRtcTransport>;
   producer: {
     audio?: MediasoupTypes.Producer;
     video?: MediasoupTypes.Producer;
@@ -38,7 +38,7 @@ export class RoomService {
     private prisma: PrismaService,
     private mediasoup: MediasoupService,
     private discoveryClient: DiscoveryClientService
-  ) {}
+  ) { }
 
   /**
    * Create a new room when 2 users enter IN_SQUAD (accept each other's cards)
@@ -82,11 +82,11 @@ export class RoomService {
 
     // BUSINESS RULE: Only users with status MATCHED can create/join rooms
     // Valid source statuses: AVAILABLE, IN_SQUAD_AVAILABLE, IN_BROADCAST_AVAILABLE → MATCHED → IN_SQUAD
-    
+
     // Check user statuses from user-service
     const invalidStatusUsers: string[] = [];
     const usersInRooms: string[] = [];
-    
+
     try {
       // Check if any user is already in an active room
       // Always check database to prevent duplicate rooms, even in TEST_MODE
@@ -146,13 +146,13 @@ export class RoomService {
         for (const userId of userIds) {
           try {
             const userStatus = await this.discoveryClient.getUserStatus(userId);
-            
+
             // Explicitly reject users with IN_SQUAD or IN_BROADCAST status (they're already in a call)
             if (userStatus === "IN_SQUAD" || userStatus === "IN_BROADCAST") {
               invalidStatusUsers.push(`${userId} (status: ${userStatus} - user is already in an active call)`);
               continue; // Skip to next user
             }
-            
+
             // Only MATCHED users can create/join rooms
             if (userStatus !== "MATCHED") {
               invalidStatusUsers.push(`${userId} (status: ${userStatus})`);
@@ -200,7 +200,7 @@ export class RoomService {
       // For normal flow: AVAILABLE, IN_SQUAD_AVAILABLE, or IN_BROADCAST_AVAILABLE → MATCHED → IN_SQUAD
       // We'll try to get their status before MATCHED, but if unavailable, default to AVAILABLE
       const previousStatuses = new Map<string, string>();
-      
+
       for (const userId of userIds) {
         try {
           // Try to get user's status history or check if they were in a squad/broadcast
@@ -318,7 +318,7 @@ export class RoomService {
       where: { roomId },
       include: {
         participants: {
-          where: { 
+          where: {
             status: "active",
             leftAt: null // Only count active participants who haven't left
           },
@@ -329,7 +329,7 @@ export class RoomService {
           }
         },
         viewers: {
-          where: { 
+          where: {
             leftAt: null // Only count active viewers who haven't left
           },
           select: {
@@ -370,13 +370,13 @@ export class RoomService {
     if (this.rooms.has(roomId)) {
       return true;
     }
-    
+
     // If not in memory, check database
     const session = await this.prisma.callSession.findUnique({
       where: { roomId },
       select: { id: true, status: true }
     });
-    
+
     if (session && session.status !== "ENDED") {
       // Room exists in database but not in memory - reload it
       this.logger.log(`Room ${roomId} exists in database but not in memory - reloading into memory`);
@@ -389,7 +389,7 @@ export class RoomService {
         return true;
       }
     }
-    
+
     return false;
   }
 
@@ -481,7 +481,7 @@ export class RoomService {
     if (process.env.TEST_MODE !== "true") {
       try {
         const userStatus = await this.discoveryClient.getUserStatus(userId);
-        
+
         // Explicitly reject users with IN_SQUAD or IN_BROADCAST status (they're already in a call)
         if (userStatus === "IN_SQUAD" || userStatus === "IN_BROADCAST") {
           throw new BadRequestException(
@@ -489,7 +489,7 @@ export class RoomService {
             `Users must leave their current call before joining a new room.`
           );
         }
-        
+
         if (userStatus !== "MATCHED") {
           throw new BadRequestException(
             `User ${userId} must be in MATCHED status to join a room. Current status: ${userStatus}. ` +
@@ -627,7 +627,7 @@ export class RoomService {
     // Try to get room from memory, but continue even if not found (will update DB)
     let room: RoomState | null = null;
     let participant: ParticipantState | undefined;
-    
+
     try {
       room = this.getRoom(roomId);
       participant = room.participants.get(userId);
@@ -637,11 +637,11 @@ export class RoomService {
     }
 
     if (room && participant) {
-      // Close transport and producers
-      participant.transport.close();
+      // Close transports and producers
+      for (const t of participant.transports.values()) { try { t.close(); } catch { } }
       if (participant.producer.audio) participant.producer.audio.close();
       if (participant.producer.video) participant.producer.video.close();
-      
+
       // Close all consumers
       for (const consumer of participant.consumers.values()) {
         consumer.close();
@@ -742,7 +742,7 @@ export class RoomService {
           sessionId: session.id,
           eventType: "participant_kicked",
           userId: kickerUserId,
-          metadata: JSON.stringify({ 
+          metadata: JSON.stringify({
             kickedUserId: targetUserId,
             kickedBy: kickerUserId
           })
@@ -773,7 +773,7 @@ export class RoomService {
     if (!roomExists) {
       throw new NotFoundException(`Room ${roomId} not found`);
     }
-    
+
     const room = this.getRoom(roomId); // Safe to call now since roomExists ensures it's in memory
     const session = await this.prisma.callSession.findUnique({
       where: { roomId }
@@ -846,7 +846,7 @@ export class RoomService {
     if (!roomExists) {
       throw new NotFoundException(`Room ${roomId} not found`);
     }
-    
+
     const room = this.getRoom(roomId);
     const session = await this.prisma.callSession.findUnique({
       where: { roomId }
@@ -868,7 +868,7 @@ export class RoomService {
 
     // Get all active participants before updating
     const participants = await this.prisma.callParticipant.findMany({
-      where: { 
+      where: {
         sessionId: session.id,
         status: "active",
         leftAt: null
@@ -1552,7 +1552,7 @@ export class RoomService {
     if (!roomExists) {
       throw new NotFoundException(`Room ${roomId} not found`);
     }
-    
+
     const room = this.getRoom(roomId); // Safe to call now since roomExists ensures it's in memory
     const session = await this.prisma.callSession.findUnique({
       where: { roomId }
@@ -1604,7 +1604,7 @@ export class RoomService {
     // Try to get room from memory, but continue even if not found (will update DB)
     let room: RoomState | null = null;
     let viewer: ViewerState | undefined;
-    
+
     try {
       room = this.getRoom(roomId);
       viewer = room.viewers.get(userId);
@@ -1623,7 +1623,7 @@ export class RoomService {
       } catch (error: any) {
         this.logger.warn(`Error closing transport for viewer ${userId}: ${error.message}`);
       }
-      
+
       // Close all consumers (with error handling)
       for (const [producerId, consumer] of viewer.consumers.entries()) {
         try {
@@ -1735,7 +1735,7 @@ export class RoomService {
     } catch (error) {
       this.logger.warn(`Room ${roomId} not in memory, will only update database when ending room`);
     }
-    
+
     const session = await this.prisma.callSession.findUnique({
       where: { roomId }
     });
@@ -1748,7 +1748,7 @@ export class RoomService {
     // Close all transports and producers/consumers if room is in memory
     if (room) {
       for (const participant of room.participants.values()) {
-        participant.transport.close();
+        for (const t of participant.transports.values()) { try { t.close(); } catch { } }
         if (participant.producer.audio) participant.producer.audio.close();
         if (participant.producer.video) participant.producer.video.close();
         for (const consumer of participant.consumers.values()) {
@@ -1813,20 +1813,20 @@ export class RoomService {
     // Get all user IDs (active participants + active viewers) at time of room end
     // This includes any remaining participants and the user who just left
     const participants = await this.prisma.callParticipant.findMany({
-      where: { 
+      where: {
         sessionId: session.id,
         // Include both active and just-left participants to update all their statuses
       },
       select: { userId: true, previousStatus: true }
     });
     const viewers = await this.prisma.callViewer.findMany({
-      where: { 
-        sessionId: session.id, 
+      where: {
+        sessionId: session.id,
         leftAt: null // Only active viewers
       },
       select: { userId: true }
     });
-    
+
     // Get all pending waitlist entries
     const waitlistEntries = await this.prisma.callWaitlist.findMany({
       where: {
@@ -1835,7 +1835,7 @@ export class RoomService {
       },
       select: { userId: true }
     });
-    
+
     const participantUserIds = participants.map((p: any) => p.userId);
     const viewerUserIds = viewers.map((v: any) => v.userId);
     const waitlistUserIds = waitlistEntries.map((w: any) => w.userId);
@@ -1857,7 +1857,7 @@ export class RoomService {
         `Room ${roomId} ending: ${pendingDares.length} pending dares found. ` +
         `Marking as cancelled (full payment not completed).`
       );
-      
+
       await this.prisma.callDare.updateMany({
         where: {
           sessionId: session.id,
@@ -1916,7 +1916,7 @@ export class RoomService {
     if (participantUserIds.length > 0) {
       // Group participants by previousStatus for batch updates
       const statusGroups = new Map<string, string[]>();
-      
+
       participants.forEach((p: any) => {
         const previousStatus = p.previousStatus || "AVAILABLE"; // Default to AVAILABLE for legacy data
         // Never revert to MATCHED (it's transitional)
@@ -2238,7 +2238,7 @@ export class RoomService {
 
     // Get user profiles from user-service (batch fetch to avoid N+1 queries)
     const participantProfiles = new Map<string, { username: string | null; displayPictureUrl: string | null; age: number | null }>();
-    
+
     if (participantUserIds.size > 0) {
       try {
         const userIdsArray = Array.from(participantUserIds);

@@ -11,6 +11,7 @@ import {
 } from "@nestjs/common";
 import { DiscoveryService } from "../services/discovery.service.js";
 import { LocationService } from "../services/location.service.js";
+import { CacheService } from "../services/cache.service.js";
 import {
   GetCardQuerySchema,
   RaincheckRequestSchema,
@@ -28,8 +29,9 @@ import {
 export class DiscoveryController {
   constructor(
     private readonly discoveryService: DiscoveryService,
-    private readonly locationService: LocationService
-  ) {}
+    private readonly locationService: LocationService,
+    private readonly cache: CacheService
+  ) { }
 
   private getTokenFromHeader(h?: string) {
     if (!h) return null;
@@ -140,10 +142,11 @@ export class DiscoveryController {
     const userId = payload.sub;
 
     // Proceed with match
-    await this.discoveryService.proceedWithMatch(userId, dto.matchedUserId);
+    const result = await this.discoveryService.proceedWithMatch(userId, dto.matchedUserId);
 
     return {
-      success: true
+      success: true,
+      ...result
     };
   }
 
@@ -233,7 +236,7 @@ export class DiscoveryController {
 
     // Reset session for the new city (clears both user rainchecks and location cards)
     await this.discoveryService.resetSession(userId, dto.sessionId, dto.city);
-    
+
     // Also clear location cards for this session
     await this.discoveryService.clearLocationCards(userId, dto.sessionId);
 
@@ -314,7 +317,7 @@ export class DiscoveryController {
 
     // Reset session for ALL cities (pass null to clear all rainchecked users)
     await this.discoveryService.resetSession(userId, sessionId, null);
-    
+
     // Also clear location cards
     await this.discoveryService.clearLocationCards(userId, sessionId);
 
@@ -338,7 +341,7 @@ export class DiscoveryController {
 
     // Reset session for the new city (clears both user rainchecks and location cards)
     await this.discoveryService.resetSession(userId, sessionId, city);
-    
+
     // Also clear location cards for this session
     await this.discoveryService.clearLocationCards(userId, sessionId);
 
@@ -367,7 +370,7 @@ export class DiscoveryController {
     // Proceed with match (returns room info if both users accepted)
     // timeoutSeconds is optional - defaults to 30 seconds for testing (or env var)
     const result = await this.discoveryService.proceedWithMatch(
-      userId, 
+      userId,
       matchedUserId,
       timeoutSeconds ? parseInt(timeoutSeconds, 10) : undefined
     );
@@ -375,6 +378,26 @@ export class DiscoveryController {
     return {
       success: true,
       ...result
+    };
+  }
+
+  /**
+   * Test endpoint: Check if user has been assigned a room (after mutual match)
+   * GET /discovery/test/my-room?userId=xxx
+   * 
+   * Returns the room ID if the user has been matched into a room,
+   * or { roomId: null } if not yet assigned.
+   */
+  @Get("test/my-room")
+  async getMyRoom(@Query("userId") userId: string) {
+    if (!userId) {
+      throw new HttpException("userId is required", HttpStatus.BAD_REQUEST);
+    }
+    const roomData = await this.cache.get<{ roomId: string; sessionId: string }>(`room:${userId}`);
+    return {
+      roomId: roomData?.roomId || null,
+      sessionId: roomData?.sessionId || null,
+      hasRoom: !!roomData?.roomId
     };
   }
 

@@ -2,6 +2,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { ConversationSection, MessageType } from "@prisma/client";
 import { StreamingClientService } from "./streaming-client.service.js";
+import { UserClientService } from "./user-client.service.js";
 
 @Injectable()
 export class ConversationService {
@@ -9,8 +10,9 @@ export class ConversationService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly streamingClient: StreamingClientService
-  ) {}
+    private readonly streamingClient: StreamingClientService,
+    private readonly userClient: UserClientService
+  ) { }
 
   /**
    * Get or create conversation between two users
@@ -247,7 +249,7 @@ export class ConversationService {
       // Edge case: Handle conversations where lastMessageId is stale or message was deleted
       const filteredConversations = conversations.filter(conv => {
         if (!conv.lastMessageId) return false;
-        
+
         // If lastMessageId exists but message not found, try to get actual last message
         let lastMessage = lastMessageMap.get(conv.lastMessageId);
         if (!lastMessage) {
@@ -255,12 +257,12 @@ export class ConversationService {
           // (it will be handled by the stale message update above)
           return false;
         }
-        
+
         if (filter === "text_only") {
           return lastMessage.messageType === MessageType.TEXT;
         } else if (filter === "with_gift") {
-          return lastMessage.messageType === MessageType.GIFT || 
-                 lastMessage.messageType === MessageType.GIFT_WITH_MESSAGE;
+          return lastMessage.messageType === MessageType.GIFT ||
+            lastMessage.messageType === MessageType.GIFT_WITH_MESSAGE;
         }
         return true;
       });
@@ -321,18 +323,18 @@ export class ConversationService {
 
     const lastMessages = lastMessageIds.length > 0
       ? await this.prisma.friendMessage.findMany({
-          where: { id: { in: lastMessageIds } },
-          select: {
-            id: true,
-            fromUserId: true,
-            toUserId: true,
-            message: true,
-            messageType: true,
-            giftId: true,
-            giftAmount: true,
-            createdAt: true
-          }
-        })
+        where: { id: { in: lastMessageIds } },
+        select: {
+          id: true,
+          fromUserId: true,
+          toUserId: true,
+          message: true,
+          messageType: true,
+          giftId: true,
+          giftAmount: true,
+          createdAt: true
+        }
+      })
       : [];
 
     const lastMessageMap = new Map(lastMessages.map(m => [m.id, m]));
@@ -348,7 +350,7 @@ export class ConversationService {
         conversationsWithStaleLastMessage.map(async (conv) => {
           const otherUserId = conv.userId1 === userId ? conv.userId2 : conv.userId1;
           const [id1, id2] = [userId, otherUserId].sort();
-          
+
           return this.prisma.friendMessage.findFirst({
             where: {
               OR: [
@@ -421,7 +423,7 @@ export class ConversationService {
     }
 
     // Get all other user IDs
-    const otherUserIds = conversations.map(conv => 
+    const otherUserIds = conversations.map(conv =>
       conv.userId1 === userId ? conv.userId2 : conv.userId1
     );
     const uniqueOtherUserIds = [...new Set(otherUserIds)];
@@ -473,6 +475,20 @@ export class ConversationService {
     const userStatusPromises = uniqueOtherUserIds.map(otherUserId =>
       this.streamingClient.getUserStatus(otherUserId)
     );
+
+    // Get full user profile (including username)
+
+    // Get full user profile (including username)
+    // For performance, we'll fetch usernames in a separate batch if needed,
+    // but the getUsersDisplayPictures already partially does this.
+    // Let's use a more comprehensive profile fetch.
+    const fullProfiles = await Promise.all(
+      uniqueOtherUserIds.map(id => this.userClient.getUserProfile(id))
+    );
+    const profileMap = new Map(
+      uniqueOtherUserIds.map((id, i) => [id, fullProfiles[i]])
+    );
+
     const userStatuses = await Promise.all(userStatusPromises);
     const userStatusMap = new Map(
       uniqueOtherUserIds.map((id, i) => [id, userStatuses[i]])
@@ -483,8 +499,8 @@ export class ConversationService {
       const otherUserId = conv.userId1 === userId ? conv.userId2 : conv.userId1;
       const [id1, id2] = [userId, otherUserId].sort();
       const isFriend = friendshipSet.has(`${id1}_${id2}`);
-      const lastMessage = conv.lastMessageId 
-        ? lastMessageMap.get(conv.lastMessageId) 
+      const lastMessage = conv.lastMessageId
+        ? lastMessageMap.get(conv.lastMessageId)
         : null;
       const userStatus = userStatusMap.get(otherUserId) || {
         status: "offline",
@@ -492,21 +508,28 @@ export class ConversationService {
         roomId: null,
         broadcastUrl: null
       };
+      const profile = profileMap.get(otherUserId) || { username: "Unknown User", displayPictureUrl: null };
 
       return {
         id: conv.id,
+        conversationId: conv.id, // Support both formats
         otherUserId,
+        otherUser: {
+          id: otherUserId,
+          username: profile.username || "Unknown User",
+          displayPictureUrl: profile.displayPictureUrl || null
+        },
         section: conv.section,
         lastMessage: lastMessage
           ? {
-              id: lastMessage.id,
-              fromUserId: lastMessage.fromUserId,
-              message: lastMessage.message,
-              messageType: lastMessage.messageType,
-              giftId: lastMessage.giftId,
-              giftAmount: lastMessage.giftAmount,
-              createdAt: lastMessage.createdAt
-            }
+            id: lastMessage.id,
+            fromUserId: lastMessage.fromUserId,
+            message: lastMessage.message,
+            messageType: lastMessage.messageType,
+            giftId: lastMessage.giftId,
+            giftAmount: lastMessage.giftAmount,
+            createdAt: lastMessage.createdAt
+          }
           : null,
         unreadCount: unreadCountMap.get(conv.id) || 0,
         isFriend,

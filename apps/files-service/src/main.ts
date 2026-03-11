@@ -8,7 +8,7 @@ import multipart from "fastify-multipart";
 async function bootstrap() {
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
-    new FastifyAdapter({ 
+    new FastifyAdapter({
       logger: true,
       requestTimeout: 8000  // 8 second request timeout (less than gateway's 10s)
     })

@@ -26,7 +26,7 @@ export class GatewayController {
     private readonly healthService: HealthService,
     private readonly rateLimitService: RateLimitService,
     private readonly authMiddleware: AuthMiddleware
-  ) {}
+  ) { }
 
   /**
    * Readiness endpoint - simple check that gateway is running
@@ -63,12 +63,12 @@ export class GatewayController {
     try {
       // Return cached results immediately (non-blocking)
       const health = await this.healthService.getOverallHealth(true);
-      
+
       // Return 200 for healthy or degraded (70%+ services up)
       // Only return 503 for truly unhealthy (< 70% services)
       const statusCode = health.status === "unhealthy" ? 503 : 200;
       res.status(statusCode).send(health);
-      
+
       // Trigger background update (don't await)
       this.healthService.getOverallHealth(false).catch(err => {
         this.logger.error(`Background health check update failed: ${err.message}`);
@@ -105,13 +105,13 @@ export class GatewayController {
       await this.authMiddleware.verifyToken(token);
 
       // Check rate limit
-      const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || 
-                 (req.headers["x-real-ip"] as string) || 
-                 req.ip || 
-                 "unknown";
+      const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() ||
+        (req.headers["x-real-ip"] as string) ||
+        req.ip ||
+        "unknown";
       const identifier = this.rateLimitService.getIdentifier({ authorization: authz }, ip);
       const rateLimit = await this.rateLimitService.checkRateLimit(identifier, "/homepage");
-      
+
       if (!rateLimit.allowed) {
         res.status(429).send({
           error: "Rate limit exceeded",
@@ -167,11 +167,11 @@ export class GatewayController {
       // Get body
       let requestBody: any = undefined;
       if (method === "POST" || method === "PUT" || method === "PATCH") {
-        if ((req as any).isMultipart && (req as any).isMultipart()) {
-          // Multipart requests - pass raw body
-          requestBody = req.body;
+        const contentType = (req.headers["content-type"] || "").toLowerCase();
+        if (contentType.includes("multipart/form-data")) {
+          // Use the raw request stream for multipart proxying
+          requestBody = req.raw;
         } else {
-          // JSON or other
           requestBody = req.body;
         }
       }
@@ -203,10 +203,10 @@ export class GatewayController {
       }
 
       // Check rate limit
-      const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || 
-                 (req.headers["x-real-ip"] as string) || 
-                 req.ip || 
-                 "unknown";
+      const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() ||
+        (req.headers["x-real-ip"] as string) ||
+        req.ip ||
+        "unknown";
       const identifier = this.rateLimitService.getIdentifier(headers, ip);
       const rateLimit = await this.rateLimitService.checkRateLimit(identifier, path);
 

@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service.js";
-import { TransactionKind } from "@prisma/client";
+import { TransactionKind, Prisma } from "@prisma/client";
 
 @Injectable()
 export class WalletService {
@@ -193,7 +193,7 @@ export class WalletService {
     // Use raw SQL if giftId is provided (due to Prisma client sync issues)
     // Otherwise use Prisma client for normal transactions
     let transactionId: string;
-    
+
     if (giftId) {
       // First ensure giftId column exists (add if not present)
       try {
@@ -209,7 +209,7 @@ export class WalletService {
       }
 
       // Use raw SQL to insert transaction with giftId
-      const { Prisma } = await import("@prisma/client");
+      // Use Prisma from the local client
       const result = await this.prisma.$queryRaw<Array<{ id: string }>>(
         Prisma.sql`
         INSERT INTO transactions (
@@ -565,8 +565,7 @@ export class WalletService {
       // Column might already exist - ignore
     }
 
-    // Use raw SQL to get gift transactions (bypasses Prisma client type checking issues)
-    const { Prisma } = await import("@prisma/client");
+    // Use Prisma from the local client
     const transactions = await this.prisma.$queryRaw<Array<{
       id: string;
       giftId: string;

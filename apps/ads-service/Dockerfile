@@ -1,7 +1,9 @@
 # Multi-stage build for ads-service
 FROM node:22-alpine AS base
-# Python required for mediasoup postinstall (used by streaming-service in monorepo)
-RUN apk add --no-cache python3 py3-pip && ln -sf /usr/bin/python3 /usr/bin/python
+# Python + build-base + linux-headers for mediasoup postinstall (compiles native worker on Alpine/musl)
+RUN apk add --no-cache python3 py3-pip build-base linux-headers \
+    && ln -sf /usr/bin/python3 /usr/bin/python \
+    && ln -sf /usr/bin/gcc /usr/bin/cc && ln -sf /usr/bin/g++ /usr/bin/c++
 
 # Install dependencies only when needed
 FROM base AS deps

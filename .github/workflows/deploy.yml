@@ -100,7 +100,7 @@ jobs:
           cache-to: type=gha,mode=max
 
   deploy:
-    needs: build-and-push
+    needs: [detect-changes, build-and-push]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     strategy:

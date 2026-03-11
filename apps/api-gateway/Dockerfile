@@ -47,11 +47,10 @@ ENV NODE_ENV=production
 COPY --from=builder /app/apps/api-gateway/dist ./dist
 COPY --from=builder /app/apps/api-gateway/package.json ./
 
-# Copy shared packages
+# Copy shared packages and node_modules (builder has full deps; no npm ci in runner)
 COPY --from=builder /app/packages ./packages
-
-# Install production dependencies only
-RUN npm ci --omit=dev && npm cache clean --force
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/apps/api-gateway/node_modules/.prisma ./node_modules/.prisma
 
 # Expose port
 EXPOSE 3000

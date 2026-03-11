@@ -63,15 +63,13 @@ COPY --from=builder /app/apps/friend-service/package.json ./
 COPY --from=builder /app/apps/friend-service/prisma ./prisma
 COPY --from=builder /app/apps/friend-service/scripts ./scripts
 
-# Copy shared packages
+# Copy shared packages and node_modules (builder has full deps; no npm ci in runner)
 COPY --from=builder /app/packages ./packages
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/apps/friend-service/node_modules/.prisma ./node_modules/.prisma
 
-# Install production dependencies only
-RUN npm ci --omit=dev && npm cache clean --force
-
-# Generate Prisma Client
-RUN npx prisma generate
+# Generate Prisma Client (schema present; DATABASE_URL from runtime env)
+RUN npx prisma generate --schema=prisma/schema.prisma
 
 # Expose port
 EXPOSE 3009

@@ -26,7 +26,7 @@ import {
   UpdateIntentSchema,
   CreateMusicPreferenceSchema
 } from "../dtos/profile.dto.js";
-import { UserStatus } from "@prisma/client";
+import { UserStatus } from "../../node_modules/.prisma/client/index.js";
 import {
   NEARBY_DEFAULT_RADIUS_KM,
   NEARBY_DEFAULT_LIMIT,

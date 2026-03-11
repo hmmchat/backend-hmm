@@ -6,7 +6,7 @@ import { MetricsService } from "./metrics.service.js";
 import { ConversationService } from "./conversation.service.js";
 import { GiftCatalogService } from "./gift-catalog.service.js";
 import { UserClientService } from "./user-client.service.js";
-import { MessageType, ConversationSection } from "@prisma/client";
+import { MessageType, ConversationSection } from "../../node_modules/.prisma/client/index.js";
 import * as crypto from "crypto";
 
 @Injectable()

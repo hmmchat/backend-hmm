@@ -24,7 +24,7 @@
     "@nestjs/core": "^10.4.20",
     "@nestjs/platform-fastify": "^10.4.20",
     "@prisma/client": "^6.0.0",
-    "@prisma/engines": "^7.2.0",
+    "@prisma/engines": "^6.0.0",
     "node-fetch": "^3.3.2",
     "zod": "^3.23.8"
   },

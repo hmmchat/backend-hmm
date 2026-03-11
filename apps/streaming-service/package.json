@@ -27,7 +27,7 @@
     "@nestjs/platform-socket.io": "^10.4.7",
     "@nestjs/websockets": "^10.4.7",
     "@prisma/client": "^6.0.0",
-    "@prisma/engines": "^7.2.0",
+    "@prisma/engines": "^6.0.0",
     "mediasoup": "^3.14.11",
     "node-fetch": "^3.3.2",
     "uuid": "^11.0.3",

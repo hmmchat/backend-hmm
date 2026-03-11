@@ -1,6 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service.js";
-import { ConversationSection, MessageType } from "@prisma/client";
+import { ConversationSection, MessageType } from "../../node_modules/.prisma/client/index.js";
 import { StreamingClientService } from "./streaming-client.service.js";
 import { UserClientService } from "./user-client.service.js";
 

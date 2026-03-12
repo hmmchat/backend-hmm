@@ -47,9 +47,13 @@ bash scripts/setup-prerequisites.sh
 
 ### Local dev (without Docker):
 
-If databases don't exist yet, run first:
+**Prerequisites:** PostgreSQL and Redis must be running before setup.
 
 ```bash
+# Start Redis (required for friend-service)
+brew services start redis
+
+# Create databases if needed
 bash scripts/create-databases-local.sh
 ```
 
@@ -98,6 +102,26 @@ Each service has its own database (Option A). No cross-service migration conflic
 ### Services missing .env files
 
 The script will warn about missing `.env` files but continue with other services. Make sure to create `.env` files for services that need database access.
+
+### Check service health (manual)
+
+**File:** `check-services-health.sh`
+
+Uses the correct health endpoint for each service (payment uses `/v1/payments/health`):
+
+```bash
+bash scripts/check-services-health.sh
+```
+
+### Services not responding (connection refused)
+
+If you see `000fail` or connection refused for streaming-service, files-service, friend-service, or ads-service:
+
+1. **Wait for startup** – `npm run dev` takes 2–5 minutes. Run the health check after it completes.
+2. **Check logs** – `tail -50 /tmp/<service-name>.log` for errors.
+3. **Redis** – friend-service needs Redis. Start with `brew services start redis`.
+4. **Mediasoup** – streaming-service uses ports 40000–49999. Ensure they're not blocked.
+5. **Database** – run `bash scripts/create-databases-local.sh` if databases don't exist.
 
 ## Notes
 

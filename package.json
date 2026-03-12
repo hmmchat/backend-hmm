@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "bash ./scripts/setup-and-start-services.sh",
+    "check-health": "bash ./scripts/check-services-health.sh",
     "start": "node ./dist/index.js || echo \"Build output missing\"",
     "build": "echo \"Add your build step (tsc/webpack/esbuild)\"",
     "lint": "echo \"OK\" && exit 0",

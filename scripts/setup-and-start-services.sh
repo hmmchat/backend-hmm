@@ -72,16 +72,16 @@ ulimit -n 8192 2>/dev/null || ulimit -n 4096 2>/dev/null || true
 check_port() {
     local port=$1
     # Check if port is actually LISTENING (not just in use)
-    # Use lsof as primary method (more reliable), netstat as fallback
-    # lsof output: "node    75522 arya.prakash   23u  IPv4  ...  TCP *:geniuslm (LISTEN)"
-    local lsof_output=$(lsof -i :$port 2>/dev/null)
+    # Use lsof with -P for numeric ports (macOS compatibility), netstat as fallback
+    local lsof_output=$(lsof -i :$port -P 2>/dev/null)
     if [ -n "$lsof_output" ] && echo "$lsof_output" | grep -q LISTEN; then
         return 0  # Port is listening
-    elif netstat -an 2>/dev/null | grep -qE "[*.]${port}[[:space:]]+.*LISTEN"; then
-        return 0  # Port is listening (netstat fallback)
-    else
-        return 1  # Port is free or not listening
     fi
+    # Fallback: netstat (more reliable on some macOS setups where lsof can miss listeners)
+    if netstat -an 2>/dev/null | grep -qE "[*.]${port}[[:space:]]+.*LISTEN"; then
+        return 0  # Port is listening (netstat fallback)
+    fi
+    return 1  # Port is free or not listening
 }
 
 # Function to kill process on a port
@@ -147,18 +147,22 @@ check_postgresql() {
     fi
 }
 
-# Function to check if Redis is running (optional)
+# Function to check if Redis is running (required for friend-service)
 check_redis() {
-    echo -e "${BLUE}[2/6]${NC} Checking Redis (optional)..."
+    echo -e "${BLUE}[2/6]${NC} Checking Redis..."
     if command -v redis-cli >/dev/null 2>&1; then
         if redis-cli ping >/dev/null 2>&1; then
             echo -e "${GREEN}✓${NC} Redis is running"
+            return 0
         else
-            echo -e "${YELLOW}⚠${NC} Redis is not running (optional, continuing anyway)"
-            echo -e "${YELLOW}  ${NC}To start Redis: brew services start redis"
+            echo -e "${RED}✗${NC} Redis is not running"
+            echo -e "${YELLOW}  ${NC}Redis is required for friend-service."
+            echo -e "${YELLOW}  ${NC}Start Redis: brew services start redis"
+            return 1
         fi
     else
-        echo -e "${YELLOW}⚠${NC} redis-cli not found. Skipping Redis check."
+        echo -e "${RED}✗${NC} redis-cli not found. Install Redis: brew install redis"
+        return 1
     fi
 }
 
@@ -382,21 +386,33 @@ start_service() {
         db_url=$(grep "^DATABASE_URL=" .env.test | cut -d'=' -f2- | tr -d '"' | tr -d "'")
     fi
     
-    # Add connection_limit to DATABASE_URL to prevent hitting PostgreSQL max_connections
-    # Limit each service to 5 connections (9 services * 5 = 45, well under default 100)
-    if [ -n "$db_url" ] && ! echo "$db_url" | grep -q "connection_limit"; then
-        if echo "$db_url" | grep -q "?"; then
-            db_url="${db_url}&connection_limit=5"
-        else
-            db_url="${db_url}?connection_limit=5"
+    # Add connection_limit and connect_timeout to DATABASE_URL
+    # connection_limit: prevent hitting PostgreSQL max_connections
+    # connect_timeout: fail fast (10s) if DB unreachable instead of hanging
+    if [ -n "$db_url" ]; then
+        if ! echo "$db_url" | grep -q "connection_limit"; then
+            if echo "$db_url" | grep -q "?"; then
+                db_url="${db_url}&connection_limit=5"
+            else
+                db_url="${db_url}?connection_limit=5"
+            fi
         fi
+        if ! echo "$db_url" | grep -q "connect_timeout"; then
+            db_url="${db_url}&connect_timeout=10"
+        fi
+    fi
+    
+    # Service-specific env overrides for stable local dev
+    local extra_env=""
+    if [ "$service_name" = "streaming-service" ]; then
+        extra_env="MEDIASOUP_WORKERS=1"
     fi
     
     # Start with proper environment variables
     if [ -n "$db_url" ]; then
-        nohup env TEST_MODE=true NODE_ENV=test PORT=$port DATABASE_URL="$db_url" npm run start:dev > "/tmp/${service_name}.log" 2>&1 &
+        nohup env TEST_MODE=true NODE_ENV=test PORT=$port DATABASE_URL="$db_url" $extra_env npm run start:dev > "/tmp/${service_name}.log" 2>&1 &
     else
-        nohup env TEST_MODE=true NODE_ENV=test PORT=$port npm run start:dev > "/tmp/${service_name}.log" 2>&1 &
+        nohup env TEST_MODE=true NODE_ENV=test PORT=$port $extra_env npm run start:dev > "/tmp/${service_name}.log" 2>&1 &
     fi
     local npm_pid=$!
     cd "$ROOT_DIR"
@@ -417,6 +433,8 @@ start_service() {
     local max_wait=30  # Increased wait time for NestJS compilation
     if [ "$service_name" = "api-gateway" ]; then
         max_wait=45  # Gateway compiles, then /health checks all 9 services
+    elif [ "$service_name" = "streaming-service" ]; then
+        max_wait=45  # Mediasoup workers need extra time to initialize
     fi
     local service_healthy=false
     
@@ -551,7 +569,10 @@ main() {
         exit 1
     }
     
-    check_redis
+    check_redis || {
+        echo -e "\n${RED}Error:${NC} Redis is required for friend-service. Please start Redis and run this script again."
+        exit 1
+    }
     
     # Step 2: Setup Prisma
     echo -e "\n${BLUE}[3/7]${NC} Setting up Prisma for all services..."
@@ -865,17 +886,7 @@ main() {
             check_timeout=3  # Gateway /health/live should be very fast
         fi
         
-        # Check if port is listening first (more reliable than HTTP in restricted environments)
-        if ! check_port "$port"; then
-            echo -e "  ${RED}✗${NC} $service (port $port) - port not listening"
-            all_healthy=false
-            if [ ${#failed_services[@]} -eq 0 ] || [[ ! " ${failed_services[@]} " =~ " ${service} " ]]; then
-                verification_failed_services+=("$service")
-            fi
-            continue
-        fi
-        
-        # Try HTTP check - but don't fail if it doesn't work (network restrictions)
+        # Try HTTP first - if service responds, it's running (avoids false "port not listening" on macOS)
         local ready_response=$(curl -s --ipv4 --connect-timeout 1 --max-time $check_timeout "$ready_url" 2>/dev/null)
         if [ -n "$ready_response" ] && (echo "$ready_response" | grep -q '"status":"ready"' || echo "$ready_response" | grep -q '"status":"healthy"'); then
             echo -e "  ${GREEN}✓${NC} $service (port $port)"
@@ -885,11 +896,16 @@ main() {
             # Port is listening but HTTP check failed - likely network restriction, mark as running
             echo -e "  ${GREEN}✓${NC} $service (port $port) - listening (HTTP check restricted)"
         else
-            echo -e "  ${RED}✗${NC} $service (port $port) - not responding"
-            all_healthy=false
-            # Only add to failed_services if it wasn't already there from startup phase
-            if [ ${#failed_services[@]} -eq 0 ] || [[ ! " ${failed_services[@]} " =~ " ${service} " ]]; then
-                verification_failed_services+=("$service")
+            # HTTP failed and port check failed - retry port check once (handles NestJS watch restart timing)
+            sleep 2
+            if check_port "$port"; then
+                echo -e "  ${GREEN}✓${NC} $service (port $port) - listening (HTTP check restricted)"
+            else
+                echo -e "  ${RED}✗${NC} $service (port $port) - port not listening"
+                all_healthy=false
+                if [ ${#failed_services[@]} -eq 0 ] || [[ ! " ${failed_services[@]} " =~ " ${service} " ]]; then
+                    verification_failed_services+=("$service")
+                fi
             fi
         fi
     done

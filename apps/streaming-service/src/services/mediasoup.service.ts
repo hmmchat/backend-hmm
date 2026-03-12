@@ -15,7 +15,8 @@ export class MediasoupService implements OnModuleInit {
   private readonly restartBackoffMaxMs: number;
 
   constructor() {
-    this.numWorkers = parseInt(process.env.MEDIASOUP_WORKERS || "4", 10);
+    // Use 1 worker for local dev to reduce resource usage and startup time
+    this.numWorkers = parseInt(process.env.MEDIASOUP_WORKERS || "1", 10);
     this.listenIp = process.env.MEDIASOUP_LISTEN_IP || "0.0.0.0";
     this.announcedIp = process.env.MEDIASOUP_ANNOUNCED_IP || "127.0.0.1";
     this.maxRestartAttempts = parseInt(process.env.MEDIASOUP_MAX_RESTART_ATTEMPTS || "5", 10);
@@ -25,28 +26,43 @@ export class MediasoupService implements OnModuleInit {
 
   async onModuleInit() {
     this.logger.log(`Creating ${this.numWorkers} Mediasoup workers...`);
-    
+    const maxRetries = 3;
+    const retryDelayMs = 2000;
+
     for (let i = 0; i < this.numWorkers; i++) {
-      try {
-        const worker = await mediasoup.createWorker({
-          logLevel: "warn",
-          logTags: ["info", "ice", "dtls", "rtp", "srtp", "rtcp"],
-          rtcMinPort: 40000,
-          rtcMaxPort: 49999
-        });
-
-        worker.on("died", () => {
-          this.logger.error(`Mediasoup worker ${i} died, attempting to restart...`);
-          this.restartWorker(i).catch(err => {
-            this.logger.error(`Failed to restart worker ${i}: ${err.message}`);
+      let lastError: Error | null = null;
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          const worker = await mediasoup.createWorker({
+            logLevel: "warn",
+            logTags: ["info", "ice", "dtls", "rtp", "srtp", "rtcp"],
+            rtcMinPort: 40000,
+            rtcMaxPort: 49999
           });
-        });
 
-        this.workers.push(worker);
-        this.logger.log(`Mediasoup worker ${i} created (PID: ${worker.pid})`);
-      } catch (error) {
-        this.logger.error(`Failed to create Mediasoup worker ${i}:`, error);
-        throw error;
+          worker.on("died", () => {
+            this.logger.error(`Mediasoup worker ${i} died, attempting to restart...`);
+            this.restartWorker(i).catch(err => {
+              this.logger.error(`Failed to restart worker ${i}: ${err.message}`);
+            });
+          });
+
+          this.workers.push(worker);
+          this.logger.log(`Mediasoup worker ${i} created (PID: ${worker.pid})`);
+          lastError = null;
+          break;
+        } catch (error: any) {
+          lastError = error;
+          this.logger.warn(`Failed to create Mediasoup worker ${i} (attempt ${attempt}/${maxRetries}): ${error.message}`);
+          if (attempt < maxRetries) {
+            this.logger.log(`Retrying in ${retryDelayMs}ms...`);
+            await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+          }
+        }
+      }
+      if (lastError) {
+        this.logger.error(`Failed to create Mediasoup worker ${i} after ${maxRetries} attempts:`, lastError);
+        throw lastError;
       }
     }
 

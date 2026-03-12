@@ -21,11 +21,12 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
     try {
       this.client = new Redis(this.redisUrl, {
+        connectTimeout: 3000,
         retryStrategy: (times: number) => {
-          const delay = Math.min(times * 50, 2000);
-          return delay;
+          if (times > 2) return null;
+          return 500;
         },
-        maxRetriesPerRequest: 3
+        maxRetriesPerRequest: 2
       });
 
       this.client.on("error", (err: Error) => {
@@ -36,12 +37,12 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         this.logger.log("Redis connected successfully");
       });
 
-      // Test connection
       await this.client.ping();
       this.logger.log("Redis service initialized");
     } catch (error: any) {
-      this.logger.warn(`Failed to connect to Redis: ${error.message}. Caching will be disabled.`);
-      this.client = null;
+      this.logger.error(`Failed to connect to Redis: ${error.message}`);
+      this.logger.error(`Redis is required for friend-service. Ensure Redis is running: brew services start redis`);
+      throw error;
     }
   }
 

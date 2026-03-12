@@ -38,17 +38,21 @@ check_postgresql() {
     fi
 }
 
-# Function to check if Redis is running (optional)
+# Function to check if Redis is running (required for friend-service)
 check_redis() {
-    echo -e "${BLUE}[2/5]${NC} Checking Redis (optional)..."
+    echo -e "${BLUE}[2/5]${NC} Checking Redis..."
     if command -v redis-cli >/dev/null 2>&1; then
         if redis-cli ping >/dev/null 2>&1; then
             echo -e "${GREEN}✓${NC} Redis is running"
+            return 0
         else
-            echo -e "${YELLOW}⚠${NC} Redis is not running (optional, continuing anyway)"
+            echo -e "${RED}✗${NC} Redis is not running"
+            echo -e "${YELLOW}  ${NC}Redis is required for friend-service. Start: brew services start redis"
+            return 1
         fi
     else
-        echo -e "${YELLOW}⚠${NC} redis-cli not found. Skipping Redis check."
+        echo -e "${RED}✗${NC} redis-cli not found. Install Redis: brew install redis"
+        return 1
     fi
 }
 
@@ -183,7 +187,10 @@ main() {
         exit 1
     }
     
-    check_redis
+    check_redis || {
+        echo -e "\n${RED}Error:${NC} Redis is required for friend-service. Please start Redis and run this script again."
+        exit 1
+    }
     
     echo -e "\n${BLUE}[3/5]${NC} Setting up Prisma for all services..."
     

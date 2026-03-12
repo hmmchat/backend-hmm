@@ -33,7 +33,7 @@ Create a `.env` file:
 ```env
 # Server
 PORT=3000
-ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173,http://localhost:3001,https://app.hmmchat.live,https://dashboard.beam.place
+ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173,http://localhost:3020,https://app.hmmchat.live,https://dashboard.beam.place
 
 # Backend Service URLs
 AUTH_SERVICE_URL=http://localhost:3001

@@ -10,7 +10,7 @@ generator client {
 }
 
 // Tables owned and managed by ads-service
-// These tables are in the shared hmm_user database but owned by ads-service
+// These tables are in the ads-service database
 
 model AdReward {
   id          String   @id @default(cuid())

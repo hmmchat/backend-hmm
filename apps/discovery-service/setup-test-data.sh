@@ -18,7 +18,7 @@ API_VERSION="/v1"
 # Direct service URLs (fallback if gateway is not available)
 DISCOVERY_URL="${DISCOVERY_URL:-http://localhost:3004}"
 USER_URL="${USER_URL:-http://localhost:3002}"
-WALLET_URL="${WALLET_URL:-http://localhost:3006}"
+WALLET_URL="${WALLET_URL:-http://localhost:3005}"
 
 USE_GATEWAY="${USE_GATEWAY:-true}"
 

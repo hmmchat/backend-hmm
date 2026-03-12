@@ -10,7 +10,7 @@ generator client {
 }
 
 // Tables owned and managed by wallet-service
-// These tables are in the shared hmm_user database but owned by wallet-service
+// These tables are in the wallet-service database
 
 // Note: User, GenderFilterPreference, RaincheckSession, and other tables are owned by their respective services.
 // Access user data via HTTP API calls to user-service.

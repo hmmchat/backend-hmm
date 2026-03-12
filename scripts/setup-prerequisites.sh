@@ -187,19 +187,18 @@ main() {
     
     echo -e "\n${BLUE}[3/5]${NC} Setting up Prisma for all services..."
     
-    # Services that use Prisma
-    # IMPORTANT: Order matters! user-service must come AFTER discovery-service
-    # because they share the same database, and discovery-service schema might drop tables
-    # that user-service needs. user-service schema will recreate those tables.
+    # Services that use Prisma (each has its own database)
     services=(
         "auth-service"
         "discovery-service"
-        "user-service"  # Must come after discovery-service (shared database)
+        "user-service"
         "streaming-service"
         "wallet-service"
         "files-service"
         "payment-service"
         "friend-service"
+        "moderation-service"
+        "ads-service"
     )
     
     local failed_services=()

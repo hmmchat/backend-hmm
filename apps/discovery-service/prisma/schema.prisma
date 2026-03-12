@@ -13,10 +13,10 @@ generator client {
 // Access wallet data via HTTP API calls to wallet-service, not direct database access.
 
 // Tables owned and managed by discovery-service
-// These tables are in the shared hmm_user database but owned by discovery-service
+// These tables are in the discovery-service database
 
 // Gender filter preference for users
-// Note: Gender enum is defined in user-service schema and shared via same database
+// Note: Gender enum values stored as JSON strings; no shared DB dependency
 model GenderFilterPreference {
   id               String    @id @default(cuid())
   userId           String    @unique

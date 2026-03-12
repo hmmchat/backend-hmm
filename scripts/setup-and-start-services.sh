@@ -204,18 +204,7 @@ setup_service_prisma() {
         has_migrations=true
     fi
     
-    # Check if this service shares a database with another service
-    # Services that share databases MUST use migrations (db push would drop other service's tables)
-    local shared_db_services=("discovery-service" "user-service")
-    local shares_database=false
-    for shared_service in "${shared_db_services[@]}"; do
-        if [ "$service_name" = "$shared_service" ]; then
-            shares_database=true
-            break
-        fi
-    done
-    
-    # Use migrations if they exist, otherwise create initial migration
+    # Use migrations if they exist, otherwise db push for initial setup
     if [ "$has_migrations" = true ]; then
         # Deploy existing migrations
         echo -e "    ${BLUE}  →${NC} Deploying database migrations..."
@@ -237,53 +226,40 @@ setup_service_prisma() {
             return 1
         fi
     else
-        # No migrations exist
-        if [ "$shares_database" = true ]; then
-            # CRITICAL: Services that share databases MUST use migrations, not db push
-            # db push would drop tables owned by other services!
-            echo -e "    ${RED}  ✗${NC} CRITICAL: $service_name shares a database with other services"
-            echo -e "    ${RED}    ${NC}Migrations are REQUIRED - db push would drop other service's tables!"
-            echo -e "    ${YELLOW}    ${NC}To fix:"
-            echo -e "    ${YELLOW}    1. Create initial migration: cd $service_dir && npx prisma migrate dev --name init"
-            echo -e "    ${YELLOW}    2. Then run this script again"
-            echo -e "    ${YELLOW}    ${NC}Or run: cd $service_dir && npx prisma migrate deploy"
-            return 1
-        else
-            # Service has its own database - db push is safe for initial setup
-            echo -e "    ${BLUE}  →${NC} No migrations found - using db push for initial schema setup..."
-            echo -e "    ${YELLOW}    ${NC}Note: For production, create migrations manually with: npx prisma migrate dev"
-            
-            # Use gtimeout if available (macOS), otherwise use perl timeout, or just run without timeout
-            local timeout_cmd=""
-            if command -v gtimeout >/dev/null 2>&1; then
-                timeout_cmd="gtimeout 30"
-            elif command -v perl >/dev/null 2>&1; then
-                timeout_cmd="perl -e 'alarm 30; exec @ARGV' --"
-            fi
-            
-            local push_output=$(${timeout_cmd} npx prisma db push --accept-data-loss --skip-generate 2>&1)
-            local push_status=$?
-            
-            if [ $push_status -eq 0 ]; then
-                # Verify the push was successful
-                if echo "$push_output" | grep -q "Your database is now in sync\|Pushing the state\|Everything is now in sync"; then
-                    echo -e "    ${GREEN}  ✓${NC} Database schema created for $service_name (using db push)"
-                else
-                    echo -e "    ${GREEN}  ✓${NC} Database schema setup completed for $service_name"
-                fi
+        # No migrations exist - db push is safe (each service has its own database)
+        echo -e "    ${BLUE}  →${NC} No migrations found - using db push for initial schema setup..."
+        echo -e "    ${YELLOW}    ${NC}Note: For production, create migrations manually with: npx prisma migrate dev"
+        
+        # Use gtimeout if available (macOS), otherwise use perl timeout, or just run without timeout
+        local timeout_cmd=""
+        if command -v gtimeout >/dev/null 2>&1; then
+            timeout_cmd="gtimeout 30"
+        elif command -v perl >/dev/null 2>&1; then
+            timeout_cmd="perl -e 'alarm 30; exec @ARGV' --"
+        fi
+        
+        local push_output=$(${timeout_cmd} npx prisma db push --accept-data-loss --skip-generate 2>&1)
+        local push_status=$?
+        
+        if [ $push_status -eq 0 ]; then
+            # Verify the push was successful
+            if echo "$push_output" | grep -q "Your database is now in sync\|Pushing the state\|Everything is now in sync"; then
+                echo -e "    ${GREEN}  ✓${NC} Database schema created for $service_name (using db push)"
             else
-                # Check if it timed out or had an error
-                if echo "$push_output" | grep -q "timeout\|Timed out"; then
-                    echo -e "    ${RED}  ✗${NC} Database schema setup TIMED OUT for $service_name"
-                    echo -e "    ${YELLOW}    ${NC}This may indicate database connection issues"
-                else
-                    echo -e "    ${RED}  ✗${NC} Database schema setup FAILED for $service_name"
-                    echo -e "    ${RED}    ${NC}Error output:"
-                    echo "$push_output" | sed 's/^/    /' | head -10
-                fi
-                echo -e "    ${YELLOW}    ${NC}Try running manually: cd $service_dir && npx prisma db push"
-                return 1
+                echo -e "    ${GREEN}  ✓${NC} Database schema setup completed for $service_name"
             fi
+        else
+            # Check if it timed out or had an error
+            if echo "$push_output" | grep -q "timeout\|Timed out"; then
+                echo -e "    ${RED}  ✗${NC} Database schema setup TIMED OUT for $service_name"
+                echo -e "    ${YELLOW}    ${NC}This may indicate database connection issues"
+            else
+                echo -e "    ${RED}  ✗${NC} Database schema setup FAILED for $service_name"
+                echo -e "    ${RED}    ${NC}Error output:"
+                echo "$push_output" | sed 's/^/    /' | head -10
+            fi
+            echo -e "    ${YELLOW}    ${NC}Try running manually: cd $service_dir && npx prisma db push"
+            return 1
         fi
     fi
     

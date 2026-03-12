@@ -3,7 +3,6 @@ import { FastifyAdapter, NestFastifyApplication } from "@nestjs/platform-fastify
 import { AppModule } from "./modules/app.module.js";
 import { ConfigService } from "@nestjs/config";
 import { ZodExceptionFilter } from "./filters/zod-exception.filter.js";
-import multipart from "@fastify/multipart";
 
 async function bootstrap() {
   const app = await NestFactory.create<NestFastifyApplication>(
@@ -13,11 +12,6 @@ async function bootstrap() {
       requestTimeout: 12000  // 12 second request timeout (slightly more than proxy timeout)
     })
   );
-
-  // Register multipart plugin for file uploads
-  await app.register(multipart, {
-    attachFieldsToBody: true
-  });
 
   const config = app.get(ConfigService);
   const port = config.get<number>("PORT") || 3000;

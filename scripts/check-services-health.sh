@@ -30,7 +30,15 @@ declare -a SERVICES=(
 failed=()
 for entry in "${SERVICES[@]}"; do
   IFS=':' read -r name port path <<< "$entry"
-  code=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 "http://127.0.0.1:${port}${path}" 2>/dev/null || echo "000")
+  url="http://127.0.0.1:${port}${path}"
+  code="000"
+  for attempt in 1 2 3; do
+    code=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 --max-time 10 --ipv4 "$url" 2>/dev/null || echo "000")
+    if [ "$code" = "200" ]; then
+      break
+    fi
+    [ $attempt -lt 3 ] && sleep 1
+  done
   if [ "$code" = "200" ]; then
     echo -e "  ${GREEN}✓${NC} $name (port $port)"
   else

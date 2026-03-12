@@ -18,11 +18,14 @@ export class BrandService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * Search brands by name (case-insensitive, partial match)
+   * Search brands by name using fuzzy matching (case-insensitive, typo-tolerant).
+   * Always tries to return the closest matches, even when there is no exact brand.
    */
   async searchBrands(query: string, limit?: number): Promise<SearchBrandResult[]> {
     const effectiveLimit = limit ?? SEARCH_DEFAULT_LIMIT;
-    if (!query || query.trim().length === 0) {
+    const trimmedQuery = query?.trim();
+
+    if (!trimmedQuery || trimmedQuery.length === 0) {
       throw new HttpException("Search query (q) is required", HttpStatus.BAD_REQUEST);
     }
 
@@ -30,22 +33,33 @@ export class BrandService {
       throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);
     }
 
-    const brands = await this.prisma.brand.findMany({
-      where: {
-        name: {
-          contains: query.trim(),
-          mode: "insensitive"
-        }
-      },
-      orderBy: { name: "asc" },
-      take: effectiveLimit,
-      select: {
-        id: true,
-        name: true,
-        domain: true,
-        logoUrl: true
-      }
-    });
+    // First, try trigram-based fuzzy search with the % operator (similar enough names).
+    let brands = await this.prisma.$queryRaw<SearchBrandResult[]>`
+      SELECT
+        id,
+        name,
+        domain,
+        "logoUrl"
+      FROM "brands"
+      WHERE lower(name) % lower(${trimmedQuery})
+      ORDER BY similarity(lower(name), lower(${trimmedQuery})) DESC, name ASC
+      LIMIT ${effectiveLimit};
+    `;
+
+    // If nothing passes the similarity threshold, fall back to nearest neighbours
+    // without the % filter so we still return sensible suggestions.
+    if (brands.length === 0) {
+      brands = await this.prisma.$queryRaw<SearchBrandResult[]>`
+        SELECT
+          id,
+          name,
+          domain,
+          "logoUrl"
+        FROM "brands"
+        ORDER BY similarity(lower(name), lower(${trimmedQuery})) DESC, name ASC
+        LIMIT ${effectiveLimit};
+      `;
+    }
 
     return brands;
   }

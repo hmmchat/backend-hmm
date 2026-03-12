@@ -499,7 +499,13 @@ GET /users/{userId}?fields=username,photos,brandPreferences
 
 #### Get All Brands
 
-**Endpoint:** `GET /brands`
+**Endpoint:** `GET /brands?limit={limit}`
+
+- Returns a **random selection** of brands to show on the \"Add Brands\" screen.
+- `limit` (optional, number): how many brands to return.
+  - Default: `8`
+  - Min: `1`
+  - Max: `50`
 
 **Response:**
 ```json
@@ -532,7 +538,10 @@ GET /users/{userId}?fields=username,photos,brandPreferences
 }
 ```
 
-Search queries the self-managed brand catalog (case-insensitive partial match on name).
+Search queries the self-managed brand catalog using **intelligent fuzzy matching** on the brand name:
+- Case-insensitive
+- Tolerant to small spelling mistakes (e.g. `"Adiddas"` → returns `"Adidas"`, `"Nike"`, `"Puma"`, ...)
+- Always returns the **closest matches**, even when there is no exact brand with that name
 
 #### Update Brand Preferences
 
@@ -549,7 +558,16 @@ Search queries the self-managed brand catalog (case-insensitive partial match on
 
 #### Get All Interests
 
-**Endpoint:** `GET /interests`
+**Endpoint:** `GET /interests?q={query}&limit={limit}`
+
+- Without `q`:
+  - Returns a **random selection** of interests to show on the \"Add Interests\" screen.
+  - `limit` (optional, number): how many interests to return (default: `8`, min: `1`, max: `50`).
+- With `q`:
+  - `GET /interests?q={query}&limit={limit}` performs fuzzy search.
+  - `q` (string, required when used): search term typed by the user
+  - `limit` (number, optional): max results (default: 20, min: 1, max: 50)
+  - Uses the same fuzzy search logic as brands (case-insensitive, typo-tolerant, nearest matches first).
 
 **Response:**
 ```json
@@ -579,7 +597,16 @@ Search queries the self-managed brand catalog (case-insensitive partial match on
 
 #### Get All Values
 
-**Endpoint:** `GET /values`
+**Endpoint:** `GET /values?q={query}&limit={limit}`
+
+- Without `q`:
+  - Returns a **random selection** of values to show on the \"Add Values\" screen.
+  - `limit` (optional, number): how many values to return (default: `8`, min: `1`, max: `50`).
+- With `q`:
+  - `GET /values?q={query}&limit={limit}` performs fuzzy search.
+  - `q` (string, required when used): search term typed by the user
+  - `limit` (number, optional): max results (default: 20, min: 1, max: 50)
+  - Uses the same fuzzy search logic as brands (case-insensitive, typo-tolerant, nearest matches first).
 
 **Response:**
 ```json
@@ -664,6 +691,30 @@ Search queries the self-managed brand catalog (case-insensitive partial match on
 ```
 
 **Note:** You can also update intent via `PATCH /me/profile` with `{ "intent": "..." }`, but this dedicated endpoint is more focused.
+
+#### Get Suggested Intent Prompts
+
+**Endpoint:** `GET /intent-prompts?limit={limit}`
+
+**Description:** Returns a random selection of active intent prompts that you can show on the profile creation screen as suggestions. Users can tap one of these **or** type their own custom intent (sent via `PATCH /me/intent` or `PATCH /me/profile`).
+
+**Query Params:**
+- `limit` (optional, number): How many prompts to return.  
+  - Default: `8`  
+  - Min: `1`  
+  - Max: `20`
+
+**Response:**
+```json
+{
+  "prompts": [
+    {
+      "id": "string",
+      "text": "Here to meet new people"
+    }
+  ]
+}
+```
 
 #### Report User (Universal API)
 

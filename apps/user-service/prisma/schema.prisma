@@ -95,6 +95,19 @@ model User {
   @@map("users")
 }
 
+// Catalog of suggested intent prompts shown during profile creation
+model IntentPrompt {
+  id        String   @id @default(cuid())
+  text      String   @db.VarChar(100) // Prompt text shown to users
+  isActive  Boolean  @default(true)
+  order     Int?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("intent_prompts")
+  @@index([isActive])
+}
+
 // Additional Photos (max 4 per user)
 model UserPhoto {
   id        String   @id @default(cuid())

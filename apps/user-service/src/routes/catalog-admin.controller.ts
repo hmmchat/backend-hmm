@@ -20,6 +20,17 @@ const updateValueSchema = z.object({
   name: z.string().min(1).max(100).optional()
 });
 
+const createIntentPromptSchema = z.object({
+  text: z.string().min(1).max(100),
+  order: z.number().optional()
+});
+
+const updateIntentPromptSchema = z.object({
+  text: z.string().min(1).max(100).optional(),
+  isActive: z.boolean().optional(),
+  order: z.number().optional()
+});
+
 @Controller("admin")
 export class CatalogAdminController {
   constructor(private readonly prisma: PrismaService) {}
@@ -115,6 +126,56 @@ export class CatalogAdminController {
   async deleteValue(@Param("id") id: string) {
     // Note: This will fail if there are userValues pointing at this row due to FK.
     await this.prisma.value.delete({ where: { id } });
+    return { ok: true };
+  }
+
+  /**
+   * Intent prompts catalog management
+   */
+
+  @Get("intent-prompts")
+  async getAllIntentPrompts() {
+    const prompts = await this.prisma.intentPrompt.findMany({
+      orderBy: [
+        { isActive: "desc" },
+        { order: "asc" },
+        { createdAt: "desc" }
+      ]
+    });
+    return { ok: true, prompts };
+  }
+
+  @Post("intent-prompts")
+  @HttpCode(HttpStatus.CREATED)
+  async createIntentPrompt(@Body() body: unknown) {
+    const data = createIntentPromptSchema.parse(body);
+    const prompt = await this.prisma.intentPrompt.create({
+      data: {
+        text: data.text,
+        order: data.order || null
+      }
+    });
+    return { ok: true, prompt };
+  }
+
+  @Patch("intent-prompts/:id")
+  async updateIntentPrompt(@Param("id") id: string, @Body() body: unknown) {
+    const data = updateIntentPromptSchema.parse(body);
+    const prompt = await this.prisma.intentPrompt.update({
+      where: { id },
+      data: {
+        text: data.text,
+        isActive: data.isActive,
+        order: data.order
+      }
+    });
+    return { ok: true, prompt };
+  }
+
+  @Delete("intent-prompts/:id")
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async deleteIntentPrompt(@Param("id") id: string) {
+    await this.prisma.intentPrompt.delete({ where: { id } });
     return { ok: true };
   }
 }

@@ -192,6 +192,11 @@ export class RoutingService implements OnModuleInit {
       serviceUrl: userServiceUrl,
       requiresAuth: false
     });
+    this.routes.set("/admin/intent-prompts", {
+      path: "/admin/intent-prompts",
+      serviceUrl: userServiceUrl,
+      requiresAuth: false
+    });
     this.routes.set("/admin/gifts", {
       path: "/admin/gifts",
       serviceUrl: friendServiceUrl,

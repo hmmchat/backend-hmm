@@ -152,8 +152,12 @@ export class UserController {
   /* ---------- Catalog Data (Public Endpoints) ---------- */
 
   @Get("brands")
-  async getBrands() {
-    return this.userService.getBrands();
+  async getBrands(@Query("limit") limit?: string) {
+    const limitNum = limit !== undefined && limit !== "" ? parseInt(limit, 10) : 8;
+    if (isNaN(limitNum) || limitNum < 1 || limitNum > 50) {
+      throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);
+    }
+    return this.userService.getBrands(limitNum);
   }
 
   @Get("brands/search")
@@ -175,13 +179,49 @@ export class UserController {
   }
 
   @Get("interests")
-  async getInterests() {
-    return this.userService.getInterests();
+  async getInterests(@Query("q") query?: string, @Query("limit") limit?: string) {
+    if (query === undefined || query === null || query === "") {
+      const limitNum = limit !== undefined && limit !== "" ? parseInt(limit, 10) : 8;
+      if (isNaN(limitNum) || limitNum < 1 || limitNum > 50) {
+        throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);
+      }
+      return this.userService.getInterests(limitNum);
+    }
+
+    const trimmedQuery = query.trim();
+    if (trimmedQuery.length === 0) {
+      throw new HttpException("Search query (q) is required", HttpStatus.BAD_REQUEST);
+    }
+
+    const limitNum = limit !== undefined && limit !== "" ? parseInt(limit, 10) : SEARCH_DEFAULT_LIMIT;
+    if (isNaN(limitNum) || limitNum < 1 || limitNum > 50) {
+      throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);
+    }
+
+    return this.userService.searchInterests(trimmedQuery, limitNum);
   }
 
   @Get("values")
-  async getValues() {
-    return this.userService.getValues();
+  async getValues(@Query("q") query?: string, @Query("limit") limit?: string) {
+    if (query === undefined || query === null || query === "") {
+      const limitNum = limit !== undefined && limit !== "" ? parseInt(limit, 10) : 8;
+      if (isNaN(limitNum) || limitNum < 1 || limitNum > 50) {
+        throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);
+      }
+      return this.userService.getValues(limitNum);
+    }
+
+    const trimmedQuery = query.trim();
+    if (trimmedQuery.length === 0) {
+      throw new HttpException("Search query (q) is required", HttpStatus.BAD_REQUEST);
+    }
+
+    const limitNum = limit !== undefined && limit !== "" ? parseInt(limit, 10) : SEARCH_DEFAULT_LIMIT;
+    if (isNaN(limitNum) || limitNum < 1 || limitNum > 50) {
+      throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);
+    }
+
+    return this.userService.searchValues(trimmedQuery, limitNum);
   }
 
   /* ---------- Music Preference ---------- */
@@ -300,6 +340,20 @@ export class UserController {
     if (!token) throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
     const dto = UpdateIntentSchema.parse(body);
     return this.userService.updateIntent(token, dto);
+  }
+
+  /**
+   * Get suggested intent prompts for profile creation.
+   * GET /intent-prompts?limit={limit}
+   */
+  @Get("intent-prompts")
+  async getIntentPrompts(@Query("limit") limit?: string) {
+    const limitNum =
+      limit !== undefined && limit !== "" ? parseInt(limit, 10) : 8;
+    if (isNaN(limitNum) || limitNum < 1 || limitNum > 20) {
+      throw new HttpException("Limit must be between 1 and 20", HttpStatus.BAD_REQUEST);
+    }
+    return this.userService.getIntentPrompts(limitNum);
   }
 
   /* ---------- Horoscope ---------- */

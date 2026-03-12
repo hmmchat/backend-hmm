@@ -222,7 +222,54 @@ These feed discovery/matching and profile UI.
 
 ---
 
-### 5. Gifts (friend-service)
+### 5. Intent Prompts (user-service)
+
+**Purpose:** Manage the catalog of **suggested intent prompts** shown during profile creation.  
+These are short \"Here to meet new people\"-style prompts that users can tap instead of typing their own intent.
+
+**Base path:** `USER_SERVICE_URL/admin/intent-prompts`
+
+- **List all intent prompts**
+  - **GET** `/admin/intent-prompts`
+  - **Response:**
+    - `ok: true`
+    - `prompts: Array<{ id, text, isActive, order, createdAt, updatedAt }>`
+
+- **Create a new intent prompt**
+  - **POST** `/admin/intent-prompts`
+  - **Body (JSON):**
+    ```json
+    {
+      "text": "Here to meet new people",
+      "order": 1
+    }
+    ```
+    - `text` (string, required, max 100 chars): Prompt text shown to users.
+    - `order` (number, optional): Used for ordering/priority (lower first).
+  - **Response:** `{ ok: true, prompt: { ... } }`
+
+- **Update an intent prompt**
+  - **PATCH** `/admin/intent-prompts/:id`
+  - **Body (JSON, all optional):**
+    ```json
+    {
+      "text": "Here to make genuine connections",
+      "isActive": true,
+      "order": 2
+    }
+    ```
+    - `text` (string, optional)
+    - `isActive` (boolean, optional) – `false` hides it from users but keeps it in DB.
+    - `order` (number, optional)
+  - **Response:** `{ ok: true, prompt: { ... } }`
+
+- **Delete an intent prompt (hard delete)**
+  - **DELETE** `/admin/intent-prompts/:id`
+  - Permanently removes the prompt row.
+
+---
+
+### 6. Gifts (friend-service)
 
 **Purpose:** Manage the catalog of gifts (stickers) that can be sent in chats.
 

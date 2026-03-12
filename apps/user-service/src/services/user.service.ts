@@ -26,7 +26,8 @@ import {
   NEARBY_DEFAULT_RADIUS_KM,
   NEARBY_DEFAULT_LIMIT,
   CITIES_MAX_USERS_DEFAULT_LIMIT,
-  DISCOVERY_USERS_DEFAULT_LIMIT
+  DISCOVERY_USERS_DEFAULT_LIMIT,
+  SEARCH_DEFAULT_LIMIT
 } from "../config/limits.config.js";
 import { getReportWeight } from "../config/report-weights.config.js";
 
@@ -750,10 +751,24 @@ export class UserService implements OnModuleInit {
 
   /* ---------- Catalog Data (Public) ---------- */
 
-  async getBrands() {
-    const brands = await this.prisma.brand.findMany({
-      orderBy: { name: "asc" }
-    });
+  async getBrands(limit: number = 8) {
+    const effectiveLimit = limit ?? 8;
+    if (effectiveLimit < 1 || effectiveLimit > 50) {
+      throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);
+    }
+
+    const brands = await this.prisma.$queryRaw<
+      { id: string; name: string; logoUrl: string | null }[]
+    >`
+      SELECT
+        id,
+        name,
+        "logoUrl"
+      FROM "brands"
+      ORDER BY random()
+      LIMIT ${effectiveLimit};
+    `;
+
     return { brands };
   }
 
@@ -780,25 +795,126 @@ export class UserService implements OnModuleInit {
     return { brand };
   }
 
-  async getInterests() {
+  async getInterests(limit: number = 8) {
+    const effectiveLimit = limit ?? 8;
+    if (effectiveLimit < 1 || effectiveLimit > 50) {
+      throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);
+    }
+
     // Only return sub-genres (name) to users, not genre
     // Genre is used internally for matching but not shown to users
-    const interests = await this.prisma.interest.findMany({
-      select: {
-        id: true,
-        name: true, // Sub-genre (what users see)
-        createdAt: true
-        // genre is intentionally excluded - only used for matching
-      },
-      orderBy: { name: "asc" }
-    });
+    const interests = await this.prisma.$queryRaw<
+      { id: string; name: string; createdAt: Date }[]
+    >`
+      SELECT
+        id,
+        name,
+        "createdAt"
+      FROM "interests"
+      ORDER BY random()
+      LIMIT ${effectiveLimit};
+    `;
+
     return { interests };
   }
 
-  async getValues() {
-    const values = await this.prisma.value.findMany({
-      orderBy: { name: "asc" }
-    });
+  async searchInterests(query: string, limit: number = SEARCH_DEFAULT_LIMIT) {
+    const trimmedQuery = query?.trim();
+
+    if (!trimmedQuery || trimmedQuery.length === 0) {
+      throw new HttpException("Search query (q) is required", HttpStatus.BAD_REQUEST);
+    }
+
+    if (limit < 1 || limit > 50) {
+      throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);
+    }
+
+    let interests = await this.prisma.$queryRaw<
+      { id: string; name: string; createdAt: Date }[]
+    >`
+      SELECT
+        id,
+        name,
+        "createdAt"
+      FROM "interests"
+      WHERE lower(name) % lower(${trimmedQuery})
+      ORDER BY similarity(lower(name), lower(${trimmedQuery})) DESC, name ASC
+      LIMIT ${limit};
+    `;
+
+    if (interests.length === 0) {
+      interests = await this.prisma.$queryRaw<
+        { id: string; name: string; createdAt: Date }[]
+      >`
+        SELECT
+          id,
+          name,
+          "createdAt"
+        FROM "interests"
+        ORDER BY similarity(lower(name), lower(${trimmedQuery})) DESC, name ASC
+        LIMIT ${limit};
+      `;
+    }
+
+    return { interests };
+  }
+
+  async getValues(limit: number = 8) {
+    const effectiveLimit = limit ?? 8;
+    if (effectiveLimit < 1 || effectiveLimit > 50) {
+      throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);
+    }
+
+    const values = await this.prisma.$queryRaw<
+      { id: string; name: string }[]
+    >`
+      SELECT
+        id,
+        name
+      FROM "values"
+      ORDER BY random()
+      LIMIT ${effectiveLimit};
+    `;
+
+    return { values };
+  }
+
+  async searchValues(query: string, limit: number = SEARCH_DEFAULT_LIMIT) {
+    const trimmedQuery = query?.trim();
+
+    if (!trimmedQuery || trimmedQuery.length === 0) {
+      throw new HttpException("Search query (q) is required", HttpStatus.BAD_REQUEST);
+    }
+
+    if (limit < 1 || limit > 50) {
+      throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);
+    }
+
+    let values = await this.prisma.$queryRaw<
+      { id: string; name: string }[]
+    >`
+      SELECT
+        id,
+        name
+      FROM "values"
+      WHERE lower(name) % lower(${trimmedQuery})
+      ORDER BY similarity(lower(name), lower(${trimmedQuery})) DESC, name ASC
+      LIMIT ${limit};
+    `;
+
+    if (values.length === 0) {
+      values = await this.prisma.$queryRaw<
+        { id: string; name: string }[]
+      >`
+        SELECT
+          id,
+          name
+        FROM "values"
+        ORDER BY similarity(lower(name), lower(${trimmedQuery})) DESC, name ASC
+        LIMIT ${limit};
+      `;
+    }
+
     return { values };
   }
 
@@ -899,6 +1015,38 @@ export class UserService implements OnModuleInit {
     });
 
     return { intent: user.intent || null };
+  }
+
+  /**
+   * Get a random selection of suggested intent prompts for profile creation.
+   * Returns only active prompts, shuffled, limited to the requested size (default 8).
+   */
+  async getIntentPrompts(limit: number = 8) {
+    const effectiveLimit = limit ?? 8;
+    if (effectiveLimit < 1 || effectiveLimit > 20) {
+      throw new HttpException("Limit must be between 1 and 20", HttpStatus.BAD_REQUEST);
+    }
+
+    const prompts = await this.prisma.intentPrompt.findMany({
+      where: { isActive: true },
+      select: {
+        id: true,
+        text: true
+      },
+      orderBy: [
+        { order: "asc" },
+        { createdAt: "desc" }
+      ]
+    });
+
+    // Shuffle in-memory and take the first N to provide randomness
+    for (let i = prompts.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [prompts[i], prompts[j]] = [prompts[j], prompts[i]];
+    }
+
+    const limited = prompts.slice(0, effectiveLimit);
+    return { prompts: limited };
   }
 
   /* ---------- Reporting ---------- */

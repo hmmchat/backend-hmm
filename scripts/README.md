@@ -55,6 +55,8 @@ bash scripts/create-databases-local.sh
 
 Then run `setup-prerequisites.sh`. With Docker Compose, databases are created automatically on first startup.
 
+**Credentials:** Default is `postgres:postgres`. All `.env.example` files use this. If your Postgres uses different credentials, set `PGPASSWORD` when running `create-databases-local.sh` and update each service `.env` accordingly.
+
 ## Quick Setup Script
 
 **File:** `quick-setup.sh`

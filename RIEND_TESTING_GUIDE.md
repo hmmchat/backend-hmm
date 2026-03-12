@@ -9,7 +9,7 @@ We've created a script at `scripts/test-friend-setup.ts` to link two users insta
 ### Prerequisite: Find User IDs
 You can find a user's ID by searching by email in the `auth-service` database:
 ```bash
-psql "postgresql://postgres:password@localhost:5432/auth-service" -c "SELECT id, email FROM \"User\" WHERE email = 'user@email.com';"
+psql "postgresql://postgres:postgres@localhost:5432/auth-service" -c "SELECT id, email FROM \"User\" WHERE email = 'user@email.com';"
 ```
 
 ### Run the Script

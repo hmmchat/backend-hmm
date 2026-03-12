@@ -55,7 +55,7 @@ PORT=3006
 ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
 
 # Database
-DATABASE_URL=postgresql://user:password@localhost:5432/streaming-service?schema=public
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/streaming-service?schema=public
 
 # Mediasoup Configuration
 MEDIASOUP_WORKERS=4

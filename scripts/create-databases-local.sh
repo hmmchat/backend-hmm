@@ -4,6 +4,7 @@
 #
 # Uses: PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres (defaults)
 # Override with env vars if your local Postgres uses different credentials.
+# Ensure each service .env uses matching credentials: postgresql://postgres:postgres@...
 
 set -e
 

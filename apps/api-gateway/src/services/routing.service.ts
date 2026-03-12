@@ -114,6 +114,13 @@ export class RoutingService implements OnModuleInit {
       requiresAuth: true
     });
 
+    // Streaming admin (dashboard content management, no app auth)
+    this.routes.set("/streaming/admin", {
+      path: "/streaming/admin",
+      serviceUrl: streamingServiceUrl,
+      requiresAuth: false
+    });
+
     this.routes.set("/wallet", {
       path: "/wallet",
       serviceUrl: walletServiceUrl,
@@ -166,6 +173,28 @@ export class RoutingService implements OnModuleInit {
     this.routes.set("/music", {
       path: "/music",
       serviceUrl: userServiceUrl,
+      requiresAuth: false
+    });
+
+    // Admin routes (dashboard content management)
+    this.routes.set("/admin/interests", {
+      path: "/admin/interests",
+      serviceUrl: userServiceUrl,
+      requiresAuth: false
+    });
+    this.routes.set("/admin/values", {
+      path: "/admin/values",
+      serviceUrl: userServiceUrl,
+      requiresAuth: false
+    });
+    this.routes.set("/admin/brands", {
+      path: "/admin/brands",
+      serviceUrl: userServiceUrl,
+      requiresAuth: false
+    });
+    this.routes.set("/admin/gifts", {
+      path: "/admin/gifts",
+      serviceUrl: friendServiceUrl,
       requiresAuth: false
     });
 

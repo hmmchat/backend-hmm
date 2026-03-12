@@ -1,9 +1,9 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post } from "@nestjs/common";
+import { randomUUID } from "crypto";
 import { z } from "zod";
 import { PrismaService } from "../prisma/prisma.service.js";
 
 const createGiftSchema = z.object({
-  giftId: z.string().min(1).max(100),
   name: z.string().min(1).max(100),
   emoji: z.string().min(1).max(10),
   coins: z.number().int().nonnegative(),
@@ -62,9 +62,13 @@ export class GiftAdminController {
   @HttpCode(HttpStatus.CREATED)
   async create(@Body() body: unknown) {
     const data = createGiftSchema.parse(body);
+
+    // Generate a stable giftId internally instead of accepting it from the client
+    const giftId = randomUUID();
+
     const gift = await this.prisma.gift.create({
       data: {
-        giftId: data.giftId,
+        giftId,
         name: data.name,
         emoji: data.emoji,
         coins: data.coins,

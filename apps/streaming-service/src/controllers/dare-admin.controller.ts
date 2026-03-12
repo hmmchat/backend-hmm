@@ -1,9 +1,9 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post } from "@nestjs/common";
+import { randomUUID } from "crypto";
 import { z } from "zod";
 import { PrismaService } from "../prisma/prisma.service.js";
 
 const createDareSchema = z.object({
-  dareId: z.string().min(1).max(100),
   text: z.string().min(1).max(500),
   category: z.string().optional(),
   order: z.number().int().optional()
@@ -69,9 +69,12 @@ export class DareAdminController {
   async create(@Body() body: unknown) {
     const data = createDareSchema.parse(body);
 
+    // Generate a stable dareId internally instead of accepting it from the client
+    const dareId = randomUUID();
+
     const dare = await this.prisma.dareCatalog.create({
       data: {
-        dareId: data.dareId,
+        dareId,
         text: data.text,
         category: data.category || null,
         order: data.order ?? null,

@@ -98,13 +98,12 @@ All endpoints below are **admin/internal** and should be protected by whatever a
   - **Body (JSON):**
     ```json
     {
-      "dareId": "dare-12",
       "text": "Do your best dance move",
       "category": "fun",
       "order": 12
     }
     ```
-    - `dareId` (string, required, **must be unique**, used in call records)
+    - `dareId` is generated internally by the service (and returned in the response, used in call records)
     - `text` (string, required)
     - `category` (string, optional; e.g. `fun`, `personal`, `physical`)
     - `order` (number, optional; display order)
@@ -286,13 +285,13 @@ These are short \"Here to meet new people\"-style prompts that users can tap ins
   - **Body:**
     ```json
     {
-      "giftId": "rocket",
       "name": "Rocket",
       "emoji": "🚀",
       "coins": 500,
       "diamonds": 500
     }
     ```
+    - `giftId` is generated internally by the service (and returned in the response, used in transactions)
 
 - **Update a gift**
   - **PATCH** `/admin/gifts/:id`

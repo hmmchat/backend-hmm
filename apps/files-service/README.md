@@ -36,7 +36,7 @@ PORT=3008
 ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
 
 # Database
-DATABASE_URL=postgresql://user:password@localhost:5432/files_db
+DATABASE_URL=postgresql://user:password@localhost:5432/files-service?schema=public
 
 # Cloudflare R2 Configuration
 R2_ACCOUNT_ID=your_account_id

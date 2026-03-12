@@ -1,16 +1,16 @@
 # Production Data Migration: Option A (Separate Database Per Service)
 
-This document describes how to migrate production from a shared `hmm_user` database to Option A, where each service has its own database.
+This document describes how to migrate production from a legacy shared database to Option A, where each service has its own database.
 
 ## Why Option A: Prisma and Data Persistence
 
-**Prisma migration conflicts (prevented):** Previously, multiple services sharing `hmm_user` wrote to the same `_prisma_migrations` table. A failed migration in one service (e.g. wallet-service) could block others. With Option A, each service has its own database and `_prisma_migrations` table. Migrations are isolated; one service's failure does not affect others.
+**Prisma migration conflicts (prevented):** Previously, multiple services sharing a single database wrote to the same `_prisma_migrations` table. A failed migration in one service (e.g. wallet-service) could block others. With Option A, each service has its own database and `_prisma_migrations` table. Migrations are isolated; one service's failure does not affect others.
 
 **Data persistence:** Each service's data lives in its own database. Docker Compose uses a single Postgres instance with multiple databases; the `postgres_data` volume persists all of them. In production, you can use separate Postgres instances per service or a shared instance with separate databases. Data persists correctly in either case.
 
 ## When to Use This
 
-- If discovery-service was previously using `hmm_user` and has data
+- If discovery-service was previously using a shared database and has data
 - If you need to migrate existing discovery tables (active_matches, gender_filter_preferences, raincheck_sessions, squad_invitations, etc.) to a new `discovery-service` database
 
 ## Prerequisites
@@ -27,7 +27,9 @@ This document describes how to migrate production from a shared `hmm_user` datab
 psql -h localhost -U postgres -d postgres -c 'CREATE DATABASE "discovery-service";'
 ```
 
-### 2. Dump discovery tables from hmm_user
+### 2. Dump discovery tables from source database
+
+Set `SOURCE_DB` to your legacy shared database name, then run:
 
 Discovery-service owns these tables:
 
@@ -43,7 +45,8 @@ Discovery-service owns these tables:
 - broadcast_follows
 
 ```bash
-pg_dump -h localhost -U postgres -d hmm_user \
+SOURCE_DB="your-legacy-db-name"  # e.g. the shared DB discovery used before
+pg_dump -h localhost -U postgres -d "$SOURCE_DB" \
   -t gender_filter_preferences \
   -t raincheck_sessions \
   -t active_matches \
@@ -61,7 +64,8 @@ pg_dump -h localhost -U postgres -d hmm_user \
 For data migration:
 
 ```bash
-pg_dump -h localhost -U postgres -d hmm_user \
+SOURCE_DB="your-legacy-db-name"
+pg_dump -h localhost -U postgres -d "$SOURCE_DB" \
   -t gender_filter_preferences \
   -t raincheck_sessions \
   -t active_matches \
@@ -95,7 +99,8 @@ DATABASE_URL="postgresql://user:pass@host:5432/discovery-service?schema=public" 
 Then restore only data (no schema) if you used migrations:
 
 ```bash
-pg_dump -h localhost -U postgres -d hmm_user \
+SOURCE_DB="your-legacy-db-name"
+pg_dump -h localhost -U postgres -d "$SOURCE_DB" \
   -t gender_filter_preferences \
   -t raincheck_sessions \
   -t active_matches \
@@ -130,12 +135,12 @@ Deploy the updated discovery-service with the new DATABASE_URL.
 - Check that discovery-service health endpoint responds
 - Verify no errors in discovery-service logs
 
-### 7. Optional: Clean up hmm_user
+### 7. Optional: Clean up source database
 
-After validation (e.g. 24–48 hours), optionally drop discovery tables from `hmm_user`:
+After validation (e.g. 24–48 hours), optionally drop discovery tables from the legacy database:
 
 ```sql
--- Only if hmm_user is no longer used by discovery-service
+-- Only if the source database is no longer used by discovery-service
 DROP TABLE IF EXISTS broadcast_follows;
 DROP TABLE IF EXISTS broadcast_shares;
 DROP TABLE IF EXISTS broadcast_comments;
@@ -150,4 +155,4 @@ DROP TABLE IF EXISTS gender_filter_preferences;
 
 ## Rollback
 
-If issues occur, revert discovery-service DATABASE_URL to `hmm_user` and redeploy. The original data remains in `hmm_user` until you drop the tables.
+If issues occur, revert discovery-service DATABASE_URL to the legacy database and redeploy. The original data remains until you drop the tables.

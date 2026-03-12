@@ -34,7 +34,7 @@ This service manages user profiles after authentication. Users authenticate via 
 
 2. **Set up environment variables** (`.env`):
    ```env
-   DATABASE_URL="postgresql://user:password@localhost:5432/user_service_db"
+   DATABASE_URL="postgresql://user:password@localhost:5432/user-service?schema=public"
    JWT_PUBLIC_JWK='{"kty":"EC",...}' # Same as auth-service
    PORT=3002
    ALLOWED_ORIGINS="http://localhost:3000,http://localhost:5173"

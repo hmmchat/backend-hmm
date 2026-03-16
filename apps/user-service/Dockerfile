@@ -1,8 +1,7 @@
 # Multi-stage build for user-service
 FROM node:22-alpine AS base
 # Python + build-base + linux-headers for mediasoup postinstall (compiles native worker on Alpine/musl)
-# openssl1.1-compat provides libssl.so.1.1 required by Prisma engine on Alpine/musl
-RUN apk add --no-cache python3 py3-pip build-base linux-headers openssl1.1-compat \
+RUN apk add --no-cache python3 py3-pip build-base linux-headers \
     && ln -sf /usr/bin/python3 /usr/bin/python \
     && ln -sf /usr/bin/gcc /usr/bin/cc && ln -sf /usr/bin/g++ /usr/bin/c++
 

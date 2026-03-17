@@ -60,11 +60,11 @@ COPY --from=builder /app/apps/wallet-service/node_modules/.prisma ./node_modules
 RUN npx prisma generate --schema=prisma/schema.prisma
 
 # Expose port
-EXPOSE 3006
+EXPOSE 3005
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:3006/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+  CMD node -e "require('http').get('http://localhost:3005/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
 
 # Run the service
 CMD ["node", "dist/main.js"]

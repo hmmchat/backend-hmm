@@ -1,8 +1,11 @@
 # Multi-stage build for streaming-service
-FROM node:22-alpine AS base
-# Python + build deps for mediasoup (postinstall + native worker build on Alpine/musl)
-RUN apk add --no-cache python3 py3-pip build-base linux-headers \
-    openssl-dev libvpx-dev opus-dev libsrtp-dev \
+FROM node:22-slim AS base
+# Python + build deps for mediasoup (postinstall + native worker build)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+      python3 python3-pip build-essential linux-headers-amd64 \
+      libssl-dev libvpx-dev libopus-dev libsrtp2-dev \
+    && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/bin/python3 /usr/bin/python \
     && ln -sf /usr/bin/gcc /usr/bin/cc && ln -sf /usr/bin/g++ /usr/bin/c++
 

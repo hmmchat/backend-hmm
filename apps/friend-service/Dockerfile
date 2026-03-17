@@ -1,7 +1,9 @@
 # Multi-stage build for friend-service
-FROM node:22-alpine AS base
-# Python + build-base + linux-headers for mediasoup postinstall (compiles native worker on Alpine/musl)
-RUN apk add --no-cache python3 py3-pip build-base linux-headers \
+FROM node:22-slim AS base
+# Python + build-essential + linux headers for native module builds
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 python3-pip build-essential linux-headers-amd64 \
+    && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/bin/python3 /usr/bin/python \
     && ln -sf /usr/bin/gcc /usr/bin/cc && ln -sf /usr/bin/g++ /usr/bin/c++
 
@@ -43,15 +45,13 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
-# Install Chrome dependencies for Puppeteer
-RUN apk add --no-cache \
-    chromium \
-    nss \
-    freetype \
-    freetype-dev \
-    harfbuzz \
-    ca-certificates \
-    ttf-freefont
+# Install Chromium dependencies for Puppeteer
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+      chromium \
+      ca-certificates \
+      fonts-freefont-ttf \
+    && rm -rf /var/lib/apt/lists/*
 
 # Set Puppeteer to use system Chrome
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true

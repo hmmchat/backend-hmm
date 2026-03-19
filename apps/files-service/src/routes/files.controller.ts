@@ -81,37 +81,51 @@ export class FilesController {
       }
     }
 
-    // Parse query parameters
-    const options = UploadFileSchema.parse(query || {});
+    try {
+      // Parse query parameters
+      const options = UploadFileSchema.parse(query || {});
 
-    // Get file from multipart request
-    const data = await (req as any).file();
-    if (!data) {
-      throw new HttpException("No file provided", HttpStatus.BAD_REQUEST);
+      // Get file from multipart request
+      const data = await (req as any).file();
+      if (!data) {
+        console.warn("⚠️ No file part found in the request");
+        throw new HttpException("No file provided", HttpStatus.BAD_REQUEST);
+      }
+
+      // Read file buffer
+      const buffer = await data.toBuffer();
+      const filename = data.filename || "file";
+      const mimeType = data.mimetype || "application/octet-stream";
+
+      // Use userId from token if available, otherwise use query param
+      const finalUserId = userId || options.userId;
+
+      console.log(`📂 Processing upload for user: ${finalUserId || 'anonymous'}, filename: ${filename}, type: ${mimeType}`);
+
+      // Upload file
+      const file = await this.filesService.uploadFile(buffer, filename, mimeType, {
+        userId: finalUserId,
+        folder: options.folder,
+        processImage: options.processImage,
+        maxWidth: options.maxWidth,
+        maxHeight: options.maxHeight,
+        quality: options.quality
+      });
+
+      console.log(`✅ Upload successful: ${file.id}`);
+
+      return {
+        success: true,
+        file
+      };
+    } catch (error: any) {
+      console.error("❌ FAILED to upload file:", error.message, error.stack);
+      if (error instanceof HttpException) throw error;
+      throw new HttpException(
+        error.message || "Upload failed due to an internal error",
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
     }
-
-    // Read file buffer
-    const buffer = await data.toBuffer();
-    const filename = data.filename || "file";
-    const mimeType = data.mimetype || "application/octet-stream";
-
-    // Use userId from token if available, otherwise use query param
-    const finalUserId = userId || options.userId;
-
-    // Upload file
-    const file = await this.filesService.uploadFile(buffer, filename, mimeType, {
-      userId: finalUserId,
-      folder: options.folder,
-      processImage: options.processImage,
-      maxWidth: options.maxWidth,
-      maxHeight: options.maxHeight,
-      quality: options.quality
-    });
-
-    return {
-      success: true,
-      file
-    };
   }
 
   /**

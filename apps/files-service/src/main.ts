@@ -3,7 +3,7 @@ import { FastifyAdapter, NestFastifyApplication } from "@nestjs/platform-fastify
 import { AppModule } from "./modules/app.module.js";
 import { ConfigService } from "@nestjs/config";
 import { ZodExceptionFilter } from "./filters/zod-exception.filter.js";
-import multipart from "fastify-multipart";
+import multipart from "@fastify/multipart";
 
 async function bootstrap() {
   const app = await NestFactory.create<NestFastifyApplication>(

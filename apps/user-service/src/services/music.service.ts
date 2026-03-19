@@ -133,8 +133,17 @@ export class MusicService implements OnModuleInit {
 
     try {
       const token = await this.getAccessToken();
-      const encodedQuery = encodeURIComponent(query);
-      const url = `https://api.spotify.com/v1/search?q=${encodedQuery}&type=track&limit=${effectiveLimit}`;
+      
+      const searchParams = new URLSearchParams();
+      searchParams.append("q", query);
+      searchParams.append("type", "track");
+      if (Math.floor(effectiveLimit) !== 20) {
+        searchParams.append("limit", Math.floor(effectiveLimit).toString());
+      }
+
+      const url = `https://api.spotify.com/v1/search?${searchParams.toString()}`;
+
+      console.log(`🎵 Searching Spotify (simplified): ${url}`);
 
       const response = await fetch(url, {
         headers: {

@@ -124,16 +124,18 @@ export class ProfileCompletionService {
     completed += details.optional.brandPreferences.filled;
     total += 5;
 
-    // Interests: optional bucket, full 10% if at least 1 selected
-    const interestsPercentage = details.optional.interests.filled >= 1 ? 10 : 0;
-    percentage += interestsPercentage;
-    completed += Math.min(details.optional.interests.filled, 1);
+    // Interests: full 10% if at least 1 selected
+    if (details.optional.interests.filled >= 1) {
+      percentage += 10;
+      completed += 1;
+    }
     total += 1;
 
-    // Values: optional bucket, full 10% if at least 1 selected
-    const valuesPercentage = details.optional.values.filled >= 1 ? 10 : 0;
-    percentage += valuesPercentage;
-    completed += Math.min(details.optional.values.filled, 1);
+    // Values: full 10% if at least 1 selected
+    if (details.optional.values.filled >= 1) {
+      percentage += 10;
+      completed += 1;
+    }
     total += 1;
 
     // Intent: 3%

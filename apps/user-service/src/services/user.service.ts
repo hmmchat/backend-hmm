@@ -770,8 +770,7 @@ export class UserService implements OnModuleInit {
       }
     } catch (error) {
       console.warn(
-        `[UserService] Brandfetch suggestions unavailable, using DB fallback: ${
-          error instanceof Error ? error.message : String(error)
+        `[UserService] Brandfetch suggestions unavailable, using DB fallback: ${error instanceof Error ? error.message : String(error)
         }`
       );
     }

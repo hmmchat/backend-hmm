@@ -20,14 +20,14 @@ export const CreateProfileSchema = z.object({
   dateOfBirth: z.string().datetime().or(z.date()).transform((val) => new Date(val)),
   gender: GenderEnum,
   displayPictureUrl: z.string().url(),
-  intent: z.string().max(50).optional()
+  intent: z.string().max(255).optional()
 });
 
 export const UpdateProfileSchema = z.object({
   username: z.string().min(3).max(30).regex(/^[a-zA-Z0-9_]+$/).optional(),
   gender: GenderEnum.optional(),
   displayPictureUrl: z.string().url().optional(),
-  intent: z.string().max(50).optional(),
+  intent: z.string().max(255).optional(),
   musicPreferenceId: z.string().optional(),
   videoEnabled: z.boolean().optional()
 });
@@ -69,7 +69,7 @@ export const UpdateStatusSchema = z.object({
 
 // Intent DTO
 export const UpdateIntentSchema = z.object({
-  intent: z.string().max(50).nullable() // Allow null to clear intent
+  intent: z.string().max(255).nullable() // Increased limit to allow longer bios
 });
 
 // Music Preference DTO

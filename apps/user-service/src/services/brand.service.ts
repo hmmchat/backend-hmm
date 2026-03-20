@@ -278,7 +278,7 @@ export class BrandService {
       try {
         const brandfetchResults = await this.searchBrandfetch(trimmedQuery, effectiveLimit);
         if (brandfetchResults.length > 0) {
-          return brandfetchResults;
+          return this.persistBrandfetchResultsToCatalog(brandfetchResults);
         }
       } catch (error) {
         // Fall back to DB search so existing flows continue to work.

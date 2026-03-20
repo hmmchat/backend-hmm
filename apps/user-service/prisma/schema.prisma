@@ -67,8 +67,8 @@ model User {
   reportCount   Int      @default(0) // Total report score (weighted sum); discovery compares to REPORT_THRESHOLD
   badgeMember   Boolean  @default(false) // 1 = yes, 0 = no
   
-  // Intent/Bio (max 50 characters)
-  intent        String?  @db.VarChar(50)
+  // Intent/Bio (max 255 characters)
+  intent        String?  @db.VarChar(255)
   
   // Location (for "miles away" calculation)
   latitude      Float?

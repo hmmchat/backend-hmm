@@ -1,5 +1,6 @@
 import { NestFactory } from "@nestjs/core";
 import { FastifyAdapter, NestFastifyApplication } from "@nestjs/platform-fastify";
+import multipart from "@fastify/multipart";
 import { AppModule } from "./modules/app.module.js";
 import { ConfigService } from "@nestjs/config";
 import { ZodExceptionFilter } from "./filters/zod-exception.filter.js";
@@ -15,6 +16,9 @@ async function bootstrap() {
 
   const config = app.get(ConfigService);
   const port = config.get<number>("PORT") || 3000;
+
+  // Allow multipart requests to reach gateway handlers for upload proxying.
+  await app.register(multipart);
 
   const origins = (process.env.ALLOWED_ORIGINS ?? "").split(",").map((o) => o.trim()).filter(Boolean);
   const isDev = !process.env.NODE_ENV || process.env.NODE_ENV === "development";

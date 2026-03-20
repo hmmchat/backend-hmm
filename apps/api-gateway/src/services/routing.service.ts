@@ -178,6 +178,18 @@ export class RoutingService implements OnModuleInit {
       requiresAuth: false
     });
 
+    this.routes.set("/intent-prompts", {
+      path: "/intent-prompts",
+      serviceUrl: userServiceUrl,
+      requiresAuth: false
+    });
+
+    this.routes.set("/metrics", {
+      path: "/metrics",
+      serviceUrl: userServiceUrl,
+      requiresAuth: false
+    });
+
     // Admin routes (dashboard content management)
     this.routes.set("/admin/interests", {
       path: "/admin/interests",

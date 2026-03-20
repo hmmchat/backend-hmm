@@ -501,7 +501,7 @@ GET /users/{userId}?fields=username,photos,brandPreferences
 
 **Endpoint:** `GET /brands?limit={limit}`
 
-- Returns a **random selection** of brands to show on the \"Add Brands\" screen.
+- Returns **Brandfetch-backed suggestions** (seeded category searches, shuffled) for the \"Add Brands\" screen. If Brandfetch is unavailable or returns nothing, falls back to a **random selection** from the self-hosted DB catalog.
 - `limit` (optional, number): how many brands to return.
   - Default: `8`
   - Min: `1`
@@ -538,10 +538,7 @@ GET /users/{userId}?fields=username,photos,brandPreferences
 }
 ```
 
-Search queries the self-managed brand catalog using **intelligent fuzzy matching** on the brand name:
-- Case-insensitive
-- Tolerant to small spelling mistakes (e.g. `"Adiddas"` → returns `"Adidas"`, `"Nike"`, `"Puma"`, ...)
-- Always returns the **closest matches**, even when there is no exact brand with that name
+Search uses **Brandfetch** first. If Brandfetch is unavailable or returns nothing, falls back to the self-hosted DB catalog with **fuzzy matching** on the brand name (case-insensitive, typo-tolerant).
 
 #### Update Brand Preferences
 

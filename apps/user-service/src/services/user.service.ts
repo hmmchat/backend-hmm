@@ -757,6 +757,25 @@ export class UserService implements OnModuleInit {
       throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);
     }
 
+    try {
+      const suggestions = await this.brandService.getBrandSuggestions(effectiveLimit);
+      if (suggestions.length > 0) {
+        return {
+          brands: suggestions.map((b) => ({
+            id: b.id,
+            name: b.name,
+            logoUrl: b.logoUrl
+          }))
+        };
+      }
+    } catch (error) {
+      console.warn(
+        `[UserService] Brandfetch suggestions unavailable, using DB fallback: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+
     const brands = await this.prisma.$queryRaw<
       { id: string; name: string; logoUrl: string | null }[]
     >`
@@ -773,7 +792,7 @@ export class UserService implements OnModuleInit {
   }
 
   /**
-   * Search brands by name (from self-managed catalog)
+   * Search brands by name (Brandfetch primary, DB fallback)
    */
   async searchBrands(query: string, limit: number = 20) {
     return this.brandService.searchBrands(query, limit);

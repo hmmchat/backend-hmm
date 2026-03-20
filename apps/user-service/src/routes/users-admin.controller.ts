@@ -13,7 +13,6 @@ import {
 } from "@nestjs/common";
 import { z } from "zod";
 import fetch from "node-fetch";
-import type { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { UserService } from "../services/user.service.js";
 
@@ -53,7 +52,49 @@ const adminUserProfileInclude = {
   badges: { orderBy: { receivedAt: "desc" as const } }
 } as const;
 
-type ProfileWithAdminInclude = Prisma.UserGetPayload<{ include: typeof adminUserProfileInclude }>;
+/**
+ * Subset of User + adminUserProfileInclude used by mergeAuthUserWithProfile.
+ * Avoids Prisma.UserGetPayload — not exported on Prisma in some generated client builds (e.g. Docker).
+ */
+type ProfileWithAdminInclude = {
+  username: string | null;
+  displayPictureUrl: string | null;
+  intent: string | null;
+  createdAt: Date;
+  dateOfBirth: Date | null;
+  gender: string | null;
+  reportCount: number;
+  badgeMember: boolean;
+  preferredCity: string | null;
+  profileCompleted: boolean;
+  activeBadgeId: string | null;
+  musicPreferenceId: string | null;
+  status: string;
+  musicPreference: {
+    id: string;
+    name: string;
+    artist: string;
+    albumArtUrl: string | null;
+    spotifyId: string | null;
+  } | null;
+  photos: { id: string; url: string; order: number }[];
+  brandPreferences: {
+    order: number;
+    brand: { id: string; name: string; domain: string | null; logoUrl: string | null };
+  }[];
+  interests: {
+    order: number;
+    interest: { id: string; name: string; genre: string | null };
+  }[];
+  values: { order: number; value: { id: string; name: string } }[];
+  badges: {
+    id: string;
+    giftId: string;
+    giftName: string;
+    giftEmoji: string | null;
+    receivedAt: Date;
+  }[];
+};
 
 function iso(d: Date | null | undefined): string | null {
   if (!d) return null;

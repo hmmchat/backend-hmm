@@ -224,8 +224,11 @@ export class RoutingService implements OnModuleInit {
    * Find route configuration for a given path
    */
   findRoute(path: string): RouteConfig | null {
+    // Remove query string if present
+    let cleanPath = path.split("?")[0];
+
     // Remove leading /v1 if present
-    let cleanPath = path.replace(/^\/v1/, "");
+    cleanPath = cleanPath.replace(/^\/v1/, "");
 
     // Ensure path starts with /
     if (!cleanPath.startsWith("/")) {

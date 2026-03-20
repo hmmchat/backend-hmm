@@ -171,6 +171,15 @@ export class AuthController {
   /* ---------- Admin Endpoints (for moderation/admin use) ---------- */
 
   /**
+   * List users for admin dashboards
+   * GET /auth/admin/users
+   */
+  @Get("admin/users")
+  async listAdminUsers() {
+    return this.auth.listUsersForAdminDashboard();
+  }
+
+  /**
    * Suspend account (admin-initiated)
    * POST /auth/admin/users/:userId/suspend
    * Note: In production, this should be protected by admin role check
@@ -212,9 +221,22 @@ export class AuthController {
     @Headers("authorization") _authz?: string
   ) {
     // TODO: Add admin role verification
-    const { reason } = z.object({ reason: z.string().min(1, "Ban reason is required") }).parse(body);
-    await this.auth.banAccount(userId, reason);
-    return { ok: true, message: `Account ${userId} banned: ${reason}` };
+    const { reason } = z
+      .object({ reason: z.string().optional() })
+      .parse(body ?? {});
+    const finalReason = (reason && String(reason).trim()) || "Moderation action";
+    await this.auth.banAccount(userId, finalReason);
+    return { ok: true, message: `Account ${userId} banned: ${finalReason}` };
+  }
+
+  /**
+   * Unban account (admin-initiated)
+   * POST /auth/admin/users/:userId/unban
+   */
+  @Post("admin/users/:userId/unban")
+  async unbanAccount(@Param("userId") userId: string, @Headers("authorization") _authz?: string) {
+    await this.auth.unbanAccount(userId);
+    return { ok: true, message: `Account ${userId} unbanned` };
   }
 
   /* ---------- Referral Endpoints ---------- */

@@ -4,6 +4,7 @@ import { PrismaService } from "../prisma/prisma.service.js";
 import { UserController } from "../routes/user.controller.js";
 import { CatalogAdminController } from "../routes/catalog-admin.controller.js";
 import { BrandAdminController } from "../routes/brand-admin.controller.js";
+import { UsersAdminController } from "../routes/users-admin.controller.js";
 import { BadgeController } from "../routes/badge.controller.js";
 import { HealthController } from "../routes/health.controller.js";
 import { UserService } from "../services/user.service.js";
@@ -17,7 +18,14 @@ import { AuthClientService } from "../services/auth-client.service.js";
 
 @Module({
   imports: [ConfigModule.forRoot()],
-  controllers: [UserController, BadgeController, HealthController, CatalogAdminController, BrandAdminController],
+  controllers: [
+    UserController,
+    BadgeController,
+    HealthController,
+    CatalogAdminController,
+    BrandAdminController,
+    UsersAdminController
+  ],
   providers: [PrismaService, UserService, ProfileCompletionService, ModerationClientService, MusicService, BrandService, BadgeService, WalletClientService, AuthClientService]
 })
 export class AppModule {}

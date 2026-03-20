@@ -538,6 +538,46 @@ export class AuthService implements OnModuleInit {
   }
 
   /**
+   * Clear ban and restore active status (admin-initiated)
+   */
+  async unbanAccount(userId: string): Promise<void> {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        accountStatus: "ACTIVE",
+        bannedAt: null,
+        banReason: null
+      }
+    });
+  }
+
+  /**
+   * List auth users for admin dashboards (pagination kept simple)
+   */
+  async listUsersForAdminDashboard() {
+    const users = await this.prisma.user.findMany({
+      orderBy: { createdAt: "desc" },
+      take: 1000,
+      select: {
+        id: true,
+        email: true,
+        phone: true,
+        name: true,
+        createdAt: true,
+        updatedAt: true,
+        accountStatus: true,
+        bannedAt: true,
+        banReason: true,
+        suspendedAt: true,
+        suspensionReason: true,
+        deactivatedAt: true,
+        deletedAt: true
+      }
+    });
+    return { ok: true, users };
+  }
+
+  /**
    * Delete user account (user-initiated, soft delete)
    * Sets deletedAt timestamp and deactivates account
    * Actual data deletion should be handled by a cleanup job

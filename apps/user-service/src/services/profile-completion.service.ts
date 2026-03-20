@@ -37,8 +37,8 @@ export class ProfileCompletionService {
    *   - Photos (0-3): 8% total
    *   - Music: 7%
    *   - Brands (0-5): 10% (2% per brand)
-   *   - Interests (required min 1): 10%
-   *   - Values (required min 1): 10%
+   *   - Interests (optional, non-incremental): 10% if at least 1 selected
+   *   - Values (optional, non-incremental): 10% if at least 1 selected
    *   - Intent: 3%
    *   - Unallocated bonus: 2% (always granted)
    */
@@ -124,13 +124,13 @@ export class ProfileCompletionService {
     completed += details.optional.brandPreferences.filled;
     total += 5;
 
-    // Interests: 10% (minimum 1 required to receive credit)
+    // Interests: optional bucket, full 10% if at least 1 selected
     const interestsPercentage = details.optional.interests.filled >= 1 ? 10 : 0;
     percentage += interestsPercentage;
     completed += Math.min(details.optional.interests.filled, 1);
     total += 1;
 
-    // Values: 10% (minimum 1 required to receive credit)
+    // Values: optional bucket, full 10% if at least 1 selected
     const valuesPercentage = details.optional.values.filled >= 1 ? 10 : 0;
     percentage += valuesPercentage;
     completed += Math.min(details.optional.values.filled, 1);

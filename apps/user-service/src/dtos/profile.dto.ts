@@ -43,11 +43,11 @@ export const UpdateBrandPreferencesSchema = z.object({
 });
 
 export const UpdateInterestsSchema = z.object({
-  interestIds: z.array(z.string()).min(1).max(4)
+  interestIds: z.array(z.string()).min(0).max(4)
 });
 
 export const UpdateValuesSchema = z.object({
-  valueIds: z.array(z.string()).min(1).max(4)
+  valueIds: z.array(z.string()).min(0).max(4)
 });
 
 // Location DTO

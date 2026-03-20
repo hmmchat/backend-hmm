@@ -1,8 +1,6 @@
 import { Injectable, OnModuleInit, HttpException, HttpStatus, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import fetch from "node-fetch";
-import http from "node:http";
-import https from "node:https";
 import { v4 as uuidv4 } from "uuid";
 
 export interface RouteConfig {
@@ -379,11 +377,8 @@ export class RoutingService implements OnModuleInit {
           const contentType = (requestHeaders["content-type"] || "").toLowerCase();
 
           if (contentType.includes("multipart/form-data")) {
-            // node-fetch occasionally drops multipart framing with raw streams in this gateway flow.
-            // Use native stream proxying to preserve boundary/body exactly as received.
-            delete requestHeaders["content-length"];
-            clearTimeout(timeoutId);
-            return await this.proxyMultipartRequest(method, url, requestHeaders, body);
+            // Multipart bytes are buffered in GatewayController and passed through as-is.
+            fetchOptions.body = body;
           } else if (typeof body === "string") {
             requestHeaders["content-type"] = "application/json";
             fetchOptions.body = body;
@@ -567,57 +562,6 @@ export class RoutingService implements OnModuleInit {
       `Service unavailable: ${error.message || 'Unknown error'}`,
       HttpStatus.BAD_GATEWAY
     );
-  }
-
-  private async proxyMultipartRequest(
-    method: string,
-    url: string,
-    headers: Record<string, string>,
-    body: NodeJS.ReadableStream
-  ): Promise<{ status: number; data: any; headers: Record<string, string> }> {
-    return new Promise((resolve, reject) => {
-      const target = new URL(url);
-      const transport = target.protocol === "https:" ? https : http;
-
-      const req = transport.request(
-        {
-          protocol: target.protocol,
-          hostname: target.hostname,
-          port: target.port || (target.protocol === "https:" ? 443 : 80),
-          path: `${target.pathname}${target.search}`,
-          method,
-          headers
-        },
-        (res) => {
-          const chunks: Buffer[] = [];
-          res.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
-          res.on("end", () => {
-            const raw = Buffer.concat(chunks).toString("utf8");
-            let data: any = {};
-            try {
-              data = raw ? JSON.parse(raw) : {};
-            } catch {
-              data = raw;
-            }
-
-            const responseHeaders: Record<string, string> = {};
-            Object.entries(res.headers).forEach(([key, value]) => {
-              if (!value || key.toLowerCase() === "transfer-encoding") return;
-              responseHeaders[key] = Array.isArray(value) ? value.join(", ") : String(value);
-            });
-
-            resolve({
-              status: res.statusCode || 500,
-              data,
-              headers: responseHeaders
-            });
-          });
-        }
-      );
-
-      req.on("error", (err) => reject(err));
-      body.pipe(req);
-    });
   }
 
   /**

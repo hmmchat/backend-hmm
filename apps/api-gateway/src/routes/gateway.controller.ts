@@ -169,13 +169,8 @@ export class GatewayController {
       if (method === "POST" || method === "PUT" || method === "PATCH") {
         const contentType = (req.headers["content-type"] || "").toLowerCase();
         if (contentType.includes("multipart/form-data")) {
-          // Buffer multipart payload so downstream proxying can preserve exact body bytes.
-          const chunks: Buffer[] = [];
-          for await (const chunk of req.raw) {
-            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-          }
-          requestBody = Buffer.concat(chunks);
-          headers["content-length"] = String(requestBody.length);
+          // Use the raw request stream for multipart proxying
+          requestBody = req.raw;
         } else {
           requestBody = req.body;
         }

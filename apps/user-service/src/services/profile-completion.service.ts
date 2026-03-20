@@ -20,7 +20,6 @@ interface ProfileCompletionResult {
       interests: { filled: number; max: number };
       values: { filled: number; max: number };
       intent: boolean;
-      location: boolean;
     };
   };
 }
@@ -41,7 +40,7 @@ export class ProfileCompletionService {
    *   - Interests (0-4): 10% (2.5% per interest)
    *   - Values (0-4): 10% (2.5% per value)
    *   - Intent: 3%
-   *   - Location: 2%
+   *   - Unallocated bonus: 2% (always granted)
    */
   async calculateCompletion(userId: string): Promise<ProfileCompletionResult> {
     const user = await this.prisma.user.findUnique({
@@ -84,8 +83,7 @@ export class ProfileCompletionService {
           filled: user.values.length,
           max: 4
         },
-        intent: !!user.intent,
-        location: !!(user.latitude && user.longitude)
+        intent: !!user.intent
       }
     };
 
@@ -145,12 +143,8 @@ export class ProfileCompletionService {
     }
     total += 1;
 
-    // Location: 2%
-    if (details.optional.location) {
-      percentage += 2;
-      completed += 1;
-    }
-    total += 1;
+    // Grant remaining 2% so users can reach 100% without location.
+    percentage += 2;
 
     // VideoEnabled: Already counted in total but doesn't add to percentage
     // (it's a preference with default value)

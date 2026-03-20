@@ -338,8 +338,7 @@ export class UserService implements OnModuleInit {
               brandPreferences: { filled: user.brandPreferences.length, max: 5 },
               interests: { filled: user.interests.length, max: 4 },
               values: { filled: user.values.length, max: 4 },
-              intent: !!user.intent,
-              location: !!(user.latitude && user.longitude)
+              intent: !!user.intent
             }
           }
         };

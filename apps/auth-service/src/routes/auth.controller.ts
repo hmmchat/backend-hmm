@@ -1,4 +1,15 @@
-import { Body, Controller, HttpException, HttpStatus, Post, Delete, Get, Headers, Param } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  HttpCode,
+  HttpException,
+  HttpStatus,
+  Post,
+  Delete,
+  Get,
+  Headers,
+  Param
+} from "@nestjs/common";
 import { z } from "zod";
 import { AuthService } from "../services/auth.service.js";
 import { verifyToken, AccessPayload } from "@hmm/common";
@@ -180,6 +191,15 @@ export class AuthController {
   }
 
   /**
+   * Single auth user for admin dashboards (merged with profile in user-service).
+   * GET /auth/admin/users/:userId
+   */
+  @Get("admin/users/:userId")
+  async getAdminUser(@Param("userId") userId: string) {
+    return this.auth.getUserForAdminDashboard(userId);
+  }
+
+  /**
    * Suspend account (admin-initiated)
    * POST /auth/admin/users/:userId/suspend
    * Note: In production, this should be protected by admin role check
@@ -237,6 +257,39 @@ export class AuthController {
   async unbanAccount(@Param("userId") userId: string, @Headers("authorization") _authz?: string) {
     await this.auth.unbanAccount(userId);
     return { ok: true, message: `Account ${userId} unbanned` };
+  }
+
+  /**
+   * Deactivate account (admin / dashboard) — same state as user self-deactivate; user may reactivate in app.
+   * POST /auth/admin/users/:userId/deactivate
+   */
+  @Post("admin/users/:userId/deactivate")
+  @HttpCode(HttpStatus.OK)
+  async adminDeactivateUser(@Param("userId") userId: string, @Headers("authorization") _authz?: string) {
+    await this.auth.deactivateAccount(userId);
+    return { ok: true, message: `Account ${userId} deactivated` };
+  }
+
+  /**
+   * Restore login for DEACTIVATED or legacy SUSPENDED — not for BANNED (use unban).
+   * POST /auth/admin/users/:userId/restore-login
+   */
+  @Post("admin/users/:userId/restore-login")
+  @HttpCode(HttpStatus.OK)
+  async adminRestoreLogin(@Param("userId") userId: string, @Headers("authorization") _authz?: string) {
+    await this.auth.adminRestoreLoginAccess(userId);
+    return { ok: true, message: `Login access restored for ${userId}` };
+  }
+
+  /**
+   * Permanently delete auth user row (dashboard hard delete).
+   * DELETE /auth/admin/users/:userId
+   */
+  @Delete("admin/users/:userId")
+  @HttpCode(HttpStatus.OK)
+  async adminHardDeleteUser(@Param("userId") userId: string, @Headers("authorization") _authz?: string) {
+    await this.auth.adminHardDeleteUser(userId);
+    return { ok: true, message: `Account ${userId} removed from auth` };
   }
 
   /* ---------- Referral Endpoints ---------- */

@@ -29,7 +29,7 @@ import {
   DISCOVERY_USERS_DEFAULT_LIMIT,
   SEARCH_DEFAULT_LIMIT
 } from "../config/limits.config.js";
-import { getReportWeight } from "../config/report-weights.config.js";
+import { getReportWeight, getAdminDashboardReportWeight } from "../config/report-weights.config.js";
 
 @Injectable()
 export class UserService implements OnModuleInit {
@@ -1115,6 +1115,40 @@ export class UserService implements OnModuleInit {
     return {
       success: true,
       reportCount: updatedUser.reportCount
+    };
+  }
+
+  /**
+   * Admin dashboard report: increments reportCount by the maximum in-app role weight (or REPORT_WEIGHT_ADMIN_DASHBOARD).
+   * In-app POST /users/report uses smaller weights per reporter context (host, participant, etc.).
+   */
+  async adminDashboardReportUser(
+    reportedUserId: string,
+    _meta: { reason: string; notes?: string }
+  ): Promise<{ success: true; reportCount: number; weightApplied: number }> {
+    const reportedUser = await this.prisma.user.findUnique({
+      where: { id: reportedUserId }
+    });
+
+    if (!reportedUser) {
+      throw new HttpException("Reported user has no profile in user-service", HttpStatus.NOT_FOUND);
+    }
+
+    const weight = getAdminDashboardReportWeight();
+
+    const updatedUser = await this.prisma.user.update({
+      where: { id: reportedUserId },
+      data: {
+        reportCount: {
+          increment: weight
+        }
+      }
+    });
+
+    return {
+      success: true,
+      reportCount: updatedUser.reportCount,
+      weightApplied: weight
     };
   }
 

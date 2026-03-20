@@ -741,6 +741,8 @@ Search uses **Brandfetch** first. If Brandfetch is unavailable or returns nothin
 
 `reportCount` is the reported user's total report score (weighted sum) after this report.
 
+**Admin dashboard (sales/moderation):** `POST /v1/admin/users/:id/report` with `{ "reason": "…", "notes": "…" }` increments the same `reportCount` using the **maximum** configured in-app role weight (or `REPORT_WEIGHT_ADMIN_DASHBOARD` if set on user-service). In-app reports use smaller weights per `reportType`; dashboard reports always apply the highest tier.
+
 ---
 
 ## Discovery & Matching

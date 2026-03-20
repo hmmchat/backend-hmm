@@ -13,7 +13,9 @@ import {
 } from "@nestjs/common";
 import { z } from "zod";
 import fetch from "node-fetch";
+import type { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service.js";
+import { UserService } from "../services/user.service.js";
 
 const authBase = () => (process.env.AUTH_SERVICE_URL || "http://localhost:3001").replace(/\/$/, "");
 
@@ -32,6 +34,116 @@ type AuthAdminUser = {
   deactivatedAt: string | null;
   deletedAt: string | null;
 };
+
+const adminUserProfileInclude = {
+  photos: { orderBy: { order: "asc" as const } },
+  musicPreference: true,
+  brandPreferences: {
+    orderBy: { order: "asc" as const },
+    include: { brand: true }
+  },
+  interests: {
+    orderBy: { order: "asc" as const },
+    include: { interest: true }
+  },
+  values: {
+    orderBy: { order: "asc" as const },
+    include: { value: true }
+  },
+  badges: { orderBy: { receivedAt: "desc" as const } }
+} as const;
+
+type ProfileWithAdminInclude = Prisma.UserGetPayload<{ include: typeof adminUserProfileInclude }>;
+
+function iso(d: Date | null | undefined): string | null {
+  if (!d) return null;
+  const s = d.toISOString?.();
+  return s ?? null;
+}
+
+function mergeAuthUserWithProfile(a: AuthAdminUser, p: ProfileWithAdminInclude | null | undefined) {
+  const banned = a.accountStatus === "BANNED";
+  const inactive =
+    a.accountStatus === "DEACTIVATED" ||
+    a.accountStatus === "SUSPENDED" ||
+    !!a.deletedAt;
+
+  const music = p?.musicPreference;
+  const musicPreference = music
+    ? {
+        id: music.id,
+        name: music.name,
+        artist: music.artist,
+        albumArtUrl: music.albumArtUrl ?? null,
+        spotifyId: music.spotifyId ?? null
+      }
+    : null;
+
+  return {
+    id: a.id,
+    email: a.email ?? null,
+    phone: a.phone ?? null,
+    displayName: p?.username ?? a.name ?? null,
+    username: p?.username ?? null,
+    firstName: null as string | null,
+    lastName: null as string | null,
+    avatarUrl: p?.displayPictureUrl ?? null,
+    bio: p?.intent ?? null,
+    createdAt: p?.createdAt ? iso(p.createdAt) : a.createdAt ?? null,
+    isActive: !inactive && !banned,
+    banned,
+    bannedAt: a.bannedAt ?? null,
+    banReason: a.banReason ?? null,
+    status: a.accountStatus,
+    role: null as string | null,
+    discoveryStatus: p?.status ?? null,
+    dateOfBirth: p?.dateOfBirth ? iso(p.dateOfBirth) : null,
+    gender: p?.gender ?? null,
+    reportCount: p?.reportCount ?? null,
+    badgeMember: p?.badgeMember ?? null,
+    preferredCity: p?.preferredCity ?? null,
+    profileCompleted: p?.profileCompleted ?? null,
+    activeBadgeId: p?.activeBadgeId ?? null,
+    musicPreference,
+    musicPreferenceId: p?.musicPreferenceId ?? null,
+    photos: (p?.photos ?? []).map((ph) => ({
+      id: ph.id,
+      url: ph.url,
+      order: ph.order
+    })),
+    brandPreferences: (p?.brandPreferences ?? []).map((ub) => ({
+      order: ub.order,
+      brand: {
+        id: ub.brand.id,
+        name: ub.brand.name,
+        domain: ub.brand.domain ?? null,
+        logoUrl: ub.brand.logoUrl ?? null
+      }
+    })),
+    interests: (p?.interests ?? []).map((ui) => ({
+      order: ui.order,
+      interest: {
+        id: ui.interest.id,
+        name: ui.interest.name,
+        genre: ui.interest.genre ?? null
+      }
+    })),
+    values: (p?.values ?? []).map((uv) => ({
+      order: uv.order,
+      value: {
+        id: uv.value.id,
+        name: uv.value.name
+      }
+    })),
+    badges: (p?.badges ?? []).map((b) => ({
+      id: b.id,
+      giftId: b.giftId,
+      giftName: b.giftName,
+      giftEmoji: b.giftEmoji ?? null,
+      receivedAt: iso(b.receivedAt)
+    }))
+  };
+}
 
 const patchUserSchema = z.object({
   displayName: z.string().nullable().optional(),
@@ -62,7 +174,10 @@ async function authFetch(path: string, init?: Parameters<typeof fetch>[1]) {
 export class UsersAdminController {
   private readonly logger = new Logger(UsersAdminController.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly userService: UserService
+  ) {}
 
   /**
    * GET /admin/users — merged auth + profile for Beam dashboard
@@ -85,40 +200,42 @@ export class UsersAdminController {
 
     const ids = authUsers.map((u) => u.id);
     const profiles = await this.prisma.user.findMany({
-      where: { id: { in: ids } }
+      where: { id: { in: ids } },
+      include: adminUserProfileInclude
     });
     const profileById = new Map(profiles.map((p) => [p.id, p]));
 
-    const users = authUsers.map((a) => {
-      const p = profileById.get(a.id);
-      const banned = a.accountStatus === "BANNED";
-      const inactive =
-        a.accountStatus === "DEACTIVATED" ||
-        a.accountStatus === "SUSPENDED" ||
-        !!a.deletedAt;
-
-      return {
-        id: a.id,
-        email: a.email ?? null,
-        phone: a.phone ?? null,
-        displayName: p?.username ?? a.name ?? null,
-        username: p?.username ?? null,
-        firstName: null as string | null,
-        lastName: null as string | null,
-        avatarUrl: p?.displayPictureUrl ?? null,
-        bio: p?.intent ?? null,
-        createdAt: p?.createdAt?.toISOString?.() ?? a.createdAt ?? null,
-        updatedAt: p?.updatedAt?.toISOString?.() ?? a.updatedAt ?? null,
-        isActive: !inactive && !banned,
-        banned,
-        bannedAt: a.bannedAt ?? null,
-        banReason: a.banReason ?? null,
-        status: a.accountStatus,
-        role: null as string | null
-      };
-    });
+    const users = authUsers.map((a) => mergeAuthUserWithProfile(a, profileById.get(a.id)));
 
     return { ok: true, users };
+  }
+
+  /**
+   * GET /admin/users/:id — merged auth + profile (richest row for dashboard detail)
+   */
+  @Get(":id")
+  async getOne(@Param("id") id: string) {
+    const authRes = await authFetch(`/auth/admin/users/${encodeURIComponent(id)}`, { method: "GET" });
+    if (!authRes.ok) {
+      if (authRes.status === 404) {
+        throw new HttpException("User not found", HttpStatus.NOT_FOUND);
+      }
+      const text = await authRes.text();
+      throw new HttpException(
+        `Auth service admin user failed: ${authRes.status} ${text}`,
+        HttpStatus.BAD_GATEWAY
+      );
+    }
+    const authJson = (await authRes.json()) as { ok?: boolean; user?: AuthAdminUser };
+    const a = authJson.user;
+    if (!a || a.id !== id) {
+      throw new HttpException("User not found", HttpStatus.NOT_FOUND);
+    }
+    const p = await this.prisma.user.findUnique({
+      where: { id },
+      include: adminUserProfileInclude
+    });
+    return { ok: true, user: mergeAuthUserWithProfile(a, p ?? undefined) };
   }
 
   /**
@@ -154,24 +271,19 @@ export class UsersAdminController {
     }
 
     if (data.isActive === true) {
-      const unbanRes = await authFetch(`/auth/admin/users/${id}/unban`, { method: "POST" });
-      if (!unbanRes.ok && unbanRes.status !== 404) {
-        const t = await unbanRes.text();
-        this.logger.warn(`unban ${id}: ${unbanRes.status} ${t}`);
-      }
-      const unsuspendRes = await authFetch(`/auth/admin/users/${id}/unsuspend`, { method: "POST" });
-      if (!unsuspendRes.ok && unsuspendRes.status !== 404) {
-        const t = await unsuspendRes.text();
-        this.logger.warn(`unsuspend ${id}: ${unsuspendRes.status} ${t}`);
+      const restoreRes = await authFetch(`/auth/admin/users/${id}/restore-login`, { method: "POST" });
+      if (!restoreRes.ok) {
+        const t = await restoreRes.text();
+        throw new HttpException(
+          `Restore login failed: ${restoreRes.status} ${t}. If the user is banned, use Unban instead of Edit → active.`,
+          HttpStatus.BAD_GATEWAY
+        );
       }
     } else if (data.isActive === false) {
-      const suspendRes = await authFetch(`/auth/admin/users/${id}/suspend`, {
-        method: "POST",
-        body: JSON.stringify({ reason: "Deactivated via admin dashboard" })
-      });
-      if (!suspendRes.ok) {
-        const t = await suspendRes.text();
-        throw new HttpException(`Suspend failed: ${suspendRes.status} ${t}`, HttpStatus.BAD_GATEWAY);
+      const deactivateRes = await authFetch(`/auth/admin/users/${id}/deactivate`, { method: "POST" });
+      if (!deactivateRes.ok) {
+        const t = await deactivateRes.text();
+        throw new HttpException(`Deactivate failed: ${deactivateRes.status} ${t}`, HttpStatus.BAD_GATEWAY);
       }
     }
 
@@ -208,39 +320,47 @@ export class UsersAdminController {
   @HttpCode(HttpStatus.OK)
   async report(@Param("id") id: string, @Body() body: unknown) {
     const parsed = reportSchema.parse(body);
+    const result = await this.userService.adminDashboardReportUser(id, {
+      reason: parsed.reason,
+      notes: parsed.notes
+    });
     this.logger.warn(
-      `Admin report user=${id} reason=${parsed.reason}${parsed.notes ? ` notes=${parsed.notes}` : ""}`
+      `Admin report user=${id} weight=${result.weightApplied} newScore=${result.reportCount} reason=${parsed.reason}${parsed.notes ? ` notes=${parsed.notes}` : ""}`
     );
-    return { ok: true, recorded: true };
+    return {
+      ok: true,
+      recorded: true,
+      reportCount: result.reportCount,
+      weightApplied: result.weightApplied
+    };
   }
 
   /**
-   * Permanent removal — ban (auth); profile data remains for FK safety
+   * Hard delete — removes user-service profile row then auth user row (dashboard only).
    */
   @Delete(":id/hard")
   @HttpCode(HttpStatus.OK)
   async hardDelete(@Param("id") id: string) {
-    const res = await authFetch(`/auth/admin/users/${id}/ban`, {
-      method: "POST",
-      body: JSON.stringify({ reason: "Permanent removal via admin dashboard" })
-    });
-    if (!res.ok) {
-      const t = await res.text();
-      throw new HttpException(`Permanent ban failed: ${res.status} ${t}`, HttpStatus.BAD_GATEWAY);
+    try {
+      await this.prisma.user.delete({ where: { id } });
+    } catch (err) {
+      this.logger.warn(`hardDelete ${id}: user-service profile missing or delete failed: ${String(err)}`);
     }
-    return res.json();
+    const res = await authFetch(`/auth/admin/users/${id}`, { method: "DELETE" });
+    if (!res.ok && res.status !== 404) {
+      const t = await res.text();
+      throw new HttpException(`Auth hard delete failed: ${res.status} ${t}`, HttpStatus.BAD_GATEWAY);
+    }
+    return { ok: true, deleted: true };
   }
 
   /**
-   * Soft deactivate — suspend auth account
+   * Deactivate — same auth state as user self-deactivate; user can reactivate in app.
    */
   @Delete(":id")
   @HttpCode(HttpStatus.OK)
   async softDelete(@Param("id") id: string) {
-    const res = await authFetch(`/auth/admin/users/${id}/suspend`, {
-      method: "POST",
-      body: JSON.stringify({ reason: "Deactivated via admin dashboard" })
-    });
+    const res = await authFetch(`/auth/admin/users/${id}/deactivate`, { method: "POST" });
     if (!res.ok) {
       const t = await res.text();
       throw new HttpException(`Deactivate failed: ${res.status} ${t}`, HttpStatus.BAD_GATEWAY);

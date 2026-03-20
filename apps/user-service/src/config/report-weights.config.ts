@@ -60,3 +60,33 @@ export function getReportWeight(reportType?: string | null): number {
   weightCache[normalized] = weight;
   return weight;
 }
+
+/** Every distinct role/context weight tier used for in-app reports (see REPORT_TYPE_TO_ENV). */
+const ALL_REPORT_ROLE_SUFFIXES = [
+  "DEFAULT",
+  "FACE_CARD",
+  "OFFLINE_CARD",
+  "HOST",
+  "PARTICIPANT_HOST",
+  "PARTICIPANT"
+] as const;
+
+/**
+ * Weight applied when a report is filed from the Beam admin dashboard (not in-app).
+ * Uses the maximum of all configured role weights so it always counts as the strongest tier.
+ * Override with REPORT_WEIGHT_ADMIN_DASHBOARD if you want a fixed value regardless of role envs.
+ */
+export function getAdminDashboardReportWeight(): number {
+  const raw = process.env.REPORT_WEIGHT_ADMIN_DASHBOARD;
+  if (raw !== undefined && raw !== "") {
+    const n = parseInt(raw, 10);
+    if (!Number.isNaN(n) && n >= 0) {
+      return n;
+    }
+  }
+  let max = 0;
+  for (const suffix of ALL_REPORT_ROLE_SUFFIXES) {
+    max = Math.max(max, getWeightForType(suffix));
+  }
+  return max;
+}

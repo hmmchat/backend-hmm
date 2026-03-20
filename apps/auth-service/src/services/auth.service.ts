@@ -132,6 +132,47 @@ export class AuthService implements OnModuleInit {
 
   /* ---------- Internal ---------- */
 
+  /**
+   * Blocked sign-in messages — keep in sync with product copy (dashboard ban / user deactivate / closed account).
+   */
+  private assertUserCanSignIn(user: {
+    accountStatus: string;
+    deletedAt: Date | null;
+    banReason: string | null;
+    suspensionReason: string | null;
+  }): void {
+    if (user.deletedAt) {
+      throw new HttpException(
+        "This account is no longer available.",
+        HttpStatus.FORBIDDEN
+      );
+    }
+    if (user.accountStatus === "BANNED") {
+      const base =
+        "Your account has been deactivated by an administrator. You cannot sign in until an administrator restores your account (unban).";
+      throw new HttpException(
+        user.banReason ? `${base} Details: ${user.banReason}` : base,
+        HttpStatus.FORBIDDEN
+      );
+    }
+    if (user.accountStatus === "DEACTIVATED") {
+      throw new HttpException(
+        "Your account is deactivated. Open the Beam app and use Activate account to sign in again.",
+        HttpStatus.FORBIDDEN
+      );
+    }
+    if (user.accountStatus === "SUSPENDED") {
+      const base = "Your account is suspended. Please contact support.";
+      throw new HttpException(
+        user.suspensionReason ? `${base} Details: ${user.suspensionReason}` : base,
+        HttpStatus.FORBIDDEN
+      );
+    }
+    if (user.accountStatus !== "ACTIVE") {
+      throw new HttpException("Account is not active.", HttpStatus.FORBIDDEN);
+    }
+  }
+
   private async signInOrUp(
     data: Partial<{
       email: string | null;
@@ -225,23 +266,7 @@ export class AuthService implements OnModuleInit {
       user = existingUser;
     }
 
-    // Check account status - prevent login for deactivated, suspended, banned, or deleted accounts
-    if (user.accountStatus !== "ACTIVE" || user.deletedAt) {
-      const statusMessages: Record<string, string> = {
-        DEACTIVATED: "Account has been deactivated. Please contact support to reactivate.",
-        SUSPENDED: user.suspensionReason 
-          ? `Account has been suspended: ${user.suspensionReason}` 
-          : "Account has been suspended. Please contact support.",
-        BANNED: user.banReason 
-          ? `Account has been banned: ${user.banReason}` 
-          : "Account has been banned. This action cannot be reversed."
-      };
-      
-      throw new HttpException(
-        statusMessages[user.accountStatus] || "Account is not active",
-        HttpStatus.FORBIDDEN
-      );
-    }
+    this.assertUserCanSignIn(user);
 
     const accessToken = await signAccessToken(this.privateKey, {
       sub: user.id,
@@ -469,10 +494,23 @@ export class AuthService implements OnModuleInit {
   }
 
   /**
-   * Reactivate user account
-   * Sets accountStatus back to ACTIVE and clears deactivatedAt
+   * Reactivate user account (user-initiated, app only).
+   * Only DEACTIVATED accounts may be reactivated here — not BANNED (admin must unban).
    */
   async reactivateAccount(userId: string): Promise<void> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { accountStatus: true }
+    });
+    if (!user) {
+      throw new HttpException("User not found", HttpStatus.NOT_FOUND);
+    }
+    if (user.accountStatus !== "DEACTIVATED") {
+      throw new HttpException(
+        "Only a deactivated account can be reactivated from the app. If an administrator restricted your account, use support or wait for unban.",
+        HttpStatus.BAD_REQUEST
+      );
+    }
     await this.prisma.user.update({
       where: { id: userId },
       data: {
@@ -518,8 +556,8 @@ export class AuthService implements OnModuleInit {
   }
 
   /**
-   * Ban user account (admin-initiated, permanent)
-   * Sets accountStatus to BANNED with reason
+   * Ban user account (admin / dashboard only). Reversible via unbanAccount.
+   * User cannot sign in until an administrator unbans.
    */
   async banAccount(userId: string, reason: string): Promise<void> {
     await this.prisma.user.update({
@@ -552,6 +590,52 @@ export class AuthService implements OnModuleInit {
   }
 
   /**
+   * Dashboard "Account active" / restore login: reactivate DEACTIVATED, unsuspend SUSPENDED.
+   * Does not unban — use unban for BANNED.
+   */
+  async adminRestoreLoginAccess(userId: string): Promise<void> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { accountStatus: true }
+    });
+    if (!user) {
+      throw new HttpException("User not found", HttpStatus.NOT_FOUND);
+    }
+    if (user.accountStatus === "BANNED") {
+      throw new HttpException(
+        "Account is restricted by an administrator. Use unban to restore access.",
+        HttpStatus.BAD_REQUEST
+      );
+    }
+    if (user.accountStatus === "ACTIVE") {
+      return;
+    }
+    if (user.accountStatus === "DEACTIVATED") {
+      await this.reactivateAccount(userId);
+      return;
+    }
+    if (user.accountStatus === "SUSPENDED") {
+      await this.unsuspendAccount(userId);
+      return;
+    }
+    throw new HttpException("Account is not active.", HttpStatus.BAD_REQUEST);
+  }
+
+  /**
+   * Permanently remove auth user row (dashboard hard delete). Sessions cleared via cascade.
+   */
+  async adminHardDeleteUser(userId: string): Promise<void> {
+    const exists = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true }
+    });
+    if (!exists) {
+      throw new HttpException("User not found", HttpStatus.NOT_FOUND);
+    }
+    await this.prisma.user.delete({ where: { id: userId } });
+  }
+
+  /**
    * List auth users for admin dashboards (pagination kept simple)
    */
   async listUsersForAdminDashboard() {
@@ -575,6 +659,34 @@ export class AuthService implements OnModuleInit {
       }
     });
     return { ok: true, users };
+  }
+
+  /**
+   * Single auth user row for admin dashboards (user-service merges with profile).
+   */
+  async getUserForAdminDashboard(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        phone: true,
+        name: true,
+        createdAt: true,
+        updatedAt: true,
+        accountStatus: true,
+        bannedAt: true,
+        banReason: true,
+        suspendedAt: true,
+        suspensionReason: true,
+        deactivatedAt: true,
+        deletedAt: true
+      }
+    });
+    if (!user) {
+      throw new HttpException("User not found", HttpStatus.NOT_FOUND);
+    }
+    return { ok: true, user };
   }
 
   /**

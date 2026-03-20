@@ -34,7 +34,7 @@ export const UpdateProfileSchema = z.object({
 // Photo DTOs
 export const CreatePhotoSchema = z.object({
   url: z.string().url(),
-  order: z.number().int().min(0).max(3)
+  order: z.number().int().min(0).max(2)
 });
 
 // Preferences DTOs

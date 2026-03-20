@@ -333,11 +333,11 @@ export class UserService implements OnModuleInit {
               displayPictureUrl: !!user.displayPictureUrl
             },
             optional: {
-              photos: { filled: user.photos.length, max: 4 },
+              photos: { filled: user.photos.length, max: 3 },
               musicPreference: !!user.musicPreferenceId,
               brandPreferences: { filled: user.brandPreferences.length, max: 5 },
-              interests: { filled: user.interests.length, max: 4 },
-              values: { filled: user.values.length, max: 4 },
+              interests: { filled: user.interests.length, max: 1 },
+              values: { filled: user.values.length, max: 1 },
               intent: !!user.intent
             }
           }
@@ -530,8 +530,8 @@ export class UserService implements OnModuleInit {
         where: { userId }
       });
 
-      if (photoCount >= 4) {
-        throw new HttpException("Maximum 4 photos allowed", HttpStatus.BAD_REQUEST);
+      if (photoCount >= 3) {
+        throw new HttpException("Maximum 3 photos allowed", HttpStatus.BAD_REQUEST);
       }
     }
 
@@ -671,6 +671,10 @@ export class UserService implements OnModuleInit {
   async updateInterests(accessToken: string, data: UpdateInterestsDto) {
     const userId = await this.verifyAccessToken(accessToken);
 
+    if (data.interestIds.length < 1) {
+      throw new HttpException("At least 1 interest is required", HttpStatus.BAD_REQUEST);
+    }
+
     if (data.interestIds.length > 4) {
       throw new HttpException("Maximum 4 interests allowed", HttpStatus.BAD_REQUEST);
     }
@@ -711,6 +715,10 @@ export class UserService implements OnModuleInit {
 
   async updateValues(accessToken: string, data: UpdateValuesDto) {
     const userId = await this.verifyAccessToken(accessToken);
+
+    if (data.valueIds.length < 1) {
+      throw new HttpException("At least 1 value is required", HttpStatus.BAD_REQUEST);
+    }
 
     if (data.valueIds.length > 4) {
       throw new HttpException("Maximum 4 values allowed", HttpStatus.BAD_REQUEST);
@@ -1479,8 +1487,8 @@ export class UserService implements OnModuleInit {
       where: { userId }
     });
 
-    if (photoCount >= 4) {
-      throw new HttpException("Maximum 4 photos allowed", HttpStatus.BAD_REQUEST);
+    if (photoCount >= 3) {
+      throw new HttpException("Maximum 3 photos allowed", HttpStatus.BAD_REQUEST);
     }
 
     // Validate photo URL for NSFW content
@@ -1591,6 +1599,10 @@ export class UserService implements OnModuleInit {
    * Update interests for user by ID (test endpoint, bypasses auth)
    */
   async updateInterestsForUser(userId: string, data: UpdateInterestsDto) {
+    if (data.interestIds.length < 1) {
+      throw new HttpException("At least 1 interest is required", HttpStatus.BAD_REQUEST);
+    }
+
     if (data.interestIds.length > 4) {
       throw new HttpException("Maximum 4 interests allowed", HttpStatus.BAD_REQUEST);
     }
@@ -1631,6 +1643,10 @@ export class UserService implements OnModuleInit {
    * Update values for user by ID (test endpoint, bypasses auth)
    */
   async updateValuesForUser(userId: string, data: UpdateValuesDto) {
+    if (data.valueIds.length < 1) {
+      throw new HttpException("At least 1 value is required", HttpStatus.BAD_REQUEST);
+    }
+
     if (data.valueIds.length > 4) {
       throw new HttpException("Maximum 4 values allowed", HttpStatus.BAD_REQUEST);
     }

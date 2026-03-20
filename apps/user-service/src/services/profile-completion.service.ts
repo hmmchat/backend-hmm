@@ -34,11 +34,11 @@ export class ProfileCompletionService {
    * Scoring:
    * - Required fields (username, DOB, gender, displayPicture): 50% total (12.5% each)
    * - Optional fields: 50% total
-   *   - Photos (0-4): 8% (2% per photo)
+   *   - Photos (0-3): 8% total
    *   - Music: 7%
    *   - Brands (0-5): 10% (2% per brand)
-   *   - Interests (0-4): 10% (2.5% per interest)
-   *   - Values (0-4): 10% (2.5% per value)
+   *   - Interests (required min 1): 10%
+   *   - Values (required min 1): 10%
    *   - Intent: 3%
    *   - Unallocated bonus: 2% (always granted)
    */
@@ -68,7 +68,7 @@ export class ProfileCompletionService {
       optional: {
         photos: {
           filled: user.photos.length,
-          max: 4
+          max: 3
         },
         musicPreference: !!user.musicPreferenceId,
         brandPreferences: {
@@ -77,11 +77,11 @@ export class ProfileCompletionService {
         },
         interests: {
           filled: user.interests.length,
-          max: 4
+          max: 1
         },
         values: {
           filled: user.values.length,
-          max: 4
+          max: 1
         },
         intent: !!user.intent
       }
@@ -105,11 +105,11 @@ export class ProfileCompletionService {
     total += 4;
 
     // Optional fields: 50% total
-    // Photos: 8% (2% per photo, max 4)
-    const photosPercentage = Math.min(details.optional.photos.filled / 4, 1) * 8;
+    // Photos: 8% total (max 3)
+    const photosPercentage = Math.min(details.optional.photos.filled / 3, 1) * 8;
     percentage += photosPercentage;
     completed += details.optional.photos.filled;
-    total += 4;
+    total += 3;
 
     // Music: 7%
     if (details.optional.musicPreference) {
@@ -124,17 +124,17 @@ export class ProfileCompletionService {
     completed += details.optional.brandPreferences.filled;
     total += 5;
 
-    // Interests: 10% (2.5% per interest, max 4)
-    const interestsPercentage = Math.min(details.optional.interests.filled / 4, 1) * 10;
+    // Interests: 10% (minimum 1 required to receive credit)
+    const interestsPercentage = details.optional.interests.filled >= 1 ? 10 : 0;
     percentage += interestsPercentage;
-    completed += details.optional.interests.filled;
-    total += 4;
+    completed += Math.min(details.optional.interests.filled, 1);
+    total += 1;
 
-    // Values: 10% (2.5% per value, max 4)
-    const valuesPercentage = Math.min(details.optional.values.filled / 4, 1) * 10;
+    // Values: 10% (minimum 1 required to receive credit)
+    const valuesPercentage = details.optional.values.filled >= 1 ? 10 : 0;
     percentage += valuesPercentage;
-    completed += details.optional.values.filled;
-    total += 4;
+    completed += Math.min(details.optional.values.filled, 1);
+    total += 1;
 
     // Intent: 3%
     if (details.optional.intent) {

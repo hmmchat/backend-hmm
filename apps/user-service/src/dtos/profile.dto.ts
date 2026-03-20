@@ -19,7 +19,8 @@ export const CreateProfileSchema = z.object({
   username: z.string().min(3).max(30).regex(/^[a-zA-Z0-9_]+$/, "Username can only contain letters, numbers, and underscores"),
   dateOfBirth: z.string().datetime().or(z.date()).transform((val) => new Date(val)),
   gender: GenderEnum,
-  displayPictureUrl: z.string().url()
+  displayPictureUrl: z.string().url(),
+  intent: z.string().max(50).optional()
 });
 
 export const UpdateProfileSchema = z.object({

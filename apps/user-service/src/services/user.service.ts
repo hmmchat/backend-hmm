@@ -142,6 +142,7 @@ export class UserService implements OnModuleInit {
           dateOfBirth: data.dateOfBirth,
           gender: data.gender as Gender,
           displayPictureUrl: data.displayPictureUrl,
+          intent: data.intent,
           profileCompleted: true,
           genderChanged: data.gender === "PREFER_NOT_TO_SAY" ? false : true
         },

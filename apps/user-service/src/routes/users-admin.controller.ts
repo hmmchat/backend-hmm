@@ -34,7 +34,8 @@ type AuthAdminUser = {
   deletedAt: string | null;
 };
 
-const adminUserProfileInclude = {
+/** Relations used for admin merge (badges optional if DB predates user_badges migration). */
+const adminUserProfileIncludeBase = {
   photos: { orderBy: { order: "asc" as const } },
   musicPreference: true,
   brandPreferences: {
@@ -48,9 +49,24 @@ const adminUserProfileInclude = {
   values: {
     orderBy: { order: "asc" as const },
     include: { value: true }
-  },
+  }
+} as const;
+
+const adminUserProfileInclude = {
+  ...adminUserProfileIncludeBase,
   badges: { orderBy: { receivedAt: "desc" as const } }
 } as const;
+
+function isMissingUserBadgesTableError(e: unknown): boolean {
+  if (typeof e !== "object" || e === null) return false;
+  const code = (e as { code?: string }).code;
+  if (code === "P2021") {
+    const table = (e as { meta?: { table?: string } }).meta?.table ?? "";
+    if (table.includes("user_badges")) return true;
+  }
+  const msg = String((e as { message?: string }).message ?? "");
+  return /user_badges/i.test(msg) && (/does not exist/i.test(msg) || /relation/i.test(msg));
+}
 
 /**
  * Subset of User + adminUserProfileInclude used by mergeAuthUserWithProfile.
@@ -87,7 +103,7 @@ type ProfileWithAdminInclude = {
     interest: { id: string; name: string; genre: string | null };
   }[];
   values: { order: number; value: { id: string; name: string } }[];
-  badges: {
+  badges?: {
     id: string;
     giftId: string;
     giftName: string;
@@ -152,30 +168,36 @@ function mergeAuthUserWithProfile(a: AuthAdminUser, p: ProfileWithAdminInclude |
       url: ph.url,
       order: ph.order
     })),
-    brandPreferences: (p?.brandPreferences ?? []).map((ub) => ({
-      order: ub.order,
-      brand: {
-        id: ub.brand.id,
-        name: ub.brand.name,
-        domain: ub.brand.domain ?? null,
-        logoUrl: ub.brand.logoUrl ?? null
-      }
-    })),
-    interests: (p?.interests ?? []).map((ui) => ({
-      order: ui.order,
-      interest: {
-        id: ui.interest.id,
-        name: ui.interest.name,
-        genre: ui.interest.genre ?? null
-      }
-    })),
-    values: (p?.values ?? []).map((uv) => ({
-      order: uv.order,
-      value: {
-        id: uv.value.id,
-        name: uv.value.name
-      }
-    })),
+    brandPreferences: (p?.brandPreferences ?? [])
+      .filter((ub) => ub.brand != null)
+      .map((ub) => ({
+        order: ub.order,
+        brand: {
+          id: ub.brand!.id,
+          name: ub.brand!.name,
+          domain: ub.brand!.domain ?? null,
+          logoUrl: ub.brand!.logoUrl ?? null
+        }
+      })),
+    interests: (p?.interests ?? [])
+      .filter((ui) => ui.interest != null)
+      .map((ui) => ({
+        order: ui.order,
+        interest: {
+          id: ui.interest!.id,
+          name: ui.interest!.name,
+          genre: ui.interest!.genre ?? null
+        }
+      })),
+    values: (p?.values ?? [])
+      .filter((uv) => uv.value != null)
+      .map((uv) => ({
+        order: uv.order,
+        value: {
+          id: uv.value!.id,
+          name: uv.value!.name
+        }
+      })),
     badges: (p?.badges ?? []).map((b) => ({
       id: b.id,
       giftId: b.giftId,
@@ -220,6 +242,46 @@ export class UsersAdminController {
     private readonly userService: UserService
   ) {}
 
+  private async findManyAdminProfiles(ids: string[]) {
+    try {
+      return await this.prisma.user.findMany({
+        where: { id: { in: ids } },
+        include: adminUserProfileInclude
+      });
+    } catch (e) {
+      if (isMissingUserBadgesTableError(e)) {
+        this.logger.warn(
+          "user_badges table missing; loading admin users without badges. Run prisma migrate deploy on user-service DB."
+        );
+        return this.prisma.user.findMany({
+          where: { id: { in: ids } },
+          include: adminUserProfileIncludeBase
+        });
+      }
+      throw e;
+    }
+  }
+
+  private async findUniqueAdminProfile(id: string) {
+    try {
+      return await this.prisma.user.findUnique({
+        where: { id },
+        include: adminUserProfileInclude
+      });
+    } catch (e) {
+      if (isMissingUserBadgesTableError(e)) {
+        this.logger.warn(
+          "user_badges table missing; loading admin user without badges. Run prisma migrate deploy on user-service DB."
+        );
+        return this.prisma.user.findUnique({
+          where: { id },
+          include: adminUserProfileIncludeBase
+        });
+      }
+      throw e;
+    }
+  }
+
   /**
    * GET /admin/users — merged auth + profile for Beam dashboard
    */
@@ -233,17 +295,19 @@ export class UsersAdminController {
         HttpStatus.BAD_GATEWAY
       );
     }
-    const authJson = (await authRes.json()) as { ok?: boolean; users: AuthAdminUser[] };
-    const authUsers = authJson.users ?? [];
+    let authJson: { ok?: boolean; users?: AuthAdminUser[] };
+    try {
+      authJson = (await authRes.json()) as { ok?: boolean; users?: AuthAdminUser[] };
+    } catch {
+      throw new HttpException("Auth service returned invalid JSON for admin user list", HttpStatus.BAD_GATEWAY);
+    }
+    const authUsers = Array.isArray(authJson.users) ? authJson.users : [];
     if (authUsers.length === 0) {
       return { ok: true, users: [] };
     }
 
     const ids = authUsers.map((u) => u.id);
-    const profiles = await this.prisma.user.findMany({
-      where: { id: { in: ids } },
-      include: adminUserProfileInclude
-    });
+    const profiles = await this.findManyAdminProfiles(ids);
     const profileById = new Map(profiles.map((p) => [p.id, p]));
 
     const users = authUsers.map((a) => mergeAuthUserWithProfile(a, profileById.get(a.id)));
@@ -267,15 +331,17 @@ export class UsersAdminController {
         HttpStatus.BAD_GATEWAY
       );
     }
-    const authJson = (await authRes.json()) as { ok?: boolean; user?: AuthAdminUser };
+    let authJson: { ok?: boolean; user?: AuthAdminUser };
+    try {
+      authJson = (await authRes.json()) as { ok?: boolean; user?: AuthAdminUser };
+    } catch {
+      throw new HttpException("Auth service returned invalid JSON for admin user", HttpStatus.BAD_GATEWAY);
+    }
     const a = authJson.user;
     if (!a || a.id !== id) {
       throw new HttpException("User not found", HttpStatus.NOT_FOUND);
     }
-    const p = await this.prisma.user.findUnique({
-      where: { id },
-      include: adminUserProfileInclude
-    });
+    const p = await this.findUniqueAdminProfile(id);
     return { ok: true, user: mergeAuthUserWithProfile(a, p ?? undefined) };
   }
 

@@ -25,6 +25,10 @@
 | Variable | Purpose |
 |----------|---------|
 | `USER_SERVICE_URL` | Base URL of user-service **reachable from the streaming host** (must not be an unroutable IP). |
+| `DISCOVERY_SERVICE_URL` | Same idea; often `https://api.beam.place` when using nginx S2S (below). |
+| `FRIEND_SERVICE_URL` | Friend-service base URL; use `https://api.beam.place` with nginx paths `^~ /internal/friends/`. |
+| `WALLET_SERVICE_URL` | Wallet-service base URL; use `https://api.beam.place` with nginx paths `^~ /test/...`. |
+| `REDIS_URL` | e.g. `redis://<backend-public-ip>:6380` when using the **nginx stream** Redis proxy (below). |
 | `USER_SERVICE_TIMEOUT_MS` | Optional; default 15000. |
 
 ### User-service
@@ -75,3 +79,39 @@ If the **streaming** droplet can open **Postgres (5432)** to the **backend** pub
    - `DISCOVERY_SERVICE_URL=https://api.beam.place`
 
    Ensure **no duplicate** `server_name` `.conf` files remain under `sites-enabled` (move backups elsewhere) after editing nginx.
+
+3. **Friend + wallet (HTTPS, same host):** add locations restricted to the streaming IP (same pattern as above):
+   - `location ^~ /internal/friends/` → `http://127.0.0.1:4009` (pass `x-service-token` from the client request).
+   - `location ^~ /test/transactions/` → `http://127.0.0.1:4005`
+   - `location ^~ /test/wallet/` → `http://127.0.0.1:4005`
+   - `location ^~ /test/balance` → `http://127.0.0.1:4005`
+
+   Then on the streaming host:
+
+   - `FRIEND_SERVICE_URL=https://api.beam.place`
+   - `WALLET_SERVICE_URL=https://api.beam.place`
+
+4. **Redis (TCP):** the streaming app may use `REDIS_URL` to reach Redis on the main droplet. HTTP proxies cannot speak the Redis protocol; use **nginx `stream`** to forward TCP:
+
+   - Install: `apt install libnginx-mod-stream`
+   - Append to **`/etc/nginx/nginx.conf`** (outside `http { }`):
+
+   ```nginx
+   stream {
+       upstream redis_s2s {
+           server 127.0.0.1:6379;
+       }
+       server {
+           listen 6380;
+           allow <STREAMING_PUBLIC_IP>;
+           deny all;
+           proxy_pass redis_s2s;
+           proxy_connect_timeout 10s;
+       }
+   }
+   ```
+
+   - Set on streaming: `REDIS_URL=redis://<BACKEND_PUBLIC_IP>:6380`
+   - **Cloud firewall:** allow inbound **TCP 6380** from the streaming droplet’s public IP. If 6380 is not open, `nc` / Redis clients will time out (same class of issue as blocked 4001).
+
+See also: `docs/deployment/nginx-api-beam-s2s.example.conf` for a commented template.

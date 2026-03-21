@@ -58,3 +58,20 @@ curl -sS -m 5 "${USER_SERVICE_URL}/health"
 ```
 
 Replace URLs with the values your services actually use in production.
+
+## DigitalOcean firewall + split droplets
+
+If the **streaming** droplet can open **Postgres (5432)** to the **backend** public IP but **not** `4001` / `4004`, the cloud firewall is blocking those ports. Options:
+
+1. **Firewall rules:** allow TCP `4001`, `4004`, `4009`, `4005` (and `6379` if Redis is used) from the streaming droplet’s public IP to the backend droplet.
+
+2. **Nginx on `api.beam.place` (HTTPS, port 443):** proxy paths only for service-to-service calls from the streaming IP, for example:
+   - `location ^~ /users/test/` → `http://127.0.0.1:4001` with `allow <streaming-public-ip>; deny all;`
+   - `location ^~ /discovery/internal/` → `http://127.0.0.1:4004` with the same `allow`.
+
+   Then set on the streaming host:
+
+   - `USER_SERVICE_URL=https://api.beam.place`
+   - `DISCOVERY_SERVICE_URL=https://api.beam.place`
+
+   Ensure **no duplicate** `server_name` `.conf` files remain under `sites-enabled` (move backups elsewhere) after editing nginx.

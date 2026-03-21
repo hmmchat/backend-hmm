@@ -1340,10 +1340,27 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
    * Extract JWT token from request
    */
   private extractToken(req: any): string | null {
-    const authHeader = req.headers.authorization;
+    // 1. Try Authorization header (server-to-server or non-browser clients)
+    const authHeader = req.headers?.authorization;
     if (authHeader && authHeader.startsWith("Bearer ")) {
       return authHeader.substring(7);
     }
+
+    // 2. Browsers cannot send custom headers on WebSocket upgrade requests,
+    //    so we also accept ?token=<jwt> as a query parameter.
+    const url = req?.url || '';
+    if (url.includes('?')) {
+      try {
+        const queryString = url.split('?')[1];
+        const params = new URLSearchParams(queryString);
+        const tokenParam = params.get('token');
+        if (tokenParam) return tokenParam;
+      } catch (e) {
+        const match = url.match(/[?&]token=([^&]*)/);
+        if (match) return decodeURIComponent(match[1]);
+      }
+    }
+
     return null;
   }
 

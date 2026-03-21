@@ -40,6 +40,105 @@ export class RoomService {
     private discoveryClient: DiscoveryClientService
   ) { }
 
+  /** User-service statuses consistent with an active streaming *participant* row */
+  private static readonly IN_CALL_PARTICIPANT_STATUSES = new Set(["IN_SQUAD", "IN_BROADCAST"]);
+
+  /** User-service statuses consistent with an active *viewer* row (broadcast / waitlist) */
+  private static readonly IN_CALL_VIEWER_STATUSES = new Set(["VIEWER", "IN_BROADCAST", "MATCHED"]);
+
+  private shouldReconcileWithUserService(): boolean {
+    return process.env.TEST_MODE !== "true" && process.env.STREAMING_SKIP_STATUS_RECONCILE !== "true";
+  }
+
+  /**
+   * If streaming DB still has an active participant but user-service says the user is not in a call,
+   * remove them so we do not block new matches / rooms.
+   */
+  private async reconcileStaleParticipantIfNeeded(userId: string): Promise<void> {
+    if (!this.shouldReconcileWithUserService()) {
+      return;
+    }
+
+    const row = await this.fetchActiveParticipantRoom(userId);
+    if (!row) {
+      return;
+    }
+
+    let status: string;
+    try {
+      status = await this.discoveryClient.getUserStatus(userId);
+    } catch {
+      return;
+    }
+
+    if (RoomService.IN_CALL_PARTICIPANT_STATUSES.has(status)) {
+      return;
+    }
+
+    this.logger.warn(
+      `[Reconcile] User ${userId} has active participant row in room ${row.roomId} but user-service status is ${status}; removing stale participant`
+    );
+
+    try {
+      await this.removeParticipant(row.roomId, userId);
+    } catch (err: any) {
+      this.logger.error(`[Reconcile] removeParticipant failed: ${err?.message || err}`);
+      try {
+        await this.removeParticipantFromDatabase(row.roomId, userId);
+      } catch (e2: any) {
+        this.logger.error(`[Reconcile] removeParticipantFromDatabase failed: ${e2?.message || e2}`);
+      }
+    }
+  }
+
+  /**
+   * If streaming DB has an active viewer but user-service says they are not viewing / broadcast flow, remove viewer row.
+   */
+  private async reconcileStaleViewerIfNeeded(userId: string): Promise<void> {
+    if (!this.shouldReconcileWithUserService()) {
+      return;
+    }
+
+    const viewer = await this.prisma.callViewer.findFirst({
+      where: {
+        userId,
+        leftAt: null
+      },
+      include: {
+        session: true
+      }
+    });
+
+    if (!viewer || !viewer.session) {
+      return;
+    }
+
+    if (viewer.session.status !== "IN_BROADCAST") {
+      return;
+    }
+
+    let status: string;
+    try {
+      status = await this.discoveryClient.getUserStatus(userId);
+    } catch {
+      return;
+    }
+
+    if (RoomService.IN_CALL_VIEWER_STATUSES.has(status)) {
+      return;
+    }
+
+    this.logger.warn(
+      `[Reconcile] User ${userId} has active viewer row in room ${viewer.session.roomId} but user-service status is ${status}; removing stale viewer`
+    );
+
+    try {
+      await this.removeViewer(viewer.session.roomId, userId, true);
+    } catch (err: any) {
+      this.logger.error(`[Reconcile] removeViewer failed: ${err?.message || err}`);
+    }
+  }
+
   /**
    * Create a new room when 2 users enter IN_SQUAD (accept each other's cards)
    * Note: Single users cannot create rooms, but once created, rooms can have 1 user remain
@@ -78,6 +177,14 @@ export class RoomService {
     const uniqueUserIds = new Set(userIds);
     if (uniqueUserIds.size !== userIds.length) {
       throw new BadRequestException("Duplicate user IDs are not allowed");
+    }
+
+    // Drop stale participant rows when user-service no longer says IN_SQUAD/IN_BROADCAST
+    // (e.g. WS never connected, tab closed before deploy fix) so "already in room" is accurate
+    if (this.shouldReconcileWithUserService()) {
+      for (const uid of userIds) {
+        await this.reconcileStaleParticipantIfNeeded(uid);
+      }
     }
 
     // BUSINESS RULE: Only users with status MATCHED can create/join rooms
@@ -2068,12 +2175,9 @@ export class RoomService {
   }
 
   /**
-   * Get user's active room (as participant)
-   * Returns the most recently started room if user is in multiple rooms
+   * Raw DB lookup: active participant row (no user-service reconcile).
    */
-  async getUserActiveRoom(userId: string): Promise<{ roomId: string } | null> {
-    // Optimized query: use raw SQL for better performance with large datasets
-    // This avoids the slow nested orderBy on relations
+  private async fetchActiveParticipantRoom(userId: string): Promise<{ roomId: string } | null> {
     const result = await this.prisma.$queryRaw<Array<{ roomId: string }>>`
       SELECT cs."roomId"
       FROM call_participants cp
@@ -2094,9 +2198,20 @@ export class RoomService {
   }
 
   /**
+   * Get user's active room (as participant)
+   * Returns the most recently started room if user is in multiple rooms
+   */
+  async getUserActiveRoom(userId: string): Promise<{ roomId: string } | null> {
+    await this.reconcileStaleParticipantIfNeeded(userId);
+    return this.fetchActiveParticipantRoom(userId);
+  }
+
+  /**
    * Get user's active room (as viewer)
    */
   async getUserActiveRoomAsViewer(userId: string): Promise<{ roomId: string } | null> {
+    await this.reconcileStaleViewerIfNeeded(userId);
+
     const viewer = await this.prisma.callViewer.findFirst({
       where: {
         userId,
@@ -2111,7 +2226,6 @@ export class RoomService {
       return null;
     }
 
-    // Only return if session is still active and broadcasting
     if (viewer.session.status !== "IN_BROADCAST") {
       return null;
     }

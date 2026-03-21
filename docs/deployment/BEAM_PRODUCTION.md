@@ -115,3 +115,29 @@ If the **streaming** droplet can open **Postgres (5432)** to the **backend** pub
    - **Cloud firewall:** allow inbound **TCP 6380** from the streaming droplet’s public IP. If 6380 is not open, `nc` / Redis clients will time out (same class of issue as blocked 4001).
 
 See also: `docs/deployment/nginx-api-beam-s2s.example.conf` for a commented template.
+
+## 5. WebSocket (`wss://api.beam.place/streaming/ws`)
+
+Browsers connect with **`wss://api.beam.place/streaming/ws`** (or optionally **`/v1/streaming/ws`** — add the rewrite in nginx). The API gateway does **not** proxy WebSockets; nginx must forward the HTTP **Upgrade** to **streaming-service** directly.
+
+1. In **`/etc/nginx/nginx.conf`**, inside `http { }`, ensure a `map` exists (once):
+
+   ```nginx
+   map $http_upgrade $connection_upgrade {
+       default upgrade;
+       ''      close;
+   }
+   ```
+
+2. In the **`server { ... }`** for `api.beam.place` (HTTPS), add **`location ^~ /streaming/ws`** (and optionally **`/v1/streaming/ws`**) **before** `location /` that points at the gateway. Use **`proxy_pass`** to streaming’s HTTP port (**`3006`** in this repo’s `docker-compose`; adjust if your prod port differs):
+
+   - Streaming runs **on the same droplet** as nginx → `http://127.0.0.1:3006`
+   - Streaming runs **on another droplet** → `http://<streaming-host>:3006` and allow **TCP 3006** from this nginx host in the cloud firewall (or use private networking).
+
+3. Include WebSocket headers: `Upgrade`, `Connection: $connection_upgrade`, `Authorization` (JWT), long `proxy_read_timeout` / `proxy_send_timeout` (e.g. 86400s). Full snippet: **`docs/deployment/nginx-api-beam-s2s.example.conf`** section **3**.
+
+4. `nginx -t && systemctl reload nginx`
+
+5. Point the app at **`wss://api.beam.place/streaming/ws`** with the same access token the REST API uses (header is forwarded by nginx).
+
+**Deploy note:** Do not leave backup copies of `api.beam.place` (e.g. `*.bak`) inside **`/etc/nginx/sites-enabled/`** — nginx loads every file there, duplicate `server_name api.beam.place` blocks are ignored and the wrong vhost may win. Keep backups under `/root/nginx-backups/` or similar.

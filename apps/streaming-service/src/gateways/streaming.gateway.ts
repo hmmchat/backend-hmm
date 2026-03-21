@@ -93,7 +93,6 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
   private async handleConnection(ws: any, req: any) {
     const connectionId = this.generateConnectionId();
     let userId: string | null = null;
-    let roomId: string | null = null;
     let isAnonymous = false;
 
     // Authenticate connection (or allow anonymous)
@@ -174,9 +173,14 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       }
     });
 
-    // Handle disconnection
+    // Handle disconnection — read roomId from connection map (handleJoinRoom sets conn.roomId;
+    // the outer `roomId` variable was never assigned and stayed null, so participants were never removed on tab close).
     ws.on("close", () => {
-      this.handleDisconnection(connectionId, userId!, roomId);
+      const conn = this.connections.get(connectionId);
+      const roomIdFromConn = conn?.roomId ?? null;
+      void this.handleDisconnection(connectionId, userId!, roomIdFromConn).catch((err) => {
+        this.logger.error(`[Disconnect] handleDisconnection error for ${userId}: ${err?.message || err}`);
+      });
       this.connections.delete(connectionId);
     });
 
@@ -1221,42 +1225,55 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     userId: string,
     roomId: string | null
   ) {
-    if (!roomId) {
+    let resolvedRoomId = roomId;
+    if (!resolvedRoomId && !this.isAnonymousUser(userId)) {
+      const viewerRoom = await this.roomService.getUserActiveRoomAsViewer(userId);
+      if (viewerRoom) {
+        resolvedRoomId = viewerRoom.roomId;
+      } else {
+        const participantRoom = await this.roomService.getUserActiveRoom(userId);
+        if (participantRoom) {
+          resolvedRoomId = participantRoom.roomId;
+        }
+      }
+    }
+
+    if (!resolvedRoomId) {
       this.logger.log(`WebSocket connection closed: ${connectionId} (user: ${userId}, no room)`);
       return;
     }
 
-    this.logger.log(`WebSocket connection closed: ${connectionId} (user: ${userId}, room: ${roomId})`);
+    this.logger.log(`WebSocket connection closed: ${connectionId} (user: ${userId}, room: ${resolvedRoomId})`);
 
     // Check if room exists (in memory or database) before trying to remove user
-    const roomExists = await this.roomService.roomExists(roomId);
+    const roomExists = await this.roomService.roomExists(resolvedRoomId);
     if (!roomExists) {
-      this.logger.debug(`[Disconnect] Room ${roomId} does not exist, skipping removal for user ${userId}`);
+      this.logger.debug(`[Disconnect] Room ${resolvedRoomId} does not exist, skipping removal for user ${userId}`);
       return;
     }
 
     // Try to remove as viewer first (viewers are less critical)
     let removed = false;
     try {
-      await this.roomService.removeViewer(roomId, userId);
-      this.logger.log(`[Disconnect] User ${userId} removed as viewer from room ${roomId}`);
+      await this.roomService.removeViewer(resolvedRoomId, userId);
+      this.logger.log(`[Disconnect] User ${userId} removed as viewer from room ${resolvedRoomId}`);
       removed = true;
     } catch (error: any) {
       // Not a viewer, or already removed, continue to check participant
-      this.logger.debug(`[Disconnect] User ${userId} not a viewer in room ${roomId}: ${error.message}`);
+      this.logger.debug(`[Disconnect] User ${userId} not a viewer in room ${resolvedRoomId}: ${error.message}`);
     }
 
     // Try to remove as participant if not removed as viewer
     if (!removed) {
       try {
-        await this.roomService.removeParticipant(roomId, userId);
-        this.logger.log(`[Disconnect] User ${userId} removed as participant from room ${roomId}`);
+        await this.roomService.removeParticipant(resolvedRoomId, userId);
+        this.logger.log(`[Disconnect] User ${userId} removed as participant from room ${resolvedRoomId}`);
       } catch (error: any) {
         // User might not be in room, or room might be already ended
         if (error.message?.includes("not found") || error.message?.includes("does not exist")) {
-          this.logger.debug(`[Disconnect] Room ${roomId} not found or user ${userId} not in room`);
+          this.logger.debug(`[Disconnect] Room ${resolvedRoomId} not found or user ${userId} not in room`);
         } else {
-          this.logger.warn(`[Disconnect] Failed to remove user ${userId} from room ${roomId}: ${error.message}`);
+          this.logger.warn(`[Disconnect] Failed to remove user ${userId} from room ${resolvedRoomId}: ${error.message}`);
         }
       }
     }

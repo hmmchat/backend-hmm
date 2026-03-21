@@ -2,6 +2,7 @@ import { Injectable, HttpException, HttpStatus, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { UserClientService } from "./user-client.service.js";
 import { FriendClientService } from "./friend-client.service.js";
+import { MatchingService } from "./matching.service.js";
 import { randomBytes } from "crypto";
 
 @Injectable()
@@ -13,7 +14,8 @@ export class SquadService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly userClient: UserClientService,
-    private readonly friendClient: FriendClientService
+    private readonly friendClient: FriendClientService,
+    private readonly matchingService: MatchingService
   ) {
     this.INVITATION_TIMEOUT_MS = parseInt(process.env.SQUAD_INVITATION_TIMEOUT_MS || "600000", 10); // 10 min default
     this.MAX_SQUAD_SIZE = parseInt(process.env.MAX_SQUAD_SIZE || "3", 10); // 1 inviter + 2 invitees
@@ -335,7 +337,7 @@ export class SquadService {
     try {
       const userProfile = await this.userClient.getUserFullProfileById(userId);
       if (userProfile.status !== "ONLINE") {
-        await this.updateUserStatus(userId, "ONLINE");
+        await this.matchingService.updateUserStatus(userId, "ONLINE");
       }
     } catch (error) {
       this.logger.error(`Failed to update user ${userId} to ONLINE:`, error);
@@ -398,7 +400,7 @@ export class SquadService {
       await this.addToSquadLobby(invitation.inviterId, inviteeId);
 
       // Update invitee status to MATCHED
-      await this.updateUserStatus(inviteeId, "MATCHED");
+      await this.matchingService.updateUserStatus(inviteeId, "MATCHED");
 
       // If external user, auto-create friendship with inviter
       if (!invitation.inviteeId) {
@@ -481,7 +483,7 @@ export class SquadService {
    */
   private async createSquadLobby(inviterId: string): Promise<any> {
     // Set inviter status to MATCHED
-    await this.updateUserStatus(inviterId, "MATCHED");
+    await this.matchingService.updateUserStatus(inviterId, "MATCHED");
 
     const lobby = await (this.prisma as any).squadLobby.create({
       data: {
@@ -713,34 +715,4 @@ export class SquadService {
     this.logger.log(`Squad lobby deleted for inviter ${inviterId}`);
   }
 
-  /**
-   * Update user status (helper method)
-   */
-  private async updateUserStatus(userId: string, status: string): Promise<void> {
-    try {
-      // Use direct DB update similar to matching service
-      const escapedStatus = status.replace(/'/g, "''");
-      const escapedUserId = userId.replace(/'/g, "''");
-      
-      await (this.prisma as any).$executeRawUnsafe(
-        `UPDATE users SET status = '${escapedStatus}' WHERE id = '${escapedUserId}'`
-      );
-    } catch (error) {
-      this.logger.error(`Failed to update user ${userId} status to ${status}:`, error);
-      // Fallback to API call if direct DB update fails
-      try {
-        const userServiceUrl = process.env.USER_SERVICE_URL || "http://localhost:3002";
-        await fetch(`${userServiceUrl}/users/test/${userId}/status`, {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({ status })
-        });
-      } catch (apiError) {
-        this.logger.error(`Failed to update status via API for user ${userId}:`, apiError);
-        // Don't throw - status update failure shouldn't break squad operations
-      }
-    }
-  }
 }

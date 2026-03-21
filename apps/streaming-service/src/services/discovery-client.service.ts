@@ -6,10 +6,13 @@ export class DiscoveryClientService {
   private readonly logger = new Logger(DiscoveryClientService.name);
   private readonly userServiceUrl: string;
   private readonly discoveryServiceUrl: string;
+  /** HTTP timeout for user-service calls (status checks must not hang indefinitely) */
+  private readonly userServiceRequestTimeoutMs: number;
 
   constructor() {
     this.userServiceUrl = process.env.USER_SERVICE_URL || "http://localhost:3002";
     this.discoveryServiceUrl = process.env.DISCOVERY_SERVICE_URL || "http://localhost:3004";
+    this.userServiceRequestTimeoutMs = parseInt(process.env.USER_SERVICE_TIMEOUT_MS || "15000", 10);
   }
 
   /**
@@ -120,7 +123,8 @@ export class DiscoveryClientService {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ status }),
-      });
+        signal: AbortSignal.timeout(this.userServiceRequestTimeoutMs)
+      } as any);
 
       if (!response.ok) {
         const error = await response.text();
@@ -174,7 +178,8 @@ export class DiscoveryClientService {
         headers: {
           "Content-Type": "application/json",
         },
-      });
+        signal: AbortSignal.timeout(this.userServiceRequestTimeoutMs)
+      } as any);
 
       if (!response.ok) {
         const error = await response.text();

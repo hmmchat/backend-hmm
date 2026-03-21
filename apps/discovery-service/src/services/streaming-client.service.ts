@@ -9,7 +9,8 @@ export class StreamingClientService {
 
   constructor() {
     this.streamingServiceUrl = process.env.STREAMING_SERVICE_URL || "http://localhost:3005";
-    this.requestTimeoutMs = parseInt(process.env.STREAMING_SERVICE_TIMEOUT_MS || "5000", 10);
+    // Room creation chains user-service checks in streaming; allow enough time for cross-service calls
+    this.requestTimeoutMs = parseInt(process.env.STREAMING_SERVICE_TIMEOUT_MS || "30000", 10);
   }
 
   /**

@@ -37,6 +37,7 @@ interface MatchPair {
 @Injectable()
 export class MatchingService {
   private readonly userServiceUrl: string;
+  private readonly userServiceStatusTimeoutMs: number;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -44,6 +45,7 @@ export class MatchingService {
     private readonly cacheService: CacheService
   ) {
     this.userServiceUrl = process.env.USER_SERVICE_URL || "http://localhost:3002";
+    this.userServiceStatusTimeoutMs = parseInt(process.env.USER_SERVICE_STATUS_TIMEOUT_MS || "10000", 10);
   }
 
   /**
@@ -705,37 +707,45 @@ export class MatchingService {
   }
 
   /**
-   * Update user status via user-service
-   * Falls back to direct database update if API fails
+   * Update user status in user-service (authoritative `users` table).
+   * Discovery DB does not contain `users`; never use discovery Prisma for profile status unless
+   * DISCOVERY_STATUS_USE_DIRECT_DB=true (single shared DB / local monolith only).
    */
   async updateUserStatus(userId: string, status: string): Promise<void> {
     console.log(`[DEBUG] updateUserStatus called for user ${userId} to status ${status}`);
-    // Fire-and-forget update for fast performance - don't wait for verification
-    // Status updates are critical but shouldn't block the main flow
-    this.updateUserStatusDirect(userId, status).catch((dbError) => {
-      console.error(`[ERROR] Direct DB update failed for user ${userId}:`, dbError);
-      // Fallback to API if direct DB update fails
-      fetch(`${this.userServiceUrl}/users/test/${userId}/status`, {
+    const url = `${this.userServiceUrl}/users/test/${userId}/status`;
+
+    try {
+      const response = await fetch(url, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({ status })
-      }).then((response) => {
-        if (!response.ok) {
-          return response.text().then(errorText => {
-            console.warn(`[WARN] Failed to update status via API for user ${userId}:`, errorText);
-          });
-        }
-      }).catch((error) => {
-        console.error(`[ERROR] Error updating status via API for user ${userId}:`, error);
-        // Don't throw - status update failure shouldn't break matching
-      });
-    });
+        body: JSON.stringify({ status }),
+        signal: AbortSignal.timeout(this.userServiceStatusTimeoutMs)
+      } as any);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`user-service ${response.status}: ${errorText}`);
+      }
+      console.log(`[DEBUG] Status updated via user-service for ${userId} -> ${status}`);
+    } catch (httpError: any) {
+      if (process.env.DISCOVERY_STATUS_USE_DIRECT_DB === "true") {
+        console.warn(
+          `[WARN] user-service PATCH failed for ${userId}, trying direct DB (DISCOVERY_STATUS_USE_DIRECT_DB):`,
+          httpError?.message || httpError
+        );
+        await this.updateUserStatusDirect(userId, status);
+        return;
+      }
+      console.error(`[ERROR] updateUserStatus failed for ${userId}:`, httpError?.message || httpError);
+      throw httpError;
+    }
   }
 
   /**
-   * Update user status directly in database (fallback)
+   * Direct SQL update — only valid when discovery shares the same Postgres as user-service.
    */
   private async updateUserStatusDirect(userId: string, status: string): Promise<void> {
     try {

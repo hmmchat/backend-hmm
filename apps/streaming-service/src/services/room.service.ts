@@ -41,7 +41,12 @@ export class RoomService {
   ) { }
 
   /** User-service statuses consistent with an active streaming *participant* row */
-  private static readonly IN_CALL_PARTICIPANT_STATUSES = new Set(["IN_SQUAD", "IN_BROADCAST"]);
+  private static readonly IN_CALL_PARTICIPANT_STATUSES = new Set([
+    "IN_SQUAD",
+    "IN_BROADCAST",
+    "IN_SQUAD_AVAILABLE",
+    "IN_BROADCAST_AVAILABLE"
+  ]);
 
   /** User-service statuses consistent with an active *viewer* row (broadcast / waitlist) */
   private static readonly IN_CALL_VIEWER_STATUSES = new Set(["VIEWER", "IN_BROADCAST", "MATCHED"]);
@@ -51,8 +56,9 @@ export class RoomService {
   }
 
   /**
-   * If streaming DB still has an active participant but user-service says the user is not in a call,
-   * remove them so we do not block new matches / rooms.
+   * If streaming DB still has an active participant but user-service status is not one of the
+   * in-call statuses (IN_SQUAD, IN_BROADCAST, IN_SQUAD_AVAILABLE, IN_BROADCAST_AVAILABLE), remove them
+   * so we do not block new matches / rooms.
    */
   private async reconcileStaleParticipantIfNeeded(userId: string): Promise<void> {
     if (!this.shouldReconcileWithUserService()) {
@@ -179,7 +185,7 @@ export class RoomService {
       throw new BadRequestException("Duplicate user IDs are not allowed");
     }
 
-    // Drop stale participant rows when user-service no longer says IN_SQUAD/IN_BROADCAST
+    // Drop stale participant rows when user-service no longer says in-call / squad-available / broadcast-available
     // (e.g. WS never connected, tab closed before deploy fix) so "already in room" is accurate
     if (this.shouldReconcileWithUserService()) {
       for (const uid of userIds) {

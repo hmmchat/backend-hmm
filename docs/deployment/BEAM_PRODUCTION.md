@@ -30,7 +30,7 @@
 | `WALLET_SERVICE_URL` | Wallet-service base URL; use `https://api.beam.place` with nginx paths `^~ /test/...`. |
 | `REDIS_URL` | e.g. `redis://<backend-public-ip>:6380` when using the **nginx stream** Redis proxy (below). |
 | `USER_SERVICE_TIMEOUT_MS` | Optional; default 15000. |
-| `STREAMING_SKIP_STATUS_RECONCILE` | Optional; set to `true` only to **disable** streaming’s automatic cleanup of stale `call_participants` / viewers when user-service status no longer indicates an active call (not recommended in production). |
+| `STREAMING_SKIP_STATUS_RECONCILE` | Optional; set to `true` only to **disable** streaming’s automatic cleanup of stale `call_participants` / viewers when user-service status no longer matches an expected in-call state (participants: `IN_SQUAD`, `IN_BROADCAST`, `IN_SQUAD_AVAILABLE`, `IN_BROADCAST_AVAILABLE`; viewers: `VIEWER`, `IN_BROADCAST`, `MATCHED`) (not recommended in production). |
 
 ### User-service
 

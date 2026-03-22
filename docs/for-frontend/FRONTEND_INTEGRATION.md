@@ -2,6 +2,8 @@
 
 Complete API integration guide for all backend services. This document covers every use case and endpoint you'll need to build the frontend.
 
+> **Supplementary:** For **`UserStatus`**, which transitions the **backend** sets vs **`PATCH /me/status`**, and a **checklist of discovery / squad / streaming APIs**, see **[USER_STATUS_AND_APIS.md](./USER_STATUS_AND_APIS.md)**.
+
 ## 📚 Table of Contents
 
 1. [Getting Started](#getting-started)
@@ -14,6 +16,8 @@ Complete API integration guide for all backend services. This document covers ev
 8. [File Uploads](#file-uploads)
 9. [Ads & Rewards](#ads--rewards)
 10. [Error Handling](#error-handling)
+
+**Also:** [User status & APIs](./USER_STATUS_AND_APIS.md) — `UserStatus` enum, backend vs manual status updates, API checklist.
 
 ---
 
@@ -349,7 +353,7 @@ GET /users/{userId}?fields=username,photos,brandPreferences
     "brandPreferences": [...],
     "interests": [...],
     "values": [...],
-    "status": "IDLE",
+    "status": "ONLINE",
     "intent": "string",
     "latitude": 0,
     "longitude": 0,
@@ -363,6 +367,8 @@ GET /users/{userId}?fields=username,photos,brandPreferences
   }
 }
 ```
+
+`user.status` is the **`UserStatus`** enum from user-service (`AVAILABLE`, `ONLINE`, `OFFLINE`, `MATCHED`, `IN_SQUAD`, `IN_SQUAD_AVAILABLE`, `IN_BROADCAST`, `IN_BROADCAST_AVAILABLE`, `VIEWER`). See **[USER_STATUS_AND_APIS.md](./USER_STATUS_AND_APIS.md)**. New profiles often default to **`ONLINE`** until flows change it.
 
 ### 3. Get Profile Completion
 
@@ -647,12 +653,17 @@ Search uses **Brandfetch** first. If Brandfetch is unavailable or returns nothin
 
 **Endpoint:** `PATCH /me/status`
 
-**Request:**
+**Request:** body must use the **user-service `UserStatus` enum** (single string):
+
 ```json
 {
-  "status": "IDLE"  // IDLE | DISCOVERING | IN_SQUAD | IN_CALL
+  "status": "AVAILABLE"
 }
 ```
+
+**Allowed values:** `AVAILABLE` | `ONLINE` | `OFFLINE` | `MATCHED` | `IN_SQUAD` | `IN_SQUAD_AVAILABLE` | `IN_BROADCAST` | `IN_BROADCAST_AVAILABLE` | `VIEWER`
+
+**Important:** Do **not** use legacy names like `IDLE`, `DISCOVERING`, or `IN_CALL`—they are not valid. Most match / room / broadcast transitions are **set by backend** (discovery, streaming); use `PATCH /me/status` only for coarse presence / pool toggles as described in **[USER_STATUS_AND_APIS.md](./USER_STATUS_AND_APIS.md)**.
 
 #### Get Intent by User ID
 
@@ -862,12 +873,12 @@ Search uses **Brandfetch** first. If Brandfetch is unavailable or returns nothin
 }
 ```
 
-**Use Case:** User swipes right/likes a card. If both users proceed, they match and enter IN_SQUAD status.
+**Use Case:** User confirms they want to proceed with the current **`matchedUserId`**. While users are in the match flow, profile **`UserStatus`** is typically **`MATCHED`** until both have accepted.
 
-**Important:** After both users proceed:
-1. Both users' status changes to `IN_SQUAD`
-2. Create a room using Streaming Service (see Streaming section)
-3. Users can now video call
+**Important:** After **both** users have proceeded:
+1. Backend sets **`UserStatus`** to **`IN_SQUAD`** and may create the streaming room (see discovery + streaming services).
+2. If your client still needs a room id, use **`POST /streaming/rooms`** only when the flow did not already return one.
+3. Connect the WebSocket for video (see [Streaming & Video Calls](#streaming--video-calls)).
 
 ### 4. Select Location
 
@@ -1166,7 +1177,7 @@ See `apps/streaming-service/README.md` in the backend repo for the full WebSocke
 }
 ```
 
-**Use Case:** User ends the call. Updates user status back to `IDLE` or `DISCOVERING`.
+**Use Case:** User ends the call. **Streaming/discovery** updates user-service **`UserStatus`** (typically back toward **`AVAILABLE`** or **`ONLINE`** per product rules). Refresh **`GET /me`** to read the new `status`. You do **not** need `PATCH /me/status` just to “reset” after ending a call unless your product explicitly requires a client-reported presence change (see **[USER_STATUS_AND_APIS.md](./USER_STATUS_AND_APIS.md)**).
 
 ### 7. History (Call History Section)
 
@@ -1212,7 +1223,7 @@ See `apps/streaming-service/README.md` in the backend repo for the full WebSocke
 
 **Fields:**
 - `callType`: `"Squad"` or `"Broadcast"`
-- `userStatus` (per participant): `"SQUAD"` | `"BROADCAST"` | `"DROP_IN"` (joined mid-call)
+- `userStatus` (per participant): `"SQUAD"` | `"BROADCAST"` | `"DROP_IN"` (joined mid-call). This is the **history API** label for how the participant appeared in that session — it is **not** the same field as profile **`GET /me`** `status` (which uses **`UserStatus`**: `IN_SQUAD`, `IN_BROADCAST`, etc.). See **[USER_STATUS_AND_APIS.md](./USER_STATUS_AND_APIS.md)**.
 - `location`: User’s preferred city (e.g. `"Kolkata"`)
 - `videoOn`: `null` (not stored today)
 - `messageCost`: `0` for friends; coins to message non-friends (e.g. `20`). Use with `conversationId` for Hotline.
@@ -2822,7 +2833,7 @@ All paths below use the **API Gateway** prefix `/v1/`. Friend-related endpoints 
 3. **Join Call** → Connect WebSocket to streaming service (`ws://.../streaming/ws`), send `join-room` with `roomId`, then use mediasoup-client for create-transport, connect-transport, produce, consume (see [Video Call: WebSocket and Mediasoup](#1a-video-call-websocket-and-mediasoup))
 4. **Chat** → Send `chat-message` over WebSocket or `GET /v1/streaming/rooms/:roomId/chat` (optional)
 5. **End Call** → `POST /v1/streaming/rooms/:roomId/end` with `userId`; or send `leave-room` over WebSocket
-6. **Update Status** → Backend updates status; optionally refresh with `PATCH /v1/me/status` → `IDLE` or `DISCOVERING`
+6. **Refresh status** → Backend updates **`UserStatus`**; read it with **`GET /v1/me`**. Use **`PATCH /v1/me/status`** only when your product needs a **manual** presence/pool update (see **[USER_STATUS_AND_APIS.md](./USER_STATUS_AND_APIS.md)**), not as a substitute for end-call handling.
 
 ### Flow 4: Purchase Coins
 

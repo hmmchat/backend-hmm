@@ -398,6 +398,22 @@ export class FriendController {
   }
 
   /**
+   * Check if the current user is friends with another user (e.g. video chat UI).
+   * GET /me/friends/:friendId/check
+   * Gateway: GET /v1/friends/me/friends/:friendId/check
+   */
+  @Get("me/friends/:friendId/check")
+  async checkFriendshipWithUser(
+    @Headers("authorization") authz: string,
+    @Param("friendId") friendId: string
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    const userId = await this.verifyTokenAndGetUserId(token!);
+    const areFriends = await this.friendService.areFriends(userId, friendId);
+    return { areFriends };
+  }
+
+  /**
    * Get inbox conversations
    * GET /me/conversations/inbox
    */

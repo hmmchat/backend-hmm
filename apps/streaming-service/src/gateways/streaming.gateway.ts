@@ -1356,6 +1356,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
         const tokenParam = params.get('token');
         if (tokenParam) return tokenParam;
       } catch (e) {
+        // Fallback: manual regex parse
         const match = url.match(/[?&]token=([^&]*)/);
         if (match) return decodeURIComponent(match[1]);
       }

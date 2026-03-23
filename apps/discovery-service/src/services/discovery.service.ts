@@ -1190,15 +1190,17 @@ export class DiscoveryService implements OnModuleInit {
         await this.matchingService.removeMatch(userId, raincheckedUserId);
       }
 
-      // When one user rainchecks, BOTH users should reset to AVAILABLE
-      // This allows both to see new cards and get new matches.
-      // Include IN_SQUAD so in-call "next/raincheck" can immediately return users to discovery.
+      // Status reset rules:
+      // - Caller (the one who rainchecked) should always return to AVAILABLE when MATCHED/IN_SQUAD.
+      // - Other user should return to AVAILABLE only when they were MATCHED.
+      //   If they are still IN_SQUAD (active call screen), frontend will auto-transition them
+      //   out of call and then set AVAILABLE to avoid exposing stuck in-call users in discovery.
       try {
         const resettableStatuses = new Set(["MATCHED", "IN_SQUAD"]);
 
-        // Reset rainchecked user to AVAILABLE
+        // Reset rainchecked user only if they are MATCHED (pre-call discovery flow).
         const raincheckedUserProfile = await this.userClient.getUserFullProfileById(raincheckedUserId);
-        if (resettableStatuses.has(String(raincheckedUserProfile.status || ""))) {
+        if (String(raincheckedUserProfile.status || "") === "MATCHED") {
           console.log(`[DEBUG] Resetting rainchecked user ${raincheckedUserId} status from ${raincheckedUserProfile.status} to AVAILABLE (due to raincheck)`);
           await this.matchingService.updateUserStatus(raincheckedUserId, "AVAILABLE");
           console.log(`[DEBUG] Status reset completed for rainchecked user ${raincheckedUserId}`);

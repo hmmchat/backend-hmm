@@ -466,6 +466,25 @@ export class StreamingController {
   }
 
   /**
+   * Leave room (authenticated)
+   * POST /streaming/rooms/:roomId/leave
+   * Uses x-user-id injected by API Gateway after token verification.
+   */
+  @Post("rooms/:roomId/leave")
+  async leaveRoom(
+    @Headers("x-user-id") xUserId: string | undefined,
+    @Param("roomId") roomId: string,
+    @Body() body?: { userId?: string }
+  ) {
+    const userId = xUserId?.trim() || body?.userId?.trim();
+    if (!userId) {
+      throw new HttpException("Missing x-user-id", HttpStatus.UNAUTHORIZED);
+    }
+    await this.roomService.removeParticipant(roomId, userId);
+    return { success: true, message: `User ${userId} left room ${roomId}` };
+  }
+
+  /**
    * Test endpoint: Leave room (bypasses auth)
    * POST /streaming/test/rooms/:roomId/leave
    */

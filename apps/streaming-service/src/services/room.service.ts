@@ -308,21 +308,19 @@ export class RoomService {
       // Generate room ID
       const roomId = uuidv4();
 
-      // Get previous status for each user before they join
-      // Users are currently MATCHED, but we need to track what they were before MATCHED
-      // For normal flow: AVAILABLE, IN_SQUAD_AVAILABLE, or IN_BROADCAST_AVAILABLE → MATCHED → IN_SQUAD
-      // We'll try to get their status before MATCHED, but if unavailable, default to AVAILABLE
+      // Get previous status for each user before they join.
+      // For matched calls, users should return to homepage baseline (ONLINE) after call ends.
+      // Explicit _AVAILABLE flows (e.g. pull stranger) track and restore their own status separately.
       const previousStatuses = new Map<string, string>();
 
       for (const userId of userIds) {
         try {
-          // Try to get user's status history or check if they were in a squad/broadcast
-          // For now, we'll default to AVAILABLE since users coming from discovery are AVAILABLE
-          // This could be enhanced later to track actual previous status
-          previousStatuses.set(userId, "AVAILABLE");
+          // Future enhancement: persist exact pre-match status history.
+          // Safe fallback for homepage-centric flow is ONLINE.
+          previousStatuses.set(userId, "ONLINE");
         } catch (error) {
-          // Default to AVAILABLE if we can't determine
-          previousStatuses.set(userId, "AVAILABLE");
+          // Default to ONLINE if we can't determine.
+          previousStatuses.set(userId, "ONLINE");
         }
       }
 
@@ -330,7 +328,7 @@ export class RoomService {
       // - matched: First 2 users are HOSTS
       // - squad: All users are HOSTS
       const participantRoles = userIds.map((userId, index) => {
-        const previousStatus = previousStatuses.get(userId) || "AVAILABLE";
+        const previousStatus = previousStatuses.get(userId) || "ONLINE";
         if (callType === "matched") {
           // Matched call: First 2 users are HOSTS
           return {
@@ -728,12 +726,12 @@ export class RoomService {
     }
 
     // Room continues (single user or multiple users) - only update leaving user's status
-    // Update user status to AVAILABLE
-    this.discoveryClient.updateUserStatus(userId, "AVAILABLE").catch((err) => {
-      this.logger.error(`Failed to update user ${userId} status to AVAILABLE: ${err.message}`);
+    // User returns to app home (ONLINE), not discovery pool.
+    this.discoveryClient.updateUserStatus(userId, "ONLINE").catch((err) => {
+      this.logger.error(`Failed to update user ${userId} status to ONLINE: ${err.message}`);
     });
 
-    this.logger.log(`Participant ${userId} removed from database for room ${roomId}, status updated to AVAILABLE`);
+    this.logger.log(`Participant ${userId} removed from database for room ${roomId}, status updated to ONLINE`);
   }
 
   async removeParticipant(roomId: string, userId: string): Promise<void> {
@@ -2031,7 +2029,7 @@ export class RoomService {
       const statusGroups = new Map<string, string[]>();
 
       participants.forEach((p: any) => {
-        const previousStatus = p.previousStatus || "AVAILABLE"; // Default to AVAILABLE for legacy data
+        const previousStatus = p.previousStatus || "ONLINE"; // Default to ONLINE for legacy data
         // Never revert to MATCHED (it's transitional)
         if (previousStatus !== "MATCHED") {
           if (!statusGroups.has(previousStatus)) {
@@ -2039,11 +2037,11 @@ export class RoomService {
           }
           statusGroups.get(previousStatus)!.push(p.userId);
         } else {
-          // If previousStatus is MATCHED (shouldn't happen, but handle gracefully), default to AVAILABLE
-          if (!statusGroups.has("AVAILABLE")) {
-            statusGroups.set("AVAILABLE", []);
+          // If previousStatus is MATCHED (shouldn't happen, but handle gracefully), default to ONLINE
+          if (!statusGroups.has("ONLINE")) {
+            statusGroups.set("ONLINE", []);
           }
-          statusGroups.get("AVAILABLE")!.push(p.userId);
+          statusGroups.get("ONLINE")!.push(p.userId);
         }
       });
 

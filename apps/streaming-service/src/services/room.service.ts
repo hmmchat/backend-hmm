@@ -725,13 +725,22 @@ export class RoomService {
       return;
     }
 
-    // Room continues (single user or multiple users) - only update leaving user's status
-    // User returns to app home (ONLINE), not discovery pool.
-    this.discoveryClient.updateUserStatus(userId, "ONLINE").catch((err) => {
-      this.logger.error(`Failed to update user ${userId} status to ONLINE: ${err.message}`);
+    // Room continues (single user or multiple users) - only update leaving user's status.
+    // Preserve AVAILABLE when another flow (e.g. raincheck) already moved user to discovery pool.
+    let statusAfterLeave = "ONLINE";
+    try {
+      const currentStatus = await this.discoveryClient.getUserStatus(userId);
+      if (currentStatus === "AVAILABLE") {
+        statusAfterLeave = "AVAILABLE";
+      }
+    } catch (error: any) {
+      this.logger.warn(`Failed to read current status for ${userId}, defaulting to ONLINE: ${error?.message || error}`);
+    }
+    this.discoveryClient.updateUserStatus(userId, statusAfterLeave).catch((err) => {
+      this.logger.error(`Failed to update user ${userId} status to ${statusAfterLeave}: ${err.message}`);
     });
 
-    this.logger.log(`Participant ${userId} removed from database for room ${roomId}, status updated to ONLINE`);
+    this.logger.log(`Participant ${userId} removed from database for room ${roomId}, status updated to ${statusAfterLeave}`);
   }
 
   async removeParticipant(roomId: string, userId: string): Promise<void> {
@@ -820,14 +829,21 @@ export class RoomService {
       // Room continues (single user or multiple users) - only update leaving user's status
     }
 
-    // BUSINESS RULE: When individual user leaves (and room continues), status changes to ONLINE
-    // User returns to app home (ONLINE), not to matchmaking pool
-    // Update user status from IN_SQUAD/IN_BROADCAST → ONLINE
-    this.discoveryClient.updateUserStatus(userId, "ONLINE").catch((err) => {
-      this.logger.error(`Failed to update user ${userId} status to ONLINE: ${err.message}`);
+    // Preserve AVAILABLE when another flow (e.g. raincheck) already moved user to discovery pool.
+    let statusAfterLeave = "ONLINE";
+    try {
+      const currentStatus = await this.discoveryClient.getUserStatus(userId);
+      if (currentStatus === "AVAILABLE") {
+        statusAfterLeave = "AVAILABLE";
+      }
+    } catch (error: any) {
+      this.logger.warn(`Failed to read current status for ${userId}, defaulting to ONLINE: ${error?.message || error}`);
+    }
+    this.discoveryClient.updateUserStatus(userId, statusAfterLeave).catch((err) => {
+      this.logger.error(`Failed to update user ${userId} status to ${statusAfterLeave}: ${err.message}`);
     });
 
-    this.logger.log(`Participant ${userId} removed from room ${roomId}, status updated to ONLINE (back to app home)`);
+    this.logger.log(`Participant ${userId} removed from room ${roomId}, status updated to ${statusAfterLeave}`);
   }
 
   /**
@@ -2028,14 +2044,26 @@ export class RoomService {
       // Group participants by previousStatus for batch updates
       const statusGroups = new Map<string, string[]>();
 
-      participants.forEach((p: any) => {
+      for (const p of participants as any[]) {
         const previousStatus = p.previousStatus || "ONLINE"; // Default to ONLINE for legacy data
-        // Never revert to MATCHED (it's transitional)
-        if (previousStatus !== "MATCHED") {
-          if (!statusGroups.has(previousStatus)) {
-            statusGroups.set(previousStatus, []);
+        let statusToRestore = previousStatus;
+
+        // If user is already AVAILABLE (e.g. raincheck flow), do not downgrade to ONLINE.
+        try {
+          const currentStatus = await this.discoveryClient.getUserStatus(p.userId);
+          if (currentStatus === "AVAILABLE") {
+            statusToRestore = "AVAILABLE";
           }
-          statusGroups.get(previousStatus)!.push(p.userId);
+        } catch (error: any) {
+          this.logger.warn(`Failed to read current status for ${p.userId} during endRoom: ${error?.message || error}`);
+        }
+
+        // Never revert to MATCHED (it's transitional)
+        if (statusToRestore !== "MATCHED") {
+          if (!statusGroups.has(statusToRestore)) {
+            statusGroups.set(statusToRestore, []);
+          }
+          statusGroups.get(statusToRestore)!.push(p.userId);
         } else {
           // If previousStatus is MATCHED (shouldn't happen, but handle gracefully), default to ONLINE
           if (!statusGroups.has("ONLINE")) {
@@ -2043,7 +2071,7 @@ export class RoomService {
           }
           statusGroups.get("ONLINE")!.push(p.userId);
         }
-      });
+      }
 
       // Update each group to their previousStatus
       for (const [status, userIds] of statusGroups.entries()) {

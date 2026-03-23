@@ -1179,7 +1179,7 @@ export class DiscoveryService implements OnModuleInit {
     userId: string,
     sessionId: string,
     raincheckedUserId: string,
-    city: string | null
+    _city: string | null
   ): Promise<void> {
     try {
       // Check if users are matched with each other

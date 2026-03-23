@@ -946,5 +946,45 @@ export class MatchingService {
       console.error(`[ERROR] Failed to cleanup expired matches:`, error?.message || error);
     }
   }
+
+  /**
+   * Reconcile legacy/conflicting active_matches rows where a user appears in multiple matches.
+   * Keeps the latest row per canonical pair and per user side, deletes older conflicting rows.
+   */
+  async reconcileActiveMatchConflicts(): Promise<{ removed: number }> {
+    try {
+      const deletedRows = await (this.prisma as any).$queryRawUnsafe(
+        `WITH ranked AS (
+           SELECT
+             id,
+             ROW_NUMBER() OVER (
+               PARTITION BY LEAST("user1Id","user2Id"), GREATEST("user1Id","user2Id")
+               ORDER BY "createdAt" DESC, id DESC
+             ) AS rn_pair,
+             ROW_NUMBER() OVER (PARTITION BY "user1Id" ORDER BY "createdAt" DESC, id DESC) AS rn_u1,
+             ROW_NUMBER() OVER (PARTITION BY "user2Id" ORDER BY "createdAt" DESC, id DESC) AS rn_u2
+           FROM active_matches
+         ),
+         to_delete AS (
+           SELECT id
+           FROM ranked
+           WHERE rn_pair > 1 OR rn_u1 > 1 OR rn_u2 > 1
+         )
+         DELETE FROM active_matches
+         WHERE id IN (SELECT id FROM to_delete)
+         RETURNING id`
+      );
+
+      const removed = Array.isArray(deletedRows) ? deletedRows.length : 0;
+      if (removed > 0) {
+        await this.cacheService.del("matched:user:ids");
+        console.warn(`[WARN] Reconciled active_matches conflicts: removed ${removed} stale/conflicting row(s)`);
+      }
+      return { removed };
+    } catch (error: any) {
+      console.error(`[ERROR] Failed to reconcile active_matches conflicts:`, error?.message || error);
+      return { removed: 0 };
+    }
+  }
 }
 

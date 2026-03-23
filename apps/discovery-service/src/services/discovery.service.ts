@@ -2062,9 +2062,13 @@ export class DiscoveryService implements OnModuleInit {
    * Runs periodically to check for expired acceptances (default: every 2 seconds)
    */
   async onModuleInit() {
+    // One-time startup reconciliation for historical/conflicting active_matches rows.
+    await this.matchingService.reconcileActiveMatchConflicts();
+
     // Get cleanup interval from environment (default 2 seconds)
     // Since acceptance timeout is 5 seconds, checking every 2 seconds is sufficient
     const cleanupIntervalMs = parseInt(process.env.CLEANUP_INTERVAL_MS || "2000", 10);
+    const reconcileIntervalMs = parseInt(process.env.MATCH_RECONCILE_INTERVAL_MS || "60000", 10);
 
     // Clean up expired acceptances periodically
     setInterval(async () => {
@@ -2075,7 +2079,17 @@ export class DiscoveryService implements OnModuleInit {
       }
     }, cleanupIntervalMs);
 
+    // Periodic reconciliation to heal any unexpected conflicting rows at runtime.
+    setInterval(async () => {
+      try {
+        await this.matchingService.reconcileActiveMatchConflicts();
+      } catch (error) {
+        console.error("[ERROR] Failed to reconcile active matches:", error);
+      }
+    }, reconcileIntervalMs);
+
     console.log(`[INFO] Cleanup interval initialized: checking expired acceptances every ${cleanupIntervalMs}ms`);
+    console.log(`[INFO] Match reconcile interval initialized: every ${reconcileIntervalMs}ms`);
   }
 
   /**

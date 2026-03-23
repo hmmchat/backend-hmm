@@ -1258,56 +1258,10 @@ export class DiscoveryService implements OnModuleInit {
         });
       }
 
-      // Trigger rematching for both users
-      // Get user profiles for rematching
-      const user1Profile = await this.userClient.getUserFullProfileById(userId);
-      const user2Profile = await this.userClient.getUserFullProfileById(raincheckedUserId);
-
-      const user1ProfileData: UserProfile = {
-        id: user1Profile.id,
-        preferredCity: user1Profile.preferredCity,
-        brandPreferences: user1Profile.brandPreferences,
-        interests: user1Profile.interests,
-        values: user1Profile.values,
-        musicPreference: user1Profile.musicPreference,
-        videoEnabled: user1Profile.videoEnabled,
-        actualCity: null
-      };
-
-      const user2ProfileData: UserProfile = {
-        id: user2Profile.id,
-        preferredCity: user2Profile.preferredCity,
-        brandPreferences: user2Profile.brandPreferences,
-        interests: user2Profile.interests,
-        values: user2Profile.values,
-        musicPreference: user2Profile.musicPreference,
-        videoEnabled: user2Profile.videoEnabled,
-        actualCity: null
-      };
-
-      // Get rainchecked users for both
-      const rainchecked1 = await this.getRaincheckedUserIds(userId, sessionId, user1Profile.preferredCity);
-      const rainchecked2 = await this.getRaincheckedUserIds(raincheckedUserId, sessionId, user2Profile.preferredCity);
-
-      console.log(`[DEBUG] Rematching after raincheck - User ${userId} rainchecked list:`, rainchecked1);
-      console.log(`[DEBUG] Rematching after raincheck - User ${raincheckedUserId} rainchecked list:`, rainchecked2);
-
-      // Rematch both users (async, don't wait)
-      this.matchingService.findMatchForUser(
-        userId,
-        user1ProfileData,
-        user1Profile.preferredCity,
-        undefined,
-        rainchecked1
-      ).catch(err => console.error("Failed to rematch user 1:", err));
-
-      this.matchingService.findMatchForUser(
-        raincheckedUserId,
-        user2ProfileData,
-        user2Profile.preferredCity,
-        undefined,
-        rainchecked2
-      ).catch(err => console.error("Failed to rematch user 2:", err));
+      // Do NOT proactively rematch both users here.
+      // The caller's next-card request should drive immediate rematch deterministically.
+      // Proactive dual rematch can race and let the non-caller consume the same candidate,
+      // producing asymmetric cards (e.g. caller sees LOCATION while another user got matched).
     } catch (error: any) {
       // If table doesn't exist, log warning but don't fail
       if (error?.code === 'P2021' || error?.message?.includes('does not exist')) {
@@ -2089,9 +2043,10 @@ export class DiscoveryService implements OnModuleInit {
     // Users with AVAILABLE status should be available even if they have old match records
     const matchedUserIds = await this.matchingService.getMatchedUserIdsCached();
     const filteredUsers = users.filter(user => {
-      // Only exclude if user is in matchedUserIds AND has MATCHED status
+      // Only exclude if user is in matchedUserIds AND is still MATCHED.
+      // AVAILABLE users must remain discoverable even if they have stale match ids.
       if (matchedUserIds.has(user.id)) {
-        return user.status === 'MATCHED';
+        return user.status !== 'MATCHED';
       }
       return true;
     });
@@ -2536,9 +2491,9 @@ export class DiscoveryService implements OnModuleInit {
     // Filter out users who are matched (they shouldn't appear in OFFLINE cards)
     const matchedUserIds = await this.matchingService.getMatchedUserIdsCached();
     const filteredUsers = users.filter(user => {
-      // Exclude if user is in matchedUserIds AND has MATCHED status
+      // Exclude if user is in matchedUserIds AND is still MATCHED.
       if (matchedUserIds.has(user.id)) {
-        return user.status === 'MATCHED';
+        return user.status !== 'MATCHED';
       }
       return true;
     });

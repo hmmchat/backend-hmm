@@ -148,30 +148,39 @@ export class DiscoveryService implements OnModuleInit {
     // Check if user is already matched
     const existingMatch = await this.matchingService.getMatchForUser(userId);
     if (existingMatch) {
-      // User is already matched, return their match's card
       const matchedUserId = existingMatch.user1Id === userId ? existingMatch.user2Id : existingMatch.user1Id;
       const matchedUser = await this.userClient.getUserFullProfileById(matchedUserId);
-      const card = await this.buildCard(this.convertToDiscoveryUser(matchedUser), preferredCity, currentUser);
+      const currentUserStatus = String((userProfileResponse as any).status || "");
+      const matchedUserStatus = String((matchedUser as any).status || "");
 
-      // Surface acceptance hint: if the other user already accepted but current user hasn't,
-      // frontend can show "X has accepted your match".
-      const acceptanceState = await this.matchingService.getAcceptanceState(existingMatch.user1Id, existingMatch.user2Id);
-      const currentUserAccepted = acceptanceState.acceptedBy.has(userId);
-      const matchedUserAccepted = acceptanceState.acceptedBy.has(matchedUserId);
-      (card as any).otherUserAccepted = matchedUserAccepted && !currentUserAccepted;
-      (card as any).currentUserAccepted = currentUserAccepted;
+      // Guard against stale active_matches: keep match card only while both users are MATCHED.
+      if (currentUserStatus !== "MATCHED" || matchedUserStatus !== "MATCHED") {
+        await this.matchingService.removeMatchAcceptances(existingMatch.user1Id, existingMatch.user2Id);
+        await this.matchingService.removeMatch(existingMatch.user1Id, existingMatch.user2Id);
+      } else {
+        // User is actively matched, return their match's card
+        const card = await this.buildCard(this.convertToDiscoveryUser(matchedUser), preferredCity, currentUser);
 
-      // Decrement gender filter if active
-      const genderFilter = await this.genderFilterService.getCurrentPreference(userId);
-      const hasActiveGenderFilter = genderFilter && genderFilter.screensRemaining > 0;
-      if (hasActiveGenderFilter) {
-        await this.genderFilterService.decrementScreen(userId);
+        // Surface acceptance hint: if the other user already accepted but current user hasn't,
+        // frontend can show "X has accepted your match".
+        const acceptanceState = await this.matchingService.getAcceptanceState(existingMatch.user1Id, existingMatch.user2Id);
+        const currentUserAccepted = acceptanceState.acceptedBy.has(userId);
+        const matchedUserAccepted = acceptanceState.acceptedBy.has(matchedUserId);
+        (card as any).otherUserAccepted = matchedUserAccepted && !currentUserAccepted;
+        (card as any).currentUserAccepted = currentUserAccepted;
+
+        // Decrement gender filter if active
+        const genderFilter = await this.genderFilterService.getCurrentPreference(userId);
+        const hasActiveGenderFilter = genderFilter && genderFilter.screensRemaining > 0;
+        if (hasActiveGenderFilter) {
+          await this.genderFilterService.decrementScreen(userId);
+        }
+
+        return {
+          card,
+          exhausted: false
+        };
       }
-
-      return {
-        card,
-        exhausted: false
-      };
     }
 
     // User is not matched, find a match using mutual matching
@@ -1744,22 +1753,31 @@ export class DiscoveryService implements OnModuleInit {
     // Check if user is already matched
     const existingMatch = await this.matchingService.getMatchForUser(userId);
     if (existingMatch) {
-      // User is already matched, return their match's card
       const matchedUserId = existingMatch.user1Id === userId ? existingMatch.user2Id : existingMatch.user1Id;
       const matchedUser = await this.userClient.getUserFullProfileById(matchedUserId);
-      const card = await this.buildCard(this.convertToDiscoveryUser(matchedUser), preferredCity, currentUser);
+      const currentUserStatus = String((userProfileResponse as any).status || "");
+      const matchedUserStatus = String((matchedUser as any).status || "");
 
-      // Decrement gender filter if active
-      const genderFilter = await this.genderFilterService.getCurrentPreference(userId);
-      const hasActiveGenderFilter = genderFilter && genderFilter.screensRemaining > 0;
-      if (hasActiveGenderFilter) {
-        await this.genderFilterService.decrementScreen(userId);
+      // Guard against stale active_matches: keep match card only while both users are MATCHED.
+      if (currentUserStatus !== "MATCHED" || matchedUserStatus !== "MATCHED") {
+        await this.matchingService.removeMatchAcceptances(existingMatch.user1Id, existingMatch.user2Id);
+        await this.matchingService.removeMatch(existingMatch.user1Id, existingMatch.user2Id);
+      } else {
+        // User is actively matched, return their match's card
+        const card = await this.buildCard(this.convertToDiscoveryUser(matchedUser), preferredCity, currentUser);
+
+        // Decrement gender filter if active
+        const genderFilter = await this.genderFilterService.getCurrentPreference(userId);
+        const hasActiveGenderFilter = genderFilter && genderFilter.screensRemaining > 0;
+        if (hasActiveGenderFilter) {
+          await this.genderFilterService.decrementScreen(userId);
+        }
+
+        return {
+          card,
+          exhausted: false
+        };
       }
-
-      return {
-        card,
-        exhausted: false
-      };
     }
 
     // User is not matched, find a match using mutual matching

@@ -248,7 +248,7 @@ export class DiscoveryService implements OnModuleInit {
           statuses,
           genders, // still apply gender filter
           soloOnly,
-          [] // don't exclude rainchecked for this check
+          raincheckedUserIds
         );
 
         // If users exist in other cities, use them (unlimited scroll)
@@ -274,7 +274,7 @@ export class DiscoveryService implements OnModuleInit {
           statuses,
           undefined, // no gender filter
           soloOnly,
-          [] // don't exclude rainchecked
+          raincheckedUserIds
         );
 
         if (usersWithoutGenderFilter.length > 0) {
@@ -288,9 +288,9 @@ export class DiscoveryService implements OnModuleInit {
         }
       }
 
-      // Before showing location cards, check if users are available (they might have just become available)
-      // Check for users in preferred city first
-      const usersBeforeLocation = preferredCity
+      // Before showing location cards, check if users are available.
+      // If preferred city has none, fall back to "anywhere" while still honoring raincheck exclusions.
+      const usersInPreferredCity = preferredCity
         ? await this.findMatchingUsers(
           token,
           userId,
@@ -300,15 +300,17 @@ export class DiscoveryService implements OnModuleInit {
           soloOnly,
           raincheckedUserIds
         )
-        : await this.findMatchingUsers(
-          token,
-          userId,
-          null,
-          statuses,
-          genders,
-          soloOnly,
-          [] // Don't exclude rainchecked for "anywhere"
-        );
+        : [];
+      const usersAnywhere = await this.findMatchingUsers(
+        token,
+        userId,
+        null,
+        statuses,
+        genders,
+        soloOnly,
+        raincheckedUserIds
+      );
+      const usersBeforeLocation = usersInPreferredCity.length > 0 ? usersInPreferredCity : usersAnywhere;
 
       console.log(`[DEBUG] getNextCardForUser - usersBeforeLocation: ${usersBeforeLocation.length} users found for city ${preferredCity || 'null (Anywhere)'}`);
 
@@ -335,8 +337,7 @@ export class DiscoveryService implements OnModuleInit {
       }
 
       // No users available - show location cards (never exhausted)
-      // BUT FIRST: Double-check if users became available (they might have just become available after rainchecking)
-      // Check for users again (this time don't exclude rainchecked to give fresh chances)
+      // BUT FIRST: Double-check if users became available after concurrent status updates.
       const usersRecheck = preferredCity
         ? await this.findMatchingUsers(
           token,
@@ -345,16 +346,16 @@ export class DiscoveryService implements OnModuleInit {
           statuses,
           genders,
           soloOnly,
-          [] // Don't exclude rainchecked - give users another chance
+          raincheckedUserIds
         )
         : await this.findMatchingUsers(
           token,
           userId,
-          null, // anywhere - will now return users from ALL cities (not just preferredCity=null)
+          null, // anywhere
           statuses,
           genders,
           soloOnly,
-          [] // Don't exclude rainchecked for "anywhere"
+          raincheckedUserIds
         );
 
       console.log(`[DEBUG] getNextCardForUser - usersRecheck: ${usersRecheck.length} users found for city ${preferredCity || 'null (Anywhere)'}`);
@@ -1902,7 +1903,7 @@ export class DiscoveryService implements OnModuleInit {
           statuses,
           genders, // still apply gender filter
           soloOnly,
-          [] // don't exclude rainchecked for this check
+          raincheckedUserIds
         );
 
         // If users exist in other cities, use them (unlimited scroll)
@@ -1927,7 +1928,7 @@ export class DiscoveryService implements OnModuleInit {
           statuses,
           undefined, // no gender filter
           soloOnly,
-          [] // don't exclude rainchecked
+          raincheckedUserIds
         );
 
         if (usersWithoutGenderFilter.length > 0) {
@@ -1941,9 +1942,9 @@ export class DiscoveryService implements OnModuleInit {
         }
       }
 
-      // Before showing location cards, check if users are available (they might have just become available)
-      // Check for users in preferred city first
-      const usersBeforeLocation = preferredCity
+      // Before showing location cards, check if users are available.
+      // If preferred city has none, fall back to "anywhere" while still honoring raincheck exclusions.
+      const usersInPreferredCity = preferredCity
         ? await this.findMatchingUsersForUser(
           userId,
           preferredCity,
@@ -1952,14 +1953,16 @@ export class DiscoveryService implements OnModuleInit {
           soloOnly,
           raincheckedUserIds
         )
-        : await this.findMatchingUsersForUser(
-          userId,
-          null,
-          statuses,
-          genders,
-          soloOnly,
-          [] // Don't exclude rainchecked for "anywhere"
-        );
+        : [];
+      const usersAnywhere = await this.findMatchingUsersForUser(
+        userId,
+        null,
+        statuses,
+        genders,
+        soloOnly,
+        raincheckedUserIds
+      );
+      const usersBeforeLocation = usersInPreferredCity.length > 0 ? usersInPreferredCity : usersAnywhere;
 
       // If users are available, show them instead of location cards
       if (usersBeforeLocation.length > 0) {

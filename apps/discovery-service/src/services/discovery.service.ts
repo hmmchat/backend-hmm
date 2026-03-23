@@ -1658,21 +1658,26 @@ export class DiscoveryService implements OnModuleInit {
         // Frontend can create room separately if needed
       }
 
-      // THEN update both users' status to IN_SQUAD (after room is created)
-      // Note: Room service will also update statuses, but we do it here too for consistency
-      await this.matchingService.updateUserStatus(match.user1Id, "IN_SQUAD");
-      await this.matchingService.updateUserStatus(match.user2Id, "IN_SQUAD");
-
-      // Store room assignment in Redis so waiting pollers can retrieve it
-      // without re-calling proceed (which would delete the already-consumed match)
+      // Only move users to IN_SQUAD when a room was actually created.
+      // If room creation failed, keep users in MATCHED so frontend fallback
+      // create-room can still succeed.
       if (roomResult.roomId) {
+        await this.matchingService.updateUserStatus(match.user1Id, "IN_SQUAD");
+        await this.matchingService.updateUserStatus(match.user2Id, "IN_SQUAD");
+
+        // Store room assignment in Redis so waiting pollers can retrieve it
+        // without re-calling proceed (which would delete the already-consumed match)
         const roomData = { roomId: roomResult.roomId, sessionId: roomResult.sessionId };
         await this.cache.set(`room:${match.user1Id}`, roomData, 300); // 5 min TTL
         await this.cache.set(`room:${match.user2Id}`, roomData, 300);
         console.log(`[INFO] Stored room ${roomResult.roomId} in Redis for both users`);
+        console.log(`[INFO] Both users accepted match - ${match.user1Id} and ${match.user2Id} moved to IN_SQUAD`);
+      } else {
+        // Defensive reset: keep both sides in MATCHED for frontend room-creation fallback path.
+        await this.matchingService.updateUserStatus(match.user1Id, "MATCHED");
+        await this.matchingService.updateUserStatus(match.user2Id, "MATCHED");
+        console.warn(`[WARN] Match accepted by both users but room creation failed. Keeping ${match.user1Id} and ${match.user2Id} in MATCHED for fallback room creation.`);
       }
-
-      console.log(`[INFO] Both users accepted match - ${match.user1Id} and ${match.user2Id} moved to IN_SQUAD`);
 
       return roomResult;
     } else {

@@ -1191,20 +1191,23 @@ export class DiscoveryService implements OnModuleInit {
       }
 
       // When one user rainchecks, BOTH users should reset to AVAILABLE
-      // This allows both to see new cards and get new matches
+      // This allows both to see new cards and get new matches.
+      // Include IN_SQUAD so in-call "next/raincheck" can immediately return users to discovery.
       try {
+        const resettableStatuses = new Set(["MATCHED", "IN_SQUAD"]);
+
         // Reset rainchecked user to AVAILABLE
         const raincheckedUserProfile = await this.userClient.getUserFullProfileById(raincheckedUserId);
-        if (raincheckedUserProfile.status === 'MATCHED') {
-          console.log(`[DEBUG] Resetting rainchecked user ${raincheckedUserId} status from MATCHED to AVAILABLE (due to raincheck)`);
+        if (resettableStatuses.has(String(raincheckedUserProfile.status || ""))) {
+          console.log(`[DEBUG] Resetting rainchecked user ${raincheckedUserId} status from ${raincheckedUserProfile.status} to AVAILABLE (due to raincheck)`);
           await this.matchingService.updateUserStatus(raincheckedUserId, "AVAILABLE");
           console.log(`[DEBUG] Status reset completed for rainchecked user ${raincheckedUserId}`);
         }
 
         // Also reset current user to AVAILABLE (they rainchecked, so they want to see new cards)
         const currentUserProfile = await this.userClient.getUserFullProfileById(userId);
-        if (currentUserProfile.status === 'MATCHED') {
-          console.log(`[DEBUG] Resetting current user ${userId} status from MATCHED to AVAILABLE (they rainchecked)`);
+        if (resettableStatuses.has(String(currentUserProfile.status || ""))) {
+          console.log(`[DEBUG] Resetting current user ${userId} status from ${currentUserProfile.status} to AVAILABLE (they rainchecked)`);
           await this.matchingService.updateUserStatus(userId, "AVAILABLE");
           console.log(`[DEBUG] Status reset completed for current user ${userId}`);
         }

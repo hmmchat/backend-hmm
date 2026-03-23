@@ -153,6 +153,14 @@ export class DiscoveryService implements OnModuleInit {
       const matchedUser = await this.userClient.getUserFullProfileById(matchedUserId);
       const card = await this.buildCard(this.convertToDiscoveryUser(matchedUser), preferredCity, currentUser);
 
+      // Surface acceptance hint: if the other user already accepted but current user hasn't,
+      // frontend can show "X has accepted your match".
+      const acceptanceState = await this.matchingService.getAcceptanceState(existingMatch.user1Id, existingMatch.user2Id);
+      const currentUserAccepted = acceptanceState.acceptedBy.has(userId);
+      const matchedUserAccepted = acceptanceState.acceptedBy.has(matchedUserId);
+      (card as any).otherUserAccepted = matchedUserAccepted && !currentUserAccepted;
+      (card as any).currentUserAccepted = currentUserAccepted;
+
       // Decrement gender filter if active
       const genderFilter = await this.genderFilterService.getCurrentPreference(userId);
       const hasActiveGenderFilter = genderFilter && genderFilter.screensRemaining > 0;

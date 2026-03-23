@@ -874,6 +874,34 @@ export class MatchingService {
   }
 
   /**
+   * Get acceptance state for a match pair.
+   * Returns who has accepted within the active acceptance timeout window.
+   */
+  async getAcceptanceState(
+    user1Id: string,
+    user2Id: string
+  ): Promise<{ acceptedBy: Set<string>; bothAccepted: boolean }> {
+    try {
+      const [id1, id2] = [user1Id, user2Id].sort();
+      const escapedId1 = id1.replace(/'/g, "''");
+      const escapedId2 = id2.replace(/'/g, "''");
+
+      const acceptances = await (this.prisma as any).$queryRawUnsafe(
+        `SELECT "acceptedBy" FROM match_acceptances
+         WHERE "user1Id" = '${escapedId1}' AND "user2Id" = '${escapedId2}'
+         AND "expiresAt" > CURRENT_TIMESTAMP`
+      );
+
+      const acceptedBy = new Set((acceptances || []).map((a: any) => a.acceptedBy));
+      const bothAccepted = acceptedBy.has(id1) && acceptedBy.has(id2);
+      return { acceptedBy, bothAccepted };
+    } catch (error: any) {
+      console.error(`[ERROR] Failed to get acceptance state:`, error?.message || error);
+      return { acceptedBy: new Set<string>(), bothAccepted: false };
+    }
+  }
+
+  /**
    * Remove match acceptances for a match
    */
   async removeMatchAcceptances(user1Id: string, user2Id: string): Promise<void> {

@@ -1023,14 +1023,13 @@ export class DiscoveryService implements OnModuleInit {
   private async getRaincheckedUserIds(
     userId: string,
     sessionId: string,
-    city: string | null
+    _city: string | null
   ): Promise<string[]> {
     try {
       const rainchecks = await (this.prisma as any).raincheckSession.findMany({
         where: {
           userId,
           sessionId,
-          city: city || null,
           raincheckedUserId: {
             not: {
               startsWith: "LOCATION:"
@@ -1224,7 +1223,7 @@ export class DiscoveryService implements OnModuleInit {
           userId,
           sessionId,
           raincheckedUserId,
-          city: city || null
+          city: null
         }
       });
 
@@ -1234,7 +1233,7 @@ export class DiscoveryService implements OnModuleInit {
             userId,
             sessionId,
             raincheckedUserId,
-            city: city || null
+            city: null
           }
         });
       }
@@ -1245,7 +1244,7 @@ export class DiscoveryService implements OnModuleInit {
           userId: raincheckedUserId,
           sessionId,
           raincheckedUserId: userId,
-          city: city || null
+          city: null
         }
       });
 
@@ -1255,7 +1254,7 @@ export class DiscoveryService implements OnModuleInit {
             userId: raincheckedUserId,
             sessionId,
             raincheckedUserId: userId,
-            city: city || null
+            city: null
           }
         });
       }

@@ -397,32 +397,25 @@ export class MatchingService {
     // Sort by score (descending)
     scoredPairs.sort((a, b) => b.score - a.score);
 
-    // Find best available match (not already matched)
-    // Check matched user IDs once before loop (performance optimization)
-    // Note: matchedUserIds may have changed since we fetched pool users, but we check once
-    // to avoid unnecessary cache calls in the loop
-    const currentMatched = await this.getMatchedUserIdsCached();
-    
+    // Find best available match.
+    // Use atomic createMatch() to enforce one-active-match-per-user at write time,
+    // instead of relying on stale cached matched-user snapshots.
     for (const pair of scoredPairs) {
-      // Check if user is still available (may have been matched by another request)
-      // Only exclude if user is in matchedUserIds AND has MATCHED status
-      // Users with AVAILABLE status should be available even if they have an old match record
-      const isMatched = currentMatched.has(pair.user.id) && pair.user.status === 'MATCHED';
-      if (!isMatched) {
-        // Create match (no expiration - persists until raincheck)
-        const result = await this.createMatch(userId, pair.user.id, pair.score);
-        if (!result.success) {
-          console.error(`[ERROR] Failed to create match in findMatchForUser for ${userId} and ${pair.user.id}:`, result.error);
-          // Continue to next pair instead of failing completely
-          continue;
+      // Create match (no expiration - persists until raincheck)
+      const result = await this.createMatch(userId, pair.user.id, pair.score);
+      if (!result.success) {
+        // Candidate was already matched elsewhere or insert failed; try next best candidate.
+        if (result.reason !== "already_matched_elsewhere") {
+          console.error(`[ERROR] Failed to create match in findMatchForUser for ${userId} and ${pair.user.id}:`, result.error || result.reason);
         }
-        // Update both users' status to MATCHED (parallelized for performance)
-        await Promise.all([
-          this.updateUserStatus(userId, "MATCHED"),
-          this.updateUserStatus(pair.user.id, "MATCHED")
-        ]);
-        return pair.user;
+        continue;
       }
+      // Update both users' status to MATCHED (parallelized for performance)
+      await Promise.all([
+        this.updateUserStatus(userId, "MATCHED"),
+        this.updateUserStatus(pair.user.id, "MATCHED")
+      ]);
+      return pair.user;
     }
 
     return null;
@@ -532,7 +525,8 @@ export class MatchingService {
               { user1Id: userId },
               { user2Id: userId }
             ]
-          }
+          },
+          orderBy: { createdAt: "desc" }
         });
         return match;
       } else {
@@ -542,6 +536,7 @@ export class MatchingService {
         const matches = await (this.prisma as any).$queryRawUnsafe(
           `SELECT "user1Id", "user2Id", score FROM active_matches 
            WHERE "user1Id" = '${escapedUserId}' OR "user2Id" = '${escapedUserId}'
+           ORDER BY "createdAt" DESC
            LIMIT 1`
         );
         return matches && matches.length > 0 ? matches[0] : null;
@@ -556,6 +551,7 @@ export class MatchingService {
         const matches = await (this.prisma as any).$queryRawUnsafe(
           `SELECT "user1Id", "user2Id", score FROM active_matches 
            WHERE "user1Id" = '${escapedUserId}' OR "user2Id" = '${escapedUserId}'
+           ORDER BY "createdAt" DESC
            LIMIT 1`
         );
         return matches && matches.length > 0 ? matches[0] : null;
@@ -571,105 +567,91 @@ export class MatchingService {
    * Matches do NOT expire - they persist until someone rainchecks
    * Returns success status and error details if failed
    */
-  async createMatch(user1Id: string, user2Id: string, score: number): Promise<{ success: boolean; error?: any }> {
+  async createMatch(
+    user1Id: string,
+    user2Id: string,
+    score: number
+  ): Promise<{ success: boolean; created: boolean; reason?: string; error?: any }> {
     try {
       // Ensure user1Id < user2Id for consistency
       const [id1, id2] = [user1Id, user2Id].sort();
-      
-      // Use raw SQL directly for reliability
-      // Note: expiresAt is optional - if column exists, we can set it to a far future date or leave NULL
+
       const escapedId1 = id1.replace(/'/g, "''");
       const escapedId2 = id2.replace(/'/g, "''");
-      
-      let rowsAffected = 0;
-      
-      // Try with expiresAt first (if column exists)
-      try {
-        const result = await (this.prisma as any).$executeRawUnsafe(
-          `INSERT INTO active_matches (id, "user1Id", "user2Id", score, "expiresAt", "createdAt", "updatedAt") 
-           VALUES (gen_random_uuid()::text, '${escapedId1}', '${escapedId2}', ${score}, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-           ON CONFLICT ("user1Id", "user2Id") DO NOTHING`
+
+      const txResult = await (this.prisma as any).$transaction(async (tx: any) => {
+        // Serialize all writes for these two users to prevent concurrent multi-match creation.
+        await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(hashtext('${escapedId1}'))`);
+        await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(hashtext('${escapedId2}'))`);
+
+        // If either user is already part of any active match, do not create a new match.
+        const existing = await tx.$queryRawUnsafe(
+          `SELECT "user1Id", "user2Id"
+           FROM active_matches
+           WHERE "user1Id" IN ('${escapedId1}', '${escapedId2}')
+              OR "user2Id" IN ('${escapedId1}', '${escapedId2}')
+           ORDER BY "createdAt" DESC
+           LIMIT 1`
         );
-        rowsAffected = result || 0;
-      } catch (expiresAtError: any) {
-        // If expiresAt column doesn't exist, create match without it
-        if (expiresAtError?.message?.includes('expiresAt') || expiresAtError?.code === '42703') {
-          const result = await (this.prisma as any).$executeRawUnsafe(
-            `INSERT INTO active_matches (id, "user1Id", "user2Id", score, "createdAt", "updatedAt") 
-             VALUES (gen_random_uuid()::text, '${escapedId1}', '${escapedId2}', ${score}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-             ON CONFLICT ("user1Id", "user2Id") DO NOTHING`
-          );
-          rowsAffected = result || 0;
-        } else {
-          throw expiresAtError;
+
+        if (existing && existing.length > 0) {
+          const row = existing[0];
+          const samePair =
+            (row.user1Id === id1 && row.user2Id === id2) ||
+            (row.user1Id === id2 && row.user2Id === id1);
+          return {
+            success: samePair,
+            created: false,
+            reason: samePair ? "already_exists" : "already_matched_elsewhere"
+          };
         }
-      }
-      
-      // Invalidate matched user IDs cache
-      await this.cacheService.del("matched:user:ids");
-      
-      if (rowsAffected > 0) {
-        console.log(`[DEBUG] Created match between ${id1} and ${id2} (no expiration - persists until raincheck)`);
-        return { success: true };
-      } else {
-        // Match already exists (ON CONFLICT DO NOTHING)
-        console.log(`[DEBUG] Match already exists between ${id1} and ${id2}`);
-        return { success: true }; // Still return success - match exists
-      }
-    } catch (error: any) {
-      // If template literal fails, try unsafe with proper escaping
-      try {
-        const [id1, id2] = [user1Id, user2Id].sort();
-        const escapedId1 = id1.replace(/'/g, "''");
-        const escapedId2 = id2.replace(/'/g, "''");
-        
+
+        // Insert with backward compatibility for optional expiresAt column.
         let rowsAffected = 0;
-        
-        // Try with expiresAt as NULL (if column exists)
         try {
-          const result = await (this.prisma as any).$executeRawUnsafe(
-            `INSERT INTO active_matches (id, "user1Id", "user2Id", score, "expiresAt", "createdAt", "updatedAt") 
+          rowsAffected = await tx.$executeRawUnsafe(
+            `INSERT INTO active_matches (id, "user1Id", "user2Id", score, "expiresAt", "createdAt", "updatedAt")
              VALUES (gen_random_uuid()::text, '${escapedId1}', '${escapedId2}', ${score}, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
              ON CONFLICT ("user1Id", "user2Id") DO NOTHING`
           );
-          rowsAffected = result || 0;
         } catch (expiresAtError: any) {
-          // If expiresAt column doesn't exist, create match without it
           if (expiresAtError?.message?.includes('expiresAt') || expiresAtError?.code === '42703') {
-            const result = await (this.prisma as any).$executeRawUnsafe(
-              `INSERT INTO active_matches (id, "user1Id", "user2Id", score, "createdAt", "updatedAt") 
+            rowsAffected = await tx.$executeRawUnsafe(
+              `INSERT INTO active_matches (id, "user1Id", "user2Id", score, "createdAt", "updatedAt")
                VALUES (gen_random_uuid()::text, '${escapedId1}', '${escapedId2}', ${score}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                ON CONFLICT ("user1Id", "user2Id") DO NOTHING`
             );
-            rowsAffected = result || 0;
           } else {
             throw expiresAtError;
           }
         }
-        
-        // Invalidate matched user IDs cache
-        await this.cacheService.del("matched:user:ids");
-        
-        if (rowsAffected > 0) {
-          console.log(`[DEBUG] Created match between ${id1} and ${id2} (no expiration - persists until raincheck)`);
-          return { success: true };
-        } else {
-          console.log(`[DEBUG] Match already exists between ${id1} and ${id2}`);
-          return { success: true }; // Still return success - match exists
+
+        if ((rowsAffected || 0) > 0) {
+          return { success: true, created: true };
         }
-      } catch (unsafeError: any) {
-        const errorDetails = {
-          code: unsafeError?.code,
-          message: unsafeError?.message,
-          detail: unsafeError?.detail,
-          hint: unsafeError?.hint,
-          stack: unsafeError?.stack
-        };
-        console.error(`[ERROR] Failed to create match between ${user1Id} and ${user2Id}:`, errorDetails);
-        console.error(`[ERROR] Full error object:`, JSON.stringify(errorDetails, null, 2));
-        // Return error details to help debugging
-        return { success: false, error: errorDetails };
+
+        // Fallback: treat as existing pair if conflict happened concurrently.
+        return { success: true, created: false, reason: "already_exists" };
+      });
+
+      await this.cacheService.del("matched:user:ids");
+      if (txResult.created) {
+        console.log(`[DEBUG] Created match between ${id1} and ${id2} (atomic)`);
+      } else {
+        console.log(`[DEBUG] Match not created between ${id1} and ${id2}: ${txResult.reason || 'already_exists'}`);
       }
+      return txResult;
+    } catch (unsafeError: any) {
+      const errorDetails = {
+        code: unsafeError?.code,
+        message: unsafeError?.message,
+        detail: unsafeError?.detail,
+        hint: unsafeError?.hint,
+        stack: unsafeError?.stack
+      };
+      console.error(`[ERROR] Failed to create match between ${user1Id} and ${user2Id}:`, errorDetails);
+      console.error(`[ERROR] Full error object:`, JSON.stringify(errorDetails, null, 2));
+      return { success: false, created: false, error: errorDetails };
     }
   }
 

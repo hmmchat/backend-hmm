@@ -892,7 +892,8 @@ export class MatchingService {
          AND "expiresAt" > CURRENT_TIMESTAMP`
       );
 
-      const acceptedBy = new Set((acceptances || []).map((a: any) => a.acceptedBy));
+      const acceptedByValues: string[] = (acceptances || []).map((a: any) => String(a.acceptedBy));
+      const acceptedBy = new Set<string>(acceptedByValues);
       const bothAccepted = acceptedBy.has(id1) && acceptedBy.has(id2);
       return { acceptedBy, bothAccepted };
     } catch (error: any) {

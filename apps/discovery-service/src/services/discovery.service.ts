@@ -145,10 +145,17 @@ export class DiscoveryService implements OnModuleInit {
       actualCity: actualCity
     };
 
+    // Session-scope raincheck exclusions must apply before honoring existing matches.
+    const raincheckedUserIds = await this.getRaincheckedUserIds(userId, sessionId, preferredCity);
+
     // Check if user is already matched
     const existingMatch = await this.matchingService.getMatchForUser(userId);
     if (existingMatch) {
       const matchedUserId = existingMatch.user1Id === userId ? existingMatch.user2Id : existingMatch.user1Id;
+      if (raincheckedUserIds.includes(matchedUserId)) {
+        await this.matchingService.removeMatchAcceptances(existingMatch.user1Id, existingMatch.user2Id);
+        await this.matchingService.removeMatch(existingMatch.user1Id, existingMatch.user2Id);
+      } else {
       const matchedUser = await this.userClient.getUserFullProfileById(matchedUserId);
       const currentUserStatus = String((userProfileResponse as any).status || "");
       const matchedUserStatus = String((matchedUser as any).status || "");
@@ -181,6 +188,7 @@ export class DiscoveryService implements OnModuleInit {
           exhausted: false
         };
       }
+      }
     }
 
     // User is not matched, find a match using mutual matching
@@ -198,9 +206,6 @@ export class DiscoveryService implements OnModuleInit {
         genders = gendersJson as ("MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY")[];
       }
     }
-
-    // Get rainchecked user IDs for this session and city
-    const raincheckedUserIds = await this.getRaincheckedUserIds(userId, sessionId, preferredCity);
 
     // Find match using mutual matching algorithm
     const matchedUser = await this.matchingService.findMatchForUser(
@@ -1708,10 +1713,17 @@ export class DiscoveryService implements OnModuleInit {
       actualCity: actualCity
     };
 
+    // Session-scope raincheck exclusions must apply before honoring existing matches.
+    const raincheckedUserIds = await this.getRaincheckedUserIds(userId, sessionId, preferredCity);
+
     // Check if user is already matched
     const existingMatch = await this.matchingService.getMatchForUser(userId);
     if (existingMatch) {
       const matchedUserId = existingMatch.user1Id === userId ? existingMatch.user2Id : existingMatch.user1Id;
+      if (raincheckedUserIds.includes(matchedUserId)) {
+        await this.matchingService.removeMatchAcceptances(existingMatch.user1Id, existingMatch.user2Id);
+        await this.matchingService.removeMatch(existingMatch.user1Id, existingMatch.user2Id);
+      } else {
       const matchedUser = await this.userClient.getUserFullProfileById(matchedUserId);
       const currentUserStatus = String((userProfileResponse as any).status || "");
       const matchedUserStatus = String((matchedUser as any).status || "");
@@ -1736,6 +1748,7 @@ export class DiscoveryService implements OnModuleInit {
           exhausted: false
         };
       }
+      }
     }
 
     // User is not matched, find a match using mutual matching
@@ -1753,9 +1766,6 @@ export class DiscoveryService implements OnModuleInit {
         genders = gendersJson as ("MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY")[];
       }
     }
-
-    // Get rainchecked user IDs for this session and city
-    const raincheckedUserIds = await this.getRaincheckedUserIds(userId, sessionId, preferredCity);
 
     // Find match using mutual matching algorithm
     // When user A sees user B's card, they are automatically matched

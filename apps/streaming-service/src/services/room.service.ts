@@ -2316,7 +2316,7 @@ export class RoomService {
     }
 
     // Cannot kick yourself
-    if (kickerUserId === targetUserId) {
+    if (String(kickerUserId) === String(targetUserId)) {
       return false;
     }
 

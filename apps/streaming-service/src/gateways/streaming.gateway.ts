@@ -521,7 +521,8 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     data: any,
     ws: any
   ) {
-    const { roomId, targetUserId } = data;
+    const { roomId, targetUserId: rawTarget } = data;
+    const targetUserId = rawTarget != null ? String(rawTarget).trim() : "";
     if (!roomId || !targetUserId) {
       this.sendError(ws, "roomId and targetUserId are required");
       return;
@@ -544,7 +545,8 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
         }
       }
 
-      // Notify all participants about the kick
+      // Notify everyone in the room (including the kicker) so all clients drop the kicked
+      // user's tiles/consumers. Excluding the kicker left their UI stuck with frozen video.
       await this.broadcastToRoom(roomId, {
         type: "participant-kicked",
         data: {
@@ -552,7 +554,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
           kickedUserId: targetUserId,
           kickedBy: userId
         }
-      }, userId); // Exclude the kicker from broadcast
+      });
 
       this.send(ws, {
         type: "user-kicked-success",

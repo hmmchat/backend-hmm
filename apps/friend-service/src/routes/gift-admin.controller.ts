@@ -7,7 +7,8 @@ const createGiftSchema = z.object({
   name: z.string().min(1).max(100),
   emoji: z.string().min(1).max(10),
   coins: z.number().int().nonnegative(),
-  diamonds: z.number().int().nonnegative()
+  diamonds: z.number().int().nonnegative(),
+  imageUrl: z.string().max(2048).optional()
 });
 
 const updateGiftSchema = z.object({
@@ -15,6 +16,7 @@ const updateGiftSchema = z.object({
   emoji: z.string().min(1).max(10).optional(),
   coins: z.number().int().nonnegative().optional(),
   diamonds: z.number().int().nonnegative().optional(),
+  imageUrl: z.string().max(2048).nullable().optional(),
   isActive: z.boolean().optional()
 });
 
@@ -73,6 +75,7 @@ export class GiftAdminController {
         emoji: data.emoji,
         coins: data.coins,
         diamonds: data.diamonds,
+        imageUrl: data.imageUrl?.trim() || null,
         isActive: true
       }
     });
@@ -93,6 +96,9 @@ export class GiftAdminController {
         emoji: data.emoji,
         coins: data.coins,
         diamonds: data.diamonds,
+        ...(data.imageUrl !== undefined && {
+          imageUrl: data.imageUrl === null ? null : data.imageUrl.trim() || null
+        }),
         isActive: data.isActive
       }
     });

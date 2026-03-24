@@ -3,14 +3,14 @@ import { PrismaClient } from "@prisma/client";
 const prisma = new PrismaClient();
 
 const GIFT_LIST = [
-  { giftId: "monkey", name: "Monkey", emoji: "🐵", coins: 50, diamonds: 50 },
-  { giftId: "pikachu", name: "Pikachu", emoji: "⚡", coins: 100, diamonds: 100 },
-  { giftId: "rose", name: "Rose", emoji: "🌹", coins: 200, diamonds: 200 },
-  { giftId: "diamond", name: "Diamond", emoji: "💎", coins: 500, diamonds: 500 },
-  { giftId: "heart", name: "Heart", emoji: "❤️", coins: 100, diamonds: 100 },
-  { giftId: "star", name: "Star", emoji: "⭐", coins: 150, diamonds: 150 },
-  { giftId: "fire", name: "Fire", emoji: "🔥", coins: 250, diamonds: 250 },
-  { giftId: "crown", name: "Crown", emoji: "👑", coins: 1000, diamonds: 1000 }
+  { giftId: "monkey", name: "Monkey", emoji: "🐵", coins: 50, diamonds: 50, imageUrl: "/gift/gift1.png" },
+  { giftId: "pikachu", name: "Pikachu", emoji: "⚡", coins: 100, diamonds: 100, imageUrl: "/gift/gift2.png" },
+  { giftId: "rose", name: "Rose", emoji: "🌹", coins: 200, diamonds: 200, imageUrl: "/gift/gift3.png" },
+  { giftId: "diamond", name: "Diamond", emoji: "💎", coins: 500, diamonds: 500, imageUrl: "/gift/gift4.png" },
+  { giftId: "heart", name: "Heart", emoji: "❤️", coins: 100, diamonds: 100, imageUrl: "/gift/gift5.png" },
+  { giftId: "star", name: "Star", emoji: "⭐", coins: 150, diamonds: 150, imageUrl: "/gift/gift6.png" },
+  { giftId: "fire", name: "Fire", emoji: "🔥", coins: 250, diamonds: 250, imageUrl: "/gift/gift7.png" },
+  { giftId: "crown", name: "Crown", emoji: "👑", coins: 1000, diamonds: 1000, imageUrl: "/gift/gift8.png" }
 ];
 
 async function main() {
@@ -24,6 +24,7 @@ async function main() {
         emoji: gift.emoji,
         coins: gift.coins,
         diamonds: gift.diamonds,
+        imageUrl: gift.imageUrl,
         isActive: true
       },
       create: {
@@ -32,6 +33,7 @@ async function main() {
         emoji: gift.emoji,
         coins: gift.coins,
         diamonds: gift.diamonds,
+        imageUrl: gift.imageUrl,
         isActive: true
       }
     });

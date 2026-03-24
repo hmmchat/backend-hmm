@@ -163,6 +163,9 @@ export class ConversationService {
   }> {
     // Handle only_follows filter separately (friend requests without messages)
     if (filter === "only_follows") {
+      if (section === ConversationSection.INBOX) {
+        return await this.getInboxNonFriendsOnly(userId, limit, cursor);
+      }
       return await this.getOnlyFollowsConversations(userId, section, limit, cursor);
     }
 
@@ -544,6 +547,36 @@ export class ConversationService {
   }
 
   /**
+   * Inbox threads where the other user is not a friend (for "only_follows"-style filter on inbox).
+   */
+  private async getInboxNonFriendsOnly(
+    userId: string,
+    limit: number,
+    cursor?: string
+  ): Promise<{
+    conversations: any[];
+    nextCursor?: string;
+    hasMore: boolean;
+  }> {
+    const take = Math.min(100, Math.max(limit * 4, limit));
+    const expanded = await this.getConversationsBySection(
+      userId,
+      ConversationSection.INBOX,
+      take,
+      cursor,
+      undefined
+    );
+    const nonFriends = expanded.conversations.filter((c) => !c.isFriend);
+    const slice = nonFriends.slice(0, limit);
+    const hasMore = nonFriends.length > limit || expanded.hasMore;
+    return {
+      conversations: slice,
+      nextCursor: hasMore && slice.length > 0 ? slice[slice.length - 1].id : undefined,
+      hasMore
+    };
+  }
+
+  /**
    * Get only friend requests without messages (only_follows filter)
    * Optimized with a single query using Prisma for better performance
    */
@@ -698,6 +731,7 @@ export class ConversationService {
 
       return {
         id: `follow_${request.id}`, // Consistent ID format for frontend
+        conversationId: `follow_${request.id}`,
         otherUserId,
         section,
         lastMessage: null, // No messages for follow requests

@@ -104,6 +104,8 @@ model Gift {
   emoji         String   // Emoji representation
   coins         Int      // Legacy/display (optional)
   diamonds      Int      @default(0) // Cost in diamonds (used for gifting)
+  /// Public URL or site-relative path for sticker art (e.g. /gift/gift1.png)
+  imageUrl      String?
   isActive      Boolean  @default(true)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt

@@ -484,7 +484,7 @@ export class FriendService {
       }
     });
 
-    return messages.map(msg => ({
+    const mapped = messages.map((msg) => ({
       id: msg.id,
       fromUserId: msg.fromUserId,
       toUserId: msg.toUserId,
@@ -497,6 +497,7 @@ export class FriendService {
       messageType: msg.messageType,
       createdAt: msg.createdAt
     }));
+    return this.giftCatalog.attachGiftImageUrls(mapped);
   }
 
   /**
@@ -955,7 +956,7 @@ export class FriendService {
     nextCursor?: string;
     hasMore: boolean;
   }> {
-    const messages = await this.prisma.friendMessage.findMany({
+    const dbMessages = await this.prisma.friendMessage.findMany({
       where: {
         OR: [
           { fromUserId: userId, toUserId: otherUserId },
@@ -972,24 +973,26 @@ export class FriendService {
       })
     });
 
-    const hasMore = messages.length > limit;
-    const resultMessages = hasMore ? messages.slice(0, limit) : messages;
+    const hasMore = dbMessages.length > limit;
+    const resultMessages = hasMore ? dbMessages.slice(0, limit) : dbMessages;
     const nextCursor = hasMore ? resultMessages[resultMessages.length - 1].id : undefined;
 
+    const mapped = resultMessages.reverse().map((msg) => ({
+      id: msg.id,
+      fromUserId: msg.fromUserId,
+      toUserId: msg.toUserId,
+      message: msg.message,
+      isRead: msg.isRead,
+      readAt: msg.readAt,
+      transactionId: msg.transactionId, // Shows if message cost coins
+      giftId: msg.giftId,
+      giftAmount: msg.giftAmount,
+      messageType: msg.messageType,
+      createdAt: msg.createdAt
+    }));
+    const enriched = await this.giftCatalog.attachGiftImageUrls(mapped);
     return {
-      messages: resultMessages.reverse().map(msg => ({
-        id: msg.id,
-        fromUserId: msg.fromUserId,
-        toUserId: msg.toUserId,
-        message: msg.message,
-        isRead: msg.isRead,
-        readAt: msg.readAt,
-        transactionId: msg.transactionId, // Shows if message cost coins
-        giftId: msg.giftId,
-        giftAmount: msg.giftAmount,
-        messageType: msg.messageType,
-        createdAt: msg.createdAt
-      })),
+      messages: enriched,
       nextCursor,
       hasMore
     };
@@ -1243,7 +1246,8 @@ export class FriendService {
   async getInboxConversations(
     userId: string,
     limit: number = 50,
-    cursor?: string
+    cursor?: string,
+    filter?: "text_only" | "with_gift" | "only_follows"
   ): Promise<{
     conversations: any[];
     nextCursor?: string;
@@ -1253,7 +1257,8 @@ export class FriendService {
       userId,
       ConversationSection.INBOX,
       limit,
-      cursor
+      cursor,
+      filter
     );
   }
 

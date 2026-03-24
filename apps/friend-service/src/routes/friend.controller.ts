@@ -18,6 +18,7 @@ import { ShareRateLimitGuard } from "../guards/share-rate-limit.guard.js";
 import { FriendsWallImageService } from "../services/friends-wall-image.service.js";
 import { FilesClientService } from "../services/files-client.service.js";
 import { MetricsService } from "../services/metrics.service.js";
+import { GiftCatalogService, resolveGiftStickerUrl } from "../services/gift-catalog.service.js";
 import { z } from "zod";
 import { verifyToken, AccessPayload } from "@hmm/common";
 import { JWK } from "jose";
@@ -64,7 +65,8 @@ export class FriendController {
     private readonly friendService: FriendService,
     private readonly friendsWallImageService: FriendsWallImageService,
     private readonly filesClient: FilesClientService,
-    private readonly metrics: MetricsService
+    private readonly metrics: MetricsService,
+    private readonly giftCatalogService: GiftCatalogService
   ) { }
 
   private async initializeJWT() {
@@ -398,6 +400,29 @@ export class FriendController {
   }
 
   /**
+   * Active gifts for messaging UI (authenticated; amounts must match validateGift).
+   * GET /me/gifts/catalog
+   */
+  @Get("me/gifts/catalog")
+  async getGiftCatalog(@Headers("authorization") authz: string) {
+    const token = this.getTokenFromHeader(authz);
+    await this.verifyTokenAndGetUserId(token!);
+    const rows = await this.giftCatalogService.getAllActiveGifts();
+    const firstMessageCostCoins = parseInt(process.env.FIRST_MESSAGE_COST_COINS || "10", 10);
+    return {
+      firstMessageCostCoins,
+      gifts: rows.map((g: any) => ({
+        giftId: g.giftId,
+        name: g.name,
+        emoji: g.emoji,
+        diamonds: g.diamonds ?? g.coins ?? 0,
+        coins: g.coins,
+        imageUrl: resolveGiftStickerUrl(g.imageUrl, g.giftId)
+      }))
+    };
+  }
+
+  /**
    * Check if the current user is friends with another user (e.g. video chat UI).
    * GET /me/friends/:friendId/check
    * Gateway: GET /v1/friends/me/friends/:friendId/check
@@ -415,7 +440,7 @@ export class FriendController {
 
   /**
    * Get inbox conversations
-   * GET /me/conversations/inbox
+   * GET /me/conversations/inbox?filter=text_only|with_gift|only_follows
    */
   @UseGuards(ConversationRateLimitGuard)
   @Get("me/conversations/inbox")
@@ -427,8 +452,13 @@ export class FriendController {
     const userId = await this.verifyTokenAndGetUserId(token!);
     // Auto-mark INBOX section as seen
     await this.friendService.markSectionAsSeen(userId, "INBOX");
-    const pagination = PaginationSchema.parse(query);
-    return this.friendService.getInboxConversations(userId, pagination.limit, pagination.cursor);
+    const parsed = ConversationQuerySchema.parse(query);
+    return this.friendService.getInboxConversations(
+      userId,
+      parsed.limit,
+      parsed.cursor,
+      parsed.filter
+    );
   }
 
   /**

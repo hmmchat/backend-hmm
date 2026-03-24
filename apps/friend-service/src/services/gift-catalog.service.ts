@@ -1,6 +1,24 @@
 import { Injectable, NotFoundException, BadRequestException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 
+/** Stable preset art when `imageUrl` is unset (giftId is often a UUID, not a filename). */
+const PRESET_GIFT_COUNT = 8;
+
+export function fallbackPresetGiftImagePath(giftId: string): string {
+  let h = 0;
+  for (let i = 0; i < giftId.length; i++) {
+    h = Math.imul(31, h) + giftId.charCodeAt(i) | 0;
+  }
+  const idx = (Math.abs(h) % PRESET_GIFT_COUNT) + 1;
+  return `/gift/gift${idx}.png`;
+}
+
+export function resolveGiftStickerUrl(imageUrl: string | null | undefined, giftId: string): string {
+  const trimmed = imageUrl?.trim();
+  if (trimmed) return trimmed;
+  return fallbackPresetGiftImagePath(giftId);
+}
+
 @Injectable()
 export class GiftCatalogService {
   constructor(private readonly prisma: PrismaService) {}
@@ -18,6 +36,7 @@ export class GiftCatalogService {
         emoji: true,
         coins: true,
         diamonds: true,
+        imageUrl: true,
         isActive: true
       } as any // diamonds added for decoupled coins/diamonds; Prisma client may need regenerate
     });
@@ -59,7 +78,8 @@ export class GiftCatalogService {
         name: true,
         emoji: true,
         coins: true,
-        diamonds: true
+        diamonds: true,
+        imageUrl: true
       } as any,
       orderBy: {
         diamonds: "asc"
@@ -77,5 +97,30 @@ export class GiftCatalogService {
     });
 
     return gift !== null && gift.isActive;
+  }
+
+  /**
+   * Adds `giftImageUrl` for GIFT rows so clients need not guess `/gift/{giftId}.png`.
+   */
+  async attachGiftImageUrls<T extends { giftId?: string | null }>(
+    messages: T[]
+  ): Promise<Array<T & { giftImageUrl?: string }>> {
+    const ids = [...new Set(messages.map((m) => m.giftId).filter(Boolean) as string[])];
+    if (ids.length === 0) {
+      return messages.map((m) => ({ ...m }));
+    }
+    const rows = await this.prisma.gift.findMany({
+      where: { giftId: { in: ids } },
+      select: { giftId: true, imageUrl: true }
+    });
+    const byGiftId = new Map(
+      rows.map((r) => [r.giftId, resolveGiftStickerUrl(r.imageUrl, r.giftId)])
+    );
+    return messages.map((m) => {
+      const gid = m.giftId;
+      if (!gid) return { ...m };
+      const url = byGiftId.get(gid) ?? fallbackPresetGiftImagePath(gid);
+      return { ...m, giftImageUrl: url };
+    });
   }
 }

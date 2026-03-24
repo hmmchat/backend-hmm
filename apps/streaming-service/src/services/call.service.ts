@@ -123,11 +123,18 @@ export class CallService {
 
     // Store producer
     if (kind === "audio") {
+      if (participant.producer.audio) {
+        this.roomService.unregisterProducerOwner(roomId, participant.producer.audio.id);
+      }
       participant.producer.audio = producer;
     } else if (kind === "video") {
+      if (participant.producer.video) {
+        this.roomService.unregisterProducerOwner(roomId, participant.producer.video.id);
+      }
       participant.producer.video = producer;
     }
 
+    this.roomService.registerProducerOwner(roomId, producer.id, userId);
     this.roomService.setParticipant(roomId, userId, participant);
 
     this.logger.log(`Producer created: ${producer.id} (${kind}) for user ${userId}`);
@@ -205,7 +212,7 @@ export class CallService {
     }> = [];
 
     for (const [userId, participant] of room.participants.entries()) {
-      if (userId === excludeUserId) continue;
+      if (excludeUserId !== undefined && String(userId) === String(excludeUserId)) continue;
 
       if (participant.producer.audio) {
         producers.push({

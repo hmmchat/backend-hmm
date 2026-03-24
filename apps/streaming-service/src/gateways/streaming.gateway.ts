@@ -690,24 +690,25 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       rtpCapabilities
     );
 
-    // Find the producer's userId by looking through all participants
-    let producerUserId: string | undefined;
-    try {
-      const room = this.roomService.getRoom(roomId);
-      // Fixed: iterate over Map entries correctly
-      for (const [pUserId, participant] of room.participants.entries()) {
-        // Skip searching in own producers
-        if (pUserId === userId) continue;
-
-        // Fixed: Check producer object structure correctly
-        const producer = (participant as any).producer;
-        if (producer.audio?.id === producerId || producer.video?.id === producerId) {
-          producerUserId = pUserId;
-          break;
+    // Prefer explicit producer→owner map (avoids missed lookups when participant shape or key types differ)
+    let producerUserId: string | undefined = this.roomService.getProducerOwner(roomId, producerId);
+    if (!producerUserId) {
+      try {
+        const room = this.roomService.getRoom(roomId);
+        for (const [pUserId, participant] of room.participants.entries()) {
+          if (String(pUserId) === String(userId)) continue;
+          const p = (participant as any).producer;
+          if (p?.audio?.id === producerId || p?.video?.id === producerId) {
+            producerUserId = pUserId;
+            break;
+          }
         }
+      } catch (error) {
+        this.logger.warn(`Could not find producer userId for ${producerId}`);
       }
-    } catch (error) {
-      this.logger.warn(`Could not find producer userId for ${producerId}`);
+    }
+    if (!producerUserId) {
+      this.logger.warn(`consume: producer owner unknown for ${producerId} in room ${roomId}`);
     }
 
     this.send(ws, {
@@ -1328,7 +1329,9 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     excludeUserId?: string
   ) {
     for (const [connId, conn] of this.connections.entries()) {
-      if (conn.roomId === roomId && conn.userId !== excludeUserId) {
+      const excluded =
+        excludeUserId !== undefined && String(conn.userId) === String(excludeUserId);
+      if (conn.roomId === roomId && !excluded) {
         try {
           this.send(conn.ws, message);
         } catch (error) {

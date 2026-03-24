@@ -10,6 +10,8 @@ interface RoomState {
   participants: Map<string, ParticipantState>;
   viewers: Map<string, ViewerState>;
   isBroadcasting: boolean;
+  /** producerId (mediasoup) -> owning participant userId — used so consume responses always carry remote userId */
+  producerOwnerById: Map<string, string>;
 }
 
 interface ParticipantState {
@@ -471,7 +473,8 @@ export class RoomService {
         router,
         participants: new Map(),
         viewers: new Map(),
-        isBroadcasting: false
+        isBroadcasting: false,
+        producerOwnerById: new Map()
       };
 
       this.rooms.set(roomId, roomState);
@@ -624,7 +627,8 @@ export class RoomService {
       router,
       participants: new Map(),
       viewers: new Map(),
-      isBroadcasting: session.isBroadcasting || false
+      isBroadcasting: session.isBroadcasting || false,
+      producerOwnerById: new Map()
     };
 
     this.rooms.set(roomId, roomState);
@@ -853,8 +857,14 @@ export class RoomService {
     if (room && participant) {
       // Close transports and producers
       for (const t of participant.transports.values()) { try { t.close(); } catch { } }
-      if (participant.producer.audio) participant.producer.audio.close();
-      if (participant.producer.video) participant.producer.video.close();
+      if (participant.producer.audio) {
+        room.producerOwnerById.delete(participant.producer.audio.id);
+        participant.producer.audio.close();
+      }
+      if (participant.producer.video) {
+        room.producerOwnerById.delete(participant.producer.video.id);
+        participant.producer.video.close();
+      }
 
       // Close all consumers
       for (const consumer of participant.consumers.values()) {
@@ -2342,6 +2352,22 @@ export class RoomService {
   setParticipant(roomId: string, userId: string, state: ParticipantState): void {
     const room = this.getRoom(roomId);
     room.participants.set(userId, state);
+  }
+
+  registerProducerOwner(roomId: string, producerId: string, ownerUserId: string): void {
+    const room = this.getRoom(roomId);
+    room.producerOwnerById.set(producerId, ownerUserId);
+  }
+
+  unregisterProducerOwner(roomId: string, producerId: string): void {
+    const room = this.rooms.get(roomId);
+    if (!room) return;
+    room.producerOwnerById.delete(producerId);
+  }
+
+  getProducerOwner(roomId: string, producerId: string): string | undefined {
+    const room = this.rooms.get(roomId);
+    return room?.producerOwnerById.get(producerId);
   }
 
   /**

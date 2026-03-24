@@ -1101,19 +1101,16 @@ export class RoomService {
       );
     }
 
-    // Get all participant user IDs
-    const participantUserIds = session.participants.map(p => p.userId);
-
     // Update database: enable pull stranger mode
     await this.prisma.callSession.update({
       where: { id: session.id },
       data: { pullStrangerEnabled: true }
     });
 
-    // Update all participants to IN_SQUAD_AVAILABLE status
-    // This makes them available for matching (only _AVAILABLE statuses can be shown in face cards)
-    this.discoveryClient.updateUserStatuses(participantUserIds, "IN_SQUAD_AVAILABLE").catch((err) => {
-      this.logger.error(`Failed to update user statuses to IN_SQUAD_AVAILABLE: ${err.message}`);
+    // Product rule: only the HOST who clicked "pull stranger" should appear in discovery.
+    // Keep other in-call participants in IN_SQUAD/IN_BROADCAST.
+    this.discoveryClient.updateUserStatus(userId, "IN_SQUAD_AVAILABLE").catch((err) => {
+      this.logger.error(`Failed to update pull-stranger host ${userId} to IN_SQUAD_AVAILABLE: ${err.message}`);
     });
 
     // Log event
@@ -1122,11 +1119,11 @@ export class RoomService {
         sessionId: session.id,
         eventType: "pull_stranger_enabled",
         userId: userId,
-        metadata: JSON.stringify({ enabledBy: userId, participantCount: session.participants.length })
+        metadata: JSON.stringify({ enabledBy: userId, participantCount: session.participants.length, visibleInDiscoveryUserId: userId })
       }
     });
 
-    this.logger.log(`Pull stranger mode enabled for room ${roomId} by HOST ${userId}. Participants: ${participantUserIds.join(", ")}`);
+    this.logger.log(`Pull stranger mode enabled for room ${roomId} by HOST ${userId}. Only this host is marked IN_SQUAD_AVAILABLE.`);
   }
 
   /**
@@ -1177,9 +1174,10 @@ export class RoomService {
       if (process.env.TEST_MODE !== "true") {
         try {
           const targetUserStatus = await this.discoveryClient.getUserStatus(targetUserId);
-          if (targetUserStatus !== "IN_SQUAD_AVAILABLE") {
+          // Allow IN_SQUAD as a transient fallback if user-service update is slightly delayed.
+          if (targetUserStatus !== "IN_SQUAD_AVAILABLE" && targetUserStatus !== "IN_SQUAD") {
             throw new BadRequestException(
-              `Target user ${targetUserId} does not have IN_SQUAD_AVAILABLE status (current: ${targetUserStatus}). ` +
+              `Target user ${targetUserId} does not have IN_SQUAD_AVAILABLE/IN_SQUAD status (current: ${targetUserStatus}). ` +
               `They may have already been matched or their status changed.`
             );
           }
@@ -1207,11 +1205,12 @@ export class RoomService {
         throw new BadRequestException(`User ${joiningUserId} is already a participant in this room`);
       }
 
-      // Verify joining user has AVAILABLE or IN_SQUAD_AVAILABLE status (only _AVAILABLE statuses can join)
+      // Verify joining user has an _AVAILABLE status
       if (process.env.TEST_MODE !== "true") {
         try {
           const joiningUserStatus = await this.discoveryClient.getUserStatus(joiningUserId);
-          if (joiningUserStatus !== "AVAILABLE" && joiningUserStatus !== "IN_SQUAD_AVAILABLE") {
+          const allowedJoiningStatuses = new Set(["AVAILABLE", "IN_SQUAD_AVAILABLE", "IN_BROADCAST_AVAILABLE"]);
+          if (!allowedJoiningStatuses.has(joiningUserStatus)) {
             // Explicitly reject IN_SQUAD/IN_BROADCAST
             if (joiningUserStatus === "IN_SQUAD" || joiningUserStatus === "IN_BROADCAST") {
               throw new BadRequestException(
@@ -1220,7 +1219,7 @@ export class RoomService {
               );
             }
             throw new BadRequestException(
-              `User ${joiningUserId} must be in AVAILABLE or IN_SQUAD_AVAILABLE status to join via pull stranger. ` +
+              `User ${joiningUserId} must be in AVAILABLE, IN_SQUAD_AVAILABLE, or IN_BROADCAST_AVAILABLE status to join via pull stranger. ` +
               `Current status: ${joiningUserStatus}. Only users with _AVAILABLE statuses can join.`
             );
           }

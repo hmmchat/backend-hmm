@@ -1171,10 +1171,14 @@ export class RoomService {
     });
 
     // Product rule: only the HOST who clicked "pull stranger" should appear in discovery.
-    // Keep other in-call participants in IN_SQUAD/IN_BROADCAST.
-    this.discoveryClient.updateUserStatus(userId, "IN_SQUAD_AVAILABLE").catch((err) => {
-      this.logger.error(`Failed to update pull-stranger host ${userId} to IN_SQUAD_AVAILABLE: ${err.message}`);
-    });
+    // Force-sync all active participants to avoid stale statuses:
+    // - enabled host => IN_SQUAD_AVAILABLE
+    // - everyone else => IN_SQUAD
+    const participantUserIds = session.participants.map((p) => p.userId);
+    for (const participantId of participantUserIds) {
+      const targetStatus = participantId === userId ? "IN_SQUAD_AVAILABLE" : "IN_SQUAD";
+      await this.discoveryClient.updateUserStatus(participantId, targetStatus);
+    }
 
     // Log event
     await this.prisma.callEvent.create({
@@ -1194,7 +1198,10 @@ export class RoomService {
     // Automatically end pull mode after configured window if no one joins.
     this.schedulePullStrangerExpiry(roomId, userId);
 
-    this.logger.log(`Pull stranger mode enabled for room ${roomId} by HOST ${userId}. Only this host is marked IN_SQUAD_AVAILABLE.`);
+    this.logger.log(
+      `Pull stranger mode enabled for room ${roomId} by HOST ${userId}. ` +
+      `Status sync complete: host=${userId}->IN_SQUAD_AVAILABLE, others->IN_SQUAD`
+    );
   }
 
   /**

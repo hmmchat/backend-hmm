@@ -37,12 +37,25 @@ export class RoomService {
   private readonly maxParticipants = parseInt(process.env.MAX_PARTICIPANTS_PER_CALL || "4", 10);
   private readonly pullStrangerWindowMs = this.getPullStrangerWindowMs();
   private pullStrangerExpiryTimers = new Map<string, NodeJS.Timeout>();
+  /**
+   * GET /users/:id/room is polled often from the video client; each call used to hit user-service reconcile.
+   * Throttle per userId to cut latency spikes, timeouts, and gateway 502/504s under load.
+   * Set ROOM_RECONCILE_MIN_INTERVAL_MS=0 to disable (always reconcile).
+   */
+  private readonly roomReconcileMinIntervalMs: number;
+  private lastParticipantReconcileAt = new Map<string, number>();
+  private lastViewerReconcileAt = new Map<string, number>();
 
   constructor(
     private prisma: PrismaService,
     private mediasoup: MediasoupService,
     private discoveryClient: DiscoveryClientService
-  ) { }
+  ) {
+    const raw = process.env.ROOM_RECONCILE_MIN_INTERVAL_MS;
+    const parsed = raw !== undefined && raw !== "" ? Number.parseInt(raw, 10) : 4000;
+    this.roomReconcileMinIntervalMs =
+      Number.isFinite(parsed) && parsed >= 0 ? parsed : 4000;
+  }
 
   private getPullStrangerWindowMs(): number {
     const raw = process.env.PULL_STRANGER_WINDOW_MS;
@@ -168,6 +181,34 @@ export class RoomService {
   /**
    * If streaming DB has an active viewer but user-service says they are not viewing / broadcast flow, remove viewer row.
    */
+  private async runParticipantReconcileThrottled(userId: string): Promise<void> {
+    if (this.roomReconcileMinIntervalMs === 0) {
+      await this.reconcileStaleParticipantIfNeeded(userId);
+      return;
+    }
+    const now = Date.now();
+    const last = this.lastParticipantReconcileAt.get(userId) ?? 0;
+    if (now - last < this.roomReconcileMinIntervalMs) {
+      return;
+    }
+    this.lastParticipantReconcileAt.set(userId, now);
+    await this.reconcileStaleParticipantIfNeeded(userId);
+  }
+
+  private async runViewerReconcileThrottled(userId: string): Promise<void> {
+    if (this.roomReconcileMinIntervalMs === 0) {
+      await this.reconcileStaleViewerIfNeeded(userId);
+      return;
+    }
+    const now = Date.now();
+    const last = this.lastViewerReconcileAt.get(userId) ?? 0;
+    if (now - last < this.roomReconcileMinIntervalMs) {
+      return;
+    }
+    this.lastViewerReconcileAt.set(userId, now);
+    await this.reconcileStaleViewerIfNeeded(userId);
+  }
+
   private async reconcileStaleViewerIfNeeded(userId: string): Promise<void> {
     if (!this.shouldReconcileWithUserService()) {
       return;
@@ -2414,7 +2455,7 @@ export class RoomService {
    * Returns the most recently started room if user is in multiple rooms
    */
   async getUserActiveRoom(userId: string): Promise<{ roomId: string } | null> {
-    await this.reconcileStaleParticipantIfNeeded(userId);
+    await this.runParticipantReconcileThrottled(userId);
     return this.fetchActiveParticipantRoom(userId);
   }
 
@@ -2422,7 +2463,7 @@ export class RoomService {
    * Get user's active room (as viewer)
    */
   async getUserActiveRoomAsViewer(userId: string): Promise<{ roomId: string } | null> {
-    await this.reconcileStaleViewerIfNeeded(userId);
+    await this.runViewerReconcileThrottled(userId);
 
     const viewer = await this.prisma.callViewer.findFirst({
       where: {

@@ -33,12 +33,75 @@ export class RoomService {
   private readonly logger = new Logger(RoomService.name);
   private rooms = new Map<string, RoomState>();
   private readonly maxParticipants = parseInt(process.env.MAX_PARTICIPANTS_PER_CALL || "4", 10);
+  private readonly pullStrangerWindowMs = this.getPullStrangerWindowMs();
+  private pullStrangerExpiryTimers = new Map<string, NodeJS.Timeout>();
 
   constructor(
     private prisma: PrismaService,
     private mediasoup: MediasoupService,
     private discoveryClient: DiscoveryClientService
   ) { }
+
+  private getPullStrangerWindowMs(): number {
+    const raw = process.env.PULL_STRANGER_WINDOW_MS;
+    const parsed = Number.parseInt(raw || "60000", 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+    this.logger.warn(`Invalid PULL_STRANGER_WINDOW_MS="${raw}", falling back to 60000ms`);
+    return 60000;
+  }
+
+  private clearPullStrangerExpiryTimer(roomId: string): void {
+    const existing = this.pullStrangerExpiryTimers.get(roomId);
+    if (existing) {
+      clearTimeout(existing);
+      this.pullStrangerExpiryTimers.delete(roomId);
+    }
+  }
+
+  private schedulePullStrangerExpiry(roomId: string, enabledByUserId: string): void {
+    this.clearPullStrangerExpiryTimer(roomId);
+
+    const timer = setTimeout(async () => {
+      try {
+        const session = await this.prisma.callSession.findUnique({
+          where: { roomId }
+        });
+
+        if (!session || !session.pullStrangerEnabled) {
+          return;
+        }
+
+        await this.prisma.callSession.update({
+          where: { id: session.id },
+          data: { pullStrangerEnabled: false }
+        });
+
+        // Product rule: if nobody joined within the pull window, restore initiator to IN_SQUAD.
+        await this.discoveryClient.updateUserStatus(enabledByUserId, "IN_SQUAD").catch((err) => {
+          this.logger.error(`Failed to restore pull-stranger host ${enabledByUserId} to IN_SQUAD: ${err.message}`);
+        });
+
+        await this.prisma.callEvent.create({
+          data: {
+            sessionId: session.id,
+            eventType: "pull_stranger_expired",
+            userId: enabledByUserId,
+            metadata: JSON.stringify({ roomId, enabledBy: enabledByUserId, windowMs: this.pullStrangerWindowMs })
+          }
+        });
+
+        this.logger.log(`Pull stranger expired for room ${roomId}. Host ${enabledByUserId} restored to IN_SQUAD.`);
+      } catch (error: any) {
+        this.logger.error(`Failed to expire pull stranger for room ${roomId}: ${error?.message || error}`);
+      } finally {
+        this.pullStrangerExpiryTimers.delete(roomId);
+      }
+    }, this.pullStrangerWindowMs);
+
+    this.pullStrangerExpiryTimers.set(roomId, timer);
+  }
 
   /** User-service statuses consistent with an active streaming *participant* row */
   private static readonly IN_CALL_PARTICIPANT_STATUSES = new Set([
@@ -1119,9 +1182,17 @@ export class RoomService {
         sessionId: session.id,
         eventType: "pull_stranger_enabled",
         userId: userId,
-        metadata: JSON.stringify({ enabledBy: userId, participantCount: session.participants.length, visibleInDiscoveryUserId: userId })
+        metadata: JSON.stringify({
+          enabledBy: userId,
+          participantCount: session.participants.length,
+          visibleInDiscoveryUserId: userId,
+          windowMs: this.pullStrangerWindowMs
+        })
       }
     });
+
+    // Automatically end pull mode after configured window if no one joins.
+    this.schedulePullStrangerExpiry(roomId, userId);
 
     this.logger.log(`Pull stranger mode enabled for room ${roomId} by HOST ${userId}. Only this host is marked IN_SQUAD_AVAILABLE.`);
   }
@@ -1160,6 +1231,42 @@ export class RoomService {
         throw new BadRequestException(
           `Pull stranger mode is not enabled for this room. A HOST must enable it first.`
         );
+      }
+
+      // Pull mode has a fixed window. If expired, disable it and restore initiator.
+      const latestEnableEvent = await tx.callEvent.findFirst({
+        where: {
+          sessionId: session.id,
+          eventType: "pull_stranger_enabled"
+        },
+        orderBy: {
+          createdAt: "desc"
+        },
+        select: {
+          createdAt: true,
+          userId: true
+        }
+      });
+
+      if (latestEnableEvent) {
+        const expiresAt = latestEnableEvent.createdAt.getTime() + this.pullStrangerWindowMs;
+        if (Date.now() > expiresAt) {
+          await tx.callSession.update({
+            where: { id: session.id },
+            data: { pullStrangerEnabled: false }
+          });
+          this.clearPullStrangerExpiryTimer(roomId);
+
+          if (latestEnableEvent.userId) {
+            this.discoveryClient.updateUserStatus(latestEnableEvent.userId, "IN_SQUAD").catch((err) => {
+              this.logger.error(`Failed to restore expired pull-stranger host ${latestEnableEvent.userId}: ${err.message}`);
+            });
+          }
+
+          throw new BadRequestException(
+            `Pull stranger window has expired. Host needs to enable it again.`
+          );
+        }
       }
 
       // Verify target user is in the room
@@ -1205,11 +1312,13 @@ export class RoomService {
         throw new BadRequestException(`User ${joiningUserId} is already a participant in this room`);
       }
 
-      // Verify joining user has an _AVAILABLE status
+      // Verify joining user has an _AVAILABLE status or MATCHED.
+      // MATCHED is valid here because discovery card rendering can temporarily transition
+      // a user to MATCHED before they click "meet this person rn".
       if (process.env.TEST_MODE !== "true") {
         try {
           const joiningUserStatus = await this.discoveryClient.getUserStatus(joiningUserId);
-          const allowedJoiningStatuses = new Set(["AVAILABLE", "IN_SQUAD_AVAILABLE", "IN_BROADCAST_AVAILABLE"]);
+          const allowedJoiningStatuses = new Set(["AVAILABLE", "IN_SQUAD_AVAILABLE", "IN_BROADCAST_AVAILABLE", "MATCHED"]);
           if (!allowedJoiningStatuses.has(joiningUserStatus)) {
             // Explicitly reject IN_SQUAD/IN_BROADCAST
             if (joiningUserStatus === "IN_SQUAD" || joiningUserStatus === "IN_BROADCAST") {
@@ -1219,7 +1328,7 @@ export class RoomService {
               );
             }
             throw new BadRequestException(
-              `User ${joiningUserId} must be in AVAILABLE, IN_SQUAD_AVAILABLE, or IN_BROADCAST_AVAILABLE status to join via pull stranger. ` +
+              `User ${joiningUserId} must be in AVAILABLE, IN_SQUAD_AVAILABLE, IN_BROADCAST_AVAILABLE, or MATCHED status to join via pull stranger. ` +
               `Current status: ${joiningUserStatus}. Only users with _AVAILABLE statuses can join.`
             );
           }
@@ -1270,6 +1379,7 @@ export class RoomService {
         where: { id: session.id },
         data: { pullStrangerEnabled: false }
       });
+      this.clearPullStrangerExpiryTimer(roomId);
 
       // Get all participant user IDs (including new joiner)
       const allParticipantUserIds = [...session.participants.map(p => p.userId), joiningUserId];
@@ -1854,6 +1964,8 @@ export class RoomService {
    * Handles ending room gracefully even if not in memory
    */
   async endRoom(roomId: string): Promise<void> {
+    this.clearPullStrangerExpiryTimer(roomId);
+
     // Try to get room from memory, but continue even if not found (will update DB)
     let room: RoomState | null = null;
     try {

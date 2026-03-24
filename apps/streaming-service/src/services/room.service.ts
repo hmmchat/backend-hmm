@@ -212,6 +212,38 @@ export class RoomService {
   }
 
   /**
+   * After call_participants rows exist, push user-service MATCHED → IN_SQUAD with retries.
+   * Awaited from createRoom to shrink the window where GET /users/:id/room reconcile could
+   * see stale MATCHED (mitigated further by IN_CALL_PARTICIPANT_STATUSES including MATCHED).
+   * Never throws: room is already persisted; logs if user-service never acks.
+   */
+  private async syncNewRoomParticipantsToInSquad(userIds: string[]): Promise<void> {
+    const maxAttempts = 5;
+    const baseDelayMs = 150;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await this.discoveryClient.updateUserStatuses(userIds, "IN_SQUAD");
+        this.logger.log(
+          `[createRoom] User-service IN_SQUAD sync ok for ${userIds.length} user(s) (attempt ${attempt})`
+        );
+        return;
+      } catch (err: any) {
+        const msg = err?.message || String(err);
+        this.logger.warn(
+          `[createRoom] IN_SQUAD user-service sync attempt ${attempt}/${maxAttempts} failed: ${msg}`
+        );
+        if (attempt >= maxAttempts) {
+          this.logger.error(
+            `[createRoom] IN_SQUAD sync failed after ${maxAttempts} attempts; userIds=${userIds.join(",")}`
+          );
+          return;
+        }
+        await new Promise((r) => setTimeout(r, baseDelayMs * 2 ** (attempt - 1)));
+      }
+    }
+  }
+
+  /**
    * Create a new room when 2 users enter IN_SQUAD (accept each other's cards)
    * Note: Single users cannot create rooms, but once created, rooms can have 1 user remain
    */
@@ -449,16 +481,12 @@ export class RoomService {
         `Room created: ${roomId} with ${userIds.length} participants (${hostCount} hosts, callType: ${callType})`
       );
 
-      // Notify discovery-service that users entered IN_SQUAD
-      this.discoveryClient.notifyRoomCreated(roomId, userIds).catch((err) => {
-        this.logger.error(`Failed to notify discovery-service: ${err.message}`);
-      });
+      // BUSINESS RULE: user-service status IN_SQUAD — await + retry so clients polling room are less
+      // likely to hit reconcile while still MATCHED. Room row already exists.
+      await this.syncNewRoomParticipantsToInSquad(userIds);
 
-      // BUSINESS RULE: When users enter a room, their status changes to IN_SQUAD
-      // Update user statuses from MATCHED → IN_SQUAD
-      this.discoveryClient.updateUserStatuses(userIds, "IN_SQUAD").catch((err) => {
-        this.logger.error(`Failed to update user statuses: ${err.message}`);
-      });
+      // Notify discovery-service (Redis / internal hooks); does not throw on HTTP failure
+      await this.discoveryClient.notifyRoomCreated(roomId, userIds);
 
       return { roomId, sessionId: session.id };
     } catch (error: any) {

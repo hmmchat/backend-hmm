@@ -108,7 +108,10 @@ export class RoomService {
     "IN_SQUAD",
     "IN_BROADCAST",
     "IN_SQUAD_AVAILABLE",
-    "IN_BROADCAST_AVAILABLE"
+    "IN_BROADCAST_AVAILABLE",
+    // Transient: room rows are committed before discovery finishes MATCHED → IN_SQUAD; GET /users/:id/room
+    // must not reconcile-remove participants while status is still MATCHED.
+    "MATCHED"
   ]);
 
   /** User-service statuses consistent with an active *viewer* row (broadcast / waitlist) */

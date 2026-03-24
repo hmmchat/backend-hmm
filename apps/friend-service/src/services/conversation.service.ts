@@ -14,6 +14,17 @@ export class ConversationService {
     private readonly userClient: UserClientService
   ) { }
 
+  /** Peer user IDs the given user has a friendship row with (sorted-pair Friend table). */
+  private async getFriendPeerIds(userId: string): Promise<string[]> {
+    const rows = await this.prisma.friend.findMany({
+      where: {
+        OR: [{ userId1: userId }, { userId2: userId }]
+      },
+      select: { userId1: true, userId2: true }
+    });
+    return rows.map((f) => (f.userId1 === userId ? f.userId2 : f.userId1));
+  }
+
   /**
    * Get or create conversation between two users
    */
@@ -198,6 +209,33 @@ export class ConversationService {
           { userId2: userId, section: ConversationSection.RECEIVED_REQUESTS }
         ]
       };
+    }
+
+    /*
+     * Listing rules (conversation rows only; empty friend-request-only rows use only_follows + synthetic IDs):
+     * - INBOX: show friends even with no messages; show non-friends only if at least one message exists
+     *   (promoted two-sided threads). Hide ghost rows created by getOrCreateConversation with no messages.
+     * - RECEIVED / SENT: only rows with a real last message (one-sided paid/gift threads). Empty FR-only
+     *   bubbles come from GET .../requests/pending|sent + frontend, not from Conversation with null lastMessage.
+     */
+    if (filter !== "text_only" && filter !== "with_gift") {
+      if (section === ConversationSection.INBOX) {
+        const friendIds = await this.getFriendPeerIds(userId);
+        const friendOrMsg: any[] = [{ lastMessageId: { not: null } }];
+        if (friendIds.length > 0) {
+          friendOrMsg.push(
+            { userId1: userId, userId2: { in: friendIds } },
+            { userId2: userId, userId1: { in: friendIds } }
+          );
+        }
+        whereClause = {
+          AND: [whereClause, { OR: friendOrMsg }]
+        };
+      } else {
+        whereClause = {
+          AND: [whereClause, { lastMessageId: { not: null } }]
+        };
+      }
     }
 
     // Note: Conversations with lastMessage: null are automatically excluded from

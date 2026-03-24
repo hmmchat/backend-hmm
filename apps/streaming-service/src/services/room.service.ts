@@ -1284,14 +1284,19 @@ export class RoomService {
         );
       }
 
-      // Verify target user has IN_SQUAD_AVAILABLE status
+      // Verify target user has pull-stranger compatible status.
+      // MATCHED can appear transiently when discovery card rendering creates/refreshes matches.
       if (process.env.TEST_MODE !== "true") {
         try {
           const targetUserStatus = await this.discoveryClient.getUserStatus(targetUserId);
           // Allow IN_SQUAD as a transient fallback if user-service update is slightly delayed.
-          if (targetUserStatus !== "IN_SQUAD_AVAILABLE" && targetUserStatus !== "IN_SQUAD") {
+          if (
+            targetUserStatus !== "IN_SQUAD_AVAILABLE" &&
+            targetUserStatus !== "IN_SQUAD" &&
+            targetUserStatus !== "MATCHED"
+          ) {
             throw new BadRequestException(
-              `Target user ${targetUserId} does not have IN_SQUAD_AVAILABLE/IN_SQUAD status (current: ${targetUserStatus}). ` +
+              `Target user ${targetUserId} does not have IN_SQUAD_AVAILABLE/IN_SQUAD/MATCHED status (current: ${targetUserStatus}). ` +
               `They may have already been matched or their status changed.`
             );
           }

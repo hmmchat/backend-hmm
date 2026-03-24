@@ -224,6 +224,34 @@ export class WalletController {
   }
 
   /**
+   * Test endpoint: Deduct coins from wallet (admin/internal style)
+   * POST /test/wallet/deduct-coins
+   * Body: { userId: string, amount: number, description?: string }
+   */
+  @Post("test/wallet/deduct-coins")
+  async deductCoinsTest(@Body() body: any) {
+    const { userId, amount, description } = body;
+    if (!userId || !amount) {
+      throw new HttpException("userId and amount are required", HttpStatus.BAD_REQUEST);
+    }
+    if (amount <= 0) {
+      throw new HttpException("Amount must be positive", HttpStatus.BAD_REQUEST);
+    }
+
+    try {
+      return await this.walletService.deductCoinsForDarePayment(userId, amount, description);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("Insufficient balance")) {
+        throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
+      }
+      throw new HttpException(
+        "Failed to deduct coins",
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  /**
    * Test endpoint: Get gift transactions for a user (bypasses auth)
    * GET /test/wallet/gift-transactions?userId=xxx
    */

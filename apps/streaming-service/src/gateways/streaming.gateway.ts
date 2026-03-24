@@ -464,9 +464,24 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Tell other connections in the room that a participant left (raincheck, leave, tab close).
+   * Kicks already use participant-kicked; do not duplicate for the same event.
+   */
+  private async broadcastParticipantLeft(roomId: string, leftUserId: string): Promise<void> {
+    await this.broadcastToRoom(
+      roomId,
+      {
+        type: "participant-left",
+        data: { roomId, userId: leftUserId }
+      },
+      leftUserId
+    );
+  }
+
+  /**
    * Handle leave room
    */
-  private async handleLeaveRoom(_connectionId: string, userId: string, data: any) {
+  private async handleLeaveRoom(connectionId: string, userId: string, data: any) {
     const { roomId } = data;
     if (!roomId) {
       this.logger.warn(`[LeaveRoom] Missing roomId in request from user ${userId}`);
@@ -478,11 +493,13 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     // Try to remove as participant first, then as viewer
     // We need to check database regardless of in-memory state
     let removed = false;
+    let removedAsParticipant = false;
 
     try {
       await this.roomService.removeParticipant(roomId, userId);
       this.logger.log(`[LeaveRoom] User ${userId} removed as participant from room ${roomId}`);
       removed = true;
+      removedAsParticipant = true;
     } catch (error: any) {
       this.logger.debug(`[LeaveRoom] removeParticipant failed for user ${userId}: ${error.message}`);
 
@@ -492,6 +509,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
         try {
           await this.roomService.removeParticipantFromDatabase(roomId, userId);
           removed = true;
+          removedAsParticipant = true;
         } catch (dbError: any) {
           this.logger.debug(`[LeaveRoom] Database cleanup failed: ${dbError.message}`);
         }
@@ -509,6 +527,15 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
           this.logger.error(`[LeaveRoom] Failed to remove user ${userId} from room ${roomId} as participant or viewer: ${viewerError.message}`);
         }
       }
+    }
+
+    if (removedAsParticipant) {
+      await this.broadcastParticipantLeft(roomId, userId);
+    }
+
+    const conn = this.connections.get(connectionId);
+    if (conn) {
+      delete conn.roomId;
     }
   }
 
@@ -1288,10 +1315,12 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     }
 
     // Try to remove as participant if not removed as viewer
+    let removedAsParticipant = false;
     if (!removed) {
       try {
         await this.roomService.removeParticipant(resolvedRoomId, userId);
         this.logger.log(`[Disconnect] User ${userId} removed as participant from room ${resolvedRoomId}`);
+        removedAsParticipant = true;
       } catch (error: any) {
         // User might not be in room, or room might be already ended
         if (error.message?.includes("not found") || error.message?.includes("does not exist")) {
@@ -1300,6 +1329,10 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
           this.logger.warn(`[Disconnect] Failed to remove user ${userId} from room ${resolvedRoomId}: ${error.message}`);
         }
       }
+    }
+
+    if (removedAsParticipant) {
+      await this.broadcastParticipantLeft(resolvedRoomId, userId);
     }
   }
 

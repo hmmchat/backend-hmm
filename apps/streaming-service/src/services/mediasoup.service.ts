@@ -24,6 +24,16 @@ export class MediasoupService implements OnModuleInit {
     this.restartBackoffMaxMs = parseInt(process.env.MEDIASOUP_RESTART_BACKOFF_MAX_MS || "32000", 10);
   }
 
+  /** Higher default for multi-party SFU (2.5 Mbps); override with MEDIASOUP_INITIAL_OUT_BITRATE */
+  private getInitialAvailableOutgoingBitrate(): number {
+    const raw = process.env.MEDIASOUP_INITIAL_OUT_BITRATE;
+    if (raw !== undefined && raw !== "") {
+      const n = parseInt(raw, 10);
+      if (Number.isFinite(n) && n >= 300000) return n;
+    }
+    return 2_500_000;
+  }
+
   async onModuleInit() {
     this.logger.log(`Creating ${this.numWorkers} Mediasoup workers...`);
     const maxRetries = 3;
@@ -164,7 +174,7 @@ export class MediasoupService implements OnModuleInit {
       enableUdp: true,
       enableTcp: true,
       preferUdp: true,
-      initialAvailableOutgoingBitrate: 1000000
+      initialAvailableOutgoingBitrate: this.getInitialAvailableOutgoingBitrate()
     });
 
     this.logger.log(

@@ -430,11 +430,32 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       const room = this.roomService.getRoom(roomId);
       const rtpCapabilities = this.mediasoup.getRtpCapabilities(room.router);
 
+      let myRole: "HOST" | "PARTICIPANT" = "PARTICIPANT";
+      const participantRoles: { userId: string; role: string }[] = [];
+      try {
+        const details = await this.roomService.getRoomDetails(roomId);
+        if (details?.participants?.length) {
+          for (const p of details.participants) {
+            participantRoles.push({ userId: p.userId, role: p.role });
+            if (
+              String(p.userId) === String(userId) &&
+              (p.role === "HOST" || p.role === "PARTICIPANT")
+            ) {
+              myRole = p.role;
+            }
+          }
+        }
+      } catch (err: any) {
+        this.logger.warn(`[JoinRoom] Could not load participant roles for ${roomId}: ${err?.message || err}`);
+      }
+
       this.send(ws, {
         type: "room-joined",
         data: {
           roomId,
-          rtpCapabilities
+          rtpCapabilities,
+          myRole,
+          participantRoles
         }
       });
     } catch (error: any) {
@@ -511,7 +532,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
 
       // Notify the kicked user (if they're connected)
       for (const [, conn] of this.connections.entries()) {
-        if (conn.userId === targetUserId) {
+        if (String(conn.userId) === String(targetUserId)) {
           this.send(conn.ws, {
             type: "user-kicked",
             data: {

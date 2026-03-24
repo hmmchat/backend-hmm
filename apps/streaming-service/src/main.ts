@@ -7,11 +7,17 @@ import { StreamingGateway } from "./gateways/streaming.gateway.js";
 import { WebSocketServer } from "ws";
 
 async function bootstrap() {
+  // Default 25s: GET /users/:id/room runs reconcile → user-service (up to USER_SERVICE_TIMEOUT_MS, often 15s).
+  // A 8s cap caused frequent aborted requests (browser red / 502) under slow user-service or cold paths.
+  const requestTimeoutMs = Number.parseInt(process.env.FASTIFY_REQUEST_TIMEOUT_MS || "25000", 10);
+  const safeTimeout =
+    Number.isFinite(requestTimeoutMs) && requestTimeoutMs > 0 ? requestTimeoutMs : 25000;
+
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
-    new FastifyAdapter({ 
+    new FastifyAdapter({
       logger: true,
-      requestTimeout: 8000  // 8 second request timeout (less than gateway's 10s)
+      requestTimeout: safeTimeout
     })
   );
 

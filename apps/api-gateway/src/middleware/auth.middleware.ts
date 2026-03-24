@@ -62,6 +62,14 @@ export class AuthMiddleware {
       return false;
     }
 
+    // Location picker / geocode — public on discovery-service; gateway must match
+    const pathNoQuery = path.split("?")[0];
+    const withoutV1 = pathNoQuery.replace(/^\/v1(?=\/|$)/, "");
+    const normalized = withoutV1.startsWith("/") ? withoutV1 : `/${withoutV1}`;
+    if (/^\/location\/(cities|search|locate-me)$/.test(normalized)) {
+      return false;
+    }
+
     // Public endpoints
     const publicPaths = [
       "/auth/",

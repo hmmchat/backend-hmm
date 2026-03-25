@@ -48,6 +48,41 @@ export class MessagingGateway implements OnModuleInit {
     this.realtime.register({ ws, userId });
     ws.send(JSON.stringify({ type: "ws:ready", data: { ok: true, userId } }));
 
+    // Client → server events (typing indicators, etc.)
+    ws.on("message", (buf: Buffer) => {
+      let msg: any;
+      try {
+        msg = JSON.parse(buf.toString());
+      } catch {
+        return;
+      }
+      const type = msg?.type;
+      const data = msg?.data;
+      if (!type) return;
+
+      // Lightweight typing indicator forwarding.
+      // Client sends: { type: 'friend:typing', data: { otherUserId, conversationId, isTyping } }
+      if (type === "friend:typing") {
+        const otherUserId = typeof data?.otherUserId === "string" ? data.otherUserId : null;
+        const conversationId = typeof data?.conversationId === "string" ? data.conversationId : null;
+        const isTyping = Boolean(data?.isTyping);
+        if (!otherUserId || !conversationId) return;
+
+        // Basic spam guard per connection.
+        const now = Date.now();
+        const last = (ws as any).__lastTypingAt ?? 0;
+        if (now - last < 250) return;
+        (ws as any).__lastTypingAt = now;
+
+        this.realtime.emitToUser(otherUserId, "friend:typing", {
+          conversationId,
+          fromUserId: userId,
+          isTyping,
+          at: new Date().toISOString()
+        });
+      }
+    });
+
     ws.on("close", () => {
       this.realtime.unregister({ ws, userId });
     });

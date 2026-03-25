@@ -14,6 +14,40 @@ export class ConversationService {
     private readonly userClient: UserClientService
   ) { }
 
+  /**
+   * Inbound unread count: messages from peer to viewer.
+   * If viewer has a read cursor on the conversation row, count createdAt > cursor; otherwise legacy isRead: false.
+   */
+  async countIncomingUnreadFromPeer(
+    peerUserId: string,
+    viewerUserId: string,
+    conv: {
+      userId1: string;
+      userId2: string;
+      user1LastReadAt: Date | null;
+      user2LastReadAt: Date | null;
+    }
+  ): Promise<number> {
+    const lastReadAt =
+      viewerUserId === conv.userId1 ? conv.user1LastReadAt : conv.user2LastReadAt;
+    if (lastReadAt != null) {
+      return this.prisma.friendMessage.count({
+        where: {
+          fromUserId: peerUserId,
+          toUserId: viewerUserId,
+          createdAt: { gt: lastReadAt }
+        }
+      });
+    }
+    return this.prisma.friendMessage.count({
+      where: {
+        fromUserId: peerUserId,
+        toUserId: viewerUserId,
+        isRead: false
+      }
+    });
+  }
+
   /** Peer user IDs the given user has a friendship row with (sorted-pair Friend table). */
   private async getFriendPeerIds(userId: string): Promise<string[]> {
     const rows = await this.prisma.friend.findMany({
@@ -527,19 +561,13 @@ export class ConversationService {
       friendships.map(f => `${f.userId1}_${f.userId2}`)
     );
 
-    // Batch fetch unread counts
+    // Batch fetch unread counts (read cursor + legacy isRead when cursor unset)
     const unreadCounts = await Promise.all(
       conversations.map(async (conv) => {
         const otherUserId = conv.userId1 === userId ? conv.userId2 : conv.userId1;
         return {
           conversationId: conv.id,
-          count: await this.prisma.friendMessage.count({
-            where: {
-              fromUserId: otherUserId,
-              toUserId: userId,
-              isRead: false
-            }
-          })
+          count: await this.countIncomingUnreadFromPeer(otherUserId, userId, conv)
         };
       })
     );

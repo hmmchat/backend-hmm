@@ -88,6 +88,10 @@ model Conversation {
   section         ConversationSection @default(INBOX)
   lastMessageAt   DateTime            @default(now())
   lastMessageId   String?
+  /// When userId1 last read incoming messages from userId2 (inbox badge = messages after this time from peer → userId1)
+  user1LastReadAt DateTime?
+  /// When userId2 last read incoming messages from userId1
+  user2LastReadAt DateTime?
   createdAt       DateTime            @default(now())
   updatedAt       DateTime            @updatedAt
   

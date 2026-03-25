@@ -1015,15 +1015,30 @@ export class FriendService {
    * Mark messages as read
    */
   async markMessagesAsRead(userId: string, otherUserId: string): Promise<void> {
-    await this.prisma.friendMessage.updateMany({
-      where: {
-        fromUserId: otherUserId,
-        toUserId: userId,
-        isRead: false
-      },
-      data: {
-        isRead: true,
-        readAt: new Date()
+    const [id1, id2] = [userId, otherUserId].sort();
+    await this.prisma.$transaction(async (tx) => {
+      await tx.friendMessage.updateMany({
+        where: {
+          fromUserId: otherUserId,
+          toUserId: userId,
+          isRead: false
+        },
+        data: {
+          isRead: true,
+          readAt: new Date()
+        }
+      });
+      const maxAgg = await tx.friendMessage.aggregate({
+        where: { fromUserId: otherUserId, toUserId: userId },
+        _max: { createdAt: true }
+      });
+      const cursor = maxAgg._max.createdAt;
+      if (cursor != null) {
+        await tx.conversation.updateMany({
+          where: { userId1: id1, userId2: id2 },
+          data:
+            userId === id1 ? { user1LastReadAt: cursor } : { user2LastReadAt: cursor }
+        });
       }
     });
     // Invalidate notification cache for reader (unread counts changed).
@@ -1047,16 +1062,12 @@ export class FriendService {
     ]);
     if (!conv || !msg) return;
 
-    // Count from persisted row so it always matches GET /conversations/inbox (same semantics as conversation.service).
+    // Same semantics as GET /conversations/inbox (read cursor + legacy isRead).
     const sender = msg.fromUserId;
     const recipient = msg.toUserId;
     const [unreadForRecipient, unreadForSender] = await Promise.all([
-      this.prisma.friendMessage.count({
-        where: { fromUserId: sender, toUserId: recipient, isRead: false }
-      }),
-      this.prisma.friendMessage.count({
-        where: { fromUserId: recipient, toUserId: sender, isRead: false }
-      })
+      this.conversationService.countIncomingUnreadFromPeer(sender, recipient, conv),
+      this.conversationService.countIncomingUnreadFromPeer(recipient, sender, conv)
     ]);
 
     const base = {

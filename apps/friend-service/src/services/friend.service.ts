@@ -1051,8 +1051,8 @@ export class FriendService {
     const sender = msg.fromUserId;
     const recipient = msg.toUserId;
     const [unreadForRecipient, unreadForSender] = await Promise.all([
-      this.conversationService.countIncomingUnreadFromPeer(sender, recipient, conv),
-      this.conversationService.countIncomingUnreadFromPeer(recipient, sender, conv)
+      this.conversationService.countIncomingUnreadFromPeer(sender, recipient),
+      this.conversationService.countIncomingUnreadFromPeer(recipient, sender)
     ]);
 
     const base = {

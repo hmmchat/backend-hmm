@@ -20,13 +20,7 @@ export class ConversationService {
    */
   async countIncomingUnreadFromPeer(
     peerUserId: string,
-    viewerUserId: string,
-    conv: {
-      userId1: string;
-      userId2: string;
-      user1LastReadAt: Date | null;
-      user2LastReadAt: Date | null;
-    }
+    viewerUserId: string
   ): Promise<number> {
     return this.prisma.friendMessage.count({
       where: {
@@ -556,7 +550,7 @@ export class ConversationService {
         const otherUserId = conv.userId1 === userId ? conv.userId2 : conv.userId1;
         return {
           conversationId: conv.id,
-          count: await this.countIncomingUnreadFromPeer(otherUserId, userId, conv)
+          count: await this.countIncomingUnreadFromPeer(otherUserId, userId)
         };
       })
     );

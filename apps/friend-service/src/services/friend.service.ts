@@ -1026,6 +1026,8 @@ export class FriendService {
         readAt: new Date()
       }
     });
+    // Invalidate notification cache for reader (unread counts changed).
+    await this.invalidateNotificationCache(userId);
     // Realtime emit (best-effort)
     try {
       this.realtime.emitToUser(otherUserId, "friend:read", { fromUserId: otherUserId, toUserId: userId });

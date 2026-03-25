@@ -1039,14 +1039,21 @@ export class FriendService {
 
   private async emitRealtimeMessageUpdate(fromUserId: string, toUserId: string, messageId: string) {
     const [id1, id2] = [fromUserId, toUserId].sort();
-    const [conv, msg] = await Promise.all([
+    const [conv, msg, unreadForToUser, unreadForFromUser] = await Promise.all([
       this.prisma.conversation.findUnique({
         where: { userId1_userId2: { userId1: id1, userId2: id2 } }
       }),
-      this.prisma.friendMessage.findUnique({ where: { id: messageId } })
+      this.prisma.friendMessage.findUnique({ where: { id: messageId } }),
+      // Inbox badge = unread messages *from the other peer to this user* in this DM.
+      this.prisma.friendMessage.count({
+        where: { fromUserId, toUserId, isRead: false }
+      }),
+      this.prisma.friendMessage.count({
+        where: { fromUserId: toUserId, toUserId: fromUserId, isRead: false }
+      })
     ]);
     if (!conv || !msg) return;
-    const payload = {
+    const base = {
       id: msg.id,
       conversationId: conv.id,
       fromUserId: msg.fromUserId,
@@ -1057,8 +1064,16 @@ export class FriendService {
       giftAmount: msg.giftAmount,
       createdAt: msg.createdAt
     };
-    this.realtime.emitToUser(toUserId, "friend:message", payload);
-    this.realtime.emitToUser(fromUserId, "friend:message", payload);
+    // Each user gets their own authoritative unread count (matches GET /conversations/inbox).
+    // Never let clients infer unread by +1 — that double-counts when lists are also refreshed.
+    this.realtime.emitToUser(toUserId, "friend:message", {
+      ...base,
+      unreadCountForConversation: unreadForToUser
+    });
+    this.realtime.emitToUser(fromUserId, "friend:message", {
+      ...base,
+      unreadCountForConversation: unreadForFromUser
+    });
   }
 
   private emitRealtimeConversationRefresh(userA: string, userB: string, reason: string) {

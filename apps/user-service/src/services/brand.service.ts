@@ -83,6 +83,44 @@ export class BrandService {
     return domain.trim().toLowerCase() || null;
   }
 
+  private domainKey(domain: string | null | undefined): string | null {
+    return this.normalizeDomain(domain ?? undefined);
+  }
+
+  /**
+   * Fuzzy search on content-managed brands only (dashboard catalog).
+   */
+  private async searchCustomBrandsDb(query: string, limit: number): Promise<SearchBrandResult[]> {
+    let rows = await this.prisma.$queryRaw<SearchBrandResult[]>`
+      SELECT
+        id,
+        name,
+        domain,
+        "logoUrl"
+      FROM "brands"
+      WHERE "isCustom" = true
+        AND lower(name) % lower(${query})
+      ORDER BY similarity(lower(name), lower(${query})) DESC, name ASC
+      LIMIT ${limit};
+    `;
+
+    if (rows.length === 0) {
+      rows = await this.prisma.$queryRaw<SearchBrandResult[]>`
+        SELECT
+          id,
+          name,
+          domain,
+          "logoUrl"
+        FROM "brands"
+        WHERE "isCustom" = true
+        ORDER BY similarity(lower(name), lower(${query})) DESC, name ASC
+        LIMIT ${limit};
+      `;
+    }
+
+    return rows;
+  }
+
   private async searchBrandfetch(query: string, limit: number): Promise<SearchBrandResult[]> {
     const encodedQuery = encodeURIComponent(query);
     const url = `https://api.brandfetch.io/v2/search/${encodedQuery}?c=${limit}`;
@@ -151,6 +189,16 @@ export class BrandService {
         }
 
         if (row) {
+          if (row.isCustom) {
+            out.push({
+              id: row.id,
+              name: row.name,
+              domain: row.domain,
+              logoUrl: this.resolvePublicLogoUrl(row.domain, row.logoUrl)
+            });
+            continue;
+          }
+
           const nextLogo =
             r.logoUrl ??
             (row.logoUrl?.includes("asset.brandfetch.io") ? null : row.logoUrl);
@@ -165,7 +213,7 @@ export class BrandService {
             id: updated.id,
             name: updated.name,
             domain: updated.domain,
-            logoUrl: updated.logoUrl
+            logoUrl: this.resolvePublicLogoUrl(updated.domain, updated.logoUrl)
           });
           continue;
         }
@@ -174,14 +222,15 @@ export class BrandService {
           data: {
             name: r.name,
             domain: r.domain,
-            logoUrl: r.logoUrl
+            logoUrl: r.logoUrl,
+            isCustom: false
           }
         });
         out.push({
           id: created.id,
           name: created.name,
           domain: created.domain,
-          logoUrl: created.logoUrl
+          logoUrl: this.resolvePublicLogoUrl(created.domain, created.logoUrl)
         });
       } catch (err: unknown) {
         const code = (err as { code?: string })?.code;
@@ -190,12 +239,21 @@ export class BrandService {
             where: { name: { equals: r.name, mode: "insensitive" } }
           });
           if (fallback) {
-            out.push({
-              id: fallback.id,
-              name: fallback.name,
-              domain: fallback.domain,
-              logoUrl: r.logoUrl ?? fallback.logoUrl
-            });
+            if (fallback.isCustom) {
+              out.push({
+                id: fallback.id,
+                name: fallback.name,
+                domain: fallback.domain,
+                logoUrl: this.resolvePublicLogoUrl(fallback.domain, fallback.logoUrl)
+              });
+            } else {
+              out.push({
+                id: fallback.id,
+                name: fallback.name,
+                domain: fallback.domain,
+                logoUrl: this.resolvePublicLogoUrl(fallback.domain, r.logoUrl ?? fallback.logoUrl)
+              });
+            }
             continue;
           }
         }
@@ -237,8 +295,29 @@ export class BrandService {
   }
 
   /**
+   * Random content-managed brands when Brandfetch is off or as filler.
+   */
+  private async getCustomBrandSuggestionsOnly(limit: number): Promise<SearchBrandResult[]> {
+    const rows = await this.prisma.$queryRaw<SearchBrandResult[]>`
+      SELECT
+        id,
+        name,
+        domain,
+        "logoUrl"
+      FROM "brands"
+      WHERE "isCustom" = true
+      ORDER BY random()
+      LIMIT ${limit};
+    `;
+    return rows.map(r => ({
+      ...r,
+      logoUrl: this.resolvePublicLogoUrl(r.domain, r.logoUrl)
+    }));
+  }
+
+  /**
    * Suggested brands for the "pick brands" screen (GET /brands).
-   * Merges Brandfetch search results from shuffled seed queries until `limit` unique brands or max API calls.
+   * Merges Brandfetch results with content-managed DB brands (deduped by domain).
    */
   async getBrandSuggestions(limit: number): Promise<SearchBrandResult[]> {
     if (limit < 1 || limit > 50) {
@@ -246,7 +325,7 @@ export class BrandService {
     }
 
     if (!this.brandfetchEnabled) {
-      return [];
+      return this.getCustomBrandSuggestionsOnly(limit);
     }
 
     const seeds = this.shuffle(this.defaultSuggestionSeeds());
@@ -274,7 +353,56 @@ export class BrandService {
     }
 
     const sliced = out.slice(0, limit);
-    return this.persistBrandfetchResultsToCatalog(sliced);
+    if (sliced.length === 0) {
+      return this.getCustomBrandSuggestionsOnly(limit);
+    }
+
+    const persisted = await this.persistBrandfetchResultsToCatalog(sliced);
+    const bfDomains = new Set(
+      persisted.map(b => this.domainKey(b.domain)).filter((v): v is string => !!v)
+    );
+
+    const customPool = await this.prisma.$queryRaw<SearchBrandResult[]>`
+      SELECT
+        id,
+        name,
+        domain,
+        "logoUrl"
+      FROM "brands"
+      WHERE "isCustom" = true
+      ORDER BY random()
+      LIMIT ${Math.min(50, limit * 3)}
+    `;
+
+    const customExtra = customPool.filter(c => {
+      const dk = this.domainKey(c.domain);
+      if (!dk) return true;
+      return !bfDomains.has(dk);
+    });
+
+    const merged: SearchBrandResult[] = [];
+    const idSeen = new Set<string>();
+    for (const b of persisted) {
+      const row = {
+        ...b,
+        logoUrl: this.resolvePublicLogoUrl(b.domain, b.logoUrl)
+      };
+      if (idSeen.has(row.id)) continue;
+      idSeen.add(row.id);
+      merged.push(row);
+      if (merged.length >= limit) break;
+    }
+    for (const c of customExtra) {
+      if (merged.length >= limit) break;
+      if (idSeen.has(c.id)) continue;
+      idSeen.add(c.id);
+      merged.push({
+        ...c,
+        logoUrl: this.resolvePublicLogoUrl(c.domain, c.logoUrl)
+      });
+    }
+
+    return merged.slice(0, limit);
   }
 
   /**
@@ -298,7 +426,40 @@ export class BrandService {
       try {
         const brandfetchResults = await this.searchBrandfetch(trimmedQuery, effectiveLimit);
         if (brandfetchResults.length > 0) {
-          return this.persistBrandfetchResultsToCatalog(brandfetchResults);
+          const bfPersisted = await this.persistBrandfetchResultsToCatalog(brandfetchResults);
+          const bfDomainSet = new Set(
+            bfPersisted.map(b => this.domainKey(b.domain)).filter((v): v is string => !!v)
+          );
+
+          const customRows = await this.searchCustomBrandsDb(trimmedQuery, effectiveLimit);
+          const customFiltered = customRows.filter(c => {
+            const dk = this.domainKey(c.domain);
+            if (!dk) return true;
+            return !bfDomainSet.has(dk);
+          });
+
+          const merged: SearchBrandResult[] = [];
+          const seen = new Set<string>();
+          for (const b of bfPersisted) {
+            const row = {
+              ...b,
+              logoUrl: this.resolvePublicLogoUrl(b.domain, b.logoUrl)
+            };
+            if (seen.has(row.id)) continue;
+            seen.add(row.id);
+            merged.push(row);
+            if (merged.length >= effectiveLimit) break;
+          }
+          for (const c of customFiltered) {
+            if (merged.length >= effectiveLimit) break;
+            if (seen.has(c.id)) continue;
+            seen.add(c.id);
+            merged.push({
+              ...c,
+              logoUrl: this.resolvePublicLogoUrl(c.domain, c.logoUrl)
+            });
+          }
+          return merged.slice(0, effectiveLimit);
         }
       } catch (error) {
         // Fall back to DB search so existing flows continue to work.
@@ -310,21 +471,22 @@ export class BrandService {
       }
     }
 
-    // First, try trigram-based fuzzy search with the % operator (similar enough names).
-    let brands = await this.prisma.$queryRaw<SearchBrandResult[]>`
-      SELECT
-        id,
-        name,
-        domain,
-        "logoUrl"
-      FROM "brands"
-      WHERE lower(name) % lower(${trimmedQuery})
-      ORDER BY similarity(lower(name), lower(${trimmedQuery})) DESC, name ASC
-      LIMIT ${effectiveLimit};
-    `;
+    // Brandfetch off / failed / no hits: prefer content-managed brands, then entire catalog.
+    let brands = await this.searchCustomBrandsDb(trimmedQuery, effectiveLimit);
+    if (brands.length === 0) {
+      brands = await this.prisma.$queryRaw<SearchBrandResult[]>`
+        SELECT
+          id,
+          name,
+          domain,
+          "logoUrl"
+        FROM "brands"
+        WHERE lower(name) % lower(${trimmedQuery})
+        ORDER BY similarity(lower(name), lower(${trimmedQuery})) DESC, name ASC
+        LIMIT ${effectiveLimit};
+      `;
+    }
 
-    // If nothing passes the similarity threshold, fall back to nearest neighbours
-    // without the % filter so we still return sensible suggestions.
     if (brands.length === 0) {
       brands = await this.prisma.$queryRaw<SearchBrandResult[]>`
         SELECT

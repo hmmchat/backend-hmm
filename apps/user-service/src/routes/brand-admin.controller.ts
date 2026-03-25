@@ -25,6 +25,7 @@ export class BrandAdminController {
   @Get()
   async getAll() {
     const brands = await this.prisma.brand.findMany({
+      where: { isCustom: true },
       orderBy: { name: "asc" }
     });
     return { ok: true, brands };
@@ -42,7 +43,8 @@ export class BrandAdminController {
       data: {
         name: data.name,
         domain: data.domain || null,
-        logoUrl: data.logoUrl || null
+        logoUrl: data.logoUrl || null,
+        isCustom: true
       }
     });
     return { ok: true, brand };

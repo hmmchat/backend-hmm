@@ -145,6 +145,8 @@ model Brand {
   name        String   @unique // Brand name (e.g., "JBL", "Apple", "Nike", "BMW")
   domain      String?  // Optional: Domain for logo URL slug (e.g., "apple.com" -> apple.png)
   logoUrl     String?  // Optional: Brand logo URL (self-hosted via BRAND_LOGO_BASE_URL)
+  /// true = content-team catalog (dashboard); false = imported from Brandfetch search
+  isCustom    Boolean  @default(true)
   brandfetchId String? // Deprecated: kept for backward compat, no longer used
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt

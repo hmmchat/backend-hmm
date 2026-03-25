@@ -51,12 +51,14 @@ async function main() {
       where: { name: brand.name },
       update: {
         domain: brand.domain,
+        isCustom: true,
         ...(logoUrl && !existing?.logoUrl ? { logoUrl } : {})
       },
       create: {
         name: brand.name,
         domain: brand.domain,
-        logoUrl
+        logoUrl,
+        isCustom: true
       }
     });
   }

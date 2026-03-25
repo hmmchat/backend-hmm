@@ -808,6 +808,7 @@ export class UserService implements OnModuleInit {
         domain,
         "logoUrl"
       FROM "brands"
+      WHERE "isCustom" = true
       ORDER BY random()
       LIMIT ${effectiveLimit};
     `;

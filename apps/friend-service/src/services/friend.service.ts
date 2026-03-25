@@ -114,6 +114,7 @@ export class FriendService {
     
     // Invalidate notification cache for recipient (they have a new friend request)
     await this.invalidateNotificationCache(toUserId);
+    this.emitRealtimeConversationRefresh(fromUserId, toUserId, "friend_request_sent");
     
     return { requestId: request.id, autoAccepted: false };
   }
@@ -129,7 +130,7 @@ export class FriendService {
     message?: string
   ): Promise<{ requestId: string; autoAccepted: boolean }> {
     // Use transaction to ensure all operations succeed or fail together
-    return await this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       // Accept the existing request
       await tx.friendRequest.update({
         where: { id: existingRequestId },
@@ -194,6 +195,8 @@ export class FriendService {
       await this.invalidateNotificationCache(newToUserId);
       return { requestId: newRequest.id, autoAccepted: true };
     });
+    this.emitRealtimeConversationRefresh(newFromUserId, newToUserId, "friend_request_auto_accepted");
+    return result;
   }
 
   /**
@@ -263,6 +266,7 @@ export class FriendService {
     await this.invalidateNotificationCache(request.toUserId);
 
     this.logger.log(`Friend request ${requestId} accepted by ${userId}`);
+    this.emitRealtimeConversationRefresh(request.fromUserId, request.toUserId, "friend_request_accepted");
   }
 
   /**
@@ -295,6 +299,7 @@ export class FriendService {
 
     this.metrics.incrementFriendRequestRejected();
     this.logger.log(`Friend request ${requestId} rejected by ${userId}`);
+    this.emitRealtimeConversationRefresh(request.fromUserId, request.toUserId, "friend_request_rejected");
   }
 
   /**
@@ -1040,6 +1045,7 @@ export class FriendService {
     ]);
     if (!conv || !msg) return;
     const payload = {
+      id: msg.id,
       conversationId: conv.id,
       fromUserId: msg.fromUserId,
       toUserId: msg.toUserId,
@@ -1051,6 +1057,18 @@ export class FriendService {
     };
     this.realtime.emitToUser(toUserId, "friend:message", payload);
     this.realtime.emitToUser(fromUserId, "friend:message", payload);
+  }
+
+  private emitRealtimeConversationRefresh(userA: string, userB: string, reason: string) {
+    // Generic "refresh your lists" hint (keeps client logic simple and robust).
+    // Clients can call loadLists + loadNotificationBadge on receipt.
+    try {
+      const data = { reason, at: new Date().toISOString(), users: [userA, userB] };
+      this.realtime.emitToUser(userA, "friend:refresh", data);
+      this.realtime.emitToUser(userB, "friend:refresh", data);
+    } catch {
+      // ignore
+    }
   }
 
   /**
@@ -1082,6 +1100,7 @@ export class FriendService {
     await this.invalidateFriendshipCache(fromUserId, toUserId);
 
     this.logger.log(`User ${fromUserId} blocked ${toUserId}`);
+    this.emitRealtimeConversationRefresh(fromUserId, toUserId, "user_blocked");
   }
 
   // Helper methods
@@ -1257,6 +1276,7 @@ export class FriendService {
 
     this.metrics.incrementFriendshipRemoved();
     this.logger.log(`User ${userId} unfriended ${friendId}`);
+    this.emitRealtimeConversationRefresh(userId, friendId, "unfriended");
   }
 
   /**

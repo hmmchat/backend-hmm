@@ -16,9 +16,7 @@ export class ConversationService {
 
   /**
    * Inbound unread count: messages from peer to viewer.
-   * - No cursor: legacy count of isRead: false.
-   * - Cursor set: isRead false AND createdAt > cursor. Mark-read clears isRead even if the
-   *   conversation row failed to advance lastReadAt, so the badge does not stay inflated.
+   * Strict rule: unread means incoming messages not marked read yet.
    */
   async countIncomingUnreadFromPeer(
     peerUserId: string,
@@ -30,23 +28,12 @@ export class ConversationService {
       user2LastReadAt: Date | null;
     }
   ): Promise<number> {
-    const lastReadAt =
-      viewerUserId === conv.userId1 ? conv.user1LastReadAt : conv.user2LastReadAt;
-    const base = {
-      fromUserId: peerUserId,
-      toUserId: viewerUserId,
-      isRead: false
-    };
-    if (lastReadAt != null) {
-      return this.prisma.friendMessage.count({
-        where: {
-          ...base,
-          createdAt: { gt: lastReadAt }
-        }
-      });
-    }
     return this.prisma.friendMessage.count({
-      where: base
+      where: {
+        fromUserId: peerUserId,
+        toUserId: viewerUserId,
+        isRead: false
+      }
     });
   }
 

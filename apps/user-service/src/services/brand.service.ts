@@ -38,6 +38,23 @@ export class BrandService {
       process.env.BRANDFETCH_ENABLED !== "false" && !!this.brandfetchClientId;
   }
 
+  /**
+   * Public logo URL for clients. Brand Search API `asset.brandfetch.io` links expire after ~24h
+   * (see Brand Search API guidelines); do not rely on those for stored or displayed URLs.
+   * Logo API CDN URLs include the client id and stay valid for embedding.
+   */
+  resolvePublicLogoUrl(domain: string | null, storedLogoUrl: string | null): string | null {
+    const d = domain?.trim();
+    if (this.brandfetchEnabled && d) {
+      const q = new URLSearchParams({ c: this.brandfetchClientId });
+      return `https://cdn.brandfetch.io/${encodeURIComponent(d)}/icon.png?${q.toString()}`;
+    }
+    if (storedLogoUrl?.includes("asset.brandfetch.io")) {
+      return null;
+    }
+    return storedLogoUrl ?? null;
+  }
+
   private getBrandfetchLogo(brand: BrandfetchResult): string | null {
     if (brand.icon) return brand.icon;
     if (!Array.isArray(brand.logos) || brand.logos.length === 0) return null;
@@ -97,7 +114,7 @@ export class BrandService {
           id: syntheticId,
           name: safeName,
           domain,
-          logoUrl: this.getBrandfetchLogo(item)
+          logoUrl: this.resolvePublicLogoUrl(domain, this.getBrandfetchLogo(item))
         };
       });
   }
@@ -134,10 +151,13 @@ export class BrandService {
         }
 
         if (row) {
+          const nextLogo =
+            r.logoUrl ??
+            (row.logoUrl?.includes("asset.brandfetch.io") ? null : row.logoUrl);
           const updated = await this.prisma.brand.update({
             where: { id: row.id },
             data: {
-              logoUrl: r.logoUrl ?? row.logoUrl,
+              logoUrl: nextLogo,
               domain: r.domain ?? row.domain
             }
           });
@@ -318,6 +338,9 @@ export class BrandService {
       `;
     }
 
-    return brands;
+    return brands.map(b => ({
+      ...b,
+      logoUrl: this.resolvePublicLogoUrl(b.domain, b.logoUrl)
+    }));
   }
 }

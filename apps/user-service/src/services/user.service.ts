@@ -93,6 +93,26 @@ export class UserService implements OnModuleInit {
     }
   }
 
+  private mapUserBrandLogos(user: any): any {
+    if (!user?.brandPreferences?.length) return user;
+    return {
+      ...user,
+      brandPreferences: this.mapBrandPreferencesLogos(user.brandPreferences)
+    };
+  }
+
+  private mapBrandPreferencesLogos(prefs: any[]): any[] {
+    return prefs.map((bp: { brand?: { domain?: string | null; logoUrl: string | null } | null }) => ({
+      ...bp,
+      brand: bp.brand
+        ? {
+            ...bp.brand,
+            logoUrl: this.brandService.resolvePublicLogoUrl(bp.brand.domain ?? null, bp.brand.logoUrl ?? null)
+          }
+        : bp.brand
+    }));
+  }
+
   /* ---------- Profile Management ---------- */
 
   async createProfile(userId: string, data: CreateProfileDto) {
@@ -164,7 +184,7 @@ export class UserService implements OnModuleInit {
         console.error(`Error processing referral reward for user ${userId}:`, error);
       });
 
-      return { user, profileCompletion: completion };
+      return { user: this.mapUserBrandLogos(user), profileCompletion: completion };
     } catch (error) {
       // Log the actual error for debugging
       console.error("Error in createProfile:", error);
@@ -306,10 +326,12 @@ export class UserService implements OnModuleInit {
     // Add activeBadge to user object (null if no badge or fetch failed)
     (user as any).activeBadge = activeBadge;
 
+    const userWithLogos = this.mapUserBrandLogos(user);
+
     // If fields are specified, filter the response
-    let filteredUser: any = user;
+    let filteredUser: any = userWithLogos;
     if (fields && fields.length > 0) {
-      filteredUser = this.filterUserFields(user, fields);
+      filteredUser = this.filterUserFields(userWithLogos, fields);
     }
 
     // Calculate profile completion percentage (only if not filtering or if completion is requested)
@@ -500,10 +522,12 @@ export class UserService implements OnModuleInit {
     // Add activeBadge to user object (null if no badge or fetch failed)
     (user as any).activeBadge = activeBadge;
 
+    const userWithLogos = this.mapUserBrandLogos(user);
+
     // Calculate profile completion percentage
     const completion = await this.profileCompletion.calculateCompletion(userId);
 
-    return { user, profileCompletion: completion };
+    return { user: userWithLogos, profileCompletion: completion };
   }
 
   /* ---------- Photo Management ---------- */
@@ -664,7 +688,7 @@ export class UserService implements OnModuleInit {
       orderBy: { order: "asc" }
     });
 
-    return { preferences };
+    return { preferences: this.mapBrandPreferencesLogos(preferences) };
   }
 
   /* ---------- Interests ---------- */
@@ -776,18 +800,25 @@ export class UserService implements OnModuleInit {
     }
 
     const brands = await this.prisma.$queryRaw<
-      { id: string; name: string; logoUrl: string | null }[]
+      { id: string; name: string; domain: string | null; logoUrl: string | null }[]
     >`
       SELECT
         id,
         name,
+        domain,
         "logoUrl"
       FROM "brands"
       ORDER BY random()
       LIMIT ${effectiveLimit};
     `;
 
-    return { brands };
+    return {
+      brands: brands.map((b) => ({
+        id: b.id,
+        name: b.name,
+        logoUrl: this.brandService.resolvePublicLogoUrl(b.domain, b.logoUrl)
+      }))
+    };
   }
 
   /**
@@ -810,7 +841,12 @@ export class UserService implements OnModuleInit {
       throw new HttpException("Brand not found", HttpStatus.NOT_FOUND);
     }
 
-    return { brand };
+    return {
+      brand: {
+        ...brand,
+        logoUrl: this.brandService.resolvePublicLogoUrl(brand.domain, brand.logoUrl)
+      }
+    };
   }
 
   async getInterests(limit: number = 8) {
@@ -1197,7 +1233,7 @@ export class UserService implements OnModuleInit {
           }
         }
         // If user has no activeBadgeId, activeBadge is already null
-        return { ...user, activeBadge };
+        return this.mapUserBrandLogos({ ...user, activeBadge });
       })
     );
 
@@ -1393,7 +1429,7 @@ export class UserService implements OnModuleInit {
       take: filters.limit ?? DISCOVERY_USERS_DEFAULT_LIMIT
     });
 
-    return { users };
+    return { users: users.map((u) => this.mapUserBrandLogos(u)) };
   }
 
   /* ---------- Horoscope ---------- */
@@ -1520,7 +1556,7 @@ export class UserService implements OnModuleInit {
     // Calculate profile completion percentage
     const completion = await this.profileCompletion.calculateCompletion(userId);
 
-    return { user, profileCompletion: completion };
+    return { user: this.mapUserBrandLogos(user), profileCompletion: completion };
   }
 
   /**
@@ -1637,7 +1673,7 @@ export class UserService implements OnModuleInit {
       orderBy: { order: "asc" }
     });
 
-    return { preferences };
+    return { preferences: this.mapBrandPreferencesLogos(preferences) };
   }
 
   /**
@@ -1812,7 +1848,7 @@ export class UserService implements OnModuleInit {
         artist: user.musicPreference.artist,
         albumArtUrl: user.musicPreference.albumArtUrl
       } : null,
-      brandPreferences: user.brandPreferences.map(bp => ({
+      brandPreferences: this.mapBrandPreferencesLogos(user.brandPreferences).map(bp => ({
         brand: {
           name: bp.brand.name,
           logoUrl: bp.brand.logoUrl

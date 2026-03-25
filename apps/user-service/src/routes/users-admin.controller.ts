@@ -15,6 +15,7 @@ import { z } from "zod";
 import fetch from "node-fetch";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { UserService } from "../services/user.service.js";
+import { BrandService } from "../services/brand.service.js";
 
 const authBase = () => (process.env.AUTH_SERVICE_URL || "http://localhost:3001").replace(/\/$/, "");
 
@@ -118,7 +119,11 @@ function iso(d: Date | null | undefined): string | null {
   return s ?? null;
 }
 
-function mergeAuthUserWithProfile(a: AuthAdminUser, p: ProfileWithAdminInclude | null | undefined) {
+function mergeAuthUserWithProfile(
+  a: AuthAdminUser,
+  p: ProfileWithAdminInclude | null | undefined,
+  resolveLogo?: (domain: string | null, logoUrl: string | null) => string | null
+) {
   const banned = a.accountStatus === "BANNED";
   const inactive =
     a.accountStatus === "DEACTIVATED" ||
@@ -176,7 +181,9 @@ function mergeAuthUserWithProfile(a: AuthAdminUser, p: ProfileWithAdminInclude |
           id: ub.brand!.id,
           name: ub.brand!.name,
           domain: ub.brand!.domain ?? null,
-          logoUrl: ub.brand!.logoUrl ?? null
+          logoUrl: resolveLogo
+            ? resolveLogo(ub.brand!.domain ?? null, ub.brand!.logoUrl ?? null)
+            : ub.brand!.logoUrl ?? null
         }
       })),
     interests: (p?.interests ?? [])
@@ -239,7 +246,8 @@ export class UsersAdminController {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly userService: UserService
+    private readonly userService: UserService,
+    private readonly brandService: BrandService
   ) {}
 
   private async findManyAdminProfiles(ids: string[]) {
@@ -310,7 +318,11 @@ export class UsersAdminController {
     const profiles = await this.findManyAdminProfiles(ids);
     const profileById = new Map(profiles.map((p) => [p.id, p]));
 
-    const users = authUsers.map((a) => mergeAuthUserWithProfile(a, profileById.get(a.id)));
+    const users = authUsers.map((a) =>
+      mergeAuthUserWithProfile(a, profileById.get(a.id), (d, u) =>
+        this.brandService.resolvePublicLogoUrl(d, u)
+      )
+    );
 
     return { ok: true, users };
   }
@@ -342,7 +354,10 @@ export class UsersAdminController {
       throw new HttpException("User not found", HttpStatus.NOT_FOUND);
     }
     const p = await this.findUniqueAdminProfile(id);
-    return { ok: true, user: mergeAuthUserWithProfile(a, p ?? undefined) };
+    return {
+      ok: true,
+      user: mergeAuthUserWithProfile(a, p ?? undefined, (d, u) => this.brandService.resolvePublicLogoUrl(d, u))
+    };
   }
 
   /**

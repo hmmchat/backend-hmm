@@ -353,6 +353,26 @@ export class ConversationService {
     }
 
     // No filter - standard query
+    // Ensure friends appear in Inbox even with no messages by guaranteeing a Conversation row exists.
+    // (Friend requests can be accepted without ever creating a conversation row.)
+    if (section === ConversationSection.INBOX) {
+      const friendIds = await this.getFriendPeerIds(userId);
+      if (friendIds.length > 0) {
+        const data = friendIds.map((otherUserId) => {
+          const [id1, id2] = [userId, otherUserId].sort();
+          return {
+            userId1: id1,
+            userId2: id2,
+            section: ConversationSection.INBOX
+          };
+        });
+        await this.prisma.conversation.createMany({
+          data,
+          skipDuplicates: true
+        });
+      }
+    }
+
     // Use composite sorting: lastMessageAt primary, createdAt fallback
     // This ensures conversations with messages are sorted by lastMessageAt (newest first)
     // and conversations without messages are sorted by createdAt (newest first)

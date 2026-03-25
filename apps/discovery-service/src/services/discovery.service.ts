@@ -52,6 +52,8 @@ interface Card {
   userId: string;
   username: string;
   age: number;
+  /** ISO date — used by clients for zodiac when age alone is not enough */
+  dateOfBirth?: string | null;
   displayPictureUrl: string;
   city: string;
   country: string;
@@ -898,6 +900,7 @@ export class DiscoveryService implements OnModuleInit {
       userId: user.id,
       username: user.username || "Unknown",
       age,
+      dateOfBirth: user.dateOfBirth || null,
       displayPictureUrl: user.displayPictureUrl || "",
       city,
       country: country || "",

@@ -8,6 +8,8 @@ export interface SearchBrandResult {
   name: string;
   domain: string | null;
   logoUrl: string | null;
+  /// Brandfetch brand id (from search payload). Used to generate stable Logo CDN URLs when `domain` is missing.
+  brandfetchId?: string | null;
 }
 
 interface BrandfetchLogo {
@@ -19,6 +21,7 @@ interface BrandfetchLogo {
 interface BrandfetchResult {
   name?: string;
   domain?: string;
+  brandId?: string;
   icon?: string;
   logos?: BrandfetchLogo[];
 }
@@ -43,15 +46,25 @@ export class BrandService {
    * (see Brand Search API guidelines); do not rely on those for stored or displayed URLs.
    * Logo API CDN URLs include the client id and stay valid for embedding.
    */
-  resolvePublicLogoUrl(domain: string | null, storedLogoUrl: string | null): string | null {
-    const d = domain?.trim();
-    if (this.brandfetchEnabled && d) {
-      const q = new URLSearchParams({ c: this.brandfetchClientId });
-      return `https://cdn.brandfetch.io/${encodeURIComponent(d)}/icon.png?${q.toString()}`;
+  resolvePublicLogoUrl(
+    domain: string | null,
+    storedLogoUrl: string | null,
+    brandfetchId?: string | null
+  ): string | null {
+    const d = domain?.trim().toLowerCase();
+    const bfid = brandfetchId?.trim();
+
+    // If we can build Logo API CDN URLs, prefer that (stable vs Brand Search hotlink URLs).
+    if (this.brandfetchClientId && (d || bfid)) {
+      const identifier = d || bfid;
+      return `https://cdn.brandfetch.io/${encodeURIComponent(identifier)}/icon.png?c=${encodeURIComponent(
+        this.brandfetchClientId
+      )}`;
     }
-    if (storedLogoUrl?.includes("asset.brandfetch.io")) {
-      return null;
-    }
+
+    // If the stored URL is a Brand Search API hotlink, it may be expired after ~24h.
+    if (storedLogoUrl?.includes("asset.brandfetch.io")) return null;
+
     return storedLogoUrl ?? null;
   }
 
@@ -96,7 +109,8 @@ export class BrandService {
         id,
         name,
         domain,
-        "logoUrl"
+        "logoUrl",
+        "brandfetchId"
       FROM "brands"
       WHERE "isCustom" = true
         AND lower(name) % lower(${query})
@@ -110,7 +124,8 @@ export class BrandService {
           id,
           name,
           domain,
-          "logoUrl"
+          "logoUrl",
+          "brandfetchId"
         FROM "brands"
         WHERE "isCustom" = true
         ORDER BY similarity(lower(name), lower(${query})) DESC, name ASC
@@ -123,7 +138,8 @@ export class BrandService {
 
   private async searchBrandfetch(query: string, limit: number): Promise<SearchBrandResult[]> {
     const encodedQuery = encodeURIComponent(query);
-    const url = `https://api.brandfetch.io/v2/search/${encodedQuery}?c=${limit}`;
+    // Brandfetch Brand Search requires the client id in `?c=` for every request.
+    const url = `https://api.brandfetch.io/v2/search/${encodedQuery}?c=${encodeURIComponent(this.brandfetchClientId)}`;
 
     const response = await fetch(url, {
       headers: {
@@ -143,6 +159,7 @@ export class BrandService {
       .filter(item => !!item.name)
       .map(item => {
         const domain = this.normalizeDomain(item.domain);
+        const brandfetchId = item.brandId ?? null;
         const safeName = (item.name || "").trim();
         const syntheticId = domain
           ? `brandfetch:${domain}`
@@ -152,9 +169,11 @@ export class BrandService {
           id: syntheticId,
           name: safeName,
           domain,
-          logoUrl: this.resolvePublicLogoUrl(domain, this.getBrandfetchLogo(item))
+          brandfetchId,
+          logoUrl: this.resolvePublicLogoUrl(domain, this.getBrandfetchLogo(item), brandfetchId)
         };
-      });
+      })
+      .slice(0, limit);
   }
 
   private shuffle<T>(arr: T[]): T[] {
@@ -194,7 +213,8 @@ export class BrandService {
               id: row.id,
               name: row.name,
               domain: row.domain,
-              logoUrl: this.resolvePublicLogoUrl(row.domain, row.logoUrl)
+              brandfetchId: row.brandfetchId,
+              logoUrl: this.resolvePublicLogoUrl(row.domain, row.logoUrl, row.brandfetchId)
             });
             continue;
           }
@@ -206,14 +226,16 @@ export class BrandService {
             where: { id: row.id },
             data: {
               logoUrl: nextLogo,
-              domain: r.domain ?? row.domain
+              domain: r.domain ?? row.domain,
+              brandfetchId: r.brandfetchId ?? row.brandfetchId
             }
           });
           out.push({
             id: updated.id,
             name: updated.name,
             domain: updated.domain,
-            logoUrl: this.resolvePublicLogoUrl(updated.domain, updated.logoUrl)
+            brandfetchId: updated.brandfetchId,
+            logoUrl: this.resolvePublicLogoUrl(updated.domain, updated.logoUrl, updated.brandfetchId)
           });
           continue;
         }
@@ -223,14 +245,16 @@ export class BrandService {
             name: r.name,
             domain: r.domain,
             logoUrl: r.logoUrl,
-            isCustom: false
+            isCustom: false,
+            brandfetchId: r.brandfetchId ?? null
           }
         });
         out.push({
           id: created.id,
           name: created.name,
           domain: created.domain,
-          logoUrl: this.resolvePublicLogoUrl(created.domain, created.logoUrl)
+          brandfetchId: created.brandfetchId,
+          logoUrl: this.resolvePublicLogoUrl(created.domain, created.logoUrl, created.brandfetchId)
         });
       } catch (err: unknown) {
         const code = (err as { code?: string })?.code;
@@ -244,14 +268,20 @@ export class BrandService {
                 id: fallback.id,
                 name: fallback.name,
                 domain: fallback.domain,
-                logoUrl: this.resolvePublicLogoUrl(fallback.domain, fallback.logoUrl)
+                brandfetchId: fallback.brandfetchId,
+                logoUrl: this.resolvePublicLogoUrl(fallback.domain, fallback.logoUrl, fallback.brandfetchId)
               });
             } else {
               out.push({
                 id: fallback.id,
                 name: fallback.name,
                 domain: fallback.domain,
-                logoUrl: this.resolvePublicLogoUrl(fallback.domain, r.logoUrl ?? fallback.logoUrl)
+                brandfetchId: r.brandfetchId ?? fallback.brandfetchId,
+                logoUrl: this.resolvePublicLogoUrl(
+                  fallback.domain,
+                  r.logoUrl ?? fallback.logoUrl,
+                  r.brandfetchId ?? fallback.brandfetchId
+                )
               });
             }
             continue;
@@ -303,7 +333,8 @@ export class BrandService {
         id,
         name,
         domain,
-        "logoUrl"
+        "logoUrl",
+        "brandfetchId"
       FROM "brands"
       WHERE "isCustom" = true
       ORDER BY random()
@@ -311,7 +342,7 @@ export class BrandService {
     `;
     return rows.map(r => ({
       ...r,
-      logoUrl: this.resolvePublicLogoUrl(r.domain, r.logoUrl)
+      logoUrl: this.resolvePublicLogoUrl(r.domain, r.logoUrl, r.brandfetchId)
     }));
   }
 
@@ -367,7 +398,8 @@ export class BrandService {
         id,
         name,
         domain,
-        "logoUrl"
+        "logoUrl",
+        "brandfetchId"
       FROM "brands"
       WHERE "isCustom" = true
       ORDER BY random()
@@ -385,7 +417,7 @@ export class BrandService {
     for (const b of persisted) {
       const row = {
         ...b,
-        logoUrl: this.resolvePublicLogoUrl(b.domain, b.logoUrl)
+        logoUrl: this.resolvePublicLogoUrl(b.domain, b.logoUrl, b.brandfetchId)
       };
       if (idSeen.has(row.id)) continue;
       idSeen.add(row.id);
@@ -398,7 +430,7 @@ export class BrandService {
       idSeen.add(c.id);
       merged.push({
         ...c,
-        logoUrl: this.resolvePublicLogoUrl(c.domain, c.logoUrl)
+        logoUrl: this.resolvePublicLogoUrl(c.domain, c.logoUrl, c.brandfetchId)
       });
     }
 
@@ -443,7 +475,7 @@ export class BrandService {
           for (const b of bfPersisted) {
             const row = {
               ...b,
-              logoUrl: this.resolvePublicLogoUrl(b.domain, b.logoUrl)
+              logoUrl: this.resolvePublicLogoUrl(b.domain, b.logoUrl, b.brandfetchId)
             };
             if (seen.has(row.id)) continue;
             seen.add(row.id);
@@ -456,7 +488,7 @@ export class BrandService {
             seen.add(c.id);
             merged.push({
               ...c,
-              logoUrl: this.resolvePublicLogoUrl(c.domain, c.logoUrl)
+              logoUrl: this.resolvePublicLogoUrl(c.domain, c.logoUrl, c.brandfetchId)
             });
           }
           return merged.slice(0, effectiveLimit);
@@ -479,7 +511,8 @@ export class BrandService {
           id,
           name,
           domain,
-          "logoUrl"
+          "logoUrl",
+          "brandfetchId"
         FROM "brands"
         WHERE lower(name) % lower(${trimmedQuery})
         ORDER BY similarity(lower(name), lower(${trimmedQuery})) DESC, name ASC
@@ -493,7 +526,8 @@ export class BrandService {
           id,
           name,
           domain,
-          "logoUrl"
+          "logoUrl",
+          "brandfetchId"
         FROM "brands"
         ORDER BY similarity(lower(name), lower(${trimmedQuery})) DESC, name ASC
         LIMIT ${effectiveLimit};
@@ -502,7 +536,7 @@ export class BrandService {
 
     return brands.map(b => ({
       ...b,
-      logoUrl: this.resolvePublicLogoUrl(b.domain, b.logoUrl)
+      logoUrl: this.resolvePublicLogoUrl(b.domain, b.logoUrl, b.brandfetchId)
     }));
   }
 }

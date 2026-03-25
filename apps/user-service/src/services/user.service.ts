@@ -102,12 +102,16 @@ export class UserService implements OnModuleInit {
   }
 
   private mapBrandPreferencesLogos(prefs: any[]): any[] {
-    return prefs.map((bp: { brand?: { domain?: string | null; logoUrl: string | null } | null }) => ({
+    return prefs.map((bp: { brand?: { domain?: string | null; logoUrl: string | null; brandfetchId?: string | null } | null }) => ({
       ...bp,
       brand: bp.brand
         ? {
             ...bp.brand,
-            logoUrl: this.brandService.resolvePublicLogoUrl(bp.brand.domain ?? null, bp.brand.logoUrl ?? null)
+            logoUrl: this.brandService.resolvePublicLogoUrl(
+              bp.brand.domain ?? null,
+              bp.brand.logoUrl ?? null,
+              bp.brand.brandfetchId ?? null
+            )
           }
         : bp.brand
     }));
@@ -800,13 +804,14 @@ export class UserService implements OnModuleInit {
     }
 
     const brands = await this.prisma.$queryRaw<
-      { id: string; name: string; domain: string | null; logoUrl: string | null }[]
+      { id: string; name: string; domain: string | null; logoUrl: string | null; brandfetchId: string | null }[]
     >`
       SELECT
         id,
         name,
         domain,
-        "logoUrl"
+        "logoUrl",
+        "brandfetchId"
       FROM "brands"
       WHERE "isCustom" = true
       ORDER BY random()
@@ -817,7 +822,7 @@ export class UserService implements OnModuleInit {
       brands: brands.map((b) => ({
         id: b.id,
         name: b.name,
-        logoUrl: this.brandService.resolvePublicLogoUrl(b.domain, b.logoUrl)
+        logoUrl: this.brandService.resolvePublicLogoUrl(b.domain, b.logoUrl, b.brandfetchId)
       }))
     };
   }
@@ -845,7 +850,7 @@ export class UserService implements OnModuleInit {
     return {
       brand: {
         ...brand,
-        logoUrl: this.brandService.resolvePublicLogoUrl(brand.domain, brand.logoUrl)
+        logoUrl: this.brandService.resolvePublicLogoUrl(brand.domain, brand.logoUrl, brand.brandfetchId)
       }
     };
   }

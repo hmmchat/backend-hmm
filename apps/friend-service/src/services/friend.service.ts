@@ -1016,6 +1016,7 @@ export class FriendService {
    */
   async markMessagesAsRead(userId: string, otherUserId: string): Promise<void> {
     const [id1, id2] = [userId, otherUserId].sort();
+    await this.conversationService.getOrCreateConversation(userId, otherUserId);
     await this.prisma.$transaction(async (tx) => {
       await tx.friendMessage.updateMany({
         where: {
@@ -1032,14 +1033,17 @@ export class FriendService {
         where: { fromUserId: otherUserId, toUserId: userId },
         _max: { createdAt: true }
       });
-      const cursor = maxAgg._max.createdAt;
-      if (cursor != null) {
-        await tx.conversation.updateMany({
-          where: { userId1: id1, userId2: id2 },
-          data:
-            userId === id1 ? { user1LastReadAt: cursor } : { user2LastReadAt: cursor }
-        });
-      }
+      const cursor = maxAgg._max.createdAt ?? new Date();
+      await tx.conversation.update({
+        where: {
+          userId1_userId2: {
+            userId1: id1,
+            userId2: id2
+          }
+        },
+        data:
+          userId === id1 ? { user1LastReadAt: cursor } : { user2LastReadAt: cursor }
+      });
     });
     // Invalidate notification cache for reader (unread counts changed).
     await this.invalidateNotificationCache(userId);

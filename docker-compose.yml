@@ -1,6 +1,20 @@
 version: '3.8'
 
 services:
+  # Edge reverse proxy (adds WebSocket upgrade support for /v1/friends/ws)
+  edge-proxy:
+    image: nginx:1.27-alpine
+    container_name: hmm-edge-proxy
+    ports:
+      - "80:80"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      api-gateway:
+        condition: service_healthy
+      friend-service:
+        condition: service_healthy
+
   # Database
   postgres:
     image: postgres:16-alpine

@@ -184,11 +184,37 @@ export class ConversationService {
     let whereClause: any;
 
     if (section === ConversationSection.INBOX) {
-      // INBOX is the same for both users
+      // Inbox listing is special:
+      // - Friends should appear even if the Conversation.section was never updated (e.g. crossed FR -> friends).
+      // - Non-friends should only appear in inbox when there's a real message thread (avoid ghost rows).
+      const friendIds = await this.getFriendPeerIds(userId);
+      const friendPairOr =
+        friendIds.length > 0
+          ? ([
+            { userId1: userId, userId2: { in: friendIds } },
+            { userId2: userId, userId1: { in: friendIds } }
+          ] as any[])
+          : ([] as any[]);
+
       whereClause = {
-        OR: [
-          { userId1: userId, section: ConversationSection.INBOX },
-          { userId2: userId, section: ConversationSection.INBOX }
+        AND: [
+          { OR: [{ userId1: userId }, { userId2: userId }] },
+          {
+            OR: [
+              ...friendPairOr,
+              {
+                AND: [
+                  {
+                    OR: [
+                      { userId1: userId, section: ConversationSection.INBOX },
+                      { userId2: userId, section: ConversationSection.INBOX }
+                    ]
+                  },
+                  { lastMessageId: { not: null } }
+                ]
+              }
+            ]
+          }
         ]
       };
     } else if (section === ConversationSection.RECEIVED_REQUESTS) {
@@ -220,17 +246,7 @@ export class ConversationService {
      */
     if (filter !== "text_only" && filter !== "with_gift") {
       if (section === ConversationSection.INBOX) {
-        const friendIds = await this.getFriendPeerIds(userId);
-        const friendOrMsg: any[] = [{ lastMessageId: { not: null } }];
-        if (friendIds.length > 0) {
-          friendOrMsg.push(
-            { userId1: userId, userId2: { in: friendIds } },
-            { userId2: userId, userId1: { in: friendIds } }
-          );
-        }
-        whereClause = {
-          AND: [whereClause, { OR: friendOrMsg }]
-        };
+        // (Handled in the INBOX whereClause above.)
       } else {
         whereClause = {
           AND: [whereClause, { lastMessageId: { not: null } }]

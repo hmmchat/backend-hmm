@@ -3,6 +3,8 @@ import { FastifyAdapter, NestFastifyApplication } from "@nestjs/platform-fastify
 import { AppModule } from "./modules/app.module.js";
 import { ConfigService } from "@nestjs/config";
 import { ZodExceptionFilter } from "./filters/zod-exception.filter.js";
+import { WebSocketServer } from "ws";
+import { MessagingGateway } from "./gateways/messaging.gateway.js";
 
 async function bootstrap() {
   const app = await NestFactory.create<NestFastifyApplication>(
@@ -26,7 +28,19 @@ async function bootstrap() {
   app.useGlobalFilters(new ZodExceptionFilter());
 
   await app.listen(port, "0.0.0.0");
+
+  // Setup WebSocket server using ws package directly (same pattern as streaming-service)
+  const fastifyInstance = app.getHttpAdapter().getInstance();
+  const server = (fastifyInstance as any).server;
+  const wss = new WebSocketServer({
+    server,
+    path: "/friends/ws"
+  });
+  const gateway = app.get(MessagingGateway);
+  gateway.initialize(wss);
+
   console.log(`🚀 Friend service running on http://localhost:${port}`);
+  console.log(`📡 WebSocket server running on ws://localhost:${port}/friends/ws`);
 }
 
 // Global error handlers

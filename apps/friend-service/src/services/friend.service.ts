@@ -6,6 +6,7 @@ import { MetricsService } from "./metrics.service.js";
 import { ConversationService } from "./conversation.service.js";
 import { GiftCatalogService } from "./gift-catalog.service.js";
 import { UserClientService } from "./user-client.service.js";
+import { MessagingRealtimeService } from "./messaging-realtime.service.js";
 import { MessageType, ConversationSection } from "../../node_modules/.prisma/client/index.js";
 import * as crypto from "crypto";
 
@@ -45,7 +46,8 @@ export class FriendService {
     private readonly metrics: MetricsService,
     private readonly conversationService: ConversationService,
     private readonly giftCatalog: GiftCatalogService,
-    private readonly userClient: UserClientService
+    private readonly userClient: UserClientService,
+    private readonly realtime: MessagingRealtimeService
   ) {}
 
 
@@ -672,7 +674,7 @@ export class FriendService {
     }
 
     // CRITICAL: Use transaction to ensure atomicity
-    return await this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       let transactionId: string | undefined;
       let newBalance: number | undefined;
 
@@ -808,6 +810,9 @@ export class FriendService {
         promotedToInbox: wasPromoted || undefined
       };
     });
+    // Realtime emit (best-effort)
+    this.emitRealtimeMessageUpdate(fromUserId, toUserId, result.messageId).catch(() => undefined);
+    return result;
   }
 
   /**
@@ -873,7 +878,7 @@ export class FriendService {
     }
 
     // Use transaction for atomicity
-    return await this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       let transactionId: string | undefined;
       let newBalance: number | undefined;
 
@@ -940,6 +945,9 @@ export class FriendService {
         newBalance
       };
     });
+    // Realtime emit (best-effort)
+    this.emitRealtimeMessageUpdate(fromUserId, toUserId, result.messageId).catch(() => undefined);
+    return result;
   }
 
   /**
@@ -1013,6 +1021,36 @@ export class FriendService {
         readAt: new Date()
       }
     });
+    // Realtime emit (best-effort)
+    try {
+      this.realtime.emitToUser(otherUserId, "friend:read", { fromUserId: otherUserId, toUserId: userId });
+      this.realtime.emitToUser(userId, "friend:read", { fromUserId: otherUserId, toUserId: userId });
+    } catch {
+      // ignore
+    }
+  }
+
+  private async emitRealtimeMessageUpdate(fromUserId: string, toUserId: string, messageId: string) {
+    const [id1, id2] = [fromUserId, toUserId].sort();
+    const [conv, msg] = await Promise.all([
+      this.prisma.conversation.findUnique({
+        where: { userId1_userId2: { userId1: id1, userId2: id2 } }
+      }),
+      this.prisma.friendMessage.findUnique({ where: { id: messageId } })
+    ]);
+    if (!conv || !msg) return;
+    const payload = {
+      conversationId: conv.id,
+      fromUserId: msg.fromUserId,
+      toUserId: msg.toUserId,
+      message: msg.message,
+      messageType: msg.messageType,
+      giftId: msg.giftId,
+      giftAmount: msg.giftAmount,
+      createdAt: msg.createdAt
+    };
+    this.realtime.emitToUser(toUserId, "friend:message", payload);
+    this.realtime.emitToUser(fromUserId, "friend:message", payload);
   }
 
   /**

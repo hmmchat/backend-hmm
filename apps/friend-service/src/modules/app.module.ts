@@ -20,6 +20,9 @@ import { FriendController } from "../routes/friend.controller.js";
 import { HealthController } from "../routes/health.controller.js";
 import { GiftAdminController } from "../routes/gift-admin.controller.js";
 import { CleanupTasksService } from "../services/cleanup-tasks.service.js";
+import { MessagingGateway } from "../gateways/messaging.gateway.js";
+import { MessagingRealtimeService } from "../services/messaging-realtime.service.js";
+import { WsAuthService } from "../services/ws-auth.service.js";
 
 @Module({
   imports: [
@@ -43,7 +46,10 @@ import { CleanupTasksService } from "../services/cleanup-tasks.service.js";
     ConversationRateLimitGuard,
     NotificationRateLimitGuard,
     ShareRateLimitGuard,
-    CleanupTasksService
+    CleanupTasksService,
+    MessagingGateway,
+    MessagingRealtimeService,
+    WsAuthService
   ]
 })
 export class AppModule {}

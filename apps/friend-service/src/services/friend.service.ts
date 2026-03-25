@@ -1039,20 +1039,26 @@ export class FriendService {
 
   private async emitRealtimeMessageUpdate(fromUserId: string, toUserId: string, messageId: string) {
     const [id1, id2] = [fromUserId, toUserId].sort();
-    const [conv, msg, unreadForToUser, unreadForFromUser] = await Promise.all([
+    const [conv, msg] = await Promise.all([
       this.prisma.conversation.findUnique({
         where: { userId1_userId2: { userId1: id1, userId2: id2 } }
       }),
-      this.prisma.friendMessage.findUnique({ where: { id: messageId } }),
-      // Inbox badge = unread messages *from the other peer to this user* in this DM.
-      this.prisma.friendMessage.count({
-        where: { fromUserId, toUserId, isRead: false }
-      }),
-      this.prisma.friendMessage.count({
-        where: { fromUserId: toUserId, toUserId: fromUserId, isRead: false }
-      })
+      this.prisma.friendMessage.findUnique({ where: { id: messageId } })
     ]);
     if (!conv || !msg) return;
+
+    // Count from persisted row so it always matches GET /conversations/inbox (same semantics as conversation.service).
+    const sender = msg.fromUserId;
+    const recipient = msg.toUserId;
+    const [unreadForRecipient, unreadForSender] = await Promise.all([
+      this.prisma.friendMessage.count({
+        where: { fromUserId: sender, toUserId: recipient, isRead: false }
+      }),
+      this.prisma.friendMessage.count({
+        where: { fromUserId: recipient, toUserId: sender, isRead: false }
+      })
+    ]);
+
     const base = {
       id: msg.id,
       conversationId: conv.id,
@@ -1065,14 +1071,13 @@ export class FriendService {
       createdAt: msg.createdAt
     };
     // Each user gets their own authoritative unread count (matches GET /conversations/inbox).
-    // Never let clients infer unread by +1 — that double-counts when lists are also refreshed.
-    this.realtime.emitToUser(toUserId, "friend:message", {
+    this.realtime.emitToUser(recipient, "friend:message", {
       ...base,
-      unreadCountForConversation: unreadForToUser
+      unreadCountForConversation: unreadForRecipient
     });
-    this.realtime.emitToUser(fromUserId, "friend:message", {
+    this.realtime.emitToUser(sender, "friend:message", {
       ...base,
-      unreadCountForConversation: unreadForFromUser
+      unreadCountForConversation: unreadForSender
     });
   }
 

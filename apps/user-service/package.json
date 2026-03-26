@@ -11,6 +11,7 @@
     "prisma:push": "echo '⚠️  WARNING: prisma:push can drop tables! Use prisma:migrate instead.' && prisma db push --accept-data-loss",
     "prisma:deploy": "prisma migrate deploy",
     "seed": "tsx prisma/seed.ts",
+    "seed:zodiacs": "tsx prisma/seed-zodiacs.ts",
     "seed:test-users": "tsx prisma/seed-test-users.ts",
     "postinstall": "node scripts/postinstall-prisma.js"
   },

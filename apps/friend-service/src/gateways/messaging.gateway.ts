@@ -63,8 +63,16 @@ export class MessagingGateway implements OnModuleInit {
       // Lightweight typing indicator forwarding.
       // Client sends: { type: 'friend:typing', data: { otherUserId, conversationId, isTyping } }
       if (type === "friend:typing") {
-        const otherUserId = typeof data?.otherUserId === "string" ? data.otherUserId : null;
-        const conversationId = typeof data?.conversationId === "string" ? data.conversationId : null;
+        const rawOther = data?.otherUserId;
+        const rawConv = data?.conversationId;
+        const otherUserId =
+          rawOther === undefined || rawOther === null || rawOther === ""
+            ? null
+            : String(rawOther);
+        const conversationId =
+          rawConv === undefined || rawConv === null || rawConv === ""
+            ? null
+            : String(rawConv);
         const isTyping = Boolean(data?.isTyping);
         if (!otherUserId || !conversationId) return;
 
@@ -73,6 +81,12 @@ export class MessagingGateway implements OnModuleInit {
         const last = (ws as any).__lastTypingAt ?? 0;
         if (now - last < 250) return;
         (ws as any).__lastTypingAt = now;
+
+        if (process.env.DEBUG_WS_TYPING === "1") {
+          this.logger.debug(
+            `[typing] from=${userId} to=${otherUserId} conv=${conversationId} isTyping=${isTyping}`
+          );
+        }
 
         this.realtime.emitToUser(otherUserId, "friend:typing", {
           conversationId,

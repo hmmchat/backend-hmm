@@ -70,6 +70,22 @@ export class AuthMiddleware {
       return false;
     }
 
+    // Beam TV / HMM_TV public discovery endpoints (must work for anonymous viewers)
+    // - GET /discovery/broadcasts/feed?sessionId=...&deviceId=...
+    // - POST /discovery/broadcasts/viewed (anonymous uses deviceId)
+    // - GET /discovery/broadcasts/:roomId (deep link)
+    // - GET /discovery/broadcasts/:roomId/comments (public)
+    // - POST /discovery/broadcasts/:roomId/share (auth optional)
+    if (
+      normalized === "/discovery/broadcasts/feed" ||
+      normalized === "/discovery/broadcasts/viewed" ||
+      /^\/discovery\/broadcasts\/[^/]+$/.test(normalized) ||
+      /^\/discovery\/broadcasts\/[^/]+\/comments$/.test(normalized) ||
+      /^\/discovery\/broadcasts\/[^/]+\/share$/.test(normalized)
+    ) {
+      return false;
+    }
+
     // Public endpoints
     const publicPaths = [
       "/auth/",

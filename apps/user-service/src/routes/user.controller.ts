@@ -408,10 +408,10 @@ export class UserController {
    * PATCH /me/zodiac
    */
   @Patch("me/zodiac")
-  async updateMyZodiac(@Headers("authorization") authz?: string, @Body() body?: unknown) {
+  async updateMyZodiac(@Body() body: unknown, @Headers("authorization") authz?: string) {
     const token = this.getTokenFromHeader(authz);
     if (!token) throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
-    const dto = UpdateZodiacSchema.parse(body);
+    const dto = UpdateZodiacSchema.parse(body) as { zodiacId: string };
     return this.userService.updateMyZodiac(token, dto);
   }
 

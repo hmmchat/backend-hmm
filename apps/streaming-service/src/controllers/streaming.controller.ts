@@ -83,8 +83,28 @@ export class StreamingController {
     if (!userId) {
       throw new HttpException("Missing x-user-id", HttpStatus.UNAUTHORIZED);
     }
-    const limit = Math.min(Math.max(parseInt(limitStr ?? "20", 10) || 20, 1), 100);
+    const limit = Math.min(Math.max(parseInt(limitStr ?? "10", 10) || 10, 1), 10);
     return this.historyService.getCallHistory(userId, limit, cursor || undefined);
+  }
+
+  /**
+   * Get call timeline detail (room lifecycle events for one call)
+   * GET /streaming/history/:sessionId/timeline
+   */
+  @Get("history/:sessionId/timeline")
+  async getHistoryTimeline(
+    @Headers("x-user-id") xUserId: string | undefined,
+    @Param("sessionId") sessionId: string
+  ) {
+    const userId = xUserId?.trim();
+    if (!userId) {
+      throw new HttpException("Missing x-user-id", HttpStatus.UNAUTHORIZED);
+    }
+    const call = await this.historyService.getCallTimeline(userId, sessionId);
+    if (!call) {
+      throw new HttpException("Call not found", HttpStatus.NOT_FOUND);
+    }
+    return call;
   }
 
   /**

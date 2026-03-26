@@ -41,19 +41,92 @@ export interface GetCallHistoryResult {
   hasMore: boolean;
 }
 
+export interface HistoryTimelineItem {
+  at: string;
+  eventType: string;
+  title: string;
+  description: string;
+  userId: string | null;
+  username: string | null;
+  displayPictureUrl: string | null;
+  metadata: Record<string, unknown> | null;
+}
+
+export interface HistoryTimelineCall extends HistoryCall {
+  timeline: HistoryTimelineItem[];
+}
+
+function safeParseMetadata(raw: string | null): Record<string, unknown> | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") {
+      return parsed as Record<string, unknown>;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function toEventPresentation(eventType: string): { title: string; description: string } {
+  const map: Record<string, { title: string; description: string }> = {
+    room_created: { title: "Call started", description: "Room was created" },
+    participant_joined: { title: "Participant joined", description: "A participant joined the call" },
+    participant_left: { title: "Participant left", description: "A participant left the call" },
+    participant_kicked: { title: "Participant removed", description: "A participant was removed from the call" },
+    broadcast_started: { title: "Broadcast started", description: "Broadcasting was started in this room" },
+    broadcast_stopped: { title: "Broadcast stopped", description: "Broadcasting was stopped in this room" },
+    pull_stranger_enabled: { title: "Pull stranger enabled", description: "Host enabled pull-stranger mode" },
+    pull_stranger_expired: { title: "Pull stranger expired", description: "Pull-stranger window expired" },
+    participant_joined_via_pull_stranger: { title: "Stranger pulled in", description: "A stranger joined via pull-stranger" },
+    waitlist_requested: { title: "Join requested", description: "A viewer requested to join" },
+    waitlist_cancelled: { title: "Join request cancelled", description: "A viewer cancelled their join request" },
+    participant_joined_via_waitlist: { title: "Viewer joined from waitlist", description: "A viewer joined from the waitlist" },
+    call_ended: { title: "Call ended", description: "Room was ended" }
+  };
+  return map[eventType] ?? { title: eventType.replaceAll("_", " "), description: "Room event" };
+}
+
 @Injectable()
 export class HistoryService {
+  private readonly maxHistoryPerUser = 10;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly discoveryClient: DiscoveryClientService,
     private readonly friendClient: FriendClientService
   ) {}
 
+  private async enforcePerUserHistoryRetention(userId: string): Promise<void> {
+    const oldSessions = await this.prisma.callSession.findMany({
+      where: {
+        status: "ENDED",
+        startedAt: { not: null },
+        participants: { some: { userId } }
+      },
+      orderBy: [{ startedAt: "desc" }, { id: "desc" }],
+      skip: this.maxHistoryPerUser,
+      select: { id: true }
+    });
+
+    if (oldSessions.length === 0) return;
+
+    await this.prisma.userHiddenCallHistory.createMany({
+      data: oldSessions.map((s) => ({ userId, sessionId: s.id })),
+      skipDuplicates: true
+    });
+  }
+
   async getCallHistory(
     userId: string,
     limit: number,
     cursor?: string
   ): Promise<GetCallHistoryResult> {
+    // Per-user retention: only last N calls should remain visible in history.
+    // Older calls are hidden for this user only (not globally deleted).
+    await this.enforcePerUserHistoryRetention(userId);
+
     const hidden = await this.prisma.userHiddenCallHistory.findMany({
       where: { userId },
       select: { sessionId: true }
@@ -110,10 +183,12 @@ export class HistoryService {
         },
         events: {
           where: {
-            eventType: { in: [...DROP_IN_EVENT_TYPES] },
-            userId: { not: null }
+            OR: [
+              { eventType: { in: [...DROP_IN_EVENT_TYPES] }, userId: { not: null } },
+              { eventType: "broadcast_started" }
+            ]
           },
-          select: { userId: true }
+          select: { userId: true, eventType: true }
         }
       },
       orderBy: [{ startedAt: "desc" }, { id: "desc" }],
@@ -141,13 +216,16 @@ export class HistoryService {
     slice.forEach((s) => {
       const set = new Set<string>();
       s.events.forEach((e) => {
-        if (e.userId) set.add(e.userId);
+        if (e.userId && DROP_IN_EVENT_TYPES.includes(e.eventType as (typeof DROP_IN_EVENT_TYPES)[number])) {
+          set.add(e.userId);
+        }
       });
       dropInBySession.set(s.id, set);
     });
 
     const calls: HistoryCall[] = slice.map((session) => {
-      const callType: CallType = session.isBroadcasting ? "Broadcast" : "Squad";
+      const hasBroadcastStarted = session.events.some((e) => e.eventType === "broadcast_started");
+      const callType: CallType = session.isBroadcasting || hasBroadcastStarted ? "Broadcast" : "Squad";
       const endedAt = session.endedAt ?? null;
       const dropIns = dropInBySession.get(session.id) ?? new Set<string>();
 
@@ -233,10 +311,12 @@ export class HistoryService {
         },
         events: {
           where: {
-            eventType: { in: [...DROP_IN_EVENT_TYPES] },
-            userId: { not: null }
+            OR: [
+              { eventType: { in: [...DROP_IN_EVENT_TYPES] }, userId: { not: null } },
+              { eventType: "broadcast_started" }
+            ]
           },
-          select: { userId: true }
+          select: { userId: true, eventType: true }
         }
       }
     });
@@ -261,10 +341,13 @@ export class HistoryService {
 
     const dropIns = new Set<string>();
     session.events.forEach((e) => {
-      if (e.userId) dropIns.add(e.userId);
+      if (e.userId && DROP_IN_EVENT_TYPES.includes(e.eventType as (typeof DROP_IN_EVENT_TYPES)[number])) {
+        dropIns.add(e.userId);
+      }
     });
 
-    const callType: CallType = session.isBroadcasting ? "Broadcast" : "Squad";
+    const hasBroadcastStarted = session.events.some((e) => e.eventType === "broadcast_started");
+    const callType: CallType = session.isBroadcasting || hasBroadcastStarted ? "Broadcast" : "Squad";
     const endedAt = session.endedAt ?? null;
 
     const participants: HistoryParticipant[] = session.participants.map((p) => {
@@ -306,6 +389,101 @@ export class HistoryService {
       endedAt: endedAt?.toISOString() ?? null,
       callType,
       participants
+    };
+  }
+
+  async getCallTimeline(userId: string, sessionId: string): Promise<HistoryTimelineCall | null> {
+    const call = await this.getCallById(userId, sessionId);
+    if (!call) return null;
+
+    const session = await this.prisma.callSession.findFirst({
+      where: {
+        id: sessionId,
+        status: "ENDED",
+        participants: { some: { userId } }
+      },
+      include: {
+        events: {
+          orderBy: { createdAt: "asc" },
+          select: {
+            eventType: true,
+            userId: true,
+            metadata: true,
+            createdAt: true
+          }
+        },
+        participants: {
+          select: {
+            userId: true,
+            joinedAt: true,
+            leftAt: true
+          }
+        }
+      }
+    });
+
+    if (!session) return null;
+
+    const participantIds = [...new Set(session.participants.map((p) => p.userId))];
+    const profiles = await this.discoveryClient.getUserProfilesBatch(participantIds);
+
+    const participantJoinLeave: HistoryTimelineItem[] = session.participants.flatMap((participant) => {
+      const profile = profiles.get(participant.userId);
+      const username = profile?.username ?? null;
+      const displayPictureUrl = profile?.displayPictureUrl ?? null;
+      const items: HistoryTimelineItem[] = [
+        {
+          at: participant.joinedAt.toISOString(),
+          eventType: "participant_joined_time",
+          title: "Participant joined",
+          description: `${username || "A participant"} joined this call`,
+          userId: participant.userId,
+          username,
+          displayPictureUrl,
+          metadata: null
+        }
+      ];
+      if (participant.leftAt) {
+        const durationSeconds = Math.max(
+          0,
+          Math.floor((participant.leftAt.getTime() - participant.joinedAt.getTime()) / 1000)
+        );
+        items.push({
+          at: participant.leftAt.toISOString(),
+          eventType: "participant_left_time",
+          title: "Participant left",
+          description: `${username || "A participant"} left after ${durationSeconds}s`,
+          userId: participant.userId,
+          username,
+          displayPictureUrl,
+          metadata: { durationSeconds }
+        });
+      }
+      return items;
+    });
+
+    const eventTimeline: HistoryTimelineItem[] = session.events.map((event) => {
+      const profile = event.userId ? profiles.get(event.userId) : null;
+      const presentation = toEventPresentation(event.eventType);
+      return {
+        at: event.createdAt.toISOString(),
+        eventType: event.eventType,
+        title: presentation.title,
+        description: presentation.description,
+        userId: event.userId,
+        username: profile?.username ?? null,
+        displayPictureUrl: profile?.displayPictureUrl ?? null,
+        metadata: safeParseMetadata(event.metadata)
+      };
+    });
+
+    const timeline = [...eventTimeline, ...participantJoinLeave].sort(
+      (a, b) => new Date(a.at).getTime() - new Date(b.at).getTime()
+    );
+
+    return {
+      ...call,
+      timeline
     };
   }
 

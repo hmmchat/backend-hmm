@@ -33,6 +33,8 @@ interface ViewerState {
 @Injectable()
 export class RoomService {
   private readonly logger = new Logger(RoomService.name);
+  private readonly perUserHistoryRetentionCount = 10;
+  private readonly historyPruneBatchSize = 200;
   private rooms = new Map<string, RoomState>();
   private readonly maxParticipants = parseInt(process.env.MAX_PARTICIPANTS_PER_CALL || "4", 10);
   private readonly pullStrangerWindowMs = this.getPullStrangerWindowMs();
@@ -2296,7 +2298,71 @@ export class RoomService {
       });
     }
 
+    await this.pruneGloballyObsoleteHistorySessions().catch((error: any) => {
+      this.logger.warn(`History prune skipped due to error: ${error?.message || error}`);
+    });
+
     this.logger.log(`Room ${roomId} ended`);
+  }
+
+  /**
+   * Physically delete ended sessions only when they are outside top-N history for ALL participants.
+   * This preserves each user's "last N calls" while allowing infra/storage cleanup.
+   */
+  private async pruneGloballyObsoleteHistorySessions(): Promise<void> {
+    const keepN = this.perUserHistoryRetentionCount;
+    const batchSize = this.historyPruneBatchSize;
+
+    const rows = await this.prisma.$queryRaw<Array<{ id: string }>>`
+      WITH ranked AS (
+        SELECT
+          cp."sessionId" AS session_id,
+          cp."userId" AS user_id,
+          ROW_NUMBER() OVER (
+            PARTITION BY cp."userId"
+            ORDER BY cs."startedAt" DESC, cs.id DESC
+          ) AS rn
+        FROM call_participants cp
+        INNER JOIN call_sessions cs ON cs.id = cp."sessionId"
+        WHERE cs.status = 'ENDED'
+          AND cs."startedAt" IS NOT NULL
+      ),
+      keep_sessions AS (
+        SELECT DISTINCT session_id
+        FROM ranked
+        WHERE rn <= ${keepN}
+      ),
+      deletable AS (
+        SELECT cs.id
+        FROM call_sessions cs
+        WHERE cs.status = 'ENDED'
+          AND cs."startedAt" IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1
+            FROM keep_sessions ks
+            WHERE ks.session_id = cs.id
+          )
+        LIMIT ${batchSize}
+      )
+      SELECT id
+      FROM deletable
+    `;
+
+    if (!rows || rows.length === 0) return;
+    const sessionIds = rows.map((r) => r.id);
+
+    await this.prisma.$transaction([
+      this.prisma.userHiddenCallHistory.deleteMany({
+        where: { sessionId: { in: sessionIds } }
+      }),
+      this.prisma.callSession.deleteMany({
+        where: { id: { in: sessionIds } }
+      })
+    ]);
+
+    this.logger.log(
+      `History prune: deleted ${sessionIds.length} ended session(s) obsolete for all users (retention=${keepN})`
+    );
   }
 
   /**

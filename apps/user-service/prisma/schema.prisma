@@ -40,6 +40,9 @@ model User {
   // Profile Creation Fields (from Figma 1)
   username      String?  // * mandatory, can be duplicate (e.g., common first names like "John", "Sarah")
   dateOfBirth   DateTime? // * mandatory, immutable once set
+  zodiacId      String?
+  zodiac        Zodiac?  @relation(fields: [zodiacId], references: [id])
+  zodiacOverridden Boolean @default(false)
   gender        Gender?  // Can change once from PREFER_NOT_TO_SAY to any other, but not otherwise
   genderChanged Boolean  @default(false) // Track if user changed from PREFER_NOT_TO_SAY
   displayPictureUrl String? // * mandatory, must be validated for NSFW before acceptance
@@ -93,6 +96,20 @@ model User {
   @@index([status])
   @@index([latitude, longitude]) // For location-based queries
   @@map("users")
+}
+
+model Zodiac {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  imageUrl  String
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users     User[]
+
+  @@map("zodiacs")
+  @@index([order])
 }
 
 // Catalog of suggested intent prompts shown during profile creation

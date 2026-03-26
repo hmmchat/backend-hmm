@@ -26,6 +26,7 @@ import {
   UpdateIntentSchema,
   CreateMusicPreferenceSchema
 } from "../dtos/profile.dto.js";
+import { UpdateZodiacSchema } from "../dtos/zodiac.dto.js";
 import { UserStatus } from "../../node_modules/.prisma/client/index.js";
 import {
   NEARBY_DEFAULT_RADIUS_KM,
@@ -389,6 +390,29 @@ export class UserController {
     const payload = await verifyAccess(token);
 
     return this.userService.getHoroscope(payload.sub);
+  }
+
+  /* ---------- Zodiac ---------- */
+
+  /**
+   * List all zodiac options (public; used for profile picker).
+   * GET /zodiacs
+   */
+  @Get("zodiacs")
+  async listZodiacs() {
+    return this.userService.listZodiacs();
+  }
+
+  /**
+   * Update authenticated user's zodiac (override).
+   * PATCH /me/zodiac
+   */
+  @Patch("me/zodiac")
+  async updateMyZodiac(@Headers("authorization") authz?: string, @Body() body?: unknown) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    const dto = UpdateZodiacSchema.parse(body);
+    return this.userService.updateMyZodiac(token, dto);
   }
 
   /* ---------- Reporting ---------- */

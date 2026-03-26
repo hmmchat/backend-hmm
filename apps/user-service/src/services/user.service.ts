@@ -117,6 +117,31 @@ export class UserService implements OnModuleInit {
     }));
   }
 
+  private async resolveZodiacFromDob(dateOfBirth: Date): Promise<{ id: string; name: string; imageUrl: string } | null> {
+    const month = dateOfBirth.getMonth() + 1; // 1-12
+    const day = dateOfBirth.getDate();
+
+    let name: string;
+    if ((month === 3 && day >= 21) || (month === 4 && day <= 19)) name = "Aries";
+    else if ((month === 4 && day >= 20) || (month === 5 && day <= 20)) name = "Taurus";
+    else if ((month === 5 && day >= 21) || (month === 6 && day <= 20)) name = "Gemini";
+    else if ((month === 6 && day >= 21) || (month === 7 && day <= 22)) name = "Cancer";
+    else if ((month === 7 && day >= 23) || (month === 8 && day <= 22)) name = "Leo";
+    else if ((month === 8 && day >= 23) || (month === 9 && day <= 22)) name = "Virgo";
+    else if ((month === 9 && day >= 23) || (month === 10 && day <= 22)) name = "Libra";
+    else if ((month === 10 && day >= 23) || (month === 11 && day <= 21)) name = "Scorpio";
+    else if ((month === 11 && day >= 22) || (month === 12 && day <= 21)) name = "Sagittarius";
+    else if ((month === 12 && day >= 22) || (month === 1 && day <= 19)) name = "Capricorn";
+    else if ((month === 1 && day >= 20) || (month === 2 && day <= 18)) name = "Aquarius";
+    else name = "Pisces";
+
+    const z = await (this.prisma as any).zodiac.findUnique({
+      where: { name },
+      select: { id: true, name: true, imageUrl: true }
+    });
+    return z || null;
+  }
+
   /* ---------- Profile Management ---------- */
 
   async createProfile(userId: string, data: CreateProfileDto) {
@@ -158,6 +183,8 @@ export class UserService implements OnModuleInit {
         }
       }
 
+      const zodiac = await this.resolveZodiacFromDob(data.dateOfBirth);
+
       // Create user profile
       const user = await this.prisma.user.create({
         data: {
@@ -168,14 +195,17 @@ export class UserService implements OnModuleInit {
           displayPictureUrl: data.displayPictureUrl,
           intent: data.intent,
           profileCompleted: true,
-          genderChanged: data.gender === "PREFER_NOT_TO_SAY" ? false : true
+          genderChanged: data.gender === "PREFER_NOT_TO_SAY" ? false : true,
+          zodiacId: zodiac?.id || null,
+          zodiacOverridden: false
         },
         include: {
           photos: true,
           musicPreference: true,
           brandPreferences: { include: { brand: true } },
           interests: { include: { interest: true } },
-          values: { include: { value: true } }
+          values: { include: { value: true } },
+          zodiac: true
         }
       });
 
@@ -290,7 +320,8 @@ export class UserService implements OnModuleInit {
         values: {
           include: { value: true },
           orderBy: { order: "asc" }
-        }
+        },
+        zodiac: true
       }
     });
 
@@ -417,7 +448,10 @@ export class UserService implements OnModuleInit {
       interests: "interests",
       values: "values",
       activeBadge: "activeBadge",
-      activeBadgeId: "activeBadgeId"
+      activeBadgeId: "activeBadgeId",
+      zodiac: "zodiac",
+      zodiacId: "zodiacId",
+      zodiacOverridden: "zodiacOverridden"
     };
 
     for (const field of fields) {
@@ -1494,6 +1528,44 @@ export class UserService implements OnModuleInit {
 
     const horoscope = this.calculateHoroscope(user.dateOfBirth);
     return { horoscope };
+  }
+
+  async listZodiacs() {
+    const zodiacs = await (this.prisma as any).zodiac.findMany({
+      select: { id: true, name: true, imageUrl: true, order: true },
+      orderBy: [{ order: "asc" }, { name: "asc" }]
+    });
+    return { ok: true, zodiacs };
+  }
+
+  async updateMyZodiac(accessToken: string, data: { zodiacId: string }) {
+    const userId = await this.verifyAccessToken(accessToken);
+
+    const zodiac = await (this.prisma as any).zodiac.findUnique({
+      where: { id: data.zodiacId },
+      select: { id: true }
+    });
+    if (!zodiac) {
+      throw new HttpException("Invalid zodiacId", HttpStatus.BAD_REQUEST);
+    }
+
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        zodiacId: data.zodiacId,
+        zodiacOverridden: true
+      },
+      include: {
+        photos: { orderBy: { order: "asc" } },
+        musicPreference: true,
+        brandPreferences: { include: { brand: true }, orderBy: { order: "asc" } },
+        interests: { include: { interest: true }, orderBy: { order: "asc" } },
+        values: { include: { value: true }, orderBy: { order: "asc" } },
+        zodiac: true
+      }
+    });
+
+    return { ok: true, user: this.mapUserBrandLogos(user) };
   }
 
   /* ---------- Test Methods (No Auth Required) ---------- */

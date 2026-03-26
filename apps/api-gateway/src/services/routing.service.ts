@@ -206,6 +206,11 @@ export class RoutingService implements OnModuleInit {
       serviceUrl: userServiceUrl,
       requiresAuth: false
     });
+    this.routes.set("/admin/zodiacs", {
+      path: "/admin/zodiacs",
+      serviceUrl: userServiceUrl,
+      requiresAuth: false
+    });
     this.routes.set("/admin/users", {
       path: "/admin/users",
       serviceUrl: userServiceUrl,

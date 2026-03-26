@@ -35,31 +35,14 @@ export class GiftAdminController {
    */
   @Get()
   async getAll() {
-    try {
-      const gifts = await this.prisma.gift.findMany({
-        orderBy: [
-          { isActive: "desc" },
-          { diamonds: "asc" },
-          { name: "asc" }
-        ] as any
-      });
-      return { ok: true, gifts };
-    } catch (e: any) {
-      // Production safety: if DB has not applied the diamonds migration yet,
-      // fall back to ordering by coins/name so admin UI can still load.
-      const msg = e?.message || String(e);
-      if (msg.includes("diamonds") && (msg.includes("does not exist") || msg.includes("column"))) {
-        const gifts = await this.prisma.gift.findMany({
-          orderBy: [
-            { isActive: "desc" },
-            { coins: "asc" },
-            { name: "asc" }
-          ] as any
-        });
-        return { ok: true, gifts, warning: "DB missing diamonds column; apply friend-service migrations." };
-      }
-      throw e;
-    }
+    const gifts = await this.prisma.gift.findMany({
+      orderBy: [
+        { isActive: "desc" },
+        { diamonds: "asc" },
+        { name: "asc" }
+      ] as any
+    });
+    return { ok: true, gifts };
   }
 
   /**
@@ -68,29 +51,14 @@ export class GiftAdminController {
    */
   @Get("active")
   async getActive() {
-    try {
-      const gifts = await this.prisma.gift.findMany({
-        where: { isActive: true },
-        orderBy: [
-          { diamonds: "asc" },
-          { name: "asc" }
-        ] as any
-      });
-      return { ok: true, gifts };
-    } catch (e: any) {
-      const msg = e?.message || String(e);
-      if (msg.includes("diamonds") && (msg.includes("does not exist") || msg.includes("column"))) {
-        const gifts = await this.prisma.gift.findMany({
-          where: { isActive: true },
-          orderBy: [
-            { coins: "asc" },
-            { name: "asc" }
-          ] as any
-        });
-        return { ok: true, gifts, warning: "DB missing diamonds column; apply friend-service migrations." };
-      }
-      throw e;
-    }
+    const gifts = await this.prisma.gift.findMany({
+      where: { isActive: true },
+      orderBy: [
+        { diamonds: "asc" },
+        { name: "asc" }
+      ] as any
+    });
+    return { ok: true, gifts };
   }
 
   /**

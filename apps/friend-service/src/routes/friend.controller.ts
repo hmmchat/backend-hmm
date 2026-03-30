@@ -25,24 +25,53 @@ import { verifyToken, AccessPayload } from "@hmm/common";
 import { JWK } from "jose";
 import * as crypto from "crypto";
 
+const GifInputSchema = z
+  .object({
+    provider: z.literal("giphy").optional().default("giphy"),
+    id: z.string().min(1),
+    url: z.string().optional(),
+    gifUrl: z.string().optional(),
+    previewUrl: z.string().optional(),
+    preview_url: z.string().optional(),
+    width: z.coerce.number().int().positive().optional(),
+    height: z.coerce.number().int().positive().optional()
+  })
+  .transform((val) => {
+    const url = (val.url || val.gifUrl || "").trim();
+    const previewUrl = (val.previewUrl || val.preview_url || "").trim() || undefined;
+    return {
+      provider: "giphy" as const,
+      id: val.id,
+      url,
+      previewUrl,
+      width: val.width,
+      height: val.height
+    };
+  })
+  .refine((val) => {
+    try {
+      // Allow frontend to send either `url` or `gifUrl`; must be a real URL.
+      // (If empty/invalid, we return 400 instead of 500.)
+      // eslint-disable-next-line no-new
+      new URL(val.url);
+      if (val.previewUrl) {
+        // eslint-disable-next-line no-new
+        new URL(val.previewUrl);
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }, { message: "gif.url must be a valid URL" });
+
 const SendMessageSchema = z.object({
   message: z.string().max(1000).nullable().optional().transform((val) => {
-    // Convert empty strings to null
     if (val === "" || val === null || val === undefined) return null;
     return val;
   }),
   giftId: z.string().optional(),
-  giftAmount: z.number().positive().optional(),
-  gif: z
-    .object({
-      provider: z.literal("giphy").default("giphy"),
-      id: z.string().min(1),
-      url: z.string().url(),
-      previewUrl: z.string().url().optional(),
-      width: z.number().int().positive().optional(),
-      height: z.number().int().positive().optional()
-    })
-    .optional()
+  giftAmount: z.coerce.number().positive().optional(),
+  gif: GifInputSchema.optional()
 }).refine(
   (data) => {
     // Either message (non-empty) or giftId or gif must be provided
@@ -60,6 +89,22 @@ const SendMessageSchema = z.object({
   },
   { message: "Cannot send a gift and a GIF in the same message" }
 );
+
+function parseOrBadRequest<TSchema extends z.ZodTypeAny>(
+  schema: TSchema,
+  input: unknown
+): z.output<TSchema> {
+  const parsed = schema.safeParse(input);
+  if (parsed.success) return parsed.data;
+  throw new HttpException(
+    {
+      statusCode: HttpStatus.BAD_REQUEST,
+      message: "Invalid request",
+      issues: parsed.error.issues
+    },
+    HttpStatus.BAD_REQUEST
+  );
+}
 
 const PaginationSchema = z.object({
   limit: z.string().optional().transform((val) => val ? Math.min(parseInt(val, 10), 100) : 50), // Max 100
@@ -368,7 +413,7 @@ export class FriendController {
   ) {
     const token = this.getTokenFromHeader(authz);
     const userId = await this.verifyTokenAndGetUserId(token!);
-    const dto = SendMessageSchema.parse(body);
+    const dto = parseOrBadRequest(SendMessageSchema, body);
     return this.friendService.sendMessageToFriend(
       userId,
       friendId,
@@ -392,7 +437,7 @@ export class FriendController {
   ) {
     const token = this.getTokenFromHeader(authz);
     const userId = await this.verifyTokenAndGetUserId(token!);
-    const dto = SendMessageSchema.parse(body);
+    const dto = parseOrBadRequest(SendMessageSchema, body);
     const request = await this.friendService.getRequest(requestId);
     return this.friendService.sendMessageToNonFriend(
       userId,
@@ -542,7 +587,7 @@ export class FriendController {
   ) {
     const token = this.getTokenFromHeader(authz);
     const userId = await this.verifyTokenAndGetUserId(token!);
-    const dto = SendMessageSchema.parse(body);
+    const dto = parseOrBadRequest(SendMessageSchema, body);
     return this.friendService.sendMessageToConversation(
       userId,
       conversationId,
@@ -565,12 +610,12 @@ export class FriendController {
     const token = this.getTokenFromHeader(authz);
     await this.verifyTokenAndGetUserId(token!);
 
-    const parsed = z.object({
+    const parsed = parseOrBadRequest(z.object({
       q: z.string().min(1, "q is required"),
       limit: z.string().optional(),
       offset: z.string().optional(),
       rating: z.string().optional()
-    }).parse(query);
+    }), query);
 
     const limit = Math.min(Math.max(parseInt(parsed.limit ?? "25", 10) || 25, 1), 50);
     const offset = Math.max(parseInt(parsed.offset ?? "0", 10) || 0, 0);
@@ -590,13 +635,11 @@ export class FriendController {
     const token = this.getTokenFromHeader(authz);
     await this.verifyTokenAndGetUserId(token!);
 
-    const parsed = z
-      .object({
-        limit: z.string().optional(),
-        offset: z.string().optional(),
-        rating: z.string().optional()
-      })
-      .parse(query);
+    const parsed = parseOrBadRequest(z.object({
+      limit: z.string().optional(),
+      offset: z.string().optional(),
+      rating: z.string().optional()
+    }), query);
 
     const limit = Math.min(Math.max(parseInt(parsed.limit ?? "25", 10) || 25, 1), 50);
     const offset = Math.max(parseInt(parsed.offset ?? "0", 10) || 0, 0);

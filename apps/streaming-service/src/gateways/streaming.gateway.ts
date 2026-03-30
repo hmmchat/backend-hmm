@@ -260,6 +260,14 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
           await this.handleProduce(connectionId, userId, data, ws);
           break;
 
+        case "close-producer":
+          if (this.isAnonymousUser(userId)) {
+            this.sendError(ws, "Authentication required. Please sign up to participate in calls.");
+            return;
+          }
+          await this.handleCloseProducer(connectionId, userId, data, ws);
+          break;
+
         case "consume":
           if (this.isAnonymousUser(userId)) {
             this.sendError(ws, "Authentication required. Please sign up to participate in calls.");
@@ -666,9 +674,20 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     data: any,
     ws: any
   ) {
-    const { roomId, transportId, kind, rtpParameters } = data;
+    const { roomId, transportId, kind, rtpParameters, source: rawSource } = data;
     if (!roomId || !transportId || !kind || !rtpParameters) {
       throw new Error("roomId, transportId, kind, and rtpParameters are required");
+    }
+
+    let source: "camera" | "screen" | undefined;
+    if (rawSource !== undefined && rawSource !== null) {
+      if (kind !== "video") {
+        throw new Error('source is only allowed when kind is "video"');
+      }
+      if (rawSource !== "camera" && rawSource !== "screen") {
+        throw new Error('source must be "camera" or "screen"');
+      }
+      source = rawSource;
     }
 
     // Validate user is a participant (only participants can produce)
@@ -682,19 +701,60 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       userId,
       transportId,
       kind,
-      rtpParameters
+      rtpParameters,
+      kind === "video" ? { source: source ?? "camera" } : undefined
     );
+
+    const videoSource =
+      producer.kind === "video"
+        ? this.callService.getVideoProducerSource(roomId, producer.id) ?? "camera"
+        : undefined;
 
     this.send(ws, {
       type: "produced",
       data: {
         id: producer.id,
-        kind: producer.kind
+        kind: producer.kind,
+        ...(producer.kind === "video" ? { source: videoSource } : {})
       }
     });
 
-    // Notify other participants about new producer
-    await this.notifyNewProducer(roomId, userId, producer.id, producer.kind);
+    await this.notifyNewProducer(roomId, userId, producer.id, producer.kind, videoSource);
+  }
+
+  private async handleCloseProducer(
+    _connectionId: string,
+    userId: string,
+    data: any,
+    ws: any
+  ) {
+    const { roomId, producerId } = data ?? {};
+    if (!roomId || !producerId) {
+      this.sendError(ws, "roomId and producerId are required");
+      return;
+    }
+
+    try {
+      await this.callService.closeProducer(roomId, userId, String(producerId));
+      this.send(ws, {
+        type: "producer-closed",
+        data: { roomId, producerId: String(producerId) }
+      });
+      await this.broadcastToRoom(
+        roomId,
+        {
+          type: "producer-closed",
+          data: {
+            roomId,
+            producerId: String(producerId),
+            closedBy: userId
+          }
+        },
+        userId
+      );
+    } catch (error: any) {
+      this.sendError(ws, error.message || "Failed to close producer");
+    }
   }
 
   /**
@@ -727,7 +787,11 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
         for (const [pUserId, participant] of room.participants.entries()) {
           if (String(pUserId) === String(userId)) continue;
           const p = (participant as any).producer;
-          if (p?.audio?.id === producerId || p?.video?.id === producerId) {
+          if (
+            p?.audio?.id === producerId ||
+            p?.video?.id === producerId ||
+            p?.screen?.id === producerId
+          ) {
             producerUserId = pUserId;
             break;
           }
@@ -740,6 +804,11 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       this.logger.warn(`consume: producer owner unknown for ${producerId} in room ${roomId}`);
     }
 
+    const videoSource =
+      consumer.kind === "video"
+        ? this.callService.getVideoProducerSource(roomId, producerId)
+        : undefined;
+
     this.send(ws, {
       type: "consumed",
       data: {
@@ -747,7 +816,8 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
         producerId: consumer.producerId,
         kind: consumer.kind,
         rtpParameters: consumer.rtpParameters,
-        userId: producerUserId // Add the producer's userId
+        userId: producerUserId,
+        ...(consumer.kind === "video" && videoSource ? { source: videoSource } : {})
       }
     });
   }
@@ -1365,16 +1435,24 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     roomId: string,
     userId: string,
     producerId: string,
-    kind: string
+    kind: string,
+    videoSource?: "camera" | "screen"
   ) {
-    await this.broadcastToRoom(roomId, {
-      type: "new-producer",
-      data: {
-        userId,
-        producerId,
-        kind
-      }
-    }, userId); // Exclude the producer
+    await this.broadcastToRoom(
+      roomId,
+      {
+        type: "new-producer",
+        data: {
+          userId,
+          producerId,
+          kind,
+          ...(kind === "video"
+            ? { source: videoSource ?? "camera" }
+            : {})
+        }
+      },
+      userId
+    );
   }
 
   /**
@@ -1574,13 +1652,19 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
         rtpCapabilities
       );
 
+      const videoSource =
+        consumer.kind === "video"
+          ? this.callService.getVideoProducerSource(roomId, producerId)
+          : undefined;
+
       this.send(ws, {
         type: "broadcast-consumed",
         data: {
           id: consumer.id,
           producerId: consumer.producerId,
           kind: consumer.kind,
-          rtpParameters: consumer.rtpParameters
+          rtpParameters: consumer.rtpParameters,
+          ...(consumer.kind === "video" && videoSource ? { source: videoSource } : {})
         }
       });
     } catch (error: any) {

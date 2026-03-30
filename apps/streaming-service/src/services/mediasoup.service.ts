@@ -190,14 +190,20 @@ export class MediasoupService implements OnModuleInit {
   async createProducer(
     transport: mediasoup.types.WebRtcTransport,
     rtpParameters: mediasoup.types.RtpParameters,
-    kind: mediasoup.types.MediaKind
+    kind: mediasoup.types.MediaKind,
+    appData?: Record<string, unknown>
   ): Promise<mediasoup.types.Producer> {
     const producer = await transport.produce({
       kind,
-      rtpParameters
+      rtpParameters,
+      ...(appData !== undefined && Object.keys(appData).length > 0 ? { appData } : {})
     });
 
-    this.logger.log(`Producer created (ID: ${producer.id}, kind: ${kind})`);
+    const src =
+      appData && typeof (appData as { source?: string }).source === "string"
+        ? `, source: ${(appData as { source: string }).source}`
+        : "";
+    this.logger.log(`Producer created (ID: ${producer.id}, kind: ${kind}${src})`);
     return producer;
   }
 

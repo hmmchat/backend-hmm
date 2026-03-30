@@ -2,7 +2,7 @@ import { Injectable, Logger, NotFoundException, BadRequestException } from "@nes
 import { PrismaService } from "../prisma/prisma.service.js";
 import { RoomService } from "./room.service.js";
 import { MediasoupService } from "./mediasoup.service.js";
-import { CallService } from "./call.service.js";
+import { CallService, type VideoProducerSource } from "./call.service.js";
 import { DiscoveryClientService } from "./discovery-client.service.js";
 import { types as MediasoupTypes } from "mediasoup";
 
@@ -317,6 +317,7 @@ export class BroadcastService {
     userId: string;
     producerId: string;
     kind: MediasoupTypes.MediaKind;
+    source?: VideoProducerSource;
   }>> {
     return await this.callService.getProducers(roomId);
   }

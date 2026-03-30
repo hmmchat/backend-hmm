@@ -19,7 +19,10 @@ interface ParticipantState {
   transports: Map<string, MediasoupTypes.WebRtcTransport>;
   producer: {
     audio?: MediasoupTypes.Producer;
+    /** Webcam / front camera */
     video?: MediasoupTypes.Producer;
+    /** Display or application capture (getDisplayMedia); separate from camera video */
+    screen?: MediasoupTypes.Producer;
   };
   consumers: Map<string, MediasoupTypes.Consumer>;
 }
@@ -907,6 +910,10 @@ export class RoomService {
       if (participant.producer.video) {
         room.producerOwnerById.delete(participant.producer.video.id);
         participant.producer.video.close();
+      }
+      if (participant.producer.screen) {
+        room.producerOwnerById.delete(participant.producer.screen.id);
+        participant.producer.screen.close();
       }
 
       // Close all consumers
@@ -2085,6 +2092,7 @@ export class RoomService {
         for (const t of participant.transports.values()) { try { t.close(); } catch { } }
         if (participant.producer.audio) participant.producer.audio.close();
         if (participant.producer.video) participant.producer.video.close();
+        if (participant.producer.screen) participant.producer.screen.close();
         for (const consumer of participant.consumers.values()) {
           consumer.close();
         }

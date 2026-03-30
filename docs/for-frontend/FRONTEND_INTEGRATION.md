@@ -1081,7 +1081,8 @@ Video is delivered by the backend using **Mediasoup**. Connect to the **streamin
 Use the **mediasoup-client** library on the frontend to create `Device`, load `rtpCapabilities`, create send/recv transports, and produce/consume tracks. The WebSocket messages above are the signaling protocol the backend expects.
 
 **In-call features (same WebSocket):**
-- **Chat:** `{ "type": "chat-message", "data": { "roomId": "...", "message": "Hello!" } }`
+- **Chat (text):** `{ "type": "chat-message", "data": { "roomId": "...", "message": "Hello!" } }`
+- **Chat (GIF):** `{ "type": "chat-message", "data": { "roomId": "...", "gif": { "provider": "giphy", "id": "...", "url": "https://...", "previewUrl": "https://..." } } }`
 - **Leave:** `{ "type": "leave-room", "data": { "roomId": "..." } }`
 - **Broadcasting:** `{ "type": "start-broadcast", "data": { "roomId": "..." } }` (host only); viewers use `join-as-viewer`, `create-viewer-transport`, `connect-viewer-transport`, `get-broadcast-producers`, `consume-broadcast`
 
@@ -1120,16 +1121,24 @@ See `apps/streaming-service/README.md` in the backend repo for the full WebSocke
 
 **Response:**
 ```json
-{
-  "messages": [
-    {
+[
+  {
+    "id": "string",
+    "roomId": "string",
+    "userId": "string",
+    "message": "string | null",
+    "messageType": "TEXT" | "GIF" | "GIF_WITH_MESSAGE",
+    "gif": {
+      "provider": "giphy",
       "id": "string",
-      "userId": "string",
-      "message": "string",
-      "timestamp": "string"
-    }
-  ]
-}
+      "url": "string",
+      "previewUrl": "string | undefined",
+      "width": "number | undefined",
+      "height": "number | undefined"
+    } | null,
+    "createdAt": "string"
+  }
+]
 ```
 
 ### 4. Enable Pull Stranger Mode
@@ -1944,7 +1953,15 @@ GET /me/conversations/sent-requests?limit=50&filter=only_follows&cursor=follow_x
 {
   "message": "Hello!" | null,  // Optional if sending gift
   "giftId": "string",  // Optional
-  "giftAmount": 100  // Required if giftId provided
+  "giftAmount": 100,  // Required if giftId provided
+  "gif": {            // Optional; cannot be combined with giftId
+    "provider": "giphy",
+    "id": "string",
+    "url": "string (https url)",
+    "previewUrl": "string (https url) | undefined",
+    "width": 320,
+    "height": 180
+  }
 }
 ```
 
@@ -1959,7 +1976,8 @@ GET /me/conversations/sent-requests?limit=50&filter=only_follows&cursor=follow_x
 **Note:** 
 - Text messages are **FREE** for friends
 - Gifts cost coins (transferred to friend)
-- Either `message` or `giftId` must be provided
+- Either `message` or `giftId` or `gif` must be provided
+- Do not send `giftId` and `gif` together in the same message
 
 ### 11. Send Message to Non-Friend (Costs Coins)
 
@@ -1970,7 +1988,15 @@ GET /me/conversations/sent-requests?limit=50&filter=only_follows&cursor=follow_x
 {
   "message": "Hello!" | null,  // Optional if sending gift
   "giftId": "string",  // Optional
-  "giftAmount": 100  // Required if giftId provided
+  "giftAmount": 100,  // Required if giftId provided
+  "gif": {            // Optional; cannot be combined with giftId
+    "provider": "giphy",
+    "id": "string",
+    "url": "string (https url)",
+    "previewUrl": "string (https url) | undefined",
+    "width": 320,
+    "height": 180
+  }
 }
 ```
 
@@ -1988,6 +2014,31 @@ GET /me/conversations/sent-requests?limit=50&filter=only_follows&cursor=follow_x
 - **Subsequent messages:** Gift required (text-only not allowed)
 - **Recipient's first reply:** FREE
 
+### 11.1 Search GIFs (GIPHY)
+
+**Endpoint:** `GET /me/gifs/search?q=hello&limit=25&offset=0&rating=g`
+
+**Response:**
+```json
+{
+  "provider": "giphy",
+  "query": "hello",
+  "limit": 25,
+  "offset": 0,
+  "results": [
+    {
+      "provider": "giphy",
+      "id": "string",
+      "url": "string",
+      "previewUrl": "string | undefined",
+      "width": "number | undefined",
+      "height": "number | undefined",
+      "title": "string | undefined"
+    }
+  ]
+}
+```
+
 **Note:** Conversation automatically moves to INBOX when both users send messages.
 
 ### 12. Send Message via Conversation ID (Unified)
@@ -1999,7 +2050,15 @@ GET /me/conversations/sent-requests?limit=50&filter=only_follows&cursor=follow_x
 {
   "message": "Hello!" | null,
   "giftId": "string",
-  "giftAmount": 100
+  "giftAmount": 100,
+  "gif": {            // Optional; cannot be combined with giftId
+    "provider": "giphy",
+    "id": "string",
+    "url": "string (https url)",
+    "previewUrl": "string (https url) | undefined",
+    "width": 320,
+    "height": 180
+  }
 }
 ```
 
@@ -2033,12 +2092,20 @@ GET /me/conversations/sent-requests?limit=50&filter=only_follows&cursor=follow_x
       "fromUserId": "string",
       "toUserId": "string",
       "message": "string | null",
+      "gif": {
+        "provider": "giphy",
+        "id": "string",
+        "url": "string",
+        "previewUrl": "string | undefined",
+        "width": "number | undefined",
+        "height": "number | undefined"
+      } | null,
       "isRead": false,
       "readAt": "string | null",
       "transactionId": "string | null",  // Shows if message cost coins
       "giftId": "string | null",
       "giftAmount": "number | null",
-      "messageType": "TEXT" | "GIFT" | "GIFT_WITH_MESSAGE",
+      "messageType": "TEXT" | "GIFT" | "GIFT_WITH_MESSAGE" | "GIF" | "GIF_WITH_MESSAGE",
       "createdAt": "string"
     }
   ],

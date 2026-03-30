@@ -154,7 +154,14 @@ model CallMessage {
   id            String      @id @default(cuid())
   sessionId     String
   userId        String
-  message       String
+  message       String?
+  messageType   CallMessageType @default(TEXT)
+  gifProvider   String?
+  gifId         String?
+  gifUrl        String?
+  gifPreviewUrl String?
+  gifWidth      Int?
+  gifHeight     Int?
   createdAt     DateTime    @default(now())
   
   session       CallSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
@@ -162,6 +169,12 @@ model CallMessage {
   @@map("call_messages")
   @@index([sessionId])
   @@index([createdAt])
+}
+
+enum CallMessageType {
+  TEXT
+  GIF
+  GIF_WITH_MESSAGE
 }
 
 model Icebreaker {

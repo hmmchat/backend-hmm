@@ -496,6 +496,16 @@ export class FriendService {
       fromUserId: msg.fromUserId,
       toUserId: msg.toUserId,
       message: msg.message,
+      gif: (msg as any).gifId
+        ? {
+            provider: (msg as any).gifProvider,
+            id: (msg as any).gifId,
+            url: (msg as any).gifUrl,
+            previewUrl: (msg as any).gifPreviewUrl,
+            width: (msg as any).gifWidth,
+            height: (msg as any).gifHeight
+          }
+        : null,
       isRead: msg.isRead,
       readAt: msg.readAt,
       transactionId: msg.transactionId,
@@ -591,7 +601,15 @@ export class FriendService {
     message: string | null,
     requestId: string, // Friend request ID
     giftId?: string,
-    giftAmount?: number
+    giftAmount?: number,
+    gif?: {
+      provider: "giphy";
+      id: string;
+      url: string;
+      previewUrl?: string;
+      width?: number;
+      height?: number;
+    }
   ): Promise<{ messageId: string; newBalance?: number; promotedToInbox?: boolean }> {
     if (fromUserId === toUserId) {
       throw new BadRequestException("Cannot send message to yourself");
@@ -617,7 +635,7 @@ export class FriendService {
       throw new BadRequestException("You cannot message this user");
     }
 
-    // Validate message length
+    // Validate message length (text only)
     if (message && message.length > this.MAX_MESSAGE_LENGTH) {
       throw new BadRequestException(`Message exceeds maximum length of ${this.MAX_MESSAGE_LENGTH} characters`);
     }
@@ -651,11 +669,18 @@ export class FriendService {
     const messageCount = await this.getMessageCountInConversation(fromUserId, toUserId);
     const isFirstMessage = messageCount === 0;
 
+    const hasGif = !!gif;
+    const hasText = !!(message && message.trim().length > 0);
+
     // Determine message type
     let messageType: MessageType = MessageType.TEXT;
-    if (giftId && !message) {
+    if (hasGif && hasText) {
+      messageType = "GIF_WITH_MESSAGE" as any;
+    } else if (hasGif) {
+      messageType = "GIF" as any;
+    } else if (giftId && !hasText) {
       messageType = MessageType.GIFT;
-    } else if (giftId && message) {
+    } else if (giftId && hasText) {
       messageType = MessageType.GIFT_WITH_MESSAGE;
     }
 
@@ -667,12 +692,12 @@ export class FriendService {
       await this.giftCatalog.validateGift(giftId, giftAmount);
     }
 
-    // Determine if we need to charge for message
-    const needsPayment = !giftId && isFirstMessage;
+    // Determine if we need to charge for message (text or gif counts)
+    const needsPayment = !giftId && (hasText || hasGif) && isFirstMessage;
     const cost = needsPayment ? this.FIRST_MESSAGE_COST_COINS : 0;
 
     // Check if subsequent message without gift (not allowed)
-    if (!isFirstMessage && !giftId && message) {
+    if (!isFirstMessage && !giftId && (hasText || hasGif)) {
       throw new BadRequestException(
         "Subsequent messages require a gift. Please send a gift with your message."
       );
@@ -711,11 +736,17 @@ export class FriendService {
           fromUserId,
           toUserId,
           message: message || null,
+          gifProvider: gif?.provider || null,
+          gifId: gif?.id || null,
+          gifUrl: gif?.url || null,
+          gifPreviewUrl: gif?.previewUrl || null,
+          gifWidth: gif?.width ?? null,
+          gifHeight: gif?.height ?? null,
           transactionId,
           giftId: giftId || null,
           giftAmount: giftAmount || null,
           messageType
-        }
+        } as any
       });
 
       // Step 3: Check friendship within transaction
@@ -829,7 +860,15 @@ export class FriendService {
     toUserId: string,
     message: string | null,
     giftId?: string,
-    giftAmount?: number
+    giftAmount?: number,
+    gif?: {
+      provider: "giphy";
+      id: string;
+      url: string;
+      previewUrl?: string;
+      width?: number;
+      height?: number;
+    }
   ): Promise<{ messageId: string; newBalance?: number }> {
     if (fromUserId === toUserId) {
       throw new BadRequestException("Cannot send message to yourself");
@@ -861,7 +900,7 @@ export class FriendService {
       throw new BadRequestException("Users are not friends");
     }
 
-    // Validate message length
+    // Validate message length (text only)
     if (message && message.length > this.MAX_MESSAGE_LENGTH) {
       throw new BadRequestException(`Message exceeds maximum length of ${this.MAX_MESSAGE_LENGTH} characters`);
     }
@@ -874,11 +913,18 @@ export class FriendService {
       await this.giftCatalog.validateGift(giftId, giftAmount);
     }
 
+    const hasGif = !!gif;
+    const hasText = !!(message && message.trim().length > 0);
+
     // Determine message type
     let messageType: MessageType = MessageType.TEXT;
-    if (giftId && !message) {
+    if (hasGif && hasText) {
+      messageType = "GIF_WITH_MESSAGE" as any;
+    } else if (hasGif) {
+      messageType = "GIF" as any;
+    } else if (giftId && !hasText) {
       messageType = MessageType.GIFT;
-    } else if (giftId && message) {
+    } else if (giftId && hasText) {
       messageType = MessageType.GIFT_WITH_MESSAGE;
     }
 
@@ -906,11 +952,17 @@ export class FriendService {
           fromUserId,
           toUserId,
           message: message || null,
+          gifProvider: gif?.provider || null,
+          gifId: gif?.id || null,
+          gifUrl: gif?.url || null,
+          gifPreviewUrl: gif?.previewUrl || null,
+          gifWidth: gif?.width ?? null,
+          gifHeight: gif?.height ?? null,
           transactionId,
           giftId: giftId || null,
           giftAmount: giftAmount || null,
           messageType
-        }
+        } as any
       });
 
       // Update conversation within transaction (friends always in inbox)
@@ -995,6 +1047,16 @@ export class FriendService {
       fromUserId: msg.fromUserId,
       toUserId: msg.toUserId,
       message: msg.message,
+      gif: (msg as any).gifId
+        ? {
+            provider: (msg as any).gifProvider,
+            id: (msg as any).gifId,
+            url: (msg as any).gifUrl,
+            previewUrl: (msg as any).gifPreviewUrl,
+            width: (msg as any).gifWidth,
+            height: (msg as any).gifHeight
+          }
+        : null,
       isRead: msg.isRead,
       readAt: msg.readAt,
       transactionId: msg.transactionId, // Shows if message cost coins
@@ -1061,6 +1123,16 @@ export class FriendService {
       fromUserId: msg.fromUserId,
       toUserId: msg.toUserId,
       message: msg.message,
+      gif: (msg as any).gifId
+        ? {
+            provider: (msg as any).gifProvider,
+            id: (msg as any).gifId,
+            url: (msg as any).gifUrl,
+            previewUrl: (msg as any).gifPreviewUrl,
+            width: (msg as any).gifWidth,
+            height: (msg as any).gifHeight
+          }
+        : null,
       messageType: msg.messageType,
       giftId: msg.giftId,
       giftAmount: msg.giftAmount,
@@ -1390,7 +1462,15 @@ export class FriendService {
     conversationId: string,
     message: string | null,
     giftId?: string,
-    giftAmount?: number
+    giftAmount?: number,
+    gif?: {
+      provider: "giphy";
+      id: string;
+      url: string;
+      previewUrl?: string;
+      width?: number;
+      height?: number;
+    }
   ): Promise<{ messageId: string; newBalance?: number; promotedToInbox?: boolean }> {
     // Get conversation
     const conversation = await this.prisma.conversation.findUnique({
@@ -1408,7 +1488,7 @@ export class FriendService {
     const areFriends = await this.areFriends(userId, otherUserId);
 
     if (areFriends) {
-      return await this.sendMessageToFriend(userId, otherUserId, message, giftId, giftAmount);
+      return await this.sendMessageToFriend(userId, otherUserId, message, giftId, giftAmount, gif);
     } else {
       // Find friend request
       const request = await this.prisma.friendRequest.findFirst({
@@ -1432,7 +1512,8 @@ export class FriendService {
           message,
           request.id,
           giftId,
-          giftAmount
+          giftAmount,
+          gif
         );
       } else {
         // Reverse the request direction for the API
@@ -1459,7 +1540,8 @@ export class FriendService {
             message,
             newRequest.id,
             giftId,
-            giftAmount
+            giftAmount,
+            gif
           );
         }
 
@@ -1469,7 +1551,8 @@ export class FriendService {
           message,
           reverseRequest.id,
           giftId,
-          giftAmount
+          giftAmount,
+          gif
         );
       }
     }

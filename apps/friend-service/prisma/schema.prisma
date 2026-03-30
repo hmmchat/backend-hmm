@@ -53,6 +53,8 @@ enum MessageType {
   TEXT
   GIFT
   GIFT_WITH_MESSAGE
+  GIF
+  GIF_WITH_MESSAGE
 }
 
 model FriendMessage {
@@ -60,6 +62,12 @@ model FriendMessage {
   fromUserId    String
   toUserId      String
   message       String?     // Nullable for gift-only messages
+  gifProvider   String?     // e.g. "giphy"
+  gifId         String?     // Provider's GIF ID
+  gifUrl        String?     // Canonical URL (provider CDN)
+  gifPreviewUrl String?     // Smaller preview URL (if provided)
+  gifWidth      Int?
+  gifHeight     Int?
   isRead        Boolean     @default(false)
   readAt        DateTime?
   transactionId String?     // Wallet transaction if paid message

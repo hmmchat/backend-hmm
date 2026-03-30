@@ -1213,9 +1213,9 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     data: any,
     ws: any
   ) {
-    const { roomId, message } = data;
-    if (!roomId || !message) {
-      this.sendError(ws, "roomId and message are required");
+    const { roomId, message, gif } = data ?? {};
+    if (!roomId) {
+      this.sendError(ws, "roomId is required");
       return;
     }
 
@@ -1226,19 +1226,37 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    // Validate message before sending
-    if (!message.trim() || message.trim().length === 0) {
+    const text = typeof message === "string" ? message : "";
+    const trimmed = text.trim();
+    const hasText = trimmed.length > 0;
+    const hasGif = !!gif;
+    if (!hasText && !hasGif) {
       this.sendError(ws, "Message cannot be empty");
       return;
     }
-
-    if (message.length > 1000) {
+    if (hasText && text.length > 1000) {
       this.sendError(ws, "Message too long (max 1000 characters)");
+      return;
+    }
+    if (hasGif && gif?.provider !== "giphy") {
+      this.sendError(ws, "Unsupported GIF provider");
       return;
     }
 
     try {
-      const chatMessage = await this.chatService.sendMessage(roomId, userId, message);
+      const chatMessage = await this.chatService.sendMessage(roomId, userId, {
+        message: hasText ? trimmed : undefined,
+        gif: hasGif
+          ? {
+              provider: "giphy",
+              id: String(gif.id || "").trim(),
+              url: String(gif.url || "").trim(),
+              previewUrl: gif.previewUrl ? String(gif.previewUrl).trim() : undefined,
+              width: typeof gif.width === "number" ? gif.width : undefined,
+              height: typeof gif.height === "number" ? gif.height : undefined
+            }
+          : undefined
+      });
 
       // Send confirmation back to client
       this.send(ws, {
@@ -1248,6 +1266,8 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
           roomId: chatMessage.roomId,
           userId: chatMessage.userId,
           message: chatMessage.message,
+          messageType: chatMessage.messageType,
+          gif: chatMessage.gif,
           createdAt: chatMessage.createdAt
         }
       });
@@ -1258,6 +1278,8 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
         data: {
           userId,
           message: chatMessage.message,
+          messageType: chatMessage.messageType,
+          gif: chatMessage.gif,
           createdAt: chatMessage.createdAt
         }
       }, userId);

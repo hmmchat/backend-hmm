@@ -5,7 +5,16 @@ export interface ChatMessage {
   id: string;
   roomId: string;
   userId: string;
-  message: string;
+  message: string | null;
+  messageType: "TEXT" | "GIF" | "GIF_WITH_MESSAGE";
+  gif: {
+    provider: "giphy";
+    id: string;
+    url: string;
+    previewUrl?: string;
+    width?: number;
+    height?: number;
+  } | null;
   createdAt: Date;
 }
 
@@ -26,12 +35,32 @@ export class ChatService {
   /**
    * Send a chat message
    */
-  async sendMessage(roomId: string, userId: string, message: string): Promise<ChatMessage> {
-    if (!message || message.trim().length === 0) {
+  async sendMessage(
+    roomId: string,
+    userId: string,
+    payload: {
+      message?: string;
+      gif?: {
+        provider: "giphy";
+        id: string;
+        url: string;
+        previewUrl?: string;
+        width?: number;
+        height?: number;
+      };
+    }
+  ): Promise<ChatMessage> {
+    const rawMessage = payload.message ?? "";
+    const message = rawMessage.trim();
+    const gif = payload.gif;
+
+    const hasText = message.length > 0;
+    const hasGif = !!gif;
+    if (!hasText && !hasGif) {
       throw new Error("Message cannot be empty");
     }
 
-    if (message.length > this.maxMessageLength) {
+    if (hasText && message.length > this.maxMessageLength) {
       throw new Error(`Message too long (max ${this.maxMessageLength} characters)`);
     }
 
@@ -44,20 +73,42 @@ export class ChatService {
       throw new Error(`Room ${roomId} not found`);
     }
 
+    const messageType: "TEXT" | "GIF" | "GIF_WITH_MESSAGE" =
+      hasGif && hasText ? "GIF_WITH_MESSAGE" : hasGif ? "GIF" : "TEXT";
+
     // Record as a call message
-    const messageRecord = await this.prisma.callMessage.create({
+    const messageRecord = (await this.prisma.callMessage.create({
       data: {
         sessionId: room.id,
         userId,
-        message: message.trim(),
-      },
-    });
+        // Keep schema/backward-compat during prisma client regen: older schema expects non-null string.
+        message: hasText ? message : "",
+        messageType,
+        gifProvider: gif?.provider || null,
+        gifId: gif?.id || null,
+        gifUrl: gif?.url || null,
+        gifPreviewUrl: gif?.previewUrl || null,
+        gifWidth: gif?.width ?? null,
+        gifHeight: gif?.height ?? null
+      } as any
+    })) as any;
 
     const chatMessage: ChatMessage = {
       id: messageRecord.id,
       roomId,
       userId,
-      message: messageRecord.message,
+      message: hasText ? messageRecord.message : null,
+      messageType: (messageRecord.messageType ?? messageType) as any,
+      gif: messageRecord.gifId
+        ? {
+            provider: messageRecord.gifProvider as any,
+            id: messageRecord.gifId,
+            url: messageRecord.gifUrl as any,
+            previewUrl: messageRecord.gifPreviewUrl ?? undefined,
+            width: messageRecord.gifWidth ?? undefined,
+            height: messageRecord.gifHeight ?? undefined
+          }
+        : null,
       createdAt: messageRecord.createdAt,
     };
 
@@ -119,7 +170,18 @@ export class ChatService {
       id: msg.id,
       roomId,
       userId: msg.userId,
-      message: msg.message,
+      message: msg.message ?? null,
+      messageType: (msg as any).messageType ?? "TEXT",
+      gif: (msg as any).gifId
+        ? {
+            provider: (msg as any).gifProvider,
+            id: (msg as any).gifId,
+            url: (msg as any).gifUrl,
+            previewUrl: (msg as any).gifPreviewUrl ?? undefined,
+            width: (msg as any).gifWidth ?? undefined,
+            height: (msg as any).gifHeight ?? undefined
+          }
+        : null,
       createdAt: msg.createdAt,
     }));
 

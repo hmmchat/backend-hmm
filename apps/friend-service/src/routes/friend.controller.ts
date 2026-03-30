@@ -19,6 +19,7 @@ import { FriendsWallImageService } from "../services/friends-wall-image.service.
 import { FilesClientService } from "../services/files-client.service.js";
 import { MetricsService } from "../services/metrics.service.js";
 import { GiftCatalogService, resolveGiftStickerUrl } from "../services/gift-catalog.service.js";
+import { GiphyService } from "../services/giphy.service.js";
 import { z } from "zod";
 import { verifyToken, AccessPayload } from "@hmm/common";
 import { JWK } from "jose";
@@ -31,15 +32,33 @@ const SendMessageSchema = z.object({
     return val;
   }),
   giftId: z.string().optional(),
-  giftAmount: z.number().positive().optional()
+  giftAmount: z.number().positive().optional(),
+  gif: z
+    .object({
+      provider: z.literal("giphy").default("giphy"),
+      id: z.string().min(1),
+      url: z.string().url(),
+      previewUrl: z.string().url().optional(),
+      width: z.number().int().positive().optional(),
+      height: z.number().int().positive().optional()
+    })
+    .optional()
 }).refine(
   (data) => {
-    // Either message (non-empty) or giftId must be provided
+    // Either message (non-empty) or giftId or gif must be provided
     const hasMessage = data.message && data.message.trim().length > 0;
     const hasGift = data.giftId && data.giftId.trim().length > 0;
-    return hasMessage || hasGift;
+    const hasGif = !!data.gif;
+    return hasMessage || hasGift || hasGif;
   },
   { message: "Either message or giftId must be provided" }
+).refine(
+  (data) => {
+    // Prevent mixed media types in a single message
+    if (data.gif && data.giftId) return false;
+    return true;
+  },
+  { message: "Cannot send a gift and a GIF in the same message" }
 );
 
 const PaginationSchema = z.object({
@@ -66,7 +85,8 @@ export class FriendController {
     private readonly friendsWallImageService: FriendsWallImageService,
     private readonly filesClient: FilesClientService,
     private readonly metrics: MetricsService,
-    private readonly giftCatalogService: GiftCatalogService
+    private readonly giftCatalogService: GiftCatalogService,
+    private readonly giphy: GiphyService
   ) { }
 
   private async initializeJWT() {
@@ -354,7 +374,8 @@ export class FriendController {
       friendId,
       dto.message || null,
       dto.giftId,
-      dto.giftAmount
+      dto.giftAmount,
+      dto.gif
     );
   }
 
@@ -379,7 +400,8 @@ export class FriendController {
       dto.message || null,
       requestId,
       dto.giftId,
-      dto.giftAmount
+      dto.giftAmount,
+      dto.gif
     );
   }
 
@@ -526,8 +548,35 @@ export class FriendController {
       conversationId,
       dto.message || null,
       dto.giftId,
-      dto.giftAmount
+      dto.giftAmount,
+      dto.gif
     );
+  }
+
+  /**
+   * Search GIFs (GIPHY)
+   * GET /me/gifs/search?q=hello&limit=25&offset=0&rating=g
+   */
+  @Get("me/gifs/search")
+  async searchGifs(
+    @Headers("authorization") authz: string,
+    @Query() query: any
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    await this.verifyTokenAndGetUserId(token!);
+
+    const parsed = z.object({
+      q: z.string().min(1, "q is required"),
+      limit: z.string().optional(),
+      offset: z.string().optional(),
+      rating: z.string().optional()
+    }).parse(query);
+
+    const limit = Math.min(Math.max(parseInt(parsed.limit ?? "25", 10) || 25, 1), 50);
+    const offset = Math.max(parseInt(parsed.offset ?? "0", 10) || 0, 0);
+    const rating = parsed.rating?.trim() || undefined;
+
+    return this.giphy.search(parsed.q, { limit, offset, rating });
   }
 
   /**
@@ -997,7 +1046,8 @@ export class FriendController {
       dto.message || null,
       requestId,
       dto.giftId,
-      dto.giftAmount
+      dto.giftAmount,
+      dto.gif
     );
   }
 
@@ -1020,7 +1070,8 @@ export class FriendController {
       friendId,
       dto.message || null,
       dto.giftId,
-      dto.giftAmount
+      dto.giftAmount,
+      dto.gif
     );
   }
 

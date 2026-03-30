@@ -17,6 +17,7 @@ import { DiscoveryClientService } from "../services/discovery-client.service.js"
 import { GiftService } from "../services/gift.service.js";
 import { HistoryService } from "../services/history.service.js";
 import { FavouriteService } from "../services/favourite.service.js";
+import { GiphyService } from "../services/giphy.service.js";
 import { z } from "zod";
 
 // Simple auth guard (you can enhance this later)
@@ -33,7 +34,8 @@ export class StreamingController {
     private discoveryClient: DiscoveryClientService,
     private giftService: GiftService,
     private historyService: HistoryService,
-    private favouriteService: FavouriteService
+    private favouriteService: FavouriteService,
+    private giphy: GiphyService
   ) {}
 
   /**
@@ -212,6 +214,35 @@ export class StreamingController {
       }
       throw error;
     }
+  }
+
+  /**
+   * Search GIFs (GIPHY) for in-call chat UI
+   * GET /streaming/gifs/search?q=hello&limit=25&offset=0&rating=g
+   * Requires x-user-id header (set by API Gateway when auth is valid).
+   */
+  @Get("gifs/search")
+  async searchGifs(
+    @Headers("x-user-id") xUserId: string | undefined,
+    @Query() query: any
+  ) {
+    const userId = xUserId?.trim();
+    if (!userId) {
+      throw new HttpException("Missing x-user-id", HttpStatus.UNAUTHORIZED);
+    }
+
+    const parsed = z.object({
+      q: z.string().min(1, "q is required"),
+      limit: z.string().optional(),
+      offset: z.string().optional(),
+      rating: z.string().optional()
+    }).parse(query);
+
+    const limit = Math.min(Math.max(parseInt(parsed.limit ?? "25", 10) || 25, 1), 50);
+    const offset = Math.max(parseInt(parsed.offset ?? "0", 10) || 0, 0);
+    const rating = parsed.rating?.trim() || undefined;
+
+    return this.giphy.search(parsed.q, { limit, offset, rating });
   }
 
   /**

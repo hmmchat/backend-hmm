@@ -24,6 +24,7 @@ import { CleanupTasksService } from "../services/cleanup-tasks.service.js";
 import { MessagingGateway } from "../gateways/messaging.gateway.js";
 import { MessagingRealtimeService } from "../services/messaging-realtime.service.js";
 import { WsAuthService } from "../services/ws-auth.service.js";
+import { GiphyService } from "../services/giphy.service.js";
 
 @Module({
   imports: [
@@ -51,7 +52,8 @@ import { WsAuthService } from "../services/ws-auth.service.js";
     CleanupTasksService,
     MessagingGateway,
     MessagingRealtimeService,
-    WsAuthService
+    WsAuthService,
+    GiphyService
   ]
 })
 export class AppModule {}

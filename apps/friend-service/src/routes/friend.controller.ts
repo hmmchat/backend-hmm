@@ -25,10 +25,30 @@ import { verifyToken, AccessPayload } from "@hmm/common";
 import { JWK } from "jose";
 import * as crypto from "crypto";
 
+/** GIPHY CDN paths often look like /media/<id>/giphy.gif */
+function deriveGiphyIdFromUrl(urlStr: string): string | null {
+  if (!urlStr) return null;
+  try {
+    const u = new URL(urlStr);
+    const m = u.pathname.match(/\/media\/([^/]+)/);
+    if (m?.[1]) return m[1];
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+/** Stable synthetic id when provider id is unknown (must be non-empty for DB). */
+function syntheticGifIdFromUrl(urlStr: string): string {
+  return `url_${crypto.createHash("sha256").update(urlStr).digest("hex").slice(0, 32)}`;
+}
+
 const GifInputSchema = z
   .object({
     provider: z.literal("giphy").optional().default("giphy"),
-    id: z.string().min(1),
+    id: z.string().optional(),
+    /** Frontend (hmm) sends this instead of `id` — treat as alias */
+    giphyId: z.string().optional(),
     url: z.string().optional(),
     gifUrl: z.string().optional(),
     previewUrl: z.string().optional(),
@@ -39,9 +59,12 @@ const GifInputSchema = z
   .transform((val) => {
     const url = (val.url || val.gifUrl || "").trim();
     const previewUrl = (val.previewUrl || val.preview_url || "").trim() || undefined;
+    const explicit = (val.id || val.giphyId || "").trim();
+    const fromUrl = deriveGiphyIdFromUrl(url) || deriveGiphyIdFromUrl(previewUrl || "");
+    const id = explicit || fromUrl || (url ? syntheticGifIdFromUrl(url) : "");
     return {
       provider: "giphy" as const,
-      id: val.id,
+      id,
       url,
       previewUrl,
       width: val.width,

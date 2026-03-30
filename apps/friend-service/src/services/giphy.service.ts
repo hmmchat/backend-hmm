@@ -97,5 +97,83 @@ export class GiphyService {
     await this.redis.set(cacheKey, JSON.stringify(payload), this.cacheTtlSeconds);
     return payload;
   }
+
+  /**
+   * GIPHY trending GIFs (https://developers.giphy.com/docs/api/endpoint#get-trending-gifs)
+   */
+  async trending(opts: { limit: number; offset: number; rating?: string }): Promise<{
+    provider: GifProvider;
+    query: string;
+    limit: number;
+    offset: number;
+    results: GifSearchItem[];
+  }> {
+    if (!this.apiKey) {
+      throw new Error("GIPHY_API_KEY is not configured");
+    }
+    const rating = opts.rating?.trim() || undefined;
+    const cacheKey = `gif:giphy:trending:${opts.limit}:${opts.offset}:${rating || "-"}`;
+    const cached = await this.redis.get(cacheKey);
+    if (cached) {
+      try {
+        return JSON.parse(cached);
+      } catch {
+        // ignore
+      }
+    }
+
+    const url = new URL(`${this.baseUrl}/gifs/trending`);
+    url.searchParams.set("api_key", this.apiKey);
+    url.searchParams.set("limit", String(opts.limit));
+    url.searchParams.set("offset", String(opts.offset));
+    if (rating) url.searchParams.set("rating", rating);
+
+    const res = await fetch(url.toString(), {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(8000)
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      this.logger.warn(`GIPHY trending failed: ${res.status} ${text}`);
+      throw new Error(`GIPHY trending failed (${res.status})`);
+    }
+
+    const json = (await res.json()) as any;
+    const results: GifSearchItem[] = Array.isArray(json?.data)
+      ? json.data
+          .map((g: any) => {
+            const id = String(g?.id || "");
+            const images = g?.images || {};
+            const original = images?.original || {};
+            const fixed = images?.fixed_width_downsampled || images?.fixed_width || {};
+            const gifUrl = String(original?.url || g?.url || "");
+            const previewUrl = fixed?.url ? String(fixed.url) : undefined;
+            const width = original?.width ? parseInt(String(original.width), 10) : undefined;
+            const height = original?.height ? parseInt(String(original.height), 10) : undefined;
+            const title = g?.title ? String(g.title) : undefined;
+            return {
+              provider: "giphy" as const,
+              id,
+              url: gifUrl,
+              previewUrl,
+              width: Number.isFinite(width as any) ? width : undefined,
+              height: Number.isFinite(height as any) ? height : undefined,
+              title
+            };
+          })
+          .filter((x: GifSearchItem) => x.id && x.url)
+      : [];
+
+    const payload = {
+      provider: "giphy" as const,
+      query: "",
+      limit: opts.limit,
+      offset: opts.offset,
+      results
+    };
+    await this.redis.set(cacheKey, JSON.stringify(payload), this.cacheTtlSeconds);
+    return payload;
+  }
 }
 

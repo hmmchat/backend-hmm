@@ -2039,6 +2039,9 @@ GET /me/conversations/sent-requests?limit=50&filter=only_follows&cursor=follow_x
 }
 ```
 
+**Trending (same `results` shape as search):** `GET /me/gifs/trending?limit=25&offset=0&rating=g`  
+Alias: `GET /me/giphy/trending?...` (same response; `query` is always `""`).
+
 **Note:** Conversation automatically moves to INBOX when both users send messages.
 
 ### 12. Send Message via Conversation ID (Unified)

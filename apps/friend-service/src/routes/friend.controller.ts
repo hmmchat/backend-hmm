@@ -580,6 +580,43 @@ export class FriendController {
   }
 
   /**
+   * Trending GIFs (GIPHY) — frontend: GET /v1/friends/me/gifs/trending
+   */
+  @Get("me/gifs/trending")
+  async trendingGifs(
+    @Headers("authorization") authz: string,
+    @Query() query: any
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    await this.verifyTokenAndGetUserId(token!);
+
+    const parsed = z
+      .object({
+        limit: z.string().optional(),
+        offset: z.string().optional(),
+        rating: z.string().optional()
+      })
+      .parse(query);
+
+    const limit = Math.min(Math.max(parseInt(parsed.limit ?? "25", 10) || 25, 1), 50);
+    const offset = Math.max(parseInt(parsed.offset ?? "0", 10) || 0, 0);
+    const rating = parsed.rating?.trim() || undefined;
+
+    return this.giphy.trending({ limit, offset, rating });
+  }
+
+  /**
+   * Alias for GIPHY trending (frontend compatibility)
+   */
+  @Get("me/giphy/trending")
+  async trendingGifsGiphyAlias(
+    @Headers("authorization") authz: string,
+    @Query() query: any
+  ) {
+    return this.trendingGifs(authz, query);
+  }
+
+  /**
    * Get messages for a conversation
    * GET /me/conversations/:conversationId/messages
    */

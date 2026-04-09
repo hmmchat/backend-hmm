@@ -508,15 +508,30 @@ GET /users/{userId}?fields=username,photos,brandPreferences
 **Endpoint:** `GET /brands?limit={limit}`
 
 - Returns **Brandfetch-backed suggestions** (seeded category searches, shuffled) for the \"Add Brands\" screen. If Brandfetch is unavailable or returns nothing, falls back to a **random selection** from the self-hosted DB catalog.
-- `limit` (optional, number): how many brands to return.
+- `limit` (optional, number): how many **suggestion** rows to return (not counting the user's current selections).
   - Default: `8`
   - Min: `1`
   - Max: `50`
+- **Optional auth:** send `Authorization: Bearer <access_token>`. When present and valid, the response includes **`selectedBrands`**: brands the user has already saved, in display order. Those ids are **excluded** from `brands` so the same brand does not appear twice. The UI should show `selectedBrands` in a dedicated section (e.g. \"Your brands\") so users can remove them without searching.
 
-**Response:**
+**Response (anonymous or no token):**
 ```json
 {
   "brands": [
+    {
+      "id": "string",
+      "name": "string",
+      "logoUrl": "string | null"
+    }
+  ]
+}
+```
+
+**Response (authenticated):**
+```json
+{
+  "brands": [ ... ],
+  "selectedBrands": [
     {
       "id": "string",
       "name": "string",
@@ -530,6 +545,8 @@ GET /users/{userId}?fields=username,photos,brandPreferences
 
 **Endpoint:** `GET /brands/search?q={query}&limit={limit}`
 
+- **Optional auth:** with `Authorization: Bearer <access_token>`, each item in `brands` includes **`selected`**: `true` when that brand is already in the user's saved preferences (so the UI can show a remove/deselect state without an extra round trip).
+
 **Response:**
 ```json
 {
@@ -538,11 +555,14 @@ GET /users/{userId}?fields=username,photos,brandPreferences
       "id": "string",
       "name": "string",
       "domain": "string | null",
-      "logoUrl": "string | null"
+      "logoUrl": "string | null",
+      "selected": true
     }
   ]
 }
 ```
+
+(`selected` is only included when the request is authenticated; omit or `false` for brands the user has not selected.)
 
 Search uses **Brandfetch** first. If Brandfetch is unavailable or returns nothing, falls back to the self-hosted DB catalog with **fuzzy matching** on the brand name (case-insensitive, typo-tolerant).
 

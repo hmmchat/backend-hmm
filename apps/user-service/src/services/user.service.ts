@@ -813,22 +813,49 @@ export class UserService implements OnModuleInit {
 
   /* ---------- Catalog Data (Public) ---------- */
 
-  async getBrands(limit: number = 8) {
+  async getBrands(limit: number = 8, userId?: string | null) {
     const effectiveLimit = limit ?? 8;
     if (effectiveLimit < 1 || effectiveLimit > 50) {
       throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);
     }
 
-    try {
-      const suggestions = await this.brandService.getBrandSuggestions(effectiveLimit);
-      if (suggestions.length > 0) {
+    const selectedIds = new Set<string>();
+    let selectedBrands: Array<{ id: string; name: string; logoUrl: string | null }> = [];
+
+    if (userId) {
+      const rows = await this.prisma.userBrand.findMany({
+        where: { userId },
+        include: { brand: true },
+        orderBy: { order: "asc" }
+      });
+      selectedBrands = rows.map((ub) => {
+        const b = ub.brand;
+        selectedIds.add(b.id);
         return {
-          brands: suggestions.map((b) => ({
+          id: b.id,
+          name: b.name,
+          logoUrl: this.brandService.resolvePublicLogoUrl(b.domain, b.logoUrl, b.brandfetchId)
+        };
+      });
+    }
+
+    const fetchLimit = effectiveLimit + selectedIds.size;
+
+    try {
+      const suggestions = await this.brandService.getBrandSuggestions(fetchLimit);
+      if (suggestions.length > 0) {
+        const brands = suggestions
+          .filter((b) => !selectedIds.has(b.id))
+          .slice(0, effectiveLimit)
+          .map((b) => ({
             id: b.id,
             name: b.name,
             logoUrl: b.logoUrl
-          }))
-        };
+          }));
+        if (userId) {
+          return { brands, selectedBrands };
+        }
+        return { brands };
       }
     } catch (error) {
       console.warn(
@@ -849,23 +876,42 @@ export class UserService implements OnModuleInit {
       FROM "brands"
       WHERE "isCustom" = true
       ORDER BY random()
-      LIMIT ${effectiveLimit};
+      LIMIT ${fetchLimit};
     `;
 
-    return {
-      brands: brands.map((b) => ({
+    const mapped = brands
+      .filter((b) => !selectedIds.has(b.id))
+      .slice(0, effectiveLimit)
+      .map((b) => ({
         id: b.id,
         name: b.name,
         logoUrl: this.brandService.resolvePublicLogoUrl(b.domain, b.logoUrl, b.brandfetchId)
-      }))
-    };
+      }));
+
+    if (userId) {
+      return { brands: mapped, selectedBrands };
+    }
+    return { brands: mapped };
   }
 
   /**
-   * Search brands by name (Brandfetch primary, DB fallback)
+   * Search brands by name (Brandfetch primary, DB fallback).
+   * With `userId`, each hit includes `selected` when it is already in the user's preferences.
    */
-  async searchBrands(query: string, limit: number = 20) {
-    return this.brandService.searchBrands(query, limit);
+  async searchBrands(query: string, limit: number = 20, userId?: string | null) {
+    const results = await this.brandService.searchBrands(query, limit);
+    if (!userId) {
+      return results;
+    }
+    const selectedRows = await this.prisma.userBrand.findMany({
+      where: { userId },
+      select: { brandId: true }
+    });
+    const selectedIds = new Set(selectedRows.map((r) => r.brandId));
+    return results.map((b) => ({
+      ...b,
+      selected: selectedIds.has(b.id)
+    }));
   }
 
   /**

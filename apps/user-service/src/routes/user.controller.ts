@@ -49,6 +49,23 @@ export class UserController {
     return t?.toLowerCase() === "bearer" ? v : null;
   }
 
+  /** Returns `sub` when a valid Bearer token is sent; otherwise null (no auth header or not Bearer). */
+  private async verifyOptionalUserId(authz?: string): Promise<string | null> {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) return null;
+
+    const { verifyToken } = await import("@hmm/common");
+    const jwkStr = process.env.JWT_PUBLIC_JWK;
+    if (!jwkStr || jwkStr === "undefined") {
+      throw new HttpException("Server configuration error", HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+    const cleanedJwk = jwkStr.trim().replace(/^['"]|['"]$/g, "");
+    const publicJwk = JSON.parse(cleanedJwk);
+    const verifyAccess = await verifyToken(publicJwk);
+    const payload = await verifyAccess(token);
+    return payload.sub;
+  }
+
   /* ---------- Profile Management ---------- */
 
   @Post("users/:userId/profile")
@@ -153,16 +170,21 @@ export class UserController {
   /* ---------- Catalog Data (Public Endpoints) ---------- */
 
   @Get("brands")
-  async getBrands(@Query("limit") limit?: string) {
+  async getBrands(@Query("limit") limit?: string, @Headers("authorization") authz?: string) {
     const limitNum = limit !== undefined && limit !== "" ? parseInt(limit, 10) : 8;
     if (isNaN(limitNum) || limitNum < 1 || limitNum > 50) {
       throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);
     }
-    return this.userService.getBrands(limitNum);
+    const userId = await this.verifyOptionalUserId(authz);
+    return this.userService.getBrands(limitNum, userId);
   }
 
   @Get("brands/search")
-  async searchBrands(@Query("q") query?: string, @Query("limit") limit?: string) {
+  async searchBrands(
+    @Query("q") query?: string,
+    @Query("limit") limit?: string,
+    @Headers("authorization") authz?: string
+  ) {
     if (!query || query.trim().length === 0) {
       throw new HttpException("Search query (q) is required", HttpStatus.BAD_REQUEST);
     }
@@ -170,7 +192,8 @@ export class UserController {
     if (isNaN(limitNum) || limitNum < 1 || limitNum > 50) {
       throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);
     }
-    const results = await this.userService.searchBrands(query, limitNum);
+    const userId = await this.verifyOptionalUserId(authz);
+    const results = await this.userService.searchBrands(query, limitNum, userId);
     return { brands: results };
   }
 

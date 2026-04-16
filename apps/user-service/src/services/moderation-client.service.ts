@@ -1,6 +1,12 @@
 import { Injectable, HttpException, HttpStatus } from "@nestjs/common";
 import fetch from "node-fetch";
 
+function envFlagEnabled(value: string | undefined): boolean {
+  if (value === undefined || value === "") return false;
+  const v = value.trim().toLowerCase();
+  return v === "true" || v === "1" || v === "yes";
+}
+
 interface ModerationResult {
   safe: boolean;
   confidence: number;
@@ -22,7 +28,8 @@ export class ModerationClientService {
   constructor() {
     this.moderationServiceUrl = process.env.MODERATION_SERVICE_URL || "http://localhost:3003";
     // Allow skipping moderation checks in test/dev environments
-    this.skipModeration = process.env.SKIP_MODERATION_CHECK === "true" || process.env.NODE_ENV === "test";
+    this.skipModeration =
+      envFlagEnabled(process.env.SKIP_MODERATION_CHECK) || process.env.NODE_ENV === "test";
   }
 
   /**
@@ -32,7 +39,7 @@ export class ModerationClientService {
   async checkImage(imageUrl: string): Promise<boolean> {
     // Skip moderation check if enabled via environment variable or in test mode
     if (this.skipModeration) {
-      console.log("Moderation check skipped (SKIP_MODERATION_CHECK=true or NODE_ENV=test)");
+      console.log("Moderation check skipped (SKIP_MODERATION_CHECK set or NODE_ENV=test)");
       return true;
     }
 

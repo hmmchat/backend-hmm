@@ -19,7 +19,7 @@ export interface ModerationResult {
 export class ModerationService {
   private readonly apiUrl: string;
   private readonly apiKey: string;
-  private readonly provider: "sightengine" | "google" | "aws" | "mock";
+  private readonly provider: "sightengine" | "google" | "aws" | "mock" | "none";
 
   constructor() {
     this.provider = (process.env.MODERATION_PROVIDER as any) || "mock";
@@ -51,6 +51,8 @@ export class ModerationService {
           return await this.checkWithGoogleVision(imageUrl);
         case "aws":
           return await this.checkWithAWSRekognition(imageUrl);
+        case "none":
+          return this.checkDisabled();
         case "mock":
         default:
           return await this.checkWithMock(imageUrl);
@@ -64,6 +66,16 @@ export class ModerationService {
         HttpStatus.SERVICE_UNAVAILABLE
       );
     }
+  }
+
+  /** No-op: image checks disabled until a real provider is configured. */
+  private checkDisabled(): ModerationResult {
+    return {
+      safe: true,
+      confidence: 1,
+      isHuman: true,
+      categories: { adult: 0, racy: 0, violence: 0 }
+    };
   }
 
   /**

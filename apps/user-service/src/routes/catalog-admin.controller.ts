@@ -35,6 +35,7 @@ const updateIntentPromptSchema = z.object({
 const createDiscoveryCityOptionSchema = z.object({
   value: z.string().min(1).max(100),
   label: z.string().min(1).max(120),
+  faceCardImageUrl: z.string().url().max(2048).optional().nullable(),
   order: z.number().optional(),
   isActive: z.boolean().optional()
 });
@@ -42,6 +43,7 @@ const createDiscoveryCityOptionSchema = z.object({
 const updateDiscoveryCityOptionSchema = z.object({
   value: z.string().min(1).max(100).optional(),
   label: z.string().min(1).max(120).optional(),
+  faceCardImageUrl: z.string().url().max(2048).optional().nullable(),
   order: z.number().optional(),
   isActive: z.boolean().optional()
 });
@@ -214,6 +216,7 @@ export class CatalogAdminController {
       data: {
         value: data.value,
         label: data.label,
+        faceCardImageUrl: data.faceCardImageUrl ?? null,
         order: data.order ?? null,
         isActive: data.isActive !== false
       }
@@ -229,6 +232,7 @@ export class CatalogAdminController {
       data: {
         value: data.value,
         label: data.label,
+        faceCardImageUrl: data.faceCardImageUrl,
         order: data.order,
         isActive: data.isActive
       }

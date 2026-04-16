@@ -131,13 +131,15 @@ model Zodiac {
 
 // Admin-managed list of discovery / profile city options (values must match users.preferredCity for real cities)
 model DiscoveryCityOption {
-  id        String   @id @default(cuid())
-  value     String   @unique
-  label     String
-  order     Int?
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id                String   @id @default(cuid())
+  value             String   @unique
+  label             String
+  /** Optional image for LOCATION discovery promos for this city (HTTPS URL). */
+  faceCardImageUrl  String?
+  order             Int?
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   @@map("discovery_city_options")
 }

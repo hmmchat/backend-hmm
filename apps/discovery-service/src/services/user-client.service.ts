@@ -451,9 +451,11 @@ export class UserClientService implements OnModuleInit {
   }
 
   /**
-   * Active discovery city option values from user-service (admin catalog).
+   * Active discovery city catalog from user-service (values + optional face-card image URLs).
    */
-  async getActiveDiscoveryCityValues(): Promise<string[]> {
+  async getActiveDiscoveryCityCatalog(): Promise<
+    Array<{ value: string; faceCardImageUrl: string | null }>
+  > {
     try {
       const response = await this.fetchWithTimeout(`${this.userServiceUrl}/discovery-city-options/active`, {
         method: "GET",
@@ -462,8 +464,13 @@ export class UserClientService implements OnModuleInit {
       if (!response.ok) {
         return [];
       }
-      const body = (await response.json()) as { options?: Array<{ value: string }> };
-      return (body.options || []).map((o) => o.value);
+      const body = (await response.json()) as {
+        options?: Array<{ value: string; faceCardImageUrl?: string | null }>;
+      };
+      return (body.options || []).map((o) => ({
+        value: o.value,
+        faceCardImageUrl: o.faceCardImageUrl ?? null
+      }));
     } catch {
       return [];
     }

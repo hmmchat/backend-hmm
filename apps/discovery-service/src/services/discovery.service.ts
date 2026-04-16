@@ -32,7 +32,7 @@ import {
 // DiscoveryUser interface is imported from user-client.service.ts
 // Import it to avoid duplication
 import type { DiscoveryUser } from "./user-client.service.js";
-import { isPreferredCityAnywhere } from "@hmm/common";
+import { isPreferredCityAnywhere, PREFERRED_CITY_ANYWHERE_IN_INDIA } from "@hmm/common";
 
 interface UserProfile {
   id: string;
@@ -102,6 +102,8 @@ interface LocationCard {
   country?: string;
   state?: string;
   availableCount: number;
+  /** From admin catalog `faceCardImageUrl` when set for this city (or for ANYWHERE_IN_INDIA row on global promo). */
+  faceCardImageUrl?: string | null;
 }
 
 interface CardResponse {
@@ -563,12 +565,12 @@ export class DiscoveryService implements OnModuleInit {
       // Still no users available - show location cards (never exhausted)
       // Get location cards already shown
       const locationCardsShown = await this.getLocationCardsShown(userId, sessionId);
-      const adminCityValues = await this.userClient.getActiveDiscoveryCityValues();
+      const adminCatalog = await this.userClient.getActiveDiscoveryCityCatalog();
 
       // Get available location cards
       let locationCards = await this.getLocationCards(locationCardsShown, {
         homeCityToExclude: poolCity,
-        adminCityValues
+        adminCatalog
       });
 
       // If all location cards are shown, clear them and cycle through again (make it feel infinite)
@@ -577,7 +579,7 @@ export class DiscoveryService implements OnModuleInit {
         // After clearing, get fresh location cards (all cities + anywhere should be available again)
         locationCards = await this.getLocationCards([], {
           homeCityToExclude: poolCity,
-          adminCityValues
+          adminCatalog
         });
       }
 
@@ -1347,17 +1349,24 @@ export class DiscoveryService implements OnModuleInit {
   /**
    * Get random location cards (8-10 cities + optional "anywhere in India" promo).
    * When `homeCityToExclude` is set, that city is omitted from promos (other-city face cards).
-   * When `adminCityValues` is set, only those city values are promoted (falls back if the intersection is empty).
+   * When `adminCatalog` is set, only those city values are promoted (falls back if the intersection is empty).
    */
   private async getLocationCards(
     excludeCities: string[] = [],
     opts?: {
       homeCityToExclude?: string | null;
-      adminCityValues?: string[] | null;
+      adminCatalog?: Array<{ value: string; faceCardImageUrl?: string | null }> | null;
     }
   ): Promise<LocationCard[]> {
     const homeCityToExclude = opts?.homeCityToExclude ?? null;
-    const adminCityValues = opts?.adminCityValues?.length ? opts.adminCityValues : null;
+    const adminCatalog = opts?.adminCatalog?.length ? opts.adminCatalog : null;
+    const adminCityValues = adminCatalog?.map((c) => c.value) ?? null;
+    const imageByValueLower = new Map<string, string | null>();
+    if (adminCatalog) {
+      for (const row of adminCatalog) {
+        imageByValueLower.set(row.value.toLowerCase(), row.faceCardImageUrl ?? null);
+      }
+    }
 
     const allCities = await this.locationService.getCitiesWithMaxUsers(CITIES_MAX_USERS_LIMIT);
 
@@ -1394,7 +1403,8 @@ export class DiscoveryService implements OnModuleInit {
       ...selectedCities.map((c) => ({
         type: "LOCATION" as const,
         city: c.city,
-        availableCount: c.availableCount
+        availableCount: c.availableCount,
+        faceCardImageUrl: imageByValueLower.get(c.city.toLowerCase()) ?? null
       }))
     ];
 
@@ -1402,7 +1412,9 @@ export class DiscoveryService implements OnModuleInit {
       locationCards.push({
         type: "LOCATION" as const,
         city: null,
-        availableCount: anywhereCount
+        availableCount: anywhereCount,
+        faceCardImageUrl:
+          imageByValueLower.get(PREFERRED_CITY_ANYWHERE_IN_INDIA.toLowerCase()) ?? null
       });
     }
 
@@ -2248,18 +2260,18 @@ export class DiscoveryService implements OnModuleInit {
 
       // No users available - show location cards (never exhausted)
       const locationCardsShown = await this.getLocationCardsShown(userId, sessionId);
-      const adminCityValues = await this.userClient.getActiveDiscoveryCityValues();
+      const adminCatalog = await this.userClient.getActiveDiscoveryCityCatalog();
 
       let locationCards = await this.getLocationCards(locationCardsShown, {
         homeCityToExclude: poolCity,
-        adminCityValues
+        adminCatalog
       });
 
       if (locationCards.length === 0) {
         await this.clearLocationCards(userId, sessionId);
         locationCards = await this.getLocationCards([], {
           homeCityToExclude: poolCity,
-          adminCityValues
+          adminCatalog
         });
       }
 

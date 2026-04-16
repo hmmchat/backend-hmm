@@ -1838,6 +1838,12 @@ export class UserService implements OnModuleInit {
       };
     }
 
+    // At/above user-service ban tripwire (REPORT_THRESHOLD): hide from discovery pool so face cards are not shown.
+    // Set DISCOVERY_POOL_EXCLUDE_AT_REPORT_THRESHOLD=false to include them (e.g. staging).
+    if (process.env.DISCOVERY_POOL_EXCLUDE_AT_REPORT_THRESHOLD !== "false") {
+      where.reportCount = { lt: getReportThreshold() };
+    }
+
     const users = await this.prisma.user.findMany({
       where,
       include: {

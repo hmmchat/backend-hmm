@@ -24,6 +24,10 @@ import {
   MATCH_SCORE_BROADCAST_TAG
 } from "../config/scoring.config.js";
 import { DISCOVERY_POOL_LIMIT, CITIES_MAX_USERS_LIMIT } from "../config/limits.config.js";
+import {
+  computeReportLayer,
+  getDiscoveryReportLayerConfig
+} from "../config/report-layers.config.js";
 
 // DiscoveryUser interface is imported from user-client.service.ts
 // Import it to avoid duplication
@@ -68,6 +72,16 @@ interface Card {
   musicPreference?: { name: string; artist: string; albumArtUrl?: string };
   pages: CardPage[];
   status: "AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE" | "ONLINE" | "OFFLINE" | "VIEWER";
+  /** Weighted report total from user-service (for debugging / advanced UI). */
+  reportCount?: number;
+  /**
+   * UI severity tier: 0 = below mild cutoff, 1–3 = increasing severity (still below ban tripwire for pool users).
+   * Align env `DISCOVERY_REPORT_LAYER_*` with `REPORT_THRESHOLD` (ban line, same as user-service).
+   */
+  reportLayer?: 0 | 1 | 2 | 3;
+  /** Cutoffs used to compute `reportLayer` for this response (same for all cards in a deployment). */
+  reportLayerThresholds?: { layer1: number; layer2: number; layer3: number; ban: number };
+  /** @deprecated Prefer `reportLayer` — true when reportLayer >= 1 */
   reported?: boolean;
   matchExplanation?: {
     reasons: string[];
@@ -946,9 +960,9 @@ export class DiscoveryService implements OnModuleInit {
     // Country is not stored separately in preferredCity, would need separate field if needed
     const country = undefined;
 
-    // Check if user is reported (check reportCount against threshold)
-    const reportThreshold = parseInt(process.env.REPORT_THRESHOLD || "5", 10);
-    const isReported = (user.reportCount || 0) >= reportThreshold;
+    const layerCfg = getDiscoveryReportLayerConfig();
+    const rc = user.reportCount || 0;
+    const reportLayer = computeReportLayer(rc, layerCfg);
 
     // Calculate match explanation if currentUser is provided
     let matchExplanation: Card["matchExplanation"] | undefined;
@@ -984,7 +998,15 @@ export class DiscoveryService implements OnModuleInit {
         : undefined,
       pages,
       status: user.status as "AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE" | "ONLINE" | "OFFLINE" | "VIEWER",
-      reported: isReported,
+      reportCount: rc,
+      reportLayer,
+      reportLayerThresholds: {
+        layer1: layerCfg.layer1,
+        layer2: layerCfg.layer2,
+        layer3: layerCfg.layer3,
+        ban: layerCfg.ban
+      },
+      reported: reportLayer >= 1,
       matchExplanation
     };
   }

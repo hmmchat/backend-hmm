@@ -447,7 +447,8 @@ export class UserController {
    *
    * Allows any authenticated user to report another user.
    * Optional reportType maps to a configurable weight (env REPORT_WEIGHT_*).
-   * reportCount stores the weighted sum; when it exceeds REPORT_THRESHOLD, user is filtered from discovery.
+   * reportCount stores the weighted sum; at/above REPORT_THRESHOLD the user is excluded from the discovery pool
+   * (and user-service moderation tripwire applies). Discovery UI tiers use DISCOVERY_REPORT_LAYER_* below that.
    */
   @Post("users/report")
   async reportUser(@Headers("authorization") authz: string, @Body() body: any) {

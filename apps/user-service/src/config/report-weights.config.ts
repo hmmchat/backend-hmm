@@ -28,13 +28,13 @@ function getWeightForType(envSuffix: string): number {
     case "DEFAULT":
       return intEnv(key, 1);
     case "FACE_CARD":
-      return intEnv(key, 5);
+      return intEnv(key, 3);
     case "OFFLINE_CARD":
-      return intEnv(key, 5);
+      return intEnv(key, 2);
     case "HOST":
       return intEnv(key, 10);
     case "PARTICIPANT_HOST":
-      return intEnv(key, 3);
+      return intEnv(key, 10);
     case "PARTICIPANT":
       return intEnv(key, 5);
     default:

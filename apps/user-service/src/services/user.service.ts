@@ -30,6 +30,7 @@ import {
   SEARCH_DEFAULT_LIMIT
 } from "../config/limits.config.js";
 import { getReportWeight, getAdminDashboardReportWeight } from "../config/report-weights.config.js";
+import { getReportThreshold } from "../config/report-threshold.config.js";
 
 @Injectable()
 export class UserService implements OnModuleInit {
@@ -151,6 +152,79 @@ export class UserService implements OnModuleInit {
         ...revokeData
       } as any
     });
+  }
+
+  /** Public for admin API responses (dashboard copy). */
+  getReportThresholdForAdmin(): number {
+    return getReportThreshold();
+  }
+
+  /**
+   * When report score is at/above threshold: auto-ban (if not already manually banned) and limit discovery to moderators after lockout.
+   * When below threshold: clear discovery restriction and lift auth auto-ban if present.
+   */
+  private async syncReportEnforcement(userId: string, reportCount: number): Promise<void> {
+    const threshold = getReportThreshold();
+    const score = Math.max(0, reportCount || 0);
+
+    try {
+      if (score >= threshold) {
+        const authRow = await this.authClient.getAdminAuthUser(userId);
+        const localProfile = await this.prisma.user.findUnique({
+          where: { id: userId },
+          select: { reportModeratorCardsOnly: true } as any
+        });
+        const manualBanned =
+          authRow?.accountStatus === "BANNED" && authRow?.reportAutoBanActive !== true;
+
+        if (manualBanned) {
+          await this.prisma.user.update({
+            where: { id: userId },
+            data: { reportModeratorCardsOnly: false } as any
+          });
+          return;
+        }
+
+        await this.prisma.user.update({
+          where: { id: userId },
+          data: { reportModeratorCardsOnly: true } as any
+        });
+
+        if (authRow?.accountStatus === "BANNED") {
+          return;
+        }
+
+        // Post–login-lockout moderation: ACTIVE in auth but discovery still restricted — do not re-issue ban.
+        if (authRow?.accountStatus === "ACTIVE" && (localProfile as any)?.reportModeratorCardsOnly) {
+          return;
+        }
+
+        await this.authClient.banUserReportAuto(
+          userId,
+          `Automatic moderation: report score ${score} reached or exceeded threshold (${threshold}).`
+        );
+      } else {
+        await this.prisma.user.update({
+          where: { id: userId },
+          data: { reportModeratorCardsOnly: false } as any
+        });
+        await this.authClient.liftReportAutoBan(userId);
+      }
+    } catch (error: any) {
+      console.error(`[UserService] syncReportEnforcement failed user=${userId}`, error?.message || error);
+    }
+  }
+
+  /** Call after dashboard unban so discovery is not stuck in moderator-only mode. */
+  async clearReportDiscoveryRestriction(userId: string): Promise<void> {
+    try {
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: { reportModeratorCardsOnly: false } as any
+      });
+    } catch (error: any) {
+      console.error(`[UserService] clearReportDiscoveryRestriction failed user=${userId}`, error?.message || error);
+    }
   }
 
   private startKycAutomationLoop(): void {
@@ -538,6 +612,7 @@ export class UserService implements OnModuleInit {
       profileCompleted: "profileCompleted",
       genderChanged: "genderChanged",
       reportCount: "reportCount",
+      reportModeratorCardsOnly: "reportModeratorCardsOnly",
       badgeMember: "badgeMember",
       isModerator: "isModerator",
       kycStatus: "kycStatus",
@@ -1341,6 +1416,7 @@ export class UserService implements OnModuleInit {
     });
 
     await this.syncKycRiskAndRevocation(reportedUserId);
+    await this.syncReportEnforcement(reportedUserId, updatedUser.reportCount ?? 0);
 
     return {
       success: true,
@@ -1376,6 +1452,7 @@ export class UserService implements OnModuleInit {
     });
 
     await this.syncKycRiskAndRevocation(reportedUserId);
+    await this.syncReportEnforcement(reportedUserId, updatedUser.reportCount ?? 0);
 
     return {
       success: true,
@@ -1411,9 +1488,12 @@ export class UserService implements OnModuleInit {
       );
     }
 
+    const finalReport = latestUser?.reportCount ?? updatedUser.reportCount ?? 0;
+    await this.syncReportEnforcement(userId, finalReport);
+
     return {
       success: true,
-      reportCount: latestUser?.reportCount ?? updatedUser.reportCount,
+      reportCount: finalReport,
       kycRiskScore: latestUser?.kycRiskScore ?? this.getKycRiskScore(updatedUser.reportCount)
     };
   }
@@ -1701,6 +1781,8 @@ export class UserService implements OnModuleInit {
     excludeUserIds?: string[];
     includeModerators?: boolean;
     excludeModerators?: boolean;
+    /** When true, pool is restricted to moderator profiles only (report-moderation discovery mode). */
+    onlyModerators?: boolean;
     excludeKycStatuses?: KycStatus[];
     limit?: number;
   }) {
@@ -1738,12 +1820,16 @@ export class UserService implements OnModuleInit {
       };
     }
 
-    if (filters.includeModerators === false) {
-      where.isModerator = false;
-    }
+    if (filters.onlyModerators === true) {
+      where.isModerator = true;
+    } else {
+      if (filters.includeModerators === false) {
+        where.isModerator = false;
+      }
 
-    if (filters.excludeModerators === true) {
-      where.isModerator = false;
+      if (filters.excludeModerators === true) {
+        where.isModerator = false;
+      }
     }
 
     if (filters.excludeKycStatuses && filters.excludeKycStatuses.length > 0) {

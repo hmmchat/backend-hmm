@@ -241,11 +241,14 @@ export class AuthController {
     @Headers("authorization") _authz?: string
   ) {
     // TODO: Add admin role verification
-    const { reason } = z
-      .object({ reason: z.string().optional() })
+    const { reason, reportAutoBan } = z
+      .object({
+        reason: z.string().optional(),
+        reportAutoBan: z.boolean().optional()
+      })
       .parse(body ?? {});
     const finalReason = (reason && String(reason).trim()) || "Moderation action";
-    await this.auth.banAccount(userId, finalReason);
+    await this.auth.banAccount(userId, finalReason, { reportAutoBan: reportAutoBan === true });
     return { ok: true, message: `Account ${userId} banned: ${finalReason}` };
   }
 
@@ -257,6 +260,17 @@ export class AuthController {
   async unbanAccount(@Param("userId") userId: string, @Headers("authorization") _authz?: string) {
     await this.auth.unbanAccount(userId);
     return { ok: true, message: `Account ${userId} unbanned` };
+  }
+
+  /**
+   * Restore login when report score drops below threshold (user-service internal).
+   * POST /auth/admin/users/:userId/lift-report-auto-ban
+   */
+  @Post("admin/users/:userId/lift-report-auto-ban")
+  @HttpCode(HttpStatus.OK)
+  async liftReportAutoBan(@Param("userId") userId: string, @Headers("authorization") _authz?: string) {
+    const res = await this.auth.liftReportAutoBanIfApplicable(userId);
+    return { ok: true, ...res };
   }
 
   /**

@@ -76,6 +76,8 @@ model User {
   
   // Moderation & Flags
   reportCount   Int      @default(0) // Total report score (weighted sum); discovery compares to REPORT_THRESHOLD
+  // After report auto-ban lockout (auth), user may log in but discovery is limited to moderator profiles until moderators lower report score or unban.
+  reportModeratorCardsOnly Boolean @default(false)
   badgeMember   Boolean  @default(false) // 1 = yes, 0 = no
   isModerator   Boolean  @default(false)
   kycStatus     KycStatus @default(UNVERIFIED)

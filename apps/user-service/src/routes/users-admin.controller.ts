@@ -29,6 +29,8 @@ type AuthAdminUser = {
   accountStatus: string;
   bannedAt: string | null;
   banReason: string | null;
+  reportAutoBanActive?: boolean | null;
+  reportBanNoLoginUntil?: string | null;
   suspendedAt: string | null;
   suspensionReason: string | null;
   deactivatedAt: string | null;
@@ -81,6 +83,7 @@ type ProfileWithAdminInclude = {
   dateOfBirth: Date | null;
   gender: string | null;
   reportCount: number;
+  reportModeratorCardsOnly?: boolean;
   badgeMember: boolean;
   isModerator?: boolean;
   kycStatus?: string;
@@ -160,12 +163,15 @@ function mergeAuthUserWithProfile(
     banned,
     bannedAt: a.bannedAt ?? null,
     banReason: a.banReason ?? null,
+    reportAutoBanActive: a.reportAutoBanActive ?? null,
+    reportBanNoLoginUntil: a.reportBanNoLoginUntil ?? null,
     status: a.accountStatus,
     role: null as string | null,
     discoveryStatus: p?.status ?? null,
     dateOfBirth: p?.dateOfBirth ? iso(p.dateOfBirth) : null,
     gender: p?.gender ?? null,
     reportCount: p?.reportCount ?? null,
+    reportModeratorCardsOnly: p?.reportModeratorCardsOnly ?? null,
     kycStatus: p?.kycStatus ?? null,
     kycRiskScore: p?.kycRiskScore ?? null,
     kycExpiresAt: iso(p?.kycExpiresAt ?? null),
@@ -487,6 +493,7 @@ export class UsersAdminController {
       const t = await res.text();
       throw new HttpException(`Unban failed: ${res.status} ${t}`, HttpStatus.BAD_GATEWAY);
     }
+    await this.userService.clearReportDiscoveryRestriction(id);
     return res.json();
   }
 
@@ -505,7 +512,8 @@ export class UsersAdminController {
       ok: true,
       recorded: true,
       reportCount: result.reportCount,
-      weightApplied: result.weightApplied
+      weightApplied: result.weightApplied,
+      reportThreshold: this.userService.getReportThresholdForAdmin()
     };
   }
 
@@ -527,7 +535,8 @@ export class UsersAdminController {
     });
     return {
       ok: true,
-      ...result
+      ...result,
+      reportThreshold: this.userService.getReportThresholdForAdmin()
     };
   }
 

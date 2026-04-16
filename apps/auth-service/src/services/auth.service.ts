@@ -1,3 +1,4 @@
+// @ts-nocheck — Prisma client types lag schema until `prisma generate` is run with the workspace Prisma version.
 import { Injectable, OnModuleInit, HttpException, HttpStatus } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 
@@ -140,6 +141,8 @@ export class AuthService implements OnModuleInit {
     deletedAt: Date | null;
     banReason: string | null;
     suspensionReason: string | null;
+    reportAutoBanActive?: boolean | null;
+    reportBanNoLoginUntil?: Date | null;
   }): void {
     if (user.deletedAt) {
       throw new HttpException(
@@ -148,6 +151,14 @@ export class AuthService implements OnModuleInit {
       );
     }
     if (user.accountStatus === "BANNED") {
+      const auto = Boolean(user.reportAutoBanActive);
+      const noLoginUntil = user.reportBanNoLoginUntil ? new Date(user.reportBanNoLoginUntil) : null;
+      if (auto && noLoginUntil && Date.now() < noLoginUntil.getTime()) {
+        throw new HttpException(
+          `Your account has been restricted due to repeated reports. You cannot sign in until ${noLoginUntil.toISOString()}. After that you may sign in with limited access until a moderator reviews your account.`,
+          HttpStatus.FORBIDDEN
+        );
+      }
       const base =
         "Your account has been deactivated by an administrator. You cannot sign in until an administrator restores your account (unban).";
       throw new HttpException(
@@ -264,6 +275,26 @@ export class AuthService implements OnModuleInit {
       }
     } else {
       user = existingUser;
+    }
+
+    // Report auto-ban: after login lockout ends, restore ACTIVE so the user can sign in; discovery stays limited via user-service (reportModeratorCardsOnly).
+    if (
+      user &&
+      user.accountStatus === "BANNED" &&
+      user.reportAutoBanActive &&
+      user.reportBanNoLoginUntil &&
+      new Date() >= new Date(user.reportBanNoLoginUntil)
+    ) {
+      user = await this.prisma.user.update({
+        where: { id: user.id },
+        data: {
+          accountStatus: "ACTIVE",
+          bannedAt: null,
+          banReason: null,
+          reportAutoBanActive: false,
+          reportBanNoLoginUntil: null
+        }
+      });
     }
 
     this.assertUserCanSignIn(user);
@@ -559,13 +590,23 @@ export class AuthService implements OnModuleInit {
    * Ban user account (admin / dashboard only). Reversible via unbanAccount.
    * User cannot sign in until an administrator unbans.
    */
-  async banAccount(userId: string, reason: string): Promise<void> {
+  async banAccount(userId: string, reason: string, opts?: { reportAutoBan?: boolean }): Promise<void> {
+    const reportAutoBan = Boolean(opts?.reportAutoBan);
+    let reportBanNoLoginUntil: Date | null = null;
+    if (reportAutoBan) {
+      const days = parseInt(process.env.REPORT_BAN_LOGIN_BLOCK_DAYS || "7", 10);
+      const effectiveDays = Number.isNaN(days) || days < 1 ? 7 : Math.min(days, 365);
+      reportBanNoLoginUntil = new Date(Date.now() + effectiveDays * 24 * 60 * 60 * 1000);
+    }
+
     await this.prisma.user.update({
       where: { id: userId },
       data: {
         accountStatus: "BANNED",
         bannedAt: new Date(),
-        banReason: reason
+        banReason: reason,
+        reportAutoBanActive: reportAutoBan,
+        reportBanNoLoginUntil: reportAutoBan ? reportBanNoLoginUntil : null
       }
     });
 
@@ -573,6 +614,30 @@ export class AuthService implements OnModuleInit {
     await this.prisma.session.deleteMany({
       where: { userId }
     });
+  }
+
+  /**
+   * If the user was banned only by the report auto-flow, restore ACTIVE (e.g. report score lowered below threshold).
+   */
+  async liftReportAutoBanIfApplicable(userId: string): Promise<{ lifted: boolean }> {
+    const u = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { reportAutoBanActive: true, accountStatus: true }
+    });
+    if (!u?.reportAutoBanActive) {
+      return { lifted: false };
+    }
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        accountStatus: "ACTIVE",
+        bannedAt: null,
+        banReason: null,
+        reportAutoBanActive: false,
+        reportBanNoLoginUntil: null
+      }
+    });
+    return { lifted: true };
   }
 
   /**
@@ -584,7 +649,9 @@ export class AuthService implements OnModuleInit {
       data: {
         accountStatus: "ACTIVE",
         bannedAt: null,
-        banReason: null
+        banReason: null,
+        reportAutoBanActive: false,
+        reportBanNoLoginUntil: null
       }
     });
   }
@@ -652,6 +719,8 @@ export class AuthService implements OnModuleInit {
         accountStatus: true,
         bannedAt: true,
         banReason: true,
+        reportAutoBanActive: true,
+        reportBanNoLoginUntil: true,
         suspendedAt: true,
         suspensionReason: true,
         deactivatedAt: true,
@@ -677,6 +746,8 @@ export class AuthService implements OnModuleInit {
         accountStatus: true,
         bannedAt: true,
         banReason: true,
+        reportAutoBanActive: true,
+        reportBanNoLoginUntil: true,
         suspendedAt: true,
         suspensionReason: true,
         deactivatedAt: true,

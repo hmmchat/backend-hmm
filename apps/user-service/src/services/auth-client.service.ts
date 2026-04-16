@@ -94,4 +94,64 @@ export class AuthClientService {
       return false;
     }
   }
+
+  /** Auth admin merged row — only fields needed for report auto-ban decisions. */
+  async getAdminAuthUser(
+    userId: string
+  ): Promise<{ accountStatus?: string; reportAutoBanActive?: boolean } | null> {
+    try {
+      const response = await fetch(`${this.authServiceUrl}/auth/admin/users/${encodeURIComponent(userId)}`, {
+        method: "GET",
+        headers: { "Content-Type": "application/json" }
+      });
+      if (!response.ok) {
+        return null;
+      }
+      const body = (await response.json()) as { user?: { accountStatus?: string } };
+      return body.user ?? null;
+    } catch (error: any) {
+      this.logger.warn(`getAdminAuthUser failed for ${userId}: ${error.message}`);
+      return null;
+    }
+  }
+
+  async banUserReportAuto(userId: string, reason: string): Promise<boolean> {
+    try {
+      const response = await fetch(`${this.authServiceUrl}/auth/admin/users/${encodeURIComponent(userId)}/ban`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason, reportAutoBan: true })
+      });
+      if (!response.ok) {
+        const t = await response.text().catch(() => "");
+        this.logger.warn(`banUserReportAuto failed ${userId}: ${response.status} ${t}`);
+        return false;
+      }
+      return true;
+    } catch (error: any) {
+      this.logger.warn(`banUserReportAuto error ${userId}: ${error.message}`);
+      return false;
+    }
+  }
+
+  async liftReportAutoBan(userId: string): Promise<boolean> {
+    try {
+      const response = await fetch(
+        `${this.authServiceUrl}/auth/admin/users/${encodeURIComponent(userId)}/lift-report-auto-ban`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" }
+        }
+      );
+      if (!response.ok) {
+        const t = await response.text().catch(() => "");
+        this.logger.warn(`liftReportAutoBan failed ${userId}: ${response.status} ${t}`);
+        return false;
+      }
+      return true;
+    } catch (error: any) {
+      this.logger.warn(`liftReportAutoBan error ${userId}: ${error.message}`);
+      return false;
+    }
+  }
 }

@@ -29,6 +29,7 @@ interface UserProfileResponse {
   kycStatus?: "UNVERIFIED" | "VERIFIED" | "PENDING_REVIEW" | "REVOKED" | "EXPIRED";
   kycRiskScore?: number;
   kycExpiresAt?: string | null;
+  reportModeratorCardsOnly?: boolean;
 }
 
 export interface DiscoveryUser {
@@ -163,7 +164,7 @@ export class UserClientService implements OnModuleInit {
     try {
       // Use /users/{id} endpoint without auth token (test mode)
       const response = await this.fetchWithTimeout(
-        `${this.userServiceUrl}/users/${userId}?fields=gender,isModerator,kycStatus,kycRiskScore,kycExpiresAt,reportCount`,
+        `${this.userServiceUrl}/users/${userId}?fields=gender,isModerator,kycStatus,kycRiskScore,kycExpiresAt,reportCount,reportModeratorCardsOnly`,
         {
           method: "GET",
           headers: {
@@ -200,7 +201,7 @@ export class UserClientService implements OnModuleInit {
     
     try {
       const response = await this.fetchWithTimeout(
-        `${this.userServiceUrl}/users/${userId}?fields=username,dateOfBirth,gender,displayPictureUrl,preferredCity,intent,status,photos,musicPreference,brandPreferences,interests,values,videoEnabled,latitude,longitude,reportCount,isModerator,kycStatus,kycRiskScore,kycExpiresAt`,
+        `${this.userServiceUrl}/users/${userId}?fields=username,dateOfBirth,gender,displayPictureUrl,preferredCity,intent,status,photos,musicPreference,brandPreferences,interests,values,videoEnabled,latitude,longitude,reportCount,isModerator,kycStatus,kycRiskScore,kycExpiresAt,reportModeratorCardsOnly`,
         {
           method: "GET",
           headers: {
@@ -338,6 +339,7 @@ export class UserClientService implements OnModuleInit {
       excludeUserIds?: string[];
       includeModerators?: boolean;
       excludeModerators?: boolean;
+      onlyModerators?: boolean;
       excludeKycStatuses?: ("UNVERIFIED" | "VERIFIED" | "PENDING_REVIEW" | "REVOKED" | "EXPIRED")[];
       limit?: number;
     }
@@ -385,6 +387,7 @@ export class UserClientService implements OnModuleInit {
       excludeUserIds?: string[];
       includeModerators?: boolean;
       excludeModerators?: boolean;
+      onlyModerators?: boolean;
       excludeKycStatuses?: ("UNVERIFIED" | "VERIFIED" | "PENDING_REVIEW" | "REVOKED" | "EXPIRED")[];
       limit?: number;
     }

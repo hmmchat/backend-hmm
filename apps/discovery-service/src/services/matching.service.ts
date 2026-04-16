@@ -264,6 +264,7 @@ export class MatchingService {
 
     const requesterIsModerator = Boolean(requestingUser?.isModerator);
     const requesterKycStatus = requestingUser?.kycStatus || "UNVERIFIED";
+    const requesterModeratorCardsOnly = Boolean((requestingUser as any)?.reportModeratorCardsOnly);
     const priorityEnabled = this.isKycPriorityEnabled();
 
     const allUsers = await this.userClient.getUsersForDiscoveryById("", {
@@ -271,8 +272,12 @@ export class MatchingService {
       statuses,
       genders,
       excludeUserIds,
-      excludeModerators: requesterIsModerator || (priorityEnabled && requesterKycStatus === "VERIFIED"),
-      excludeKycStatuses: requesterIsModerator ? ["VERIFIED"] : [],
+      ...(requesterModeratorCardsOnly
+        ? { onlyModerators: true as const }
+        : {
+            excludeModerators: requesterIsModerator || (priorityEnabled && requesterKycStatus === "VERIFIED"),
+            excludeKycStatuses: requesterIsModerator ? ["VERIFIED"] : []
+          }),
       limit: DISCOVERY_POOL_LIMIT
     });
 
@@ -291,6 +296,10 @@ export class MatchingService {
       // Exclude if user is in exclude list
       if (excludeUserIds.includes(user.id)) {
         return false;
+      }
+
+      if (requesterModeratorCardsOnly) {
+        return Boolean(user.isModerator);
       }
 
       if (requesterIsModerator) {

@@ -522,7 +522,17 @@ export class UserController {
 
   @Post("users/discovery")
   async getUsersForDiscovery(@Body() body: any) {
-    const { city, statuses, genders, excludeUserIds, limit, includeModerators, excludeModerators, excludeKycStatuses } = body;
+    const {
+      city,
+      statuses,
+      genders,
+      excludeUserIds,
+      limit,
+      includeModerators,
+      excludeModerators,
+      onlyModerators,
+      excludeKycStatuses
+    } = body;
 
     if (!Array.isArray(statuses) || statuses.length === 0) {
       throw new HttpException("statuses array is required", HttpStatus.BAD_REQUEST);
@@ -557,6 +567,7 @@ export class UserController {
       excludeUserIds,
       includeModerators: includeModerators === undefined ? undefined : Boolean(includeModerators),
       excludeModerators: excludeModerators === undefined ? undefined : Boolean(excludeModerators),
+      onlyModerators: onlyModerators === undefined ? undefined : Boolean(onlyModerators),
       excludeKycStatuses: Array.isArray(excludeKycStatuses)
         ? excludeKycStatuses.filter((v: string) => ["UNVERIFIED", "VERIFIED", "PENDING_REVIEW", "REVOKED", "EXPIRED"].includes(v)) as any[]
         : undefined,

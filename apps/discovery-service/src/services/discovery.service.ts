@@ -169,7 +169,8 @@ export class DiscoveryService implements OnModuleInit {
       isModerator: Boolean((userProfileResponse as any).isModerator),
       kycStatus: (userProfileResponse as any).kycStatus || "UNVERIFIED",
       kycRiskScore: (userProfileResponse as any).kycRiskScore || 0,
-      actualCity: actualCity
+      actualCity: actualCity,
+      reportModeratorCardsOnly: Boolean((userProfileResponse as any).reportModeratorCardsOnly)
     };
 
     // Session-scope raincheck exclusions must apply before honoring existing matches.
@@ -473,6 +474,7 @@ export class DiscoveryService implements OnModuleInit {
     const requesterProfile = await this.userClient.getUserFullProfileById(userId);
     const requesterIsModerator = Boolean((requesterProfile as any).isModerator);
     const requesterKycStatus = String((requesterProfile as any).kycStatus || "UNVERIFIED");
+    const requesterModeratorCardsOnly = Boolean((requesterProfile as any).reportModeratorCardsOnly);
     const priorityEnabled = this.isKycPriorityEnabled();
 
     const users = await this.userClient.getUsersForDiscovery(token, {
@@ -480,12 +482,19 @@ export class DiscoveryService implements OnModuleInit {
       statuses,
       genders,
       excludeUserIds: excludeIds,
-      excludeModerators: requesterIsModerator || (priorityEnabled && requesterKycStatus === "VERIFIED"),
-      excludeKycStatuses: requesterIsModerator ? ["VERIFIED"] : [],
+      ...(requesterModeratorCardsOnly
+        ? { onlyModerators: true as const }
+        : {
+            excludeModerators: requesterIsModerator || (priorityEnabled && requesterKycStatus === "VERIFIED"),
+            excludeKycStatuses: requesterIsModerator ? (["VERIFIED"] as const) : []
+          }),
       limit: DISCOVERY_POOL_LIMIT
     });
 
     return users.filter((candidate) => {
+      if (requesterModeratorCardsOnly) {
+        return Boolean(candidate.isModerator);
+      }
       if (requesterIsModerator) {
         if (candidate.isModerator) {
           return false;
@@ -1767,7 +1776,8 @@ export class DiscoveryService implements OnModuleInit {
       isModerator: Boolean((userProfileResponse as any).isModerator),
       kycStatus: (userProfileResponse as any).kycStatus || "UNVERIFIED",
       kycRiskScore: (userProfileResponse as any).kycRiskScore || 0,
-      actualCity: actualCity
+      actualCity: actualCity,
+      reportModeratorCardsOnly: Boolean((userProfileResponse as any).reportModeratorCardsOnly)
     };
 
     // Session-scope raincheck exclusions must apply before honoring existing matches.
@@ -2097,6 +2107,7 @@ export class DiscoveryService implements OnModuleInit {
     const requesterProfile = await this.userClient.getUserFullProfileById(userId);
     const requesterIsModerator = Boolean((requesterProfile as any).isModerator);
     const requesterKycStatus = String((requesterProfile as any).kycStatus || "UNVERIFIED");
+    const requesterModeratorCardsOnly = Boolean((requesterProfile as any).reportModeratorCardsOnly);
     const priorityEnabled = this.isKycPriorityEnabled();
 
     // Call user service discovery endpoint directly (will need to modify to accept userId)
@@ -2108,8 +2119,12 @@ export class DiscoveryService implements OnModuleInit {
         statuses,
         genders,
         excludeUserIds: excludeIds,
-        excludeModerators: requesterIsModerator || (priorityEnabled && requesterKycStatus === "VERIFIED"),
-        excludeKycStatuses: requesterIsModerator ? ["VERIFIED"] : [],
+        ...(requesterModeratorCardsOnly
+          ? { onlyModerators: true as const }
+          : {
+              excludeModerators: requesterIsModerator || (priorityEnabled && requesterKycStatus === "VERIFIED"),
+              excludeKycStatuses: requesterIsModerator ? ["VERIFIED"] : []
+            }),
         limit: DISCOVERY_POOL_LIMIT
       }
     );
@@ -2119,6 +2134,9 @@ export class DiscoveryService implements OnModuleInit {
     // Users with AVAILABLE status should be available even if they have old match records
     const matchedUserIds = await this.matchingService.getMatchedUserIdsCached();
     const filteredUsers = users.filter(user => {
+      if (requesterModeratorCardsOnly) {
+        return Boolean(user.isModerator);
+      }
       if (requesterIsModerator) {
         if (user.isModerator) {
           return false;
@@ -2282,7 +2300,8 @@ export class DiscoveryService implements OnModuleInit {
       isModerator: Boolean((userProfileResponse as any).isModerator),
       kycStatus: (userProfileResponse as any).kycStatus || "UNVERIFIED",
       kycRiskScore: (userProfileResponse as any).kycRiskScore || 0,
-      actualCity: actualCity
+      actualCity: actualCity,
+      reportModeratorCardsOnly: Boolean((userProfileResponse as any).reportModeratorCardsOnly)
     };
 
     // Get gender filter preference
@@ -2357,14 +2376,21 @@ export class DiscoveryService implements OnModuleInit {
     // Add current user to exclude list
     const excludeIds = [...excludeUserIds, userId];
 
+    const requesterProfile = await this.userClient.getUserFullProfile(token);
+    const requesterModeratorCardsOnly = Boolean((requesterProfile as any).reportModeratorCardsOnly);
+
     const users = await this.userClient.getUsersForDiscovery(token, {
       city,
       statuses: statuses as ("AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE" | "ONLINE" | "OFFLINE" | "VIEWER" | "MATCHED")[],
       genders,
       excludeUserIds: excludeIds,
+      ...(requesterModeratorCardsOnly ? { onlyModerators: true as const } : {}),
       limit: DISCOVERY_POOL_LIMIT
     });
 
+    if (requesterModeratorCardsOnly) {
+      return users.filter((u) => Boolean(u.isModerator));
+    }
     return users;
   }
 
@@ -2511,7 +2537,8 @@ export class DiscoveryService implements OnModuleInit {
       isModerator: Boolean((userProfileResponse as any).isModerator),
       kycStatus: (userProfileResponse as any).kycStatus || "UNVERIFIED",
       kycRiskScore: (userProfileResponse as any).kycRiskScore || 0,
-      actualCity: actualCity
+      actualCity: actualCity,
+      reportModeratorCardsOnly: Boolean((userProfileResponse as any).reportModeratorCardsOnly)
     };
 
     // Get gender filter preference
@@ -2584,6 +2611,9 @@ export class DiscoveryService implements OnModuleInit {
     // Add current user to exclude list
     const excludeIds = [...excludeUserIds, userId];
 
+    const requesterProfile = await this.userClient.getUserFullProfileById(userId);
+    const requesterModeratorCardsOnly = Boolean((requesterProfile as any).reportModeratorCardsOnly);
+
     const users = await this.userClient.getUsersForDiscoveryById(
       userId,
       {
@@ -2591,6 +2621,7 @@ export class DiscoveryService implements OnModuleInit {
         statuses: statuses as ("AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE" | "ONLINE" | "OFFLINE" | "VIEWER" | "MATCHED")[],
         genders,
         excludeUserIds: excludeIds,
+        ...(requesterModeratorCardsOnly ? { onlyModerators: true as const } : {}),
         limit: 500
       }
     );
@@ -2598,6 +2629,9 @@ export class DiscoveryService implements OnModuleInit {
     // Filter out users who are matched (they shouldn't appear in OFFLINE cards)
     const matchedUserIds = await this.matchingService.getMatchedUserIdsCached();
     const filteredUsers = users.filter(user => {
+      if (requesterModeratorCardsOnly && !user.isModerator) {
+        return false;
+      }
       // Exclude if user is in matchedUserIds AND is still MATCHED.
       if (matchedUserIds.has(user.id)) {
         return user.status !== 'MATCHED';

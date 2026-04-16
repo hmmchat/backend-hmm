@@ -21,7 +21,7 @@ import {
   UpdateIntentDto,
   CreateMusicPreferenceDto
 } from "../dtos/profile.dto.js";
-import { Gender, UserStatus } from "../../node_modules/.prisma/client/index.js";
+import { Gender, KycStatus, UserStatus } from "../../node_modules/.prisma/client/index.js";
 import {
   NEARBY_DEFAULT_RADIUS_KM,
   NEARBY_DEFAULT_LIMIT,
@@ -35,6 +35,7 @@ import { getReportWeight, getAdminDashboardReportWeight } from "../config/report
 export class UserService implements OnModuleInit {
   private verifyAccess!: (token: string) => Promise<AccessPayload>;
   private publicJwk!: JWK;
+  private kycAutomationInterval?: NodeJS.Timeout;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -78,6 +79,107 @@ export class UserService implements OnModuleInit {
     this.publicJwk = JSON.parse(cleanedJwk) as JWK;
 
     this.verifyAccess = await verifyToken(this.publicJwk);
+
+    this.startKycAutomationLoop();
+  }
+
+  private isKycEnabled(): boolean {
+    return process.env.KYC_ENABLED === "true";
+  }
+
+  private getKycRiskScore(reportCount: number): number {
+    const reportNormFactor = parseFloat(process.env.KYC_REPORT_NORM_FACTOR || "100");
+    if (Number.isNaN(reportNormFactor) || reportNormFactor <= 0) {
+      return 0;
+    }
+    return Math.min(100, Math.round((reportCount / reportNormFactor) * 100));
+  }
+
+  private getKycRiskThreshold(): number {
+    const threshold = parseInt(process.env.KYC_RISK_THRESHOLD || "50", 10);
+    if (Number.isNaN(threshold)) {
+      return 50;
+    }
+    return Math.max(0, Math.min(100, threshold));
+  }
+
+  private getKycExpiryDays(): number {
+    const days = parseInt(process.env.KYC_EXPIRY_DAYS || "90", 10);
+    if (Number.isNaN(days) || days <= 0) {
+      return 90;
+    }
+    return days;
+  }
+
+  private getVerifiedExpiryDate(): Date {
+    const now = new Date();
+    now.setDate(now.getDate() + this.getKycExpiryDays());
+    return now;
+  }
+
+  private async syncKycRiskAndRevocation(userId: string): Promise<void> {
+    if (!this.isKycEnabled()) {
+      return;
+    }
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        reportCount: true,
+        kycStatus: true
+      } as any
+    });
+    if (!user) {
+      return;
+    }
+
+    const nextRiskScore = this.getKycRiskScore(user.reportCount || 0);
+    const riskThreshold = this.getKycRiskThreshold();
+    const shouldAutoRevoke = process.env.KYC_AUTO_REVOKE_ENABLED === "true";
+    const revokeData =
+      shouldAutoRevoke && user.kycStatus === "VERIFIED" && nextRiskScore > riskThreshold
+        ? {
+            kycStatus: "REVOKED" as KycStatus,
+            kycExpiresAt: null as Date | null
+          }
+        : {};
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        kycRiskScore: nextRiskScore,
+        ...revokeData
+      } as any
+    });
+  }
+
+  private startKycAutomationLoop(): void {
+    const autoExpireEnabled = process.env.KYC_AUTO_EXPIRE_ENABLED === "true";
+    if (!this.isKycEnabled() || !autoExpireEnabled) {
+      return;
+    }
+
+    const intervalMs = parseInt(process.env.KYC_AUTO_EXPIRE_INTERVAL_MS || "300000", 10);
+    const effectiveIntervalMs = Number.isNaN(intervalMs) || intervalMs < 15000 ? 300000 : intervalMs;
+    this.kycAutomationInterval = setInterval(async () => {
+      try {
+        const now = new Date();
+        await this.prisma.user.updateMany({
+          where: {
+            kycStatus: "VERIFIED" as any,
+            kycExpiresAt: {
+              lte: now
+            }
+          } as any,
+          data: {
+            kycStatus: "EXPIRED" as KycStatus,
+            kycExpiresAt: null
+          } as any
+        });
+      } catch (error) {
+        console.error("[UserService] KYC expiry automation failed:", error);
+      }
+    }, effectiveIntervalMs);
   }
 
   /* ---------- Token Verification ---------- */
@@ -437,6 +539,10 @@ export class UserService implements OnModuleInit {
       genderChanged: "genderChanged",
       reportCount: "reportCount",
       badgeMember: "badgeMember",
+      isModerator: "isModerator",
+      kycStatus: "kycStatus",
+      kycRiskScore: "kycRiskScore",
+      kycExpiresAt: "kycExpiresAt",
       createdAt: "createdAt",
       updatedAt: "updatedAt",
       locationUpdatedAt: "locationUpdatedAt",
@@ -1234,6 +1340,8 @@ export class UserService implements OnModuleInit {
       }
     });
 
+    await this.syncKycRiskAndRevocation(reportedUserId);
+
     return {
       success: true,
       reportCount: updatedUser.reportCount
@@ -1267,10 +1375,143 @@ export class UserService implements OnModuleInit {
       }
     });
 
+    await this.syncKycRiskAndRevocation(reportedUserId);
+
     return {
       success: true,
       reportCount: updatedUser.reportCount,
       weightApplied: weight
+    };
+  }
+
+  async adminSetReportScore(
+    userId: string,
+    reportCount: number,
+    meta?: { updatedBy: string; reason: string; notes?: string }
+  ): Promise<{ success: true; reportCount: number; kycRiskScore: number }> {
+    const updatedUser = await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        reportCount: Math.max(0, reportCount)
+      } as any
+    });
+
+    await this.syncKycRiskAndRevocation(userId);
+    const latestUser = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        reportCount: true,
+        kycRiskScore: true
+      } as any
+    });
+
+    if (meta?.updatedBy && meta?.reason) {
+      console.warn(
+        `[AUDIT] adminSetReportScore user=${userId} updatedBy=${meta.updatedBy} reason=${meta.reason}${meta.notes ? ` notes=${meta.notes}` : ""}`
+      );
+    }
+
+    return {
+      success: true,
+      reportCount: latestUser?.reportCount ?? updatedUser.reportCount,
+      kycRiskScore: latestUser?.kycRiskScore ?? this.getKycRiskScore(updatedUser.reportCount)
+    };
+  }
+
+  async adminSetKycState(
+    userId: string,
+    payload: {
+      kycStatus?: KycStatus;
+      kycRiskScore?: number;
+      kycExpiresAt?: Date | null;
+      isModerator?: boolean;
+    },
+    meta?: { updatedBy: string; reason: string; notes?: string }
+  ): Promise<{
+    success: true;
+    userId: string;
+    kycStatus: KycStatus;
+    kycRiskScore: number;
+    kycExpiresAt: Date | null;
+    isModerator: boolean;
+  }> {
+    const updateData: any = {};
+    if (payload.kycStatus !== undefined) {
+      updateData.kycStatus = payload.kycStatus;
+      if (payload.kycStatus === "VERIFIED" && payload.kycExpiresAt === undefined) {
+        updateData.kycExpiresAt = this.getVerifiedExpiryDate();
+      }
+      if (payload.kycStatus !== "VERIFIED" && payload.kycExpiresAt === undefined) {
+        updateData.kycExpiresAt = null;
+      }
+    }
+    if (payload.kycRiskScore !== undefined) {
+      updateData.kycRiskScore = Math.max(0, Math.min(100, payload.kycRiskScore));
+    }
+    if (payload.kycExpiresAt !== undefined) {
+      updateData.kycExpiresAt = payload.kycExpiresAt;
+    }
+    if (payload.isModerator !== undefined) {
+      updateData.isModerator = payload.isModerator;
+    }
+
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      data: updateData,
+      select: {
+        id: true,
+        kycStatus: true,
+        kycRiskScore: true,
+        kycExpiresAt: true,
+        isModerator: true
+      } as any
+    });
+
+    if (meta?.updatedBy && meta?.reason) {
+      console.warn(
+        `[AUDIT] adminSetKycState user=${userId} updatedBy=${meta.updatedBy} reason=${meta.reason}${meta.notes ? ` notes=${meta.notes}` : ""}`
+      );
+    }
+
+    return {
+      success: true,
+      userId: user.id,
+      kycStatus: user.kycStatus as KycStatus,
+      kycRiskScore: user.kycRiskScore ?? 0,
+      kycExpiresAt: user.kycExpiresAt ?? null,
+      isModerator: Boolean((user as any).isModerator)
+    };
+  }
+
+  async getKycSnapshot(userId: string): Promise<{
+    userId: string;
+    reportCount: number;
+    kycStatus: KycStatus;
+    kycRiskScore: number;
+    kycExpiresAt: Date | null;
+    isModerator: boolean;
+  }> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        reportCount: true,
+        kycStatus: true,
+        kycRiskScore: true,
+        kycExpiresAt: true,
+        isModerator: true
+      } as any
+    });
+    if (!user) {
+      throw new HttpException("User profile not found", HttpStatus.NOT_FOUND);
+    }
+    return {
+      userId: user.id,
+      reportCount: user.reportCount ?? 0,
+      kycStatus: user.kycStatus as KycStatus,
+      kycRiskScore: user.kycRiskScore ?? 0,
+      kycExpiresAt: user.kycExpiresAt ?? null,
+      isModerator: Boolean((user as any).isModerator)
     };
   }
 
@@ -1458,6 +1699,9 @@ export class UserService implements OnModuleInit {
     statuses: UserStatus[];
     genders?: ("MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY")[];
     excludeUserIds?: string[];
+    includeModerators?: boolean;
+    excludeModerators?: boolean;
+    excludeKycStatuses?: KycStatus[];
     limit?: number;
   }) {
     const where: any = {
@@ -1491,6 +1735,20 @@ export class UserService implements OnModuleInit {
     if (filters.excludeUserIds && filters.excludeUserIds.length > 0) {
       where.id = {
         notIn: filters.excludeUserIds
+      };
+    }
+
+    if (filters.includeModerators === false) {
+      where.isModerator = false;
+    }
+
+    if (filters.excludeModerators === true) {
+      where.isModerator = false;
+    }
+
+    if (filters.excludeKycStatuses && filters.excludeKycStatuses.length > 0) {
+      where.kycStatus = {
+        notIn: filters.excludeKycStatuses
       };
     }
 
@@ -1958,6 +2216,10 @@ export class UserService implements OnModuleInit {
         preferredCity: (user as any).preferredCity,
         videoEnabled: (user as any).videoEnabled,
         profileCompleted: user.profileCompleted,
+        isModerator: (user as any).isModerator ?? false,
+        kycStatus: (user as any).kycStatus ?? "UNVERIFIED",
+        kycRiskScore: (user as any).kycRiskScore ?? 0,
+        kycExpiresAt: (user as any).kycExpiresAt ?? null,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt
       },

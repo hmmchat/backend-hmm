@@ -32,3 +32,47 @@ enum DareSubmissionStatus {
   APPROVED    // Approved by moderation team
   REJECTED    // Rejected by moderation team
 }
+
+enum KycDecision {
+  VERIFIED
+  REJECTED
+  REVIEW
+  REVOKED
+}
+
+model KycSession {
+  id             String      @id @default(cuid())
+  userId         String
+  moderatorId    String
+  startedAt      DateTime    @default(now())
+  endedAt        DateTime?
+  decision       KycDecision?
+  decisionReason String?
+  reportCount    Int         @default(0)
+  kycRiskScore   Int         @default(0)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  feedbacks      KycFeedback[]
+
+  @@index([userId, createdAt])
+  @@index([moderatorId, createdAt])
+  @@index([decision])
+  @@map("kyc_sessions")
+}
+
+model KycFeedback {
+  id             String   @id @default(cuid())
+  userId         String
+  sessionId      String?
+  session        KycSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  questionOne    String
+  questionTwo    String
+  rewardedCoins  Int      @default(0)
+  rewardIssued   Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([userId, sessionId])
+  @@index([userId, createdAt])
+  @@map("kyc_feedback")
+}

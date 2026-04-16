@@ -11,6 +11,7 @@ import {
   HttpStatus,
   Query
 } from "@nestjs/common";
+import { z } from "zod";
 import { UserService } from "../services/user.service.js";
 import { MusicService } from "../services/music.service.js";
 import {
@@ -521,7 +522,7 @@ export class UserController {
 
   @Post("users/discovery")
   async getUsersForDiscovery(@Body() body: any) {
-    const { city, statuses, genders, excludeUserIds, limit } = body;
+    const { city, statuses, genders, excludeUserIds, limit, includeModerators, excludeModerators, excludeKycStatuses } = body;
 
     if (!Array.isArray(statuses) || statuses.length === 0) {
       throw new HttpException("statuses array is required", HttpStatus.BAD_REQUEST);
@@ -554,7 +555,34 @@ export class UserController {
       statuses: statuses as UserStatus[],
       genders,
       excludeUserIds,
+      includeModerators: includeModerators === undefined ? undefined : Boolean(includeModerators),
+      excludeModerators: excludeModerators === undefined ? undefined : Boolean(excludeModerators),
+      excludeKycStatuses: Array.isArray(excludeKycStatuses)
+        ? excludeKycStatuses.filter((v: string) => ["UNVERIFIED", "VERIFIED", "PENDING_REVIEW", "REVOKED", "EXPIRED"].includes(v)) as any[]
+        : undefined,
       limit: limitNum
+    });
+  }
+
+  @Get("users/internal/:userId/kyc")
+  async getKycSnapshot(@Param("userId") userId: string) {
+    return this.userService.getKycSnapshot(userId);
+  }
+
+  @Post("users/internal/:userId/kyc")
+  async updateKycSnapshot(@Param("userId") userId: string, @Body() body: any) {
+    const parsed = z.object({
+      kycStatus: z.enum(["UNVERIFIED", "VERIFIED", "PENDING_REVIEW", "REVOKED", "EXPIRED"]).optional(),
+      kycRiskScore: z.number().int().min(0).max(100).optional(),
+      kycExpiresAt: z.string().datetime().nullable().optional(),
+      isModerator: z.boolean().optional()
+    }).parse(body ?? {});
+
+    return this.userService.adminSetKycState(userId, {
+      kycStatus: parsed.kycStatus as any,
+      kycRiskScore: parsed.kycRiskScore,
+      kycExpiresAt: parsed.kycExpiresAt !== undefined ? (parsed.kycExpiresAt ? new Date(parsed.kycExpiresAt) : null) : undefined,
+      isModerator: parsed.isModerator
     });
   }
 

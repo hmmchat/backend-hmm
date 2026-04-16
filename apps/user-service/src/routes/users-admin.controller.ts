@@ -82,6 +82,10 @@ type ProfileWithAdminInclude = {
   gender: string | null;
   reportCount: number;
   badgeMember: boolean;
+  isModerator?: boolean;
+  kycStatus?: string;
+  kycRiskScore?: number;
+  kycExpiresAt?: Date | null;
   preferredCity: string | null;
   profileCompleted: boolean;
   activeBadgeId: string | null;
@@ -162,6 +166,10 @@ function mergeAuthUserWithProfile(
     dateOfBirth: p?.dateOfBirth ? iso(p.dateOfBirth) : null,
     gender: p?.gender ?? null,
     reportCount: p?.reportCount ?? null,
+    kycStatus: p?.kycStatus ?? null,
+    kycRiskScore: p?.kycRiskScore ?? null,
+    kycExpiresAt: iso(p?.kycExpiresAt ?? null),
+    isModerator: p?.isModerator ?? null,
     badgeMember: p?.badgeMember ?? null,
     preferredCity: p?.preferredCity ?? null,
     profileCompleted: p?.profileCompleted ?? null,
@@ -221,7 +229,17 @@ const patchUserSchema = z.object({
   email: z.string().nullable().optional(),
   phone: z.string().nullable().optional(),
   bio: z.string().nullable().optional(),
-  isActive: z.boolean().optional()
+  isActive: z.boolean().optional(),
+  reportCount: z.number().int().min(0).optional(),
+  isModerator: z.boolean().optional(),
+  kycStatus: z.enum(["UNVERIFIED", "VERIFIED", "PENDING_REVIEW", "REVOKED", "EXPIRED"]).optional(),
+  kycRiskScore: z.number().int().min(0).max(100).optional(),
+  kycExpiresAt: z.string().datetime().nullable().optional(),
+  moderationMeta: z.object({
+    updatedBy: z.string().min(1),
+    reason: z.string().min(1),
+    notes: z.string().optional()
+  }).optional()
 });
 
 const reportSchema = z.object({
@@ -409,6 +427,40 @@ export class UsersAdminController {
       }
     }
 
+    if (data.reportCount !== undefined) {
+      if (!data.moderationMeta?.updatedBy || !data.moderationMeta?.reason) {
+        throw new HttpException("moderationMeta.updatedBy and moderationMeta.reason are required for report score changes", HttpStatus.BAD_REQUEST);
+      }
+      const auditMeta = {
+        updatedBy: data.moderationMeta.updatedBy,
+        reason: data.moderationMeta.reason,
+        notes: data.moderationMeta.notes
+      };
+      await this.userService.adminSetReportScore(id, data.reportCount, auditMeta);
+    }
+
+    if (
+      data.isModerator !== undefined ||
+      data.kycStatus !== undefined ||
+      data.kycRiskScore !== undefined ||
+      data.kycExpiresAt !== undefined
+    ) {
+      if (!data.moderationMeta?.updatedBy || !data.moderationMeta?.reason) {
+        throw new HttpException("moderationMeta.updatedBy and moderationMeta.reason are required for KYC/moderator changes", HttpStatus.BAD_REQUEST);
+      }
+      const auditMeta = {
+        updatedBy: data.moderationMeta.updatedBy,
+        reason: data.moderationMeta.reason,
+        notes: data.moderationMeta.notes
+      };
+      await this.userService.adminSetKycState(id, {
+        isModerator: data.isModerator,
+        kycStatus: data.kycStatus as any,
+        kycRiskScore: data.kycRiskScore,
+        kycExpiresAt: data.kycExpiresAt !== undefined ? (data.kycExpiresAt ? new Date(data.kycExpiresAt) : null) : undefined
+      }, auditMeta);
+    }
+
     return { ok: true };
   }
 
@@ -454,6 +506,59 @@ export class UsersAdminController {
       recorded: true,
       reportCount: result.reportCount,
       weightApplied: result.weightApplied
+    };
+  }
+
+  @Post(":id/report-score")
+  @HttpCode(HttpStatus.OK)
+  async setReportScore(@Param("id") id: string, @Body() body: unknown) {
+    const { reportCount, moderationMeta } = z.object({
+      reportCount: z.number().int().min(0),
+      moderationMeta: z.object({
+        updatedBy: z.string().min(1),
+        reason: z.string().min(1),
+        notes: z.string().optional()
+      })
+    }).parse(body);
+    const result = await this.userService.adminSetReportScore(id, reportCount, {
+      updatedBy: moderationMeta.updatedBy,
+      reason: moderationMeta.reason,
+      notes: moderationMeta.notes
+    });
+    return {
+      ok: true,
+      ...result
+    };
+  }
+
+  @Post(":id/kyc")
+  @HttpCode(HttpStatus.OK)
+  async updateKyc(@Param("id") id: string, @Body() body: unknown) {
+    const parsed = z.object({
+      kycStatus: z.enum(["UNVERIFIED", "VERIFIED", "PENDING_REVIEW", "REVOKED", "EXPIRED"]).optional(),
+      kycRiskScore: z.number().int().min(0).max(100).optional(),
+      kycExpiresAt: z.string().datetime().nullable().optional(),
+      isModerator: z.boolean().optional(),
+      moderationMeta: z.object({
+        updatedBy: z.string().min(1),
+        reason: z.string().min(1),
+        notes: z.string().optional()
+      })
+    }).parse(body ?? {});
+
+    const result = await this.userService.adminSetKycState(id, {
+      kycStatus: parsed.kycStatus as any,
+      kycRiskScore: parsed.kycRiskScore,
+      kycExpiresAt: parsed.kycExpiresAt !== undefined ? (parsed.kycExpiresAt ? new Date(parsed.kycExpiresAt) : null) : undefined,
+      isModerator: parsed.isModerator
+    }, {
+      updatedBy: parsed.moderationMeta.updatedBy,
+      reason: parsed.moderationMeta.reason,
+      notes: parsed.moderationMeta.notes
+    });
+    return {
+      ok: true,
+      ...result
     };
   }
 

@@ -25,6 +25,10 @@ interface UserProfileResponse {
   latitude?: number | null;
   longitude?: number | null;
   reportCount?: number;
+  isModerator?: boolean;
+  kycStatus?: "UNVERIFIED" | "VERIFIED" | "PENDING_REVIEW" | "REVOKED" | "EXPIRED";
+  kycRiskScore?: number;
+  kycExpiresAt?: string | null;
 }
 
 export interface DiscoveryUser {
@@ -43,6 +47,10 @@ export interface DiscoveryUser {
   values: Array<{ value: { id: string; name: string } }>;
   videoEnabled: boolean;
   reportCount?: number;
+  isModerator?: boolean;
+  kycStatus?: "UNVERIFIED" | "VERIFIED" | "PENDING_REVIEW" | "REVOKED" | "EXPIRED";
+  kycRiskScore?: number;
+  kycExpiresAt?: string | null;
 }
 
 interface DiscoveryUsersResponse {
@@ -155,7 +163,7 @@ export class UserClientService implements OnModuleInit {
     try {
       // Use /users/{id} endpoint without auth token (test mode)
       const response = await this.fetchWithTimeout(
-        `${this.userServiceUrl}/users/${userId}?fields=gender`,
+        `${this.userServiceUrl}/users/${userId}?fields=gender,isModerator,kycStatus,kycRiskScore,kycExpiresAt,reportCount`,
         {
           method: "GET",
           headers: {
@@ -192,7 +200,7 @@ export class UserClientService implements OnModuleInit {
     
     try {
       const response = await this.fetchWithTimeout(
-        `${this.userServiceUrl}/users/${userId}?fields=username,dateOfBirth,gender,displayPictureUrl,preferredCity,intent,status,photos,musicPreference,brandPreferences,interests,values,videoEnabled,latitude,longitude`,
+        `${this.userServiceUrl}/users/${userId}?fields=username,dateOfBirth,gender,displayPictureUrl,preferredCity,intent,status,photos,musicPreference,brandPreferences,interests,values,videoEnabled,latitude,longitude,reportCount,isModerator,kycStatus,kycRiskScore,kycExpiresAt`,
         {
           method: "GET",
           headers: {
@@ -328,6 +336,9 @@ export class UserClientService implements OnModuleInit {
       statuses: ("AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE" | "ONLINE" | "OFFLINE" | "VIEWER" | "MATCHED")[];
       genders?: ("MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY")[];
       excludeUserIds?: string[];
+      includeModerators?: boolean;
+      excludeModerators?: boolean;
+      excludeKycStatuses?: ("UNVERIFIED" | "VERIFIED" | "PENDING_REVIEW" | "REVOKED" | "EXPIRED")[];
       limit?: number;
     }
   ): Promise<DiscoveryUser[]> {
@@ -372,6 +383,9 @@ export class UserClientService implements OnModuleInit {
       statuses: ("AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE" | "ONLINE" | "OFFLINE" | "VIEWER" | "MATCHED")[];
       genders?: ("MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY")[];
       excludeUserIds?: string[];
+      includeModerators?: boolean;
+      excludeModerators?: boolean;
+      excludeKycStatuses?: ("UNVERIFIED" | "VERIFIED" | "PENDING_REVIEW" | "REVOKED" | "EXPIRED")[];
       limit?: number;
     }
   ): Promise<DiscoveryUser[]> {

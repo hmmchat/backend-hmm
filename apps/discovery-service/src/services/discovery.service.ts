@@ -14,6 +14,7 @@ import {
   MATCH_SCORE_MUSIC,
   MATCH_SCORE_SAME_CITY,
   MATCH_SCORE_VIDEO,
+  MATCH_SCORE_MODERATOR_PRIORITY,
   MATCH_SCORE_BROADCAST_TRENDING,
   MATCH_SCORE_BROADCAST_POPULARITY_CAP,
   MATCH_SCORE_BROADCAST_VIEWERS_CAP,
@@ -39,6 +40,9 @@ interface UserProfile {
   latitude?: number | null;
   longitude?: number | null;
   actualCity?: string | null; // City derived from latitude/longitude (for "anywhere" mode)
+  isModerator?: boolean;
+  kycStatus?: "UNVERIFIED" | "VERIFIED" | "PENDING_REVIEW" | "REVOKED" | "EXPIRED";
+  kycRiskScore?: number;
   [key: string]: any;
 }
 
@@ -104,6 +108,24 @@ export class DiscoveryService implements OnModuleInit {
     private readonly cache: CacheService
   ) { }
 
+  private isKycPriorityEnabled(): boolean {
+    return process.env.KYC_ENABLED === "true" && process.env.KYC_MODERATOR_PRIORITY_ENABLED === "true";
+  }
+
+  private shouldPrioritizeModeratorCandidate(currentUser: UserProfile, candidate: DiscoveryUser): boolean {
+    if (!this.isKycPriorityEnabled()) {
+      return false;
+    }
+    if (currentUser.isModerator) {
+      return false;
+    }
+    const currentKycStatus = currentUser.kycStatus || "UNVERIFIED";
+    if (currentKycStatus === "VERIFIED") {
+      return false;
+    }
+    return Boolean(candidate.isModerator);
+  }
+
   /**
    * Get next face card for user
    */
@@ -144,6 +166,9 @@ export class DiscoveryService implements OnModuleInit {
       values: (userProfileResponse as any).values,
       musicPreference: (userProfileResponse as any).musicPreference,
       videoEnabled: (userProfileResponse as any).videoEnabled,
+      isModerator: Boolean((userProfileResponse as any).isModerator),
+      kycStatus: (userProfileResponse as any).kycStatus || "UNVERIFIED",
+      kycRiskScore: (userProfileResponse as any).kycRiskScore || 0,
       actualCity: actualCity
     };
 
@@ -445,16 +470,34 @@ export class DiscoveryService implements OnModuleInit {
   ): Promise<DiscoveryUser[]> {
     // Add current user to exclude list
     const excludeIds = [...excludeUserIds, userId];
+    const requesterProfile = await this.userClient.getUserFullProfileById(userId);
+    const requesterIsModerator = Boolean((requesterProfile as any).isModerator);
+    const requesterKycStatus = String((requesterProfile as any).kycStatus || "UNVERIFIED");
+    const priorityEnabled = this.isKycPriorityEnabled();
 
     const users = await this.userClient.getUsersForDiscovery(token, {
       city,
       statuses,
       genders,
       excludeUserIds: excludeIds,
+      excludeModerators: requesterIsModerator || (priorityEnabled && requesterKycStatus === "VERIFIED"),
+      excludeKycStatuses: requesterIsModerator ? ["VERIFIED"] : [],
       limit: DISCOVERY_POOL_LIMIT
     });
 
-    return users;
+    return users.filter((candidate) => {
+      if (requesterIsModerator) {
+        if (candidate.isModerator) {
+          return false;
+        }
+        if (candidate.kycStatus === "VERIFIED") {
+          return false;
+        }
+      } else if (priorityEnabled && requesterKycStatus === "VERIFIED" && candidate.isModerator) {
+        return false;
+      }
+      return true;
+    });
   }
 
   /**
@@ -502,7 +545,11 @@ export class DiscoveryService implements OnModuleInit {
         }
       })),
       videoEnabled: profile.videoEnabled !== undefined ? profile.videoEnabled : true,
-      reportCount: profile.reportCount || 0
+      reportCount: profile.reportCount || 0,
+      isModerator: Boolean(profile.isModerator),
+      kycStatus: profile.kycStatus || "UNVERIFIED",
+      kycRiskScore: profile.kycRiskScore || 0,
+      kycExpiresAt: profile.kycExpiresAt || null
     };
   }
 
@@ -610,6 +657,10 @@ export class DiscoveryService implements OnModuleInit {
       user.videoEnabled === targetUser.videoEnabled
     ) {
       score += MATCH_SCORE_VIDEO;
+    }
+
+    if (this.shouldPrioritizeModeratorCandidate(user, targetUser)) {
+      score += MATCH_SCORE_MODERATOR_PRIORITY;
     }
 
     return score;
@@ -1713,6 +1764,9 @@ export class DiscoveryService implements OnModuleInit {
       values: (userProfileResponse as any).values,
       musicPreference: (userProfileResponse as any).musicPreference,
       videoEnabled: (userProfileResponse as any).videoEnabled,
+      isModerator: Boolean((userProfileResponse as any).isModerator),
+      kycStatus: (userProfileResponse as any).kycStatus || "UNVERIFIED",
+      kycRiskScore: (userProfileResponse as any).kycRiskScore || 0,
       actualCity: actualCity
     };
 
@@ -2040,6 +2094,10 @@ export class DiscoveryService implements OnModuleInit {
   ): Promise<DiscoveryUser[]> {
     // Add current user to exclude list
     const excludeIds = [...excludeUserIds, userId];
+    const requesterProfile = await this.userClient.getUserFullProfileById(userId);
+    const requesterIsModerator = Boolean((requesterProfile as any).isModerator);
+    const requesterKycStatus = String((requesterProfile as any).kycStatus || "UNVERIFIED");
+    const priorityEnabled = this.isKycPriorityEnabled();
 
     // Call user service discovery endpoint directly (will need to modify to accept userId)
     // For now, we'll use the existing method but with a workaround
@@ -2050,6 +2108,8 @@ export class DiscoveryService implements OnModuleInit {
         statuses,
         genders,
         excludeUserIds: excludeIds,
+        excludeModerators: requesterIsModerator || (priorityEnabled && requesterKycStatus === "VERIFIED"),
+        excludeKycStatuses: requesterIsModerator ? ["VERIFIED"] : [],
         limit: DISCOVERY_POOL_LIMIT
       }
     );
@@ -2059,6 +2119,17 @@ export class DiscoveryService implements OnModuleInit {
     // Users with AVAILABLE status should be available even if they have old match records
     const matchedUserIds = await this.matchingService.getMatchedUserIdsCached();
     const filteredUsers = users.filter(user => {
+      if (requesterIsModerator) {
+        if (user.isModerator) {
+          return false;
+        }
+        if (user.kycStatus === "VERIFIED") {
+          return false;
+        }
+      } else if (priorityEnabled && requesterKycStatus === "VERIFIED" && user.isModerator) {
+        return false;
+      }
+
       // Only exclude if user is in matchedUserIds AND is still MATCHED.
       // AVAILABLE users must remain discoverable even if they have stale match ids.
       if (matchedUserIds.has(user.id)) {
@@ -2208,6 +2279,9 @@ export class DiscoveryService implements OnModuleInit {
       values: (userProfileResponse as any).values,
       musicPreference: (userProfileResponse as any).musicPreference,
       videoEnabled: (userProfileResponse as any).videoEnabled,
+      isModerator: Boolean((userProfileResponse as any).isModerator),
+      kycStatus: (userProfileResponse as any).kycStatus || "UNVERIFIED",
+      kycRiskScore: (userProfileResponse as any).kycRiskScore || 0,
       actualCity: actualCity
     };
 
@@ -2434,6 +2508,9 @@ export class DiscoveryService implements OnModuleInit {
       values: (userProfileResponse as any).values,
       musicPreference: (userProfileResponse as any).musicPreference,
       videoEnabled: (userProfileResponse as any).videoEnabled,
+      isModerator: Boolean((userProfileResponse as any).isModerator),
+      kycStatus: (userProfileResponse as any).kycStatus || "UNVERIFIED",
+      kycRiskScore: (userProfileResponse as any).kycRiskScore || 0,
       actualCity: actualCity
     };
 

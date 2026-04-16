@@ -31,6 +31,9 @@ export const MATCH_SCORE_SAME_CITY = intEnv("MATCH_SCORE_SAME_CITY", 50);
 /** Points when video preference matches */
 export const MATCH_SCORE_VIDEO = intEnv("MATCH_SCORE_VIDEO", 100);
 
+/** Bonus score when routing unverified users to moderators */
+export const MATCH_SCORE_MODERATOR_PRIORITY = intEnv("MATCH_SCORE_MODERATOR_PRIORITY", 500);
+
 // --- Broadcast recommendation scoring ---
 
 /** Points for trending broadcast */

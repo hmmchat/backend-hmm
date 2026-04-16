@@ -9,7 +9,8 @@ import {
   MATCH_SCORE_VALUE,
   MATCH_SCORE_MUSIC,
   MATCH_SCORE_SAME_CITY,
-  MATCH_SCORE_VIDEO
+  MATCH_SCORE_VIDEO,
+  MATCH_SCORE_MODERATOR_PRIORITY
 } from "../config/scoring.config.js";
 import { DISCOVERY_POOL_LIMIT } from "../config/limits.config.js";
 import fetch from "node-fetch";
@@ -25,6 +26,9 @@ interface UserProfile {
   latitude?: number | null;
   longitude?: number | null;
   actualCity?: string | null;
+  isModerator?: boolean;
+  kycStatus?: "UNVERIFIED" | "VERIFIED" | "PENDING_REVIEW" | "REVOKED" | "EXPIRED";
+  kycRiskScore?: number;
   [key: string]: any;
 }
 
@@ -46,6 +50,27 @@ export class MatchingService {
   ) {
     this.userServiceUrl = process.env.USER_SERVICE_URL || "http://localhost:3002";
     this.userServiceStatusTimeoutMs = parseInt(process.env.USER_SERVICE_STATUS_TIMEOUT_MS || "10000", 10);
+  }
+
+  private isKycPriorityEnabled(): boolean {
+    return process.env.KYC_ENABLED === "true" && process.env.KYC_MODERATOR_PRIORITY_ENABLED === "true";
+  }
+
+  private shouldPrioritizeModeratorCandidate(
+    requester: UserProfile,
+    candidate: DiscoveryUser
+  ): boolean {
+    if (!this.isKycPriorityEnabled()) {
+      return false;
+    }
+    if (requester.isModerator) {
+      return false;
+    }
+    const requesterKycStatus = requester.kycStatus || "UNVERIFIED";
+    if (requesterKycStatus === "VERIFIED") {
+      return false;
+    }
+    return Boolean(candidate.isModerator);
   }
 
   /**
@@ -214,6 +239,10 @@ export class MatchingService {
       score += MATCH_SCORE_VIDEO;
     }
 
+    if (this.shouldPrioritizeModeratorCandidate(user, targetUser)) {
+      score += MATCH_SCORE_MODERATOR_PRIORITY;
+    }
+
     return score;
   }
 
@@ -224,7 +253,8 @@ export class MatchingService {
     city: string | null,
     genders?: ("MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY")[],
     excludeUserIds: string[] = [],
-    matchedUserIds?: Set<string> // Accept as parameter to avoid N+1 query
+    matchedUserIds?: Set<string>, // Accept as parameter to avoid N+1 query
+    requestingUser?: UserProfile
   ): Promise<DiscoveryUser[]> {
     const statuses: ("AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE")[] = [
       "AVAILABLE",
@@ -232,11 +262,17 @@ export class MatchingService {
       "IN_BROADCAST_AVAILABLE"
     ];
 
+    const requesterIsModerator = Boolean(requestingUser?.isModerator);
+    const requesterKycStatus = requestingUser?.kycStatus || "UNVERIFIED";
+    const priorityEnabled = this.isKycPriorityEnabled();
+
     const allUsers = await this.userClient.getUsersForDiscoveryById("", {
       city,
       statuses,
       genders,
       excludeUserIds,
+      excludeModerators: requesterIsModerator || (priorityEnabled && requesterKycStatus === "VERIFIED"),
+      excludeKycStatuses: requesterIsModerator ? ["VERIFIED"] : [],
       limit: DISCOVERY_POOL_LIMIT
     });
 
@@ -254,6 +290,17 @@ export class MatchingService {
     const filteredUsers = allUsers.filter(user => {
       // Exclude if user is in exclude list
       if (excludeUserIds.includes(user.id)) {
+        return false;
+      }
+
+      if (requesterIsModerator) {
+        if (user.isModerator) {
+          return false;
+        }
+        if (user.kycStatus === "VERIFIED") {
+          return false;
+        }
+      } else if (priorityEnabled && requesterKycStatus === "VERIFIED" && user.isModerator) {
         return false;
       }
       
@@ -376,7 +423,7 @@ export class MatchingService {
 
     // Get pool users (pass matchedUserIds to avoid N+1 query)
     console.log(`[DEBUG] findMatchForUser for ${userId} - excludeUserIds:`, excludeUserIds);
-    const poolUsers = await this.getPoolUsers(city, genders, [...excludeUserIds, userId], matchedUserIds);
+    const poolUsers = await this.getPoolUsers(city, genders, [...excludeUserIds, userId], matchedUserIds, userProfile);
     console.log(`[DEBUG] findMatchForUser for ${userId} - poolUsers count:`, poolUsers.length);
 
     if (poolUsers.length === 0) {
@@ -802,7 +849,12 @@ export class MatchingService {
           name: v.value.name
         }
       })),
-      videoEnabled: profile.videoEnabled !== undefined ? profile.videoEnabled : true
+      videoEnabled: profile.videoEnabled !== undefined ? profile.videoEnabled : true,
+      reportCount: profile.reportCount || 0,
+      isModerator: Boolean(profile.isModerator),
+      kycStatus: profile.kycStatus || "UNVERIFIED",
+      kycRiskScore: profile.kycRiskScore || 0,
+      kycExpiresAt: profile.kycExpiresAt || null
     };
   }
 

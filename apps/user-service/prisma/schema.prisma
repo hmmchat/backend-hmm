@@ -32,6 +32,14 @@ enum UserStatus {
   VIEWER
 }
 
+enum KycStatus {
+  UNVERIFIED
+  VERIFIED
+  PENDING_REVIEW
+  REVOKED
+  EXPIRED
+}
+
 model User {
   id            String   @id // Links to auth-service User.id (must match auth-service user id)
   createdAt     DateTime @default(now())
@@ -69,6 +77,10 @@ model User {
   // Moderation & Flags
   reportCount   Int      @default(0) // Total report score (weighted sum); discovery compares to REPORT_THRESHOLD
   badgeMember   Boolean  @default(false) // 1 = yes, 0 = no
+  isModerator   Boolean  @default(false)
+  kycStatus     KycStatus @default(UNVERIFIED)
+  kycRiskScore  Int      @default(0)
+  kycExpiresAt  DateTime?
   
   // Intent/Bio (max 255 characters)
   intent        String?  @db.VarChar(255)
@@ -94,6 +106,9 @@ model User {
 
   @@index([username])
   @@index([status])
+  @@index([isModerator])
+  @@index([kycStatus])
+  @@index([kycExpiresAt])
   @@index([latitude, longitude]) // For location-based queries
   @@map("users")
 }

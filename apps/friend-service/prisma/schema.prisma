@@ -114,8 +114,8 @@ model Gift {
   giftId       String   @unique // e.g., "monkey", "pikachu"
   name          String   // Display name
   emoji         String   // Emoji representation
-  coins         Int      // Legacy/display (optional)
-  diamonds      Int      @default(0) // Cost in diamonds (used for gifting)
+  coins         Int      // Legacy column; not derived from diamonds. Gift send cost is `diamonds` only.
+  diamonds      Int      @default(0) // Cost in diamonds when sending this gift
   /// Public URL or site-relative path for sticker art (e.g. /gift/gift1.png)
   imageUrl      String?
   isActive      Boolean  @default(true)

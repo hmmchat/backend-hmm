@@ -490,7 +490,8 @@ export class FriendController {
   }
 
   /**
-   * Active gifts for messaging UI (authenticated; amounts must match validateGift).
+   * Active gifts for messaging UI (authenticated; send amounts are in diamonds and must match validateGift).
+   * Does not return legacy per-gift `coins` — coin→diamond applies only when purchasing diamonds.
    * GET /me/gifts/catalog
    */
   @Get("me/gifts/catalog")
@@ -506,7 +507,6 @@ export class FriendController {
         name: g.name,
         emoji: g.emoji,
         diamonds: g.diamonds ?? g.coins ?? 0,
-        coins: g.coins,
         imageUrl: resolveGiftStickerUrl(g.imageUrl, g.giftId)
       }))
     };

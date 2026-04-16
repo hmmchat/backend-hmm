@@ -8,8 +8,9 @@ const createGiftSchema = z.object({
   /** Optional — dashboard may omit; defaults to 🎁 */
   emoji: z.string().min(1).max(10).optional(),
   /**
-   * Optional legacy/display. If omitted, we mirror diamonds.
-   * This keeps older clients that display coins working.
+   * Legacy DB column only. Gift pricing for sends is `diamonds`; coins are not derived from diamonds
+   * (diamonds are not convertible to coins — coin→diamond applies only when purchasing diamonds).
+   * If omitted (e.g. dashboard), stored as 0.
    */
   coins: z.number().int().nonnegative().optional(),
   diamonds: z.number().int().nonnegative(),
@@ -73,7 +74,7 @@ export class GiftAdminController {
     // Generate a stable giftId internally instead of accepting it from the client
     const giftId = randomUUID();
     const diamonds = data.diamonds;
-    const coins = data.coins ?? diamonds;
+    const coins = data.coins ?? 0;
     const emoji = data.emoji?.trim() || "🎁";
 
     const gift = await this.prisma.gift.create({
@@ -97,21 +98,21 @@ export class GiftAdminController {
   @Patch(":id")
   async update(@Param("id") id: string, @Body() body: unknown) {
     const data = updateGiftSchema.parse(body);
-    const hasDiamonds = data.diamonds !== undefined;
-    const hasCoins = data.coins !== undefined;
+
+    const updateData: Record<string, unknown> = {
+      ...(data.name !== undefined && { name: data.name }),
+      ...(data.emoji !== undefined && { emoji: data.emoji }),
+      ...(data.diamonds !== undefined && { diamonds: data.diamonds }),
+      ...(data.isActive !== undefined && { isActive: data.isActive }),
+      ...(data.imageUrl !== undefined && {
+        imageUrl: data.imageUrl === null ? null : data.imageUrl.trim() || null
+      }),
+      ...(data.coins !== undefined && { coins: data.coins })
+    };
+
     const gift = await this.prisma.gift.update({
       where: { id },
-      data: {
-        name: data.name,
-        emoji: data.emoji,
-        diamonds: data.diamonds,
-        // If diamonds changes and coins wasn't explicitly provided, mirror coins to diamonds.
-        ...(hasDiamonds && !hasCoins ? { coins: data.diamonds } : { coins: data.coins }),
-        ...(data.imageUrl !== undefined && {
-          imageUrl: data.imageUrl === null ? null : data.imageUrl.trim() || null
-        }),
-        isActive: data.isActive
-      }
+      data: updateData as any
     });
     return { ok: true, gift };
   }
@@ -143,4 +144,3 @@ export class GiftAdminController {
     return { ok: true };
   }
 }
-

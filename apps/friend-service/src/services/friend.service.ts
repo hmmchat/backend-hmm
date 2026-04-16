@@ -832,9 +832,15 @@ export class FriendService {
                          newSection === ConversationSection.INBOX;
 
       this.metrics.incrementMessageSentToNonFriend();
+      const costDesc =
+        giftId && giftAmount != null
+          ? `${giftAmount} diamonds (gift)`
+          : cost > 0
+            ? `${cost} coins (first message)`
+            : "0";
       this.logger.log(
         `Message sent from ${fromUserId} to non-friend ${toUserId} ` +
-        `(type: ${messageType}, cost: ${cost || giftAmount || 0} coins)`
+        `(type: ${messageType}, cost: ${costDesc})`
       );
 
       // Invalidate notification cache for recipient (they have a new unread message)
@@ -946,7 +952,7 @@ export class FriendService {
         newBalance = result.newBalance;
       }
 
-      // Create message (free for friends, but gift costs coins)
+      // Create message (free for friends; gifts cost diamonds via transfer above)
       const friendMessage = await tx.friendMessage.create({
         data: {
           fromUserId,
@@ -991,7 +997,7 @@ export class FriendService {
       this.metrics.incrementMessageSentToFriend();
       this.logger.log(
         `Message sent from ${fromUserId} to friend ${toUserId} ` +
-        `(type: ${messageType}${giftAmount ? `, gift: ${giftAmount} coins` : ""})`
+        `(type: ${messageType}${giftAmount ? `, gift: ${giftAmount} diamonds` : ""})`
       );
 
       // Invalidate notification cache for recipient (they have a new unread message)

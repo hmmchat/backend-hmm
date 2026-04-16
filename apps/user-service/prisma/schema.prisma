@@ -134,7 +134,7 @@ model DiscoveryCityOption {
   id                String   @id @default(cuid())
   value             String   @unique
   label             String
-  /** Optional image for LOCATION discovery promos for this city (HTTPS URL). */
+  /// Optional image for LOCATION discovery promos for this city (HTTPS URL).
   faceCardImageUrl  String?
   order             Int?
   isActive          Boolean  @default(true)

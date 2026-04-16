@@ -23,6 +23,7 @@ export class RoutingService implements OnModuleInit {
   private readonly logger = new Logger(RoutingService.name);
   private routes: Map<string, RouteConfig> = new Map();
   private circuitBreakers: Map<string, CircuitBreakerState> = new Map();
+  private adminKycRevokeRoute: RouteConfig | null = null;
   private readonly CIRCUIT_BREAKER_THRESHOLD: number;
   private readonly CIRCUIT_BREAKER_TIMEOUT: number;
   private readonly CIRCUIT_BREAKER_WINDOW: number;
@@ -79,6 +80,21 @@ export class RoutingService implements OnModuleInit {
       serviceUrl: moderationServiceUrl,
       requiresAuth: false
     });
+
+    this.routes.set("/kyc", {
+      path: "/kyc",
+      serviceUrl: moderationServiceUrl,
+      requiresAuth: false
+    });
+
+    // Special route override for dashboard/admin KYC revoke endpoint:
+    // /v1/admin/users/:id/kyc/revoke must be handled by moderation-service.
+    // Keep route.path as /admin/users so proxy path rewriting logic preserves full path.
+    this.adminKycRevokeRoute = {
+      path: "/admin/users",
+      serviceUrl: moderationServiceUrl,
+      requiresAuth: false
+    };
 
     this.routes.set("/discovery", {
       path: "/discovery",
@@ -243,6 +259,12 @@ export class RoutingService implements OnModuleInit {
     // Ensure path starts with /
     if (!cleanPath.startsWith("/")) {
       cleanPath = "/" + cleanPath;
+    }
+
+    // Explicitly route KYC revoke admin path to moderation-service.
+    // Without this override, /admin/users prefix routes to user-service.
+    if (/^\/admin\/users\/[^/]+\/kyc\/revoke$/.test(cleanPath) && this.adminKycRevokeRoute) {
+      return this.adminKycRevokeRoute;
     }
 
     // Try exact match first

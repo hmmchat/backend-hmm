@@ -887,7 +887,10 @@ export class RoomService {
     this.logger.log(`Participant ${userId} removed from database for room ${roomId}, status updated to ${statusAfterLeave}`);
   }
 
-  async removeParticipant(roomId: string, userId: string): Promise<void> {
+  /**
+   * @returns true if this user was an active call participant and was marked left (DB row updated).
+   */
+  async removeParticipant(roomId: string, userId: string): Promise<boolean> {
     // Try to get room from memory, but continue even if not found (will update DB)
     let room: RoomState | null = null;
     let participant: ParticipantState | undefined;
@@ -929,59 +932,61 @@ export class RoomService {
       where: { roomId }
     });
 
-    if (session) {
-      // Update participant record - only update if currently active
-      const updateResult = await this.prisma.callParticipant.updateMany({
-        where: {
-          sessionId: session.id,
-          userId,
-          status: "active", // Only update active participants
-          leftAt: null // Only update participants who haven't left yet
-        },
-        data: {
-          leftAt: new Date(),
-          status: "left"
-        }
-      });
-
-      if (updateResult.count === 0) {
-        this.logger.warn(`No active participant record found to update for user ${userId} in room ${roomId}`);
-        // User might already be marked as left, or might be a viewer instead
-        return;
-      }
-
-      this.logger.log(`Updated ${updateResult.count} participant record(s) for user ${userId} in room ${roomId}`);
-
-      await this.prisma.callEvent.create({
-        data: {
-          sessionId: session.id,
-          eventType: "participant_left",
-          userId,
-          metadata: JSON.stringify({ roomId })
-        }
-      });
-
-      // Check if room should be ended
-      // BUSINESS RULE: Room ends only when no participants remain
-      // Single user rooms are now allowed
-      const activeParticipants = await this.prisma.callParticipant.findMany({
-        where: {
-          sessionId: session.id,
-          status: "active",
-          leftAt: null
-        },
-        select: { userId: true }
-      });
-
-      // If no active participants left, end the room
-      if (activeParticipants.length === 0) {
-        this.logger.log(`No active participants left in room ${roomId}, ending room`);
-        await this.endRoom(roomId);
-        return; // endRoom will handle status updates
-      }
-
-      // Room continues (single user or multiple users) - only update leaving user's status
+    if (!session) {
+      return false;
     }
+
+    // Update participant record - only update if currently active
+    const updateResult = await this.prisma.callParticipant.updateMany({
+      where: {
+        sessionId: session.id,
+        userId,
+        status: "active", // Only update active participants
+        leftAt: null // Only update participants who haven't left yet
+      },
+      data: {
+        leftAt: new Date(),
+        status: "left"
+      }
+    });
+
+    if (updateResult.count === 0) {
+      this.logger.warn(`No active participant record found to update for user ${userId} in room ${roomId}`);
+      // User might already be marked as left, or might be a viewer instead
+      return false;
+    }
+
+    this.logger.log(`Updated ${updateResult.count} participant record(s) for user ${userId} in room ${roomId}`);
+
+    await this.prisma.callEvent.create({
+      data: {
+        sessionId: session.id,
+        eventType: "participant_left",
+        userId,
+        metadata: JSON.stringify({ roomId })
+      }
+    });
+
+    // Check if room should be ended
+    // BUSINESS RULE: Room ends only when no participants remain
+    // Single user rooms are now allowed
+    const activeParticipants = await this.prisma.callParticipant.findMany({
+      where: {
+        sessionId: session.id,
+        status: "active",
+        leftAt: null
+      },
+      select: { userId: true }
+    });
+
+    // If no active participants left, end the room
+    if (activeParticipants.length === 0) {
+      this.logger.log(`No active participants left in room ${roomId}, ending room`);
+      await this.endRoom(roomId);
+      return true; // endRoom will handle status updates
+    }
+
+    // Room continues (single user or multiple users) - only update leaving user's status
 
     // Preserve AVAILABLE when another flow (e.g. raincheck) already moved user to discovery pool.
     let statusAfterLeave = "ONLINE";
@@ -998,6 +1003,7 @@ export class RoomService {
     });
 
     this.logger.log(`Participant ${userId} removed from room ${roomId}, status updated to ${statusAfterLeave}`);
+    return true;
   }
 
   /**
@@ -1938,8 +1944,9 @@ export class RoomService {
   /**
    * Remove a viewer from the broadcast
    * @param leavingHMMTV - true if user is leaving HMM_TV section entirely (going to homepage), false if just scrolling to next broadcast
+   * @returns true if an active viewer row was updated for this user
    */
-  async removeViewer(roomId: string, userId: string, leavingHMMTV: boolean = false): Promise<void> {
+  async removeViewer(roomId: string, userId: string, leavingHMMTV: boolean = false): Promise<boolean> {
     // Try to get room from memory, but continue even if not found (will update DB)
     let room: RoomState | null = null;
     let viewer: ViewerState | undefined;
@@ -1988,6 +1995,7 @@ export class RoomService {
     }
 
     // Update viewer record - only if they haven't left already
+    let dbViewerUpdated = false;
     try {
       const updateResult = await this.prisma.callViewer.updateMany({
         where: {
@@ -2000,6 +2008,7 @@ export class RoomService {
         }
       });
 
+      dbViewerUpdated = updateResult.count > 0;
       if (updateResult.count === 0) {
         // Viewer might already be marked as left, or might not exist
         this.logger.warn(`No active viewer record found to update for user ${userId} in room ${roomId}. They may have already left or not be a viewer.`);
@@ -2060,6 +2069,8 @@ export class RoomService {
         this.logger.log(`Anonymous viewer ${userId} removed from room ${roomId}`);
       }
     }
+
+    return dbViewerUpdated;
   }
 
   /**

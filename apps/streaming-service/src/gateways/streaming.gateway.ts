@@ -504,10 +504,11 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     let removedAsParticipant = false;
 
     try {
-      await this.roomService.removeParticipant(roomId, userId);
-      this.logger.log(`[LeaveRoom] User ${userId} removed as participant from room ${roomId}`);
-      removed = true;
-      removedAsParticipant = true;
+      removedAsParticipant = await this.roomService.removeParticipant(roomId, userId);
+      if (removedAsParticipant) {
+        this.logger.log(`[LeaveRoom] User ${userId} removed as participant from room ${roomId}`);
+        removed = true;
+      }
     } catch (error: any) {
       this.logger.debug(`[LeaveRoom] removeParticipant failed for user ${userId}: ${error.message}`);
 
@@ -525,11 +526,13 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     }
 
     // If not removed as participant, try as viewer
-    if (!removed) {
+    if (!removedAsParticipant) {
       try {
-        await this.roomService.removeViewer(roomId, userId);
-        this.logger.log(`[LeaveRoom] User ${userId} removed as viewer from room ${roomId}`);
-        removed = true;
+        const removedViewer = await this.roomService.removeViewer(roomId, userId);
+        if (removedViewer) {
+          removed = true;
+          this.logger.log(`[LeaveRoom] User ${userId} removed as viewer from room ${roomId}`);
+        }
       } catch (viewerError: any) {
         if (!removed) {
           this.logger.error(`[LeaveRoom] Failed to remove user ${userId} from room ${roomId} as participant or viewer: ${viewerError.message}`);
@@ -1395,32 +1398,29 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    // Try to remove as viewer first (viewers are less critical)
-    let removed = false;
+    // Same order as leave-room: participant first, then viewer (removeViewer does not throw when user is not a viewer)
+    let removedAsParticipant = false;
     try {
-      await this.roomService.removeViewer(resolvedRoomId, userId);
-      this.logger.log(`[Disconnect] User ${userId} removed as viewer from room ${resolvedRoomId}`);
-      removed = true;
+      removedAsParticipant = await this.roomService.removeParticipant(resolvedRoomId, userId);
+      if (removedAsParticipant) {
+        this.logger.log(`[Disconnect] User ${userId} removed as participant from room ${resolvedRoomId}`);
+      }
     } catch (error: any) {
-      // Not a viewer, or already removed, continue to check participant
-      this.logger.debug(`[Disconnect] User ${userId} not a viewer in room ${resolvedRoomId}: ${error.message}`);
+      // User might not be in room, or room might be already ended
+      if (error.message?.includes("not found") || error.message?.includes("does not exist")) {
+        this.logger.debug(`[Disconnect] Room ${resolvedRoomId} not found or user ${userId} not in room`);
+      } else {
+        this.logger.warn(`[Disconnect] Failed to remove user ${userId} as participant from room ${resolvedRoomId}: ${error.message}`);
+      }
     }
 
-    // Try to remove as participant if not removed as viewer
-    let removedAsParticipant = false;
-    if (!removed) {
-      try {
-        await this.roomService.removeParticipant(resolvedRoomId, userId);
-        this.logger.log(`[Disconnect] User ${userId} removed as participant from room ${resolvedRoomId}`);
-        removedAsParticipant = true;
-      } catch (error: any) {
-        // User might not be in room, or room might be already ended
-        if (error.message?.includes("not found") || error.message?.includes("does not exist")) {
-          this.logger.debug(`[Disconnect] Room ${resolvedRoomId} not found or user ${userId} not in room`);
-        } else {
-          this.logger.warn(`[Disconnect] Failed to remove user ${userId} from room ${resolvedRoomId}: ${error.message}`);
-        }
+    try {
+      const removedViewer = await this.roomService.removeViewer(resolvedRoomId, userId);
+      if (removedViewer) {
+        this.logger.log(`[Disconnect] User ${userId} removed as viewer from room ${resolvedRoomId}`);
       }
+    } catch (error: any) {
+      this.logger.debug(`[Disconnect] removeViewer failed for user ${userId} in room ${resolvedRoomId}: ${error.message}`);
     }
 
     if (removedAsParticipant) {

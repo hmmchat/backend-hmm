@@ -336,12 +336,12 @@ export class LocationService implements OnModuleInit {
       // Note: This requires both services to share the same database
       
       // Try to call user-service test endpoint if it exists, otherwise update DB directly
-      const response = await fetch(`${this.userServiceUrl}/users/${userId}`, {
+      const response = await fetch(`${this.userServiceUrl}/users/test/${userId}/preferred-city`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({ preferredCity: city })
+        body: JSON.stringify({ city })
       });
 
       if (response.ok) {

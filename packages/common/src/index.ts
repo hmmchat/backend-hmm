@@ -5,6 +5,10 @@ import { z } from "zod";
 export { ServiceClient, type ServiceClientConfig, type CircuitBreakerState } from "./service-client.js";
 export { ServiceDiscovery, type ServiceEndpoint } from "./service-discovery.js";
 export { HealthChecker, type HealthCheckResult } from "./health-check.js";
+export {
+  PREFERRED_CITY_ANYWHERE_IN_INDIA,
+  isPreferredCityAnywhere
+} from "./preferred-city.js";
 
 /* ---------- Types ---------- */
 export type Provider = "google" | "apple" | "facebook" | "phone";

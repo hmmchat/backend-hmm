@@ -93,6 +93,8 @@ export class AuthMiddleware {
       "/brands",
       "/interests",
       "/values",
+      "/intent-prompts",
+      "/discovery-city-options",
       "/music/search",
       "/files/upload" // Some file endpoints might be public
     ];

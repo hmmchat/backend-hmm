@@ -53,15 +53,11 @@ setup() {
     sleep 2
     local profile_data=$(cat <<EOF
 {
-  "name": "Discovery User 1",
-  "age": 25,
+  "username": "disc1${TEST_SESSION_ID}",
+  "dateOfBirth": "1998-01-15T00:00:00.000Z",
   "gender": "MALE",
-  "bio": "Test user for discovery",
-  "city": "Mumbai",
-  "state": "Maharashtra",
-  "country": "India",
-  "latitude": 19.0760,
-  "longitude": 72.8777
+  "displayPictureUrl": "https://via.placeholder.com/300",
+  "preferredCity": "ANYWHERE_IN_INDIA"
 }
 EOF
 )
@@ -71,15 +67,11 @@ EOF
     
     profile_data=$(cat <<EOF
 {
-  "name": "Discovery User 2",
-  "age": 24,
+  "username": "disc2${TEST_SESSION_ID}",
+  "dateOfBirth": "1999-02-15T00:00:00.000Z",
   "gender": "FEMALE",
-  "bio": "Test user 2 for discovery",
-  "city": "Mumbai",
-  "state": "Maharashtra",
-  "country": "India",
-  "latitude": 19.0760,
-  "longitude": 72.8777
+  "displayPictureUrl": "https://via.placeholder.com/301",
+  "preferredCity": "ANYWHERE_IN_INDIA"
 }
 EOF
 )

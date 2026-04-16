@@ -1,5 +1,6 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, HttpException, HttpStatus, Param, Patch, Post } from "@nestjs/common";
 import { z } from "zod";
+import { PREFERRED_CITY_ANYWHERE_IN_INDIA } from "@hmm/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 
 const createInterestSchema = z.object({
@@ -29,6 +30,20 @@ const updateIntentPromptSchema = z.object({
   text: z.string().min(1).max(100).optional(),
   isActive: z.boolean().optional(),
   order: z.number().optional()
+});
+
+const createDiscoveryCityOptionSchema = z.object({
+  value: z.string().min(1).max(100),
+  label: z.string().min(1).max(120),
+  order: z.number().optional(),
+  isActive: z.boolean().optional()
+});
+
+const updateDiscoveryCityOptionSchema = z.object({
+  value: z.string().min(1).max(100).optional(),
+  label: z.string().min(1).max(120).optional(),
+  order: z.number().optional(),
+  isActive: z.boolean().optional()
 });
 
 @Controller("admin")
@@ -176,6 +191,59 @@ export class CatalogAdminController {
   @HttpCode(HttpStatus.NO_CONTENT)
   async deleteIntentPrompt(@Param("id") id: string) {
     await this.prisma.intentPrompt.delete({ where: { id } });
+    return { ok: true };
+  }
+
+  /**
+   * Discovery / profile preferred city catalog (values must match `users.preferredCity` for real cities).
+   */
+
+  @Get("discovery-city-options")
+  async getAllDiscoveryCityOptions() {
+    const options = await (this.prisma as any).discoveryCityOption.findMany({
+      orderBy: [{ isActive: "desc" }, { order: "asc" }, { label: "asc" }]
+    });
+    return { ok: true, options };
+  }
+
+  @Post("discovery-city-options")
+  @HttpCode(HttpStatus.CREATED)
+  async createDiscoveryCityOption(@Body() body: unknown) {
+    const data = createDiscoveryCityOptionSchema.parse(body);
+    const option = await (this.prisma as any).discoveryCityOption.create({
+      data: {
+        value: data.value,
+        label: data.label,
+        order: data.order ?? null,
+        isActive: data.isActive !== false
+      }
+    });
+    return { ok: true, option };
+  }
+
+  @Patch("discovery-city-options/:id")
+  async updateDiscoveryCityOption(@Param("id") id: string, @Body() body: unknown) {
+    const data = updateDiscoveryCityOptionSchema.parse(body);
+    const option = await (this.prisma as any).discoveryCityOption.update({
+      where: { id },
+      data: {
+        value: data.value,
+        label: data.label,
+        order: data.order,
+        isActive: data.isActive
+      }
+    });
+    return { ok: true, option };
+  }
+
+  @Delete("discovery-city-options/:id")
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async deleteDiscoveryCityOption(@Param("id") id: string) {
+    const existing = await (this.prisma as any).discoveryCityOption.findUnique({ where: { id } });
+    if (existing?.value === PREFERRED_CITY_ANYWHERE_IN_INDIA) {
+      throw new HttpException("Cannot delete the built-in Anywhere in India option.", HttpStatus.BAD_REQUEST);
+    }
+    await (this.prisma as any).discoveryCityOption.delete({ where: { id } });
     return { ok: true };
   }
 }

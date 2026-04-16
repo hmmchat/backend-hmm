@@ -449,4 +449,23 @@ export class UserClientService implements OnModuleInit {
       return null; // Return null on error
     }
   }
+
+  /**
+   * Active discovery city option values from user-service (admin catalog).
+   */
+  async getActiveDiscoveryCityValues(): Promise<string[]> {
+    try {
+      const response = await this.fetchWithTimeout(`${this.userServiceUrl}/discovery-city-options/active`, {
+        method: "GET",
+        headers: { "Content-Type": "application/json" }
+      });
+      if (!response.ok) {
+        return [];
+      }
+      const body = (await response.json()) as { options?: Array<{ value: string }> };
+      return (body.options || []).map((o) => o.value);
+    } catch {
+      return [];
+    }
+  }
 }

@@ -64,7 +64,8 @@ test_create_profile() {
   "username": "testuser${TIMESTAMP}1",
   "dateOfBirth": "1998-01-15T00:00:00.000Z",
   "gender": "MALE",
-  "displayPictureUrl": "https://via.placeholder.com/300"
+  "displayPictureUrl": "https://via.placeholder.com/300",
+  "preferredCity": "ANYWHERE_IN_INDIA"
 }
 EOF
 )

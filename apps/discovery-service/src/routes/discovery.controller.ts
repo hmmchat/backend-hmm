@@ -197,6 +197,7 @@ export class DiscoveryController {
     const cityResponse = await this.locationService.getPreferredCity(token);
     const city = cityResponse.city;
 
+    await this.discoveryService.clearSessionDiscoveryPoolOverride(userId, dto.sessionId);
     // Reset session
     await this.discoveryService.resetSession(userId, dto.sessionId, city);
 
@@ -231,28 +232,14 @@ export class DiscoveryController {
     const payload = await verifyAccess(token);
     const userId = payload.sub;
 
-    // Update user's preferred city
-    await this.locationService.updatePreferredCity(token, dto.city);
-
-    // Reset session for the new city (clears both user rainchecks and location cards)
-    await this.discoveryService.resetSession(userId, dto.sessionId, dto.city);
-
-    // Also clear location cards for this session
-    await this.discoveryService.clearLocationCards(userId, dto.sessionId);
-
-    // Return next user card for the selected location
-    const soloOnly = false;
-    const nextCard = await this.discoveryService.getNextCard(
+    return this.discoveryService.handleSelectLocation({
       token,
-      dto.sessionId,
-      soloOnly
-    );
-
-    return {
-      success: true,
-      nextCard: nextCard.card,
-      isLocationCard: false
-    };
+      userId,
+      sessionId: dto.sessionId,
+      city: dto.city,
+      persistPreference: dto.persistPreference,
+      soloOnly: false
+    });
   }
 
   /* ---------- Test Endpoints (No Auth Required) ---------- */
@@ -315,6 +302,7 @@ export class DiscoveryController {
       throw new HttpException("userId and sessionId are required", HttpStatus.BAD_REQUEST);
     }
 
+    await this.discoveryService.clearSessionDiscoveryPoolOverride(userId, sessionId);
     // Reset session for ALL cities (pass null to clear all rainchecked users)
     await this.discoveryService.resetSession(userId, sessionId, null);
 
@@ -330,29 +318,24 @@ export class DiscoveryController {
    */
   @Post("test/select-location")
   async selectLocationTest(@Body() body: any) {
-    const { userId, sessionId, city } = body;
+    const { userId, sessionId } = body;
+    const dto = SelectLocationRequestSchema.parse({
+      sessionId,
+      city: body.city,
+      persistPreference: body.persistPreference
+    });
 
-    if (!userId || !sessionId) {
-      throw new HttpException("userId and sessionId are required", HttpStatus.BAD_REQUEST);
+    if (!userId) {
+      throw new HttpException("userId is required", HttpStatus.BAD_REQUEST);
     }
 
-    // Update user's preferred city
-    await this.locationService.updatePreferredCityForUser(userId, city);
-
-    // Reset session for the new city (clears both user rainchecks and location cards)
-    await this.discoveryService.resetSession(userId, sessionId, city);
-
-    // Also clear location cards for this session
-    await this.discoveryService.clearLocationCards(userId, sessionId);
-
-    // Return next user card for the selected location
-    const nextCard = await this.discoveryService.getNextCardForUser(userId, sessionId, false);
-
-    return {
-      success: true,
-      nextCard: nextCard.card,
-      isLocationCard: false
-    };
+    return this.discoveryService.handleSelectLocationForUser({
+      userId,
+      sessionId: dto.sessionId,
+      city: dto.city,
+      persistPreference: dto.persistPreference,
+      soloOnly: false
+    });
   }
 
   /**

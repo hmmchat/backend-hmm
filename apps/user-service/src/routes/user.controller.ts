@@ -371,6 +371,15 @@ export class UserController {
    * Get suggested intent prompts for profile creation.
    * GET /intent-prompts?limit={limit}
    */
+  /**
+   * Active discovery city options for onboarding / profile picker (same values as `PATCH /me/preferred-city`).
+   * GET /discovery-city-options/active
+   */
+  @Get("discovery-city-options/active")
+  async getActiveDiscoveryCityOptions() {
+    return this.userService.listActiveDiscoveryCityOptions();
+  }
+
   @Get("intent-prompts")
   async getIntentPrompts(@Query("limit") limit?: string) {
     const limitNum =

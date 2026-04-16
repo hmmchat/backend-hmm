@@ -189,3 +189,18 @@ model BroadcastFollow {
   @@index([createdAt])
   @@map("broadcast_follows")
 }
+
+// Temporary discovery pool city when user accepts a LOCATION face card (does not change user-service profile).
+// poolCity = "*" means "all cities" for this session only.
+model SessionDiscoveryCityOverride {
+  id        String   @id @default(cuid())
+  userId    String
+  sessionId String
+  poolCity  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, sessionId])
+  @@index([userId])
+  @@map("session_discovery_city_overrides")
+}

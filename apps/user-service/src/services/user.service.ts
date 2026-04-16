@@ -6,7 +6,7 @@ import { ModerationClientService } from "./moderation-client.service.js";
 import { BrandService } from "./brand.service.js";
 import { WalletClientService } from "./wallet-client.service.js";
 import { AuthClientService } from "./auth-client.service.js";
-import { verifyToken, AccessPayload } from "@hmm/common";
+import { verifyToken, AccessPayload, PREFERRED_CITY_ANYWHERE_IN_INDIA } from "@hmm/common";
 import { JWK } from "jose";
 import {
   CreateProfileDto,
@@ -34,6 +34,27 @@ import { getReportThreshold } from "../config/report-threshold.config.js";
 
 @Injectable()
 export class UserService implements OnModuleInit {
+  async listActiveDiscoveryCityOptions() {
+    const options = await this.prisma.discoveryCityOption.findMany({
+      where: { isActive: true },
+      orderBy: [{ order: "asc" }, { label: "asc" }],
+      select: { id: true, value: true, label: true, order: true }
+    });
+    return { options };
+  }
+
+  private async ensureActiveDiscoveryCityValue(value: string): Promise<void> {
+    const row = await this.prisma.discoveryCityOption.findFirst({
+      where: { value, isActive: true }
+    });
+    if (!row) {
+      throw new HttpException(
+        "Invalid preferred city. Pick a value from the active discovery city list.",
+        HttpStatus.BAD_REQUEST
+      );
+    }
+  }
+
   private verifyAccess!: (token: string) => Promise<AccessPayload>;
   private publicJwk!: JWK;
   private kycAutomationInterval?: NodeJS.Timeout;
@@ -361,6 +382,8 @@ export class UserService implements OnModuleInit {
 
       const zodiac = await this.resolveZodiacFromDob(data.dateOfBirth);
 
+      await this.ensureActiveDiscoveryCityValue(data.preferredCity);
+
       // Create user profile
       const user = await this.prisma.user.create({
         data: {
@@ -369,6 +392,7 @@ export class UserService implements OnModuleInit {
           dateOfBirth: data.dateOfBirth,
           gender: data.gender as Gender,
           displayPictureUrl: data.displayPictureUrl,
+          preferredCity: data.preferredCity,
           intent: data.intent,
           profileCompleted: true,
           genderChanged: data.gender === "PREFER_NOT_TO_SAY" ? false : true,
@@ -1269,6 +1293,8 @@ export class UserService implements OnModuleInit {
       throw new HttpException("User profile not found", HttpStatus.NOT_FOUND);
     }
 
+    await this.ensureActiveDiscoveryCityValue(data.city);
+
     const user = await this.prisma.user.update({
       where: { id: userId },
       data: {
@@ -1719,6 +1745,7 @@ export class UserService implements OnModuleInit {
       FROM users
       WHERE "preferredCity" IS NOT NULL
         AND "preferredCity" != ''
+        AND "preferredCity" <> ${PREFERRED_CITY_ANYWHERE_IN_INDIA}
         AND "profileCompleted" = true
         AND status IN ('AVAILABLE', 'IN_SQUAD_AVAILABLE', 'IN_BROADCAST_AVAILABLE')
       GROUP BY "preferredCity"
@@ -1741,7 +1768,7 @@ export class UserService implements OnModuleInit {
     const result = await this.prisma.$queryRaw<Array<{ count: bigint }>>`
       SELECT COUNT(*)::int as count
       FROM users
-      WHERE "preferredCity" IS NULL
+      WHERE ("preferredCity" IS NULL OR "preferredCity" = ${PREFERRED_CITY_ANYWHERE_IN_INDIA})
         AND "profileCompleted" = true
         AND status IN ('AVAILABLE', 'IN_SQUAD_AVAILABLE', 'IN_BROADCAST_AVAILABLE')
     `;
@@ -2259,6 +2286,8 @@ export class UserService implements OnModuleInit {
     if (!existingUser) {
       throw new HttpException("User profile not found", HttpStatus.NOT_FOUND);
     }
+
+    await this.ensureActiveDiscoveryCityValue(data.city);
 
     const user = await this.prisma.user.update({
       where: { id: userId },

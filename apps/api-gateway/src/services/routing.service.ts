@@ -200,6 +200,12 @@ export class RoutingService implements OnModuleInit {
       requiresAuth: false
     });
 
+    this.routes.set("/discovery-city-options", {
+      path: "/discovery-city-options",
+      serviceUrl: userServiceUrl,
+      requiresAuth: false
+    });
+
     this.routes.set("/metrics", {
       path: "/metrics",
       serviceUrl: userServiceUrl,
@@ -234,6 +240,11 @@ export class RoutingService implements OnModuleInit {
     });
     this.routes.set("/admin/intent-prompts", {
       path: "/admin/intent-prompts",
+      serviceUrl: userServiceUrl,
+      requiresAuth: false
+    });
+    this.routes.set("/admin/discovery-city-options", {
+      path: "/admin/discovery-city-options",
       serviceUrl: userServiceUrl,
       requiresAuth: false
     });

@@ -12,6 +12,7 @@ interface ProfileCompletionResult {
       dateOfBirth: boolean;
       gender: boolean;
       displayPictureUrl: boolean;
+      preferredCity: boolean;
     };
     optional: {
       photos: { filled: number; max: number };
@@ -32,7 +33,7 @@ export class ProfileCompletionService {
    * Calculate profile completion percentage
    * 
    * Scoring:
-   * - Required fields (username, DOB, gender, displayPicture): 50% total (12.5% each)
+   * - Required fields (username, DOB, gender, displayPicture, preferredCity): 50% total (10% each)
    * - Optional fields: 50% total
    *   - Photos (0-3): 8% total
    *   - Music: 7%
@@ -63,7 +64,8 @@ export class ProfileCompletionService {
         username: !!user.username,
         dateOfBirth: !!user.dateOfBirth,
         gender: !!user.gender,
-        displayPictureUrl: !!user.displayPictureUrl
+        displayPictureUrl: !!user.displayPictureUrl,
+        preferredCity: !!(user as any).preferredCity && String((user as any).preferredCity).trim() !== ""
       },
       optional: {
         photos: {
@@ -92,17 +94,18 @@ export class ProfileCompletionService {
     let completed = 0;
     let total = 0;
 
-    // Required fields: 50% total (12.5% each = 4 fields)
+    // Required fields: 50% total (10% each = 5 fields)
     const requiredFields = [
       details.required.username,
       details.required.dateOfBirth,
       details.required.gender,
-      details.required.displayPictureUrl
+      details.required.displayPictureUrl,
+      details.required.preferredCity
     ];
     const requiredCompleted = requiredFields.filter(Boolean).length;
-    percentage += (requiredCompleted / 4) * 50;
+    percentage += (requiredCompleted / 5) * 50;
     completed += requiredCompleted;
-    total += 4;
+    total += 5;
 
     // Optional fields: 50% total
     // Photos: 8% total (max 3)

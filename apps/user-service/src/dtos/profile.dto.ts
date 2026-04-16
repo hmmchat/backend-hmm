@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { PREFERRED_CITY_ANYWHERE_IN_INDIA } from "@hmm/common";
 
 export const GenderEnum = z.enum(["MALE", "FEMALE", "NON_BINARY", "PREFER_NOT_TO_SAY"]);
 
@@ -20,6 +21,8 @@ export const CreateProfileSchema = z.object({
   dateOfBirth: z.string().datetime().or(z.date()).transform((val) => new Date(val)),
   gender: GenderEnum,
   displayPictureUrl: z.string().url(),
+  /** Must be an active admin catalog `value`, typically `ANYWHERE_IN_INDIA` or a city value. */
+  preferredCity: z.string().min(1).max(100),
   intent: z.string().max(255).optional()
 });
 
@@ -57,9 +60,15 @@ export const UpdateLocationSchema = z.object({
   longitude: z.number().min(-180).max(180)
 });
 
-// Preferred City DTO
+// Preferred City DTO — null/omitted maps to "Anywhere in India" sentinel for backwards compatibility
 export const UpdatePreferredCitySchema = z.object({
-  city: z.string().min(1).max(100).nullable() // Single preferred city, null means no preference
+  city: z
+    .string()
+    .min(1)
+    .max(100)
+    .nullable()
+    .optional()
+    .transform((v) => (v === undefined || v === null ? PREFERRED_CITY_ANYWHERE_IN_INDIA : v))
 });
 
 // Status DTO

@@ -32,6 +32,7 @@ import {
 // DiscoveryUser interface is imported from user-client.service.ts
 // Import it to avoid duplication
 import type { DiscoveryUser } from "./user-client.service.js";
+import { isPreferredCityAnywhere } from "@hmm/common";
 
 interface UserProfile {
   id: string;
@@ -140,6 +141,139 @@ export class DiscoveryService implements OnModuleInit {
     return Boolean(candidate.isModerator);
   }
 
+  /** In-session pool only; `"*"` = all cities for this session (does not update user profile). */
+  private static readonly SESSION_DISCOVERY_POOL_ANYWHERE = "*";
+
+  private storedPreferredToDiscoveryPoolCity(stored: string | null): string | null {
+    return isPreferredCityAnywhere(stored) ? null : stored;
+  }
+
+  private async getSessionDiscoveryPoolCityRow(
+    userId: string,
+    sessionId: string
+  ): Promise<{ poolCity: string } | null> {
+    try {
+      if (!(this.prisma as any).sessionDiscoveryCityOverride) return null;
+      return await (this.prisma as any).sessionDiscoveryCityOverride.findUnique({
+        where: { userId_sessionId: { userId, sessionId } }
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  private async getEffectiveDiscoveryPoolCity(
+    userId: string,
+    sessionId: string,
+    storedPreferred: string | null
+  ): Promise<string | null> {
+    const row = await this.getSessionDiscoveryPoolCityRow(userId, sessionId);
+    if (row) {
+      return row.poolCity === DiscoveryService.SESSION_DISCOVERY_POOL_ANYWHERE
+        ? null
+        : row.poolCity;
+    }
+    return this.storedPreferredToDiscoveryPoolCity(storedPreferred);
+  }
+
+  async upsertSessionDiscoveryPoolOverride(userId: string, sessionId: string, poolCity: string): Promise<void> {
+    if (!(this.prisma as any).sessionDiscoveryCityOverride) return;
+    await (this.prisma as any).sessionDiscoveryCityOverride.upsert({
+      where: { userId_sessionId: { userId, sessionId } },
+      create: { userId, sessionId, poolCity },
+      update: { poolCity }
+    });
+  }
+
+  async clearSessionDiscoveryPoolOverride(userId: string, sessionId: string): Promise<void> {
+    try {
+      if (!(this.prisma as any).sessionDiscoveryCityOverride) return;
+      await (this.prisma as any).sessionDiscoveryCityOverride.deleteMany({
+        where: { userId, sessionId }
+      });
+    } catch {
+      // Older deploys without the table
+    }
+  }
+
+  /**
+   * Select location from profile UI or LOCATION face card.
+   * When `persistPreference` is false, only the in-session discovery pool changes; profile city is unchanged.
+   */
+  async handleSelectLocation(args: {
+    token: string;
+    userId: string;
+    sessionId: string;
+    city: string | null;
+    persistPreference: boolean;
+    soloOnly?: boolean;
+  }): Promise<{ success: boolean; nextCard: Card | LocationCard | null; isLocationCard: boolean }> {
+    const { token, userId, sessionId, persistPreference } = args;
+    const city = args.city;
+    const soloOnly = args.soloOnly ?? false;
+
+    if (persistPreference) {
+      await this.clearSessionDiscoveryPoolOverride(userId, sessionId);
+      await this.locationService.updatePreferredCity(token, city);
+      await this.resetSession(userId, sessionId, city);
+      await this.clearLocationCards(userId, sessionId);
+      const nextCard = await this.getNextCard(token, sessionId, soloOnly);
+      return { success: true, nextCard: nextCard.card, isLocationCard: false };
+    }
+
+    const poolMarker =
+      city === null || isPreferredCityAnywhere(city)
+        ? DiscoveryService.SESSION_DISCOVERY_POOL_ANYWHERE
+        : city;
+    await this.upsertSessionDiscoveryPoolOverride(userId, sessionId, poolMarker);
+    await this.resetSession(
+      userId,
+      sessionId,
+      poolMarker === DiscoveryService.SESSION_DISCOVERY_POOL_ANYWHERE ? null : poolMarker
+    );
+    await this.clearLocationCards(userId, sessionId);
+    const nextCard = await this.getNextCard(token, sessionId, soloOnly);
+    return { success: true, nextCard: nextCard.card, isLocationCard: false };
+  }
+
+  /**
+   * Test helper: session-only location (no user-service profile write).
+   */
+  async handleSelectLocationForUser(args: {
+    userId: string;
+    sessionId: string;
+    city: string | null;
+    persistPreference: boolean;
+    soloOnly?: boolean;
+  }): Promise<{ success: boolean; nextCard: Card | LocationCard | null; isLocationCard: boolean }> {
+    const { userId, sessionId, persistPreference } = args;
+    const city = args.city;
+    const soloOnly = args.soloOnly ?? false;
+
+    if (persistPreference) {
+      await this.clearSessionDiscoveryPoolOverride(userId, sessionId);
+      await this.locationService.updatePreferredCityForUser(userId, city);
+      await this.resetSession(userId, sessionId, city);
+      await this.clearLocationCards(userId, sessionId);
+      const nextCard = await this.getNextCardForUser(userId, sessionId, soloOnly);
+      return { success: true, nextCard: nextCard.card, isLocationCard: false };
+    }
+
+    const poolMarker =
+      city === null || isPreferredCityAnywhere(city)
+        ? DiscoveryService.SESSION_DISCOVERY_POOL_ANYWHERE
+        : city;
+    await this.upsertSessionDiscoveryPoolOverride(userId, sessionId, poolMarker);
+    await this.resetSession(
+      userId,
+      sessionId,
+      poolMarker === DiscoveryService.SESSION_DISCOVERY_POOL_ANYWHERE ? null : poolMarker
+    );
+    await this.clearLocationCards(userId, sessionId);
+    const nextCard = await this.getNextCardForUser(userId, sessionId, soloOnly);
+    return { success: true, nextCard: nextCard.card, isLocationCard: false };
+  }
+
   /**
    * Get next face card for user
    */
@@ -152,13 +286,13 @@ export class DiscoveryService implements OnModuleInit {
     const userProfileResponse = await this.userClient.getUserFullProfile(token);
     const userId = userProfileResponse.id;
 
-    // Get user's preferred city
     const cityResponse = await this.locationService.getPreferredCity(token);
-    const preferredCity = cityResponse.city;
+    const storedPreferred = cityResponse.city;
+    const poolCity = await this.getEffectiveDiscoveryPoolCity(userId, sessionId, storedPreferred);
 
     // Get viewer's actual city from location if in "anywhere" mode
     let actualCity: string | null = null;
-    if (preferredCity === null && (userProfileResponse as any).latitude && (userProfileResponse as any).longitude) {
+    if (isPreferredCityAnywhere(storedPreferred) && (userProfileResponse as any).latitude && (userProfileResponse as any).longitude) {
       try {
         const locationResult = await this.locationService.locateMe(
           (userProfileResponse as any).latitude,
@@ -174,7 +308,7 @@ export class DiscoveryService implements OnModuleInit {
     // Convert to UserProfile interface
     const currentUser: UserProfile = {
       id: userProfileResponse.id,
-      preferredCity: preferredCity,
+      preferredCity: storedPreferred,
       brandPreferences: (userProfileResponse as any).brandPreferences,
       interests: (userProfileResponse as any).interests,
       values: (userProfileResponse as any).values,
@@ -188,7 +322,7 @@ export class DiscoveryService implements OnModuleInit {
     };
 
     // Session-scope raincheck exclusions must apply before honoring existing matches.
-    const raincheckedUserIds = await this.getRaincheckedUserIds(userId, sessionId, preferredCity);
+    const raincheckedUserIds = await this.getRaincheckedUserIds(userId, sessionId, storedPreferred);
 
     // Check if user is already matched
     const existingMatch = await this.matchingService.getMatchForUser(userId);
@@ -208,7 +342,7 @@ export class DiscoveryService implements OnModuleInit {
         await this.matchingService.removeMatch(existingMatch.user1Id, existingMatch.user2Id);
       } else {
         // User is actively matched, return their match's card
-        const card = await this.buildCard(this.convertToDiscoveryUser(matchedUser), preferredCity, currentUser);
+        const card = await this.buildCard(this.convertToDiscoveryUser(matchedUser), poolCity, currentUser);
 
         // Surface acceptance hint: if the other user already accepted but current user hasn't,
         // frontend can show "X has accepted your match".
@@ -253,13 +387,13 @@ export class DiscoveryService implements OnModuleInit {
     const matchedUser = await this.matchingService.findMatchForUser(
       userId,
       currentUser,
-      preferredCity,
+      poolCity,
       genders,
       raincheckedUserIds
     );
 
     if (matchedUser) {
-      const card = await this.buildCard(matchedUser, preferredCity, currentUser);
+      const card = await this.buildCard(matchedUser, poolCity, currentUser);
 
       if (hasActiveGenderFilter) {
         await this.genderFilterService.decrementScreen(userId);
@@ -272,7 +406,7 @@ export class DiscoveryService implements OnModuleInit {
     }
 
     // No match found, check fallback options
-    console.log(`[DEBUG] getNextCardForUser - findMatchForUser returned null for user ${userId}, city: ${preferredCity || 'null (Anywhere)'}`);
+    console.log(`[DEBUG] getNextCardForUser - findMatchForUser returned null for user ${userId}, city: ${poolCity || 'null (Anywhere)'}`);
     // Determine statuses to filter
     const statuses: ("AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE")[] = soloOnly
       ? ["AVAILABLE"]
@@ -296,7 +430,7 @@ export class DiscoveryService implements OnModuleInit {
         // If users exist in other cities, use them (unlimited scroll)
         if (usersInOtherCities.length > 0) {
           const selectedUser = this.selectBestMatch(usersInOtherCities, currentUser);
-          const card = await this.buildCard(selectedUser, preferredCity, currentUser);
+          const card = await this.buildCard(selectedUser, poolCity, currentUser);
 
           if (hasActiveGenderFilter) {
             await this.genderFilterService.decrementScreen(userId);
@@ -321,7 +455,7 @@ export class DiscoveryService implements OnModuleInit {
 
         if (usersWithoutGenderFilter.length > 0) {
           const selectedUser = this.selectBestMatch(usersWithoutGenderFilter, currentUser);
-          const card = await this.buildCard(selectedUser, preferredCity, currentUser);
+          const card = await this.buildCard(selectedUser, poolCity, currentUser);
 
           return {
             card,
@@ -330,19 +464,20 @@ export class DiscoveryService implements OnModuleInit {
         }
       }
 
-      // Before showing location cards, check if users are available.
-      // If preferred city has none, fall back to "anywhere" while still honoring raincheck exclusions.
-      const usersInPreferredCity = preferredCity
-        ? await this.findMatchingUsers(
-          token,
-          userId,
-          preferredCity,
-          statuses,
-          genders,
-          soloOnly,
-          raincheckedUserIds
-        )
-        : [];
+      // Before showing location cards, check if users are available in the effective pool.
+      // When the pool is city-scoped, do not fall back to global "anywhere" users here — show LOCATION promos instead.
+      const usersInPoolCity =
+        poolCity !== null
+          ? await this.findMatchingUsers(
+              token,
+              userId,
+              poolCity,
+              statuses,
+              genders,
+              soloOnly,
+              raincheckedUserIds
+            )
+          : [];
       const usersAnywhere = await this.findMatchingUsers(
         token,
         userId,
@@ -352,16 +487,16 @@ export class DiscoveryService implements OnModuleInit {
         soloOnly,
         raincheckedUserIds
       );
-      const usersBeforeLocation = usersInPreferredCity.length > 0 ? usersInPreferredCity : usersAnywhere;
+      const usersBeforeLocation = poolCity !== null ? usersInPoolCity : usersAnywhere;
 
-      console.log(`[DEBUG] getNextCardForUser - usersBeforeLocation: ${usersBeforeLocation.length} users found for city ${preferredCity || 'null (Anywhere)'}`);
+      console.log(`[DEBUG] getNextCardForUser - usersBeforeLocation: ${usersBeforeLocation.length} users found for city ${poolCity || 'null (Anywhere)'}`);
 
       // If users are available, show them instead of location cards
       if (usersBeforeLocation.length > 0) {
         try {
           // Use selectBestMatchAndCreate to ensure matches are created before showing card
           const selectedUser = await this.selectBestMatchAndCreate(userId, usersBeforeLocation, currentUser);
-          const card = await this.buildCard(selectedUser, preferredCity, currentUser);
+          const card = await this.buildCard(selectedUser, poolCity, currentUser);
 
           if (hasActiveGenderFilter) {
             await this.genderFilterService.decrementScreen(userId);
@@ -380,34 +515,35 @@ export class DiscoveryService implements OnModuleInit {
 
       // No users available - show location cards (never exhausted)
       // BUT FIRST: Double-check if users became available after concurrent status updates.
-      const usersRecheck = preferredCity
-        ? await this.findMatchingUsers(
-          token,
-          userId,
-          preferredCity,
-          statuses,
-          genders,
-          soloOnly,
-          raincheckedUserIds
-        )
-        : await this.findMatchingUsers(
-          token,
-          userId,
-          null, // anywhere
-          statuses,
-          genders,
-          soloOnly,
-          raincheckedUserIds
-        );
+      const usersRecheck =
+        poolCity !== null
+          ? await this.findMatchingUsers(
+              token,
+              userId,
+              poolCity,
+              statuses,
+              genders,
+              soloOnly,
+              raincheckedUserIds
+            )
+          : await this.findMatchingUsers(
+              token,
+              userId,
+              null, // anywhere
+              statuses,
+              genders,
+              soloOnly,
+              raincheckedUserIds
+            );
 
-      console.log(`[DEBUG] getNextCardForUser - usersRecheck: ${usersRecheck.length} users found for city ${preferredCity || 'null (Anywhere)'}`);
+      console.log(`[DEBUG] getNextCardForUser - usersRecheck: ${usersRecheck.length} users found for city ${poolCity || 'null (Anywhere)'}`);
 
       // If users are now available, show them instead of location cards
       if (usersRecheck.length > 0) {
         try {
           // Use selectBestMatchAndCreate to ensure matches are created before showing card
           const selectedUser = await this.selectBestMatchAndCreate(userId, usersRecheck, currentUser);
-          const card = await this.buildCard(selectedUser, preferredCity, currentUser);
+          const card = await this.buildCard(selectedUser, poolCity, currentUser);
 
           if (hasActiveGenderFilter) {
             await this.genderFilterService.decrementScreen(userId);
@@ -427,15 +563,22 @@ export class DiscoveryService implements OnModuleInit {
       // Still no users available - show location cards (never exhausted)
       // Get location cards already shown
       const locationCardsShown = await this.getLocationCardsShown(userId, sessionId);
+      const adminCityValues = await this.userClient.getActiveDiscoveryCityValues();
 
       // Get available location cards
-      let locationCards = await this.getLocationCards(locationCardsShown);
+      let locationCards = await this.getLocationCards(locationCardsShown, {
+        homeCityToExclude: poolCity,
+        adminCityValues
+      });
 
       // If all location cards are shown, clear them and cycle through again (make it feel infinite)
       if (locationCards.length === 0) {
         await this.clearLocationCards(userId, sessionId);
         // After clearing, get fresh location cards (all cities + anywhere should be available again)
-        locationCards = await this.getLocationCards([]);
+        locationCards = await this.getLocationCards([], {
+          homeCityToExclude: poolCity,
+          adminCityValues
+        });
       }
 
       // Always return a location card (never exhausted)
@@ -660,10 +803,10 @@ export class DiscoveryService implements OnModuleInit {
       score += MATCH_SCORE_MUSIC;
     }
 
-    // Same city (only when viewer's preferredCity is null - "anywhere" mode)
+    // Same city (only when viewer is in "anywhere" stored preference mode)
     // When viewer has a city preference, all candidates are already from that city (filtered),
     // so this scoring would be redundant. Only applies when viewer is in "anywhere" mode.
-    if (user.preferredCity === null && user.actualCity && targetUser.preferredCity) {
+    if (isPreferredCityAnywhere(user.preferredCity) && user.actualCity && targetUser.preferredCity) {
       // Viewer is in "anywhere" mode, compare viewer's actual city (from location) 
       // with target user's preferredCity
       if (user.actualCity.toLowerCase() === targetUser.preferredCity.toLowerCase()) {
@@ -1068,12 +1211,12 @@ export class DiscoveryService implements OnModuleInit {
     }
 
     // Same city
-    if (currentUser.preferredCity && matchedUser.preferredCity) {
-      if (currentUser.preferredCity.toLowerCase() === matchedUser.preferredCity.toLowerCase()) {
+    if (!isPreferredCityAnywhere(currentUser.preferredCity) && matchedUser.preferredCity) {
+      if (currentUser.preferredCity!.toLowerCase() === matchedUser.preferredCity.toLowerCase()) {
         sameCity = true;
         reasons.push(`Same city: ${matchedUser.preferredCity}`);
       }
-    } else if (currentUser.actualCity && matchedUser.preferredCity) {
+    } else if (isPreferredCityAnywhere(currentUser.preferredCity) && currentUser.actualCity && matchedUser.preferredCity) {
       if (currentUser.actualCity.toLowerCase() === matchedUser.preferredCity.toLowerCase()) {
         sameCity = true;
         reasons.push(`Same city: ${matchedUser.preferredCity}`);
@@ -1202,63 +1345,67 @@ export class DiscoveryService implements OnModuleInit {
   }
 
   /**
-   * Get random location cards (8-10 cities + "anywhere")
-   * Always includes "anywhere" option
+   * Get random location cards (8-10 cities + optional "anywhere in India" promo).
+   * When `homeCityToExclude` is set, that city is omitted from promos (other-city face cards).
+   * When `adminCityValues` is set, only those city values are promoted (falls back if the intersection is empty).
    */
   private async getLocationCards(
-    excludeCities: string[] = []
+    excludeCities: string[] = [],
+    opts?: {
+      homeCityToExclude?: string | null;
+      adminCityValues?: string[] | null;
+    }
   ): Promise<LocationCard[]> {
-    // Get top cities (more than needed for randomization)
+    const homeCityToExclude = opts?.homeCityToExclude ?? null;
+    const adminCityValues = opts?.adminCityValues?.length ? opts.adminCityValues : null;
+
     const allCities = await this.locationService.getCitiesWithMaxUsers(CITIES_MAX_USERS_LIMIT);
 
-    // Calculate "Anywhere" count:
-    // - Users with preferredCity = null (didn't select a city)
-    // - PLUS all available users from all cities (because "Anywhere" sees everyone)
     const nullCityUsersCount = await this.locationService.getAnywhereUsersCount();
     const totalCityUsers = allCities.reduce((sum, city) => sum + city.availableCount, 0);
-    // "Anywhere" = users with null city + all users from all cities
-    // Note: Users with null city are NOT included in city counts (city query filters WHERE preferredCity IS NOT NULL)
-    // So we need to add them separately
     const anywhereCount = nullCityUsersCount + totalCityUsers;
 
-    // Check if "anywhere" was already shown (it's stored as "ANYWHERE" in excludeCities)
     const anywhereShown = excludeCities.includes("ANYWHERE") || excludeCities.includes(null as any);
 
-    // Filter out excluded cities (include "anywhere" in exclusion if it was shown)
     const excludeCitiesFiltered = excludeCities.filter(c => c !== "ANYWHERE" && c !== null);
-    const availableCities = allCities.filter(
-      c => !excludeCitiesFiltered.includes(c.city)
+    let availableCities = allCities.filter((c) => !excludeCitiesFiltered.includes(c.city));
+
+    if (homeCityToExclude) {
+      const h = homeCityToExclude.toLowerCase();
+      availableCities = availableCities.filter((c) => c.city.toLowerCase() !== h);
+    }
+
+    if (adminCityValues) {
+      const allowed = new Set(adminCityValues.map((v) => v.toLowerCase()));
+      const filtered = availableCities.filter((c) => allowed.has(c.city.toLowerCase()));
+      if (filtered.length > 0) {
+        availableCities = filtered;
+      }
+    }
+
+    const pickCount = Math.min(
+      8 + Math.floor(Math.random() * 3),
+      Math.max(availableCities.length, 1)
     );
-
-    // Randomly select 8-10 cities
-    const count = Math.min(8 + Math.floor(Math.random() * 3), availableCities.length); // 8-10 cities
     const shuffled = [...availableCities].sort(() => Math.random() - 0.5);
-    const selectedCities = shuffled.slice(0, count);
+    const selectedCities = shuffled.slice(0, pickCount);
 
-    // Build location cards
     const locationCards: LocationCard[] = [
-      ...selectedCities.map(c => ({
+      ...selectedCities.map((c) => ({
         type: "LOCATION" as const,
         city: c.city,
         availableCount: c.availableCount
       }))
     ];
 
-    // Always include "Anywhere" to make location cards feel infinite
-    // After clearing (when excludeCities is empty), all location cards cycle back including "anywhere"
-    // The check ensures we don't show "anywhere" twice in the same cycle, but it will reappear after clearing
     if (!anywhereShown || excludeCities.length === 0) {
-      // Include "anywhere" if:
-      // 1. It hasn't been shown yet in this cycle (!anywhereShown), OR
-      // 2. All location cards were cleared (excludeCities is empty), meaning we're starting a new cycle
       locationCards.push({
         type: "LOCATION" as const,
-        city: null, // "Anywhere"
-        availableCount: anywhereCount // Users with null city + all users from all cities
+        city: null,
+        availableCount: anywhereCount
       });
     }
 
-    // Shuffle again to randomize "Anywhere" position (if it's included)
     return locationCards.sort(() => Math.random() - 0.5);
   }
 
@@ -1768,12 +1915,12 @@ export class DiscoveryService implements OnModuleInit {
     // Get current user profile directly by userId
     const userProfileResponse = await this.userClient.getUserFullProfileById(userId);
 
-    // Get user's preferred city directly
-    const preferredCity = await this.userClient.getPreferredCityById(userId);
+    const storedPreferred = await this.userClient.getPreferredCityById(userId);
+    const poolCity = await this.getEffectiveDiscoveryPoolCity(userId, sessionId, storedPreferred);
 
     // Get viewer's actual city from location if in "anywhere" mode
     let actualCity: string | null = null;
-    if (preferredCity === null && (userProfileResponse as any).latitude && (userProfileResponse as any).longitude) {
+    if (isPreferredCityAnywhere(storedPreferred) && (userProfileResponse as any).latitude && (userProfileResponse as any).longitude) {
       try {
         const locationResult = await this.locationService.locateMe(
           (userProfileResponse as any).latitude,
@@ -1789,7 +1936,7 @@ export class DiscoveryService implements OnModuleInit {
     // Convert to UserProfile interface
     const currentUser: UserProfile = {
       id: userProfileResponse.id,
-      preferredCity: preferredCity,
+      preferredCity: storedPreferred,
       brandPreferences: (userProfileResponse as any).brandPreferences,
       interests: (userProfileResponse as any).interests,
       values: (userProfileResponse as any).values,
@@ -1803,7 +1950,7 @@ export class DiscoveryService implements OnModuleInit {
     };
 
     // Session-scope raincheck exclusions must apply before honoring existing matches.
-    const raincheckedUserIds = await this.getRaincheckedUserIds(userId, sessionId, preferredCity);
+    const raincheckedUserIds = await this.getRaincheckedUserIds(userId, sessionId, storedPreferred);
 
     // Check if user is already matched
     const existingMatch = await this.matchingService.getMatchForUser(userId);
@@ -1823,7 +1970,7 @@ export class DiscoveryService implements OnModuleInit {
         await this.matchingService.removeMatch(existingMatch.user1Id, existingMatch.user2Id);
       } else {
         // User is actively matched, return their match's card
-        const card = await this.buildCard(this.convertToDiscoveryUser(matchedUser), preferredCity, currentUser);
+        const card = await this.buildCard(this.convertToDiscoveryUser(matchedUser), poolCity, currentUser);
 
         // Decrement gender filter if active
         const genderFilter = await this.genderFilterService.getCurrentPreference(userId);
@@ -1862,7 +2009,7 @@ export class DiscoveryService implements OnModuleInit {
     const matchedUser = await this.matchingService.findMatchForUser(
       userId,
       currentUser,
-      preferredCity,
+      poolCity,
       genders,
       raincheckedUserIds
     );
@@ -1893,7 +2040,7 @@ export class DiscoveryService implements OnModuleInit {
         );
       }
 
-      const card = await this.buildCard(matchedUser, preferredCity, currentUser);
+      const card = await this.buildCard(matchedUser, poolCity, currentUser);
 
       if (hasActiveGenderFilter) {
         await this.genderFilterService.decrementScreen(userId);
@@ -1906,7 +2053,7 @@ export class DiscoveryService implements OnModuleInit {
     }
 
     // No mutual match found, use fallback logic
-    console.log(`[DEBUG] getNextCardForUser - No mutual match found, using fallback logic. preferredCity: ${preferredCity}`);
+    console.log(`[DEBUG] getNextCardForUser - No mutual match found, using fallback logic. poolCity: ${poolCity}`);
 
     // Determine statuses to filter
     const statuses: ("AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE")[] = soloOnly
@@ -1914,10 +2061,10 @@ export class DiscoveryService implements OnModuleInit {
       : ["AVAILABLE", "IN_SQUAD_AVAILABLE", "IN_BROADCAST_AVAILABLE"];
 
     // Find matching users (using a fake token - won't be validated in test mode)
-    console.log(`[DEBUG] getNextCardForUser - Calling findMatchingUsersForUser with city: ${preferredCity}`);
+    console.log(`[DEBUG] getNextCardForUser - Calling findMatchingUsersForUser with city: ${poolCity}`);
     const matchingUsers = await this.findMatchingUsersForUser(
       userId,
-      preferredCity,
+      poolCity,
       statuses,
       genders,
       soloOnly,
@@ -1929,7 +2076,7 @@ export class DiscoveryService implements OnModuleInit {
     if (matchingUsers.length > 0) {
       console.log(`[DEBUG] getNextCardForUser - Found ${matchingUsers.length} users, selecting best match`);
       const selectedUser = await this.selectBestMatchAndCreate(userId, matchingUsers, currentUser);
-      const card = await this.buildCard(selectedUser, preferredCity, currentUser);
+      const card = await this.buildCard(selectedUser, poolCity, currentUser);
 
       if (hasActiveGenderFilter) {
         await this.genderFilterService.decrementScreen(userId);
@@ -1941,9 +2088,9 @@ export class DiscoveryService implements OnModuleInit {
       };
     }
 
-    // If no matches found and preferredCity is null, try searching in suggested cities
-    if (matchingUsers.length === 0 && !preferredCity) {
-      console.log(`[DEBUG] getNextCardForUser - No matches found and preferredCity is null, trying suggested cities fallback`);
+    // If no matches found and pool is global, try searching in suggested cities
+    if (matchingUsers.length === 0 && poolCity === null) {
+      console.log(`[DEBUG] getNextCardForUser - No matches found and poolCity is null, trying suggested cities fallback`);
       // User has no city preference - try searching in cities with available users
       const suggestedCities = await this.locationService.getCitiesWithMaxUsers(5);
       console.log(`[DEBUG] getNextCardForUser - Got ${suggestedCities.length} suggested cities:`, suggestedCities.map(c => `${c.city} (${c.availableCount})`).join(', '));
@@ -1997,7 +2144,7 @@ export class DiscoveryService implements OnModuleInit {
         // If users exist in other cities, use them (unlimited scroll)
         if (usersInOtherCities.length > 0) {
           const selectedUser = this.selectBestMatch(usersInOtherCities, currentUser);
-          const card = await this.buildCard(selectedUser, preferredCity, currentUser);
+          const card = await this.buildCard(selectedUser, poolCity, currentUser);
 
           if (hasActiveGenderFilter) {
             await this.genderFilterService.decrementScreen(userId);
@@ -2021,7 +2168,7 @@ export class DiscoveryService implements OnModuleInit {
 
         if (usersWithoutGenderFilter.length > 0) {
           const selectedUser = this.selectBestMatch(usersWithoutGenderFilter, currentUser);
-          const card = await this.buildCard(selectedUser, preferredCity, currentUser);
+          const card = await this.buildCard(selectedUser, poolCity, currentUser);
 
           return {
             card,
@@ -2030,18 +2177,17 @@ export class DiscoveryService implements OnModuleInit {
         }
       }
 
-      // Before showing location cards, check if users are available.
-      // If preferred city has none, fall back to "anywhere" while still honoring raincheck exclusions.
-      const usersInPreferredCity = preferredCity
-        ? await this.findMatchingUsersForUser(
-          userId,
-          preferredCity,
-          statuses,
-          genders,
-          soloOnly,
-          raincheckedUserIds
-        )
-        : [];
+      const usersInPoolCity =
+        poolCity !== null
+          ? await this.findMatchingUsersForUser(
+              userId,
+              poolCity,
+              statuses,
+              genders,
+              soloOnly,
+              raincheckedUserIds
+            )
+          : [];
       const usersAnywhere = await this.findMatchingUsersForUser(
         userId,
         null,
@@ -2050,12 +2196,45 @@ export class DiscoveryService implements OnModuleInit {
         soloOnly,
         raincheckedUserIds
       );
-      const usersBeforeLocation = usersInPreferredCity.length > 0 ? usersInPreferredCity : usersAnywhere;
+      const usersBeforeLocation = poolCity !== null ? usersInPoolCity : usersAnywhere;
 
       // If users are available, show them instead of location cards
       if (usersBeforeLocation.length > 0) {
         const selectedUser = this.selectBestMatch(usersBeforeLocation, currentUser);
-        const card = await this.buildCard(selectedUser, preferredCity, currentUser);
+        const card = await this.buildCard(selectedUser, poolCity, currentUser);
+
+        if (hasActiveGenderFilter) {
+          await this.genderFilterService.decrementScreen(userId);
+        }
+
+        return {
+          card,
+          exhausted: false
+        };
+      }
+
+      const usersRecheck =
+        poolCity !== null
+          ? await this.findMatchingUsersForUser(
+              userId,
+              poolCity,
+              statuses,
+              genders,
+              soloOnly,
+              raincheckedUserIds
+            )
+          : await this.findMatchingUsersForUser(
+              userId,
+              null,
+              statuses,
+              genders,
+              soloOnly,
+              raincheckedUserIds
+            );
+
+      if (usersRecheck.length > 0) {
+        const selectedUser = this.selectBestMatch(usersRecheck, currentUser);
+        const card = await this.buildCard(selectedUser, poolCity, currentUser);
 
         if (hasActiveGenderFilter) {
           await this.genderFilterService.decrementScreen(userId);
@@ -2068,23 +2247,24 @@ export class DiscoveryService implements OnModuleInit {
       }
 
       // No users available - show location cards (never exhausted)
-      // Get location cards already shown
       const locationCardsShown = await this.getLocationCardsShown(userId, sessionId);
+      const adminCityValues = await this.userClient.getActiveDiscoveryCityValues();
 
-      // Get available location cards
-      let locationCards = await this.getLocationCards(locationCardsShown);
+      let locationCards = await this.getLocationCards(locationCardsShown, {
+        homeCityToExclude: poolCity,
+        adminCityValues
+      });
 
-      // If all location cards are shown, clear them and cycle through again
       if (locationCards.length === 0) {
         await this.clearLocationCards(userId, sessionId);
-        locationCards = await this.getLocationCards([]);
+        locationCards = await this.getLocationCards([], {
+          homeCityToExclude: poolCity,
+          adminCityValues
+        });
       }
 
-      // Always return a location card (never exhausted)
       if (locationCards.length > 0) {
         const selectedLocationCard = locationCards[0];
-
-        // Mark as shown
         await this.markLocationCardShown(userId, sessionId, selectedLocationCard.city);
 
         return {
@@ -2094,11 +2274,10 @@ export class DiscoveryService implements OnModuleInit {
         };
       }
 
-      // Fallback: if somehow no location cards (should never happen), return "anywhere"
       return {
         card: {
           type: "LOCATION" as const,
-          city: null, // "Anywhere"
+          city: null,
           availableCount: await this.locationService.getAnywhereUsersCount()
         },
         exhausted: false,
@@ -2292,13 +2471,14 @@ export class DiscoveryService implements OnModuleInit {
     const userProfileResponse = await this.userClient.getUserFullProfile(token);
     const userId = userProfileResponse.id;
 
-    // Get user's preferred city
     const cityResponse = await this.locationService.getPreferredCity(token);
-    const preferredCity = cityResponse.city;
+    const storedPreferred = cityResponse.city;
+    const offlineSessionId = `offline-${sessionId}`;
+    const poolCity = await this.getEffectiveDiscoveryPoolCity(userId, offlineSessionId, storedPreferred);
 
     // Get viewer's actual city from location if in "anywhere" mode
     let actualCity: string | null = null;
-    if (preferredCity === null && (userProfileResponse as any).latitude && (userProfileResponse as any).longitude) {
+    if (isPreferredCityAnywhere(storedPreferred) && (userProfileResponse as any).latitude && (userProfileResponse as any).longitude) {
       try {
         const locationResult = await this.locationService.locateMe(
           (userProfileResponse as any).latitude,
@@ -2313,7 +2493,7 @@ export class DiscoveryService implements OnModuleInit {
     // Convert to UserProfile interface
     const currentUser: UserProfile = {
       id: userProfileResponse.id,
-      preferredCity: preferredCity,
+      preferredCity: storedPreferred,
       brandPreferences: (userProfileResponse as any).brandPreferences,
       interests: (userProfileResponse as any).interests,
       values: (userProfileResponse as any).values,
@@ -2341,11 +2521,8 @@ export class DiscoveryService implements OnModuleInit {
       }
     }
 
-    // Use prefixed sessionId to avoid conflicts with video call rainchecks
-    const offlineSessionId = `offline-${sessionId}`;
-
     // Get rainchecked user IDs for this OFFLINE session and city
-    const raincheckedUserIds = await this.getOfflineRaincheckedUserIds(userId, offlineSessionId, preferredCity);
+    const raincheckedUserIds = await this.getOfflineRaincheckedUserIds(userId, offlineSessionId, storedPreferred);
 
     // Determine statuses to filter - OFFLINE cards show ONLINE, OFFLINE, VIEWER
     const statuses: ("ONLINE" | "OFFLINE" | "VIEWER")[] = ["ONLINE", "OFFLINE", "VIEWER"];
@@ -2354,7 +2531,7 @@ export class DiscoveryService implements OnModuleInit {
     const matchingUsers = await this.findOfflineMatchingUsers(
       token,
       userId,
-      preferredCity,
+      poolCity,
       statuses,
       genders,
       soloOnly,
@@ -2364,7 +2541,7 @@ export class DiscoveryService implements OnModuleInit {
     // If matches found, return the best match (using same scoring)
     if (matchingUsers.length > 0) {
       const selectedUser = this.selectBestMatch(matchingUsers, currentUser);
-      const card = await this.buildCard(selectedUser, preferredCity, currentUser);
+      const card = await this.buildCard(selectedUser, poolCity, currentUser);
 
       if (hasActiveGenderFilter) {
         await this.genderFilterService.decrementScreen(userId);
@@ -2530,12 +2707,13 @@ export class DiscoveryService implements OnModuleInit {
     // Get current user profile directly by userId
     const userProfileResponse = await this.userClient.getUserFullProfileById(userId);
 
-    // Get user's preferred city directly
-    const preferredCity = await this.userClient.getPreferredCityById(userId);
+    const storedPreferred = await this.userClient.getPreferredCityById(userId);
+    const offlineSessionId = `offline-${sessionId}`;
+    const poolCity = await this.getEffectiveDiscoveryPoolCity(userId, offlineSessionId, storedPreferred);
 
     // Get viewer's actual city from location if in "anywhere" mode
     let actualCity: string | null = null;
-    if (preferredCity === null && (userProfileResponse as any).latitude && (userProfileResponse as any).longitude) {
+    if (isPreferredCityAnywhere(storedPreferred) && (userProfileResponse as any).latitude && (userProfileResponse as any).longitude) {
       try {
         const locationResult = await this.locationService.locateMe(
           (userProfileResponse as any).latitude,
@@ -2550,7 +2728,7 @@ export class DiscoveryService implements OnModuleInit {
     // Convert to UserProfile interface
     const currentUser: UserProfile = {
       id: userProfileResponse.id,
-      preferredCity: preferredCity,
+      preferredCity: storedPreferred,
       brandPreferences: (userProfileResponse as any).brandPreferences,
       interests: (userProfileResponse as any).interests,
       values: (userProfileResponse as any).values,
@@ -2578,11 +2756,8 @@ export class DiscoveryService implements OnModuleInit {
       }
     }
 
-    // Use prefixed sessionId to avoid conflicts
-    const offlineSessionId = `offline-${sessionId}`;
-
     // Get rainchecked user IDs for this OFFLINE session
-    const raincheckedUserIds = await this.getOfflineRaincheckedUserIds(userId, offlineSessionId, preferredCity);
+    const raincheckedUserIds = await this.getOfflineRaincheckedUserIds(userId, offlineSessionId, storedPreferred);
 
     // Determine statuses - OFFLINE cards show ONLINE, OFFLINE, VIEWER
     const statuses: ("ONLINE" | "OFFLINE" | "VIEWER")[] = ["ONLINE", "OFFLINE", "VIEWER"];
@@ -2590,7 +2765,7 @@ export class DiscoveryService implements OnModuleInit {
     // Find matching users (no match creation)
     const matchingUsers = await this.findOfflineMatchingUsersForUser(
       userId,
-      preferredCity,
+      poolCity,
       statuses,
       genders,
       soloOnly,
@@ -2600,7 +2775,7 @@ export class DiscoveryService implements OnModuleInit {
     // If matches found, return the best match
     if (matchingUsers.length > 0) {
       const selectedUser = this.selectBestMatch(matchingUsers, currentUser);
-      const card = await this.buildCard(selectedUser, preferredCity, currentUser);
+      const card = await this.buildCard(selectedUser, poolCity, currentUser);
 
       if (hasActiveGenderFilter) {
         await this.genderFilterService.decrementScreen(userId);

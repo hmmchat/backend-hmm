@@ -14,6 +14,7 @@ import {
 } from "../config/scoring.config.js";
 import { DISCOVERY_POOL_LIMIT } from "../config/limits.config.js";
 import fetch from "node-fetch";
+import { isPreferredCityAnywhere } from "@hmm/common";
 
 interface UserProfile {
   id: string;
@@ -223,8 +224,8 @@ export class MatchingService {
       score += MATCH_SCORE_MUSIC;
     }
 
-    // Same city (only when viewer's preferredCity is null - "anywhere" mode)
-    if (user.preferredCity === null && user.actualCity && targetUser.preferredCity) {
+    // Same city (only when viewer is in "anywhere" stored preference mode)
+    if (isPreferredCityAnywhere(user.preferredCity) && user.actualCity && targetUser.preferredCity) {
       if (user.actualCity.toLowerCase() === targetUser.preferredCity.toLowerCase()) {
         score += MATCH_SCORE_SAME_CITY;
       }

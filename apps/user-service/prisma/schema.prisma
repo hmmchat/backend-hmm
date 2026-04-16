@@ -92,8 +92,8 @@ model User {
   longitude     Float?
   locationUpdatedAt DateTime?
   
-  // Preferred City (single city name for location-based matching)
-  // null means user can connect with anyone from anywhere
+  // Preferred City (single city name for location-based matching).
+  // Use ANYWHERE_IN_INDIA sentinel (see @hmm/common) for "all cities"; null is treated as unset/legacy.
   preferredCity String?
   
   // Video Preferences (on/off)
@@ -127,6 +127,19 @@ model Zodiac {
 
   @@map("zodiacs")
   @@index([order])
+}
+
+// Admin-managed list of discovery / profile city options (values must match users.preferredCity for real cities)
+model DiscoveryCityOption {
+  id        String   @id @default(cuid())
+  value     String   @unique
+  label     String
+  order     Int?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("discovery_city_options")
 }
 
 // Catalog of suggested intent prompts shown during profile creation

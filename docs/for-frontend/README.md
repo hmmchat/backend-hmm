@@ -35,7 +35,16 @@ Comprehensive API integration guide covering:
 
 Step-by-step frontend notes for **LOCATION** cards (cities + **Anywhere in India**), **`GET /v1/discovery/card`**, **`raincheck`**, **`select-location`** (`persistPreference`), **`proceed`**, and related **`/v1/discovery-city-options`**, **`/v1/me/preferred-city`**, and **`/v1/location/*`** APIs.
 
-### 4. **`USER_STATUS_AND_APIS.md`**
+### 4. **`OFFLINE_CARDS.md`** — OFFLINE cards behavior and APIs
+
+Dedicated integration guide for OFFLINE cards:
+- `GET /v1/discovery/offline-cards/card`
+- `POST /v1/discovery/offline-cards/raincheck`
+- `POST /v1/friends/me/friends/offline-cards/request`
+- Optional related actions (`/v1/streaming/offline-cards/gifts`, `/v1/users/report`)
+- Behavior notes (no match creation, session isolation, edge cases)
+
+### 5. **`USER_STATUS_AND_APIS.md`**
 
 User status and related APIs (see file for scope).
 
@@ -53,6 +62,7 @@ docs/for-frontend/
 ├── FRONTEND_SETUP.md ⭐ — Setup guide (START HERE)
 ├── FRONTEND_INTEGRATION.md — Complete API documentation
 ├── DISCOVERY_LOCATION_CARDS.md — LOCATION promos & discovery session APIs
+├── OFFLINE_CARDS.md — OFFLINE cards integration guide
 └── USER_STATUS_AND_APIS.md — User status APIs
 ```
 
@@ -65,5 +75,5 @@ docs/for-frontend/
 
 ---
 
-Start with **FRONTEND_SETUP** and **FRONTEND_INTEGRATION**; use the focused docs for discovery LOCATION flow and user status. 🚀
+Start with **FRONTEND_SETUP** and **FRONTEND_INTEGRATION**; use the focused docs for discovery LOCATION flow, OFFLINE cards flow, and user status. 🚀
 

@@ -224,6 +224,19 @@ export class AuthService implements OnModuleInit {
 
           if (referrer && referrer.accountStatus === "ACTIVE" && referrer.id) {
             referredBy = referrer.id;
+            console.log(JSON.stringify({
+              event: "referral_code_accepted",
+              referralCode,
+              referrerId: referrer.id,
+              ts: new Date().toISOString()
+            }));
+          } else {
+            console.log(JSON.stringify({
+              event: "referral_code_rejected",
+              referralCode,
+              reason: referrer ? "inactive_referrer" : "code_not_found",
+              ts: new Date().toISOString()
+            }));
           }
           // If referrer not found or inactive, silently ignore (don't block signup)
         } catch (error) {
@@ -501,6 +514,102 @@ export class AuthService implements OnModuleInit {
       rewardsClaimed: referrals.filter(r => r.rewardClaimed).length,
       pendingRewards: referrals.filter(r => !r.rewardClaimed).length
     };
+  }
+
+  async getReferralOverview(userId: string): Promise<{
+    referralCode: string;
+    rewardConfig: {
+      referrerCoins: number;
+      referredCoins: number;
+      successCriteriaLabel: string;
+    };
+    share: {
+      deepLink: string;
+      messageTemplate: string;
+      copyText: string;
+      code: string;
+    };
+    stats: {
+      totalReferred: number;
+      successfulReferrals: number;
+      pendingReferrals: number;
+      totalCoinsEarned: number;
+    };
+    recentReferrals: Array<{
+      referredUserId: string;
+      status: "joined" | "rewarded";
+      createdAt: Date;
+      claimedAt: Date | null;
+    }>;
+  }> {
+    const [referralCode, stats, referrals] = await Promise.all([
+      this.getReferralCode(userId),
+      this.getReferralStats(userId),
+      this.getReferrals(userId)
+    ]);
+
+    const referrerCoins = parseInt(process.env.REFERRAL_REWARD_REFERRER || "100", 10);
+    const referredCoins = parseInt(process.env.REFERRAL_REWARD_REFERRED || "50", 10);
+    const successCriteriaLabel = process.env.REFERRAL_SUCCESS_CRITERIA_LABEL || "Profile completed";
+    const baseUrl = process.env.REFERRAL_SHARE_BASE_URL || "https://ahmm.space/lander";
+    const paramName = process.env.REFERRAL_SHARE_QUERY_PARAM || "ref";
+    const separator = baseUrl.includes("?") ? "&" : "?";
+    const deepLink = `${baseUrl}${separator}${encodeURIComponent(paramName)}=${encodeURIComponent(referralCode)}`;
+    const rawTemplate = process.env.REFERRAL_SHARE_TEMPLATE
+      || "Join me on Beam! Use my referral code {code} and get rewards: {link}";
+
+    const messageTemplate = rawTemplate
+      .replaceAll("{code}", referralCode)
+      .replaceAll("{link}", deepLink)
+      .replaceAll("{referrerCoins}", String(referrerCoins))
+      .replaceAll("{referredCoins}", String(referredCoins));
+
+    const recentReferrals = referrals.slice(0, 20).map((referral) => ({
+      referredUserId: referral.referredUserId,
+      status: referral.rewardClaimed ? "rewarded" as const : "joined" as const,
+      createdAt: referral.createdAt,
+      claimedAt: referral.claimedAt
+    }));
+
+    return {
+      referralCode,
+      rewardConfig: {
+        referrerCoins,
+        referredCoins,
+        successCriteriaLabel
+      },
+      share: {
+        deepLink,
+        messageTemplate,
+        copyText: deepLink,
+        code: referralCode
+      },
+      stats: {
+        totalReferred: stats.totalReferred,
+        successfulReferrals: stats.rewardsClaimed,
+        pendingReferrals: stats.pendingRewards,
+        totalCoinsEarned: stats.rewardsClaimed * referrerCoins
+      },
+      recentReferrals
+    };
+  }
+
+  async trackReferralShareEvent(
+    userId: string,
+    payload: {
+      channel: "whatsapp" | "instagram" | "snapchat" | "copy" | "other";
+      target?: string;
+      metadata?: Record<string, unknown>;
+    }
+  ): Promise<void> {
+    console.log(JSON.stringify({
+      event: "referral_share_event",
+      userId,
+      channel: payload.channel,
+      target: payload.target || null,
+      metadata: payload.metadata || null,
+      ts: new Date().toISOString()
+    }));
   }
 
   /* ---------- Account Management ---------- */

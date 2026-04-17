@@ -39,6 +39,16 @@ export class WalletController {
     return payload.sub;
   }
 
+  private assertInternalRequest(internalToken?: string) {
+    const expectedToken = process.env.INTERNAL_SERVICE_TOKEN;
+    if (!expectedToken) {
+      throw new HttpException("INTERNAL_SERVICE_TOKEN is not configured", HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+    if (!internalToken || internalToken !== expectedToken) {
+      throw new HttpException("Unauthorized internal request", HttpStatus.UNAUTHORIZED);
+    }
+  }
+
   /**
    * Get current user's coin and diamond balance
    * GET /me/balance
@@ -363,7 +373,8 @@ export class WalletController {
    * Body: { referrerId: string, referredUserId: string, referrerReward: number, referredReward: number }
    */
   @Post("internal/referral-rewards")
-  async awardReferralRewards(@Body() body: any) {
+  async awardReferralRewards(@Body() body: any, @Headers("x-internal-token") internalToken?: string) {
+    this.assertInternalRequest(internalToken);
     const schema = z.object({
       referrerId: z.string().min(1),
       referredUserId: z.string().min(1),

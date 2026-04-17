@@ -5,9 +5,22 @@ import fetch from "node-fetch";
 export class AuthClientService {
   private readonly logger = new Logger(AuthClientService.name);
   private readonly authServiceUrl: string;
+  private readonly internalServiceToken: string | undefined;
 
   constructor() {
     this.authServiceUrl = process.env.AUTH_SERVICE_URL || "http://localhost:3001";
+    this.internalServiceToken = process.env.INTERNAL_SERVICE_TOKEN;
+    if (!this.internalServiceToken) {
+      this.logger.warn("INTERNAL_SERVICE_TOKEN is not configured; internal auth-service calls will be rejected.");
+    }
+  }
+
+  private getInternalHeaders(): Record<string, string> {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (this.internalServiceToken) {
+      headers["x-internal-token"] = this.internalServiceToken;
+    }
+    return headers;
   }
 
   /**
@@ -22,7 +35,7 @@ export class AuthClientService {
     try {
       const response = await fetch(`${this.authServiceUrl}/auth/users/${userId}/referral-status`, {
         method: "GET",
-        headers: { "Content-Type": "application/json" }
+        headers: this.getInternalHeaders()
       });
 
       if (!response.ok) {
@@ -54,7 +67,7 @@ export class AuthClientService {
     try {
       const response = await fetch(`${this.authServiceUrl}/auth/users/${userId}/mark-referral-claimed`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" }
+        headers: this.getInternalHeaders()
       });
 
       if (!response.ok) {
@@ -78,7 +91,7 @@ export class AuthClientService {
     try {
       const response = await fetch(`${this.authServiceUrl}/auth/users/${userId}/account-status`, {
         method: "GET",
-        headers: { "Content-Type": "application/json" }
+        headers: this.getInternalHeaders()
       });
 
       if (!response.ok) {

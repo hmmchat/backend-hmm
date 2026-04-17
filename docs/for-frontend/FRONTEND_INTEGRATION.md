@@ -82,7 +82,8 @@ Errors:
 {
   "idToken": "string (JWT from Google Sign-In SDK)",
   "acceptedTerms": true,
-  "acceptedTermsVer": "v1.0"
+  "acceptedTermsVer": "v1.0",
+  "referralCode": "string (optional)"
 }
 ```
 
@@ -125,7 +126,8 @@ const handleGoogleSignIn = async (credentialResponse) => {
 {
   "identityToken": "string (JWT from Apple Sign-In SDK)",
   "acceptedTerms": true,
-  "acceptedTermsVer": "v1.0"
+  "acceptedTermsVer": "v1.0",
+  "referralCode": "string (optional)"
 }
 ```
 
@@ -140,7 +142,8 @@ const handleGoogleSignIn = async (credentialResponse) => {
 {
   "accessToken": "string (from Facebook SDK)",
   "acceptedTerms": true,
-  "acceptedTermsVer": "v1.0"
+  "acceptedTermsVer": "v1.0",
+  "referralCode": "string (optional)"
 }
 ```
 
@@ -179,7 +182,8 @@ const handleGoogleSignIn = async (credentialResponse) => {
   "phone": "+916123456789",
   "code": "123456",
   "acceptedTerms": true,
-  "acceptedTermsVer": "v1.0"
+  "acceptedTermsVer": "v1.0",
+  "referralCode": "string (optional)"
 }
 ```
 
@@ -274,6 +278,67 @@ const handleGoogleSignIn = async (credentialResponse) => {
   } | null (optional)
 }
 ```
+
+### 9. Referral Overview (Referral Screen)
+
+**Endpoint:** `GET /v1/referrals/me/overview`
+
+**Headers:** `Authorization: Bearer {accessToken}`
+
+**Response:**
+```json
+{
+  "referralCode": "REFABCDE123",
+  "rewardConfig": {
+    "referrerCoins": 100,
+    "referredCoins": 50,
+    "successCriteriaLabel": "Profile completed"
+  },
+  "share": {
+    "deepLink": "https://ahmm.space/lander?ref=REFABCDE123",
+    "messageTemplate": "Join me on Beam! Use my referral code REFABCDE123 and get rewards: https://ahmm.space/lander?ref=REFABCDE123",
+    "copyText": "https://ahmm.space/lander?ref=REFABCDE123",
+    "code": "REFABCDE123"
+  },
+  "stats": {
+    "totalReferred": 8,
+    "successfulReferrals": 3,
+    "pendingReferrals": 5,
+    "totalCoinsEarned": 300
+  },
+  "recentReferrals": [
+    {
+      "referredUserId": "user_123",
+      "status": "rewarded",
+      "createdAt": "2026-04-17T09:10:11.000Z",
+      "claimedAt": "2026-04-17T09:20:11.000Z"
+    }
+  ]
+}
+```
+
+### 10. Track Share Channel Clicks (Referral Analytics)
+
+**Endpoint:** `POST /v1/referrals/me/share-events`
+
+**Headers:** `Authorization: Bearer {accessToken}`
+
+**Request:**
+```json
+{
+  "channel": "whatsapp",
+  "target": "android-intent",
+  "metadata": {
+    "screen": "referral",
+    "campaign": "reward_launch"
+  }
+}
+```
+
+**Notes:**
+- `channel` allowed values: `whatsapp | instagram | snapchat | copy | other`.
+- For Instagram/Snapchat where direct link share may vary by platform, still track tap intent with this endpoint.
+- Use `share.copyText` from overview to support the copy button shown in the UI mock.
 
 ---
 

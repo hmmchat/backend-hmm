@@ -28,6 +28,7 @@ Comprehensive API integration guide covering:
 - Wallet & payments
 - File uploads
 - Ads & rewards
+- Referrals (overview + share event tracking)
 - Error handling
 - Complete user flows
 

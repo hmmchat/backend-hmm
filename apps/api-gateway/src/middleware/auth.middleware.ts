@@ -109,6 +109,7 @@ export class AuthMiddleware {
     // Authenticated endpoints
     const authPaths = [
       "/me/",
+      "/referrals/",
       "/discovery/",
       "/squad/",
       "/wallet/",

@@ -454,11 +454,23 @@ export class UserService implements OnModuleInit {
    */
   private async processReferralReward(userId: string): Promise<void> {
     try {
+      console.log(JSON.stringify({
+        event: "referral_payout_attempted",
+        referredUserId: userId,
+        ts: new Date().toISOString()
+      }));
+
       // Get referral status from auth-service
       const referralStatus = await this.authClient.getReferralStatus(userId);
 
       // If no referral or already claimed, skip
       if (!referralStatus || !referralStatus.referredBy || referralStatus.referralRewardClaimed) {
+        console.log(JSON.stringify({
+          event: "referral_payout_skipped",
+          referredUserId: userId,
+          reason: !referralStatus ? "no_referral_status" : (!referralStatus.referredBy ? "no_referrer" : "already_claimed"),
+          ts: new Date().toISOString()
+        }));
         return;
       }
 
@@ -470,6 +482,13 @@ export class UserService implements OnModuleInit {
         console.warn(`Referrer ${referrerId} is not active, skipping referral reward for user ${userId}`);
         // Mark as claimed to prevent retry attempts
         await this.authClient.markReferralClaimed(userId);
+        console.log(JSON.stringify({
+          event: "referral_payout_skipped",
+          referredUserId: userId,
+          referrerId,
+          reason: "inactive_referrer",
+          ts: new Date().toISOString()
+        }));
         return;
       }
 
@@ -477,15 +496,24 @@ export class UserService implements OnModuleInit {
       if (referrerId === userId) {
         console.warn(`Self-referral detected for user ${userId}, skipping reward`);
         await this.authClient.markReferralClaimed(userId);
+        console.log(JSON.stringify({
+          event: "referral_payout_skipped",
+          referredUserId: userId,
+          referrerId,
+          reason: "self_referral",
+          ts: new Date().toISOString()
+        }));
         return;
       }
 
       // Get reward amounts from environment variables (with defaults)
-      const referrerReward = parseInt(process.env.REFERRAL_REWARD_REFERRER || "100", 10);
-      const referredReward = parseInt(process.env.REFERRAL_REWARD_REFERRED || "50", 10);
+      const parsedReferrerReward = parseInt(process.env.REFERRAL_REWARD_REFERRER || "100", 10);
+      const parsedReferredReward = parseInt(process.env.REFERRAL_REWARD_REFERRED || "50", 10);
+      const referrerReward = parsedReferrerReward > 0 ? parsedReferrerReward : 100;
+      const referredReward = parsedReferredReward > 0 ? parsedReferredReward : 50;
 
       // Award coins to both referrer and referred user
-      await this.walletClient.awardReferralRewards(
+      const payoutResult = await this.walletClient.awardReferralRewards(
         referrerId,
         userId,
         referrerReward,
@@ -495,10 +523,25 @@ export class UserService implements OnModuleInit {
       // Mark referral as claimed in auth-service
       await this.authClient.markReferralClaimed(userId);
 
-      console.log(`Referral rewards awarded: ${referrerReward} coins to ${referrerId}, ${referredReward} coins to ${userId}`);
+      console.log(JSON.stringify({
+        event: "referral_payout_succeeded",
+        referredUserId: userId,
+        referrerId,
+        referrerReward,
+        referredReward,
+        alreadyAwarded: payoutResult.alreadyAwarded,
+        referrerTransactionId: payoutResult.referrerTransactionId,
+        referredTransactionId: payoutResult.referredTransactionId,
+        ts: new Date().toISOString()
+      }));
     } catch (error) {
       // Log error but don't throw - this is non-blocking
-      console.error(`Error processing referral reward for user ${userId}:`, error);
+      console.error(JSON.stringify({
+        event: "referral_payout_failed",
+        referredUserId: userId,
+        message: error instanceof Error ? error.message : String(error),
+        ts: new Date().toISOString()
+      }));
       // Don't re-throw - profile creation already succeeded
     }
   }

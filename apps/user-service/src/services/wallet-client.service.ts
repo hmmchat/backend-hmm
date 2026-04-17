@@ -5,9 +5,22 @@ import fetch from "node-fetch";
 export class WalletClientService {
   private readonly logger = new Logger(WalletClientService.name);
   private readonly walletServiceUrl: string;
+  private readonly internalServiceToken: string | undefined;
 
   constructor() {
     this.walletServiceUrl = process.env.WALLET_SERVICE_URL || "http://localhost:3005";
+    this.internalServiceToken = process.env.INTERNAL_SERVICE_TOKEN;
+    if (!this.internalServiceToken) {
+      this.logger.warn("INTERNAL_SERVICE_TOKEN is not configured; internal wallet-service calls will be rejected.");
+    }
+  }
+
+  private getInternalHeaders(): Record<string, string> {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (this.internalServiceToken) {
+      headers["x-internal-token"] = this.internalServiceToken;
+    }
+    return headers;
   }
 
   /**
@@ -57,11 +70,12 @@ export class WalletClientService {
     referredTransactionId: string;
     referrerNewBalance: number;
     referredNewBalance: number;
+    alreadyAwarded: boolean;
   }> {
     try {
       const response = await fetch(`${this.walletServiceUrl}/internal/referral-rewards`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: this.getInternalHeaders(),
         body: JSON.stringify({
           referrerId,
           referredUserId,
@@ -80,6 +94,7 @@ export class WalletClientService {
         referredTransactionId: string;
         referrerNewBalance: number;
         referredNewBalance: number;
+        alreadyAwarded: boolean;
       };
     } catch (error: any) {
       this.logger.error(`Error awarding referral rewards: ${error.message}`);

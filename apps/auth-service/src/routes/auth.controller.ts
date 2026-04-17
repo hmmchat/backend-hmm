@@ -56,6 +56,16 @@ export class AuthController {
     return payload.sub;
   }
 
+  private assertInternalRequest(internalToken?: string) {
+    const expectedToken = process.env.INTERNAL_SERVICE_TOKEN;
+    if (!expectedToken) {
+      throw new HttpException("INTERNAL_SERVICE_TOKEN is not configured", HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+    if (!internalToken || internalToken !== expectedToken) {
+      throw new HttpException("Unauthorized internal request", HttpStatus.UNAUTHORIZED);
+    }
+  }
+
   @Post("google")
   async google(@Body() body: any) {
     const schema = z.object({
@@ -313,7 +323,8 @@ export class AuthController {
    * GET /auth/users/:userId/referral-status
    */
   @Get("users/:userId/referral-status")
-  async getReferralStatus(@Param("userId") userId: string) {
+  async getReferralStatus(@Param("userId") userId: string, @Headers("x-internal-token") internalToken?: string) {
+    this.assertInternalRequest(internalToken);
     return this.auth.getReferralStatus(userId);
   }
 
@@ -322,7 +333,8 @@ export class AuthController {
    * GET /auth/users/:userId/account-status
    */
   @Get("users/:userId/account-status")
-  async getAccountStatusForUser(@Param("userId") userId: string) {
+  async getAccountStatusForUser(@Param("userId") userId: string, @Headers("x-internal-token") internalToken?: string) {
+    this.assertInternalRequest(internalToken);
     return this.auth.getAccountStatus(userId);
   }
 
@@ -331,7 +343,8 @@ export class AuthController {
    * POST /auth/users/:userId/mark-referral-claimed
    */
   @Post("users/:userId/mark-referral-claimed")
-  async markReferralClaimed(@Param("userId") userId: string) {
+  async markReferralClaimed(@Param("userId") userId: string, @Headers("x-internal-token") internalToken?: string) {
+    this.assertInternalRequest(internalToken);
     await this.auth.markReferralClaimed(userId);
     return { ok: true };
   }

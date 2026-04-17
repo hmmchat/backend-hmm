@@ -75,6 +75,12 @@ export class RoutingService implements OnModuleInit {
       requiresAuth: false
     });
 
+    this.routes.set("/referrals", {
+      path: "/referrals",
+      serviceUrl: authServiceUrl,
+      requiresAuth: true
+    });
+
     this.routes.set("/moderation", {
       path: "/moderation",
       serviceUrl: moderationServiceUrl,

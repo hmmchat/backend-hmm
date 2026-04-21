@@ -551,7 +551,9 @@ export class AuthService implements OnModuleInit {
     const referrerCoins = parseInt(process.env.REFERRAL_REWARD_REFERRER || "100", 10);
     const referredCoins = parseInt(process.env.REFERRAL_REWARD_REFERRED || "50", 10);
     const successCriteriaLabel = process.env.REFERRAL_SUCCESS_CRITERIA_LABEL || "Profile completed";
-    const baseUrl = process.env.REFERRAL_SHARE_BASE_URL || "https://ahmm.space/lander";
+    // Production should set REFERRAL_SHARE_BASE_URL explicitly if this default is wrong.
+    const baseUrl =
+      process.env.REFERRAL_SHARE_BASE_URL || "https://sandbox.rbshstudio.com";
     const paramName = process.env.REFERRAL_SHARE_QUERY_PARAM || "ref";
     const separator = baseUrl.includes("?") ? "&" : "?";
     const deepLink = `${baseUrl}${separator}${encodeURIComponent(paramName)}=${encodeURIComponent(referralCode)}`;

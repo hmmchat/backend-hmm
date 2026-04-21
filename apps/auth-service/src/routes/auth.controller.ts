@@ -20,6 +20,13 @@ const termsSchema = z.object({
   acceptedTermsVer: z.string().default("v1.0")
 });
 
+/** Same shape as referrals.controller share-events body. */
+const referralShareEventSchema = z.object({
+  channel: z.enum(["whatsapp", "instagram", "snapchat", "copy", "other"]),
+  target: z.string().optional(),
+  metadata: z.record(z.any()).optional()
+});
+
 @Controller("auth")
 export class AuthController {
   private verifyAccess!: (token: string) => Promise<AccessPayload>;
@@ -381,5 +388,29 @@ export class AuthController {
     const token = this.getTokenFromHeader(authz);
     const userId = await this.verifyTokenAndGetUserId(token!);
     return this.auth.getReferralStats(userId);
+  }
+
+  /**
+   * Full referral overview for the rewards UI (same response as GET /referrals/me/overview).
+   * Exposed under /auth so API gateways that only proxy /auth/* can reach it without a /referrals route.
+   */
+  @Get("me/referral-overview")
+  async getMyReferralOverview(@Headers("authorization") authz: string) {
+    const token = this.getTokenFromHeader(authz);
+    const userId = await this.verifyTokenAndGetUserId(token!);
+    return this.auth.getReferralOverview(userId);
+  }
+
+  /**
+   * Track referral share taps (same behavior as POST /referrals/me/share-events).
+   */
+  @Post("me/referral-share-events")
+  @HttpCode(HttpStatus.OK)
+  async trackMyReferralShareEvent(@Headers("authorization") authz: string, @Body() body: unknown) {
+    const token = this.getTokenFromHeader(authz);
+    const userId = await this.verifyTokenAndGetUserId(token!);
+    const dto = referralShareEventSchema.parse(body);
+    await this.auth.trackReferralShareEvent(userId, dto);
+    return { ok: true };
   }
 }

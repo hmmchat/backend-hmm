@@ -116,10 +116,7 @@ export class UserClientService implements OnModuleInit {
     }
   }
 
-  /**
-   * Get count of users currently in calls or available to calls
-   * Calls user-service to get the count
-   */
+  /** GET user-service `/metrics/active-meetings` — total user profiles (all statuses). */
   async getActiveMeetingsCount(): Promise<number> {
     try {
       const response = await this.fetchWithTimeout(
@@ -138,9 +135,9 @@ export class UserClientService implements OnModuleInit {
       const result = await response.json() as ActiveMeetingsResponse;
       return result.count;
     } catch (error: any) {
-      console.error("Failed to get active meetings count from user-service:", error);
+      console.error("Failed to get user count metric from user-service:", error);
       throw new HttpException(
-        "Unable to fetch active meetings count. Please try again later.",
+        "Unable to fetch user count. Please try again later.",
         HttpStatus.SERVICE_UNAVAILABLE
       );
     }

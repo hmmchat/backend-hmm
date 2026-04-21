@@ -1819,24 +1819,11 @@ export class UserService implements OnModuleInit {
   }
 
   /**
-   * Get count of users available + in calls, squad and broadcast
-   * Counts users with statuses: AVAILABLE, IN_SQUAD, IN_SQUAD_AVAILABLE, IN_BROADCAST, IN_BROADCAST_AVAILABLE
+   * Total profiles in `users` (user-service), regardless of {@link UserStatus}.
+   * Used for the homepage “beaming now” counter, GET /metrics/active-meetings, and discovery `/metrics/meetings`.
    */
   async getActiveMeetingsCount(): Promise<number> {
-    const count = await this.prisma.user.count({
-      where: {
-        status: {
-          in: [
-            UserStatus.AVAILABLE,
-            UserStatus.IN_SQUAD,
-            UserStatus.IN_SQUAD_AVAILABLE,
-            UserStatus.IN_BROADCAST,
-            UserStatus.IN_BROADCAST_AVAILABLE
-          ]
-        }
-      } as any // Workspace Prisma client type resolution issue
-    });
-    return count;
+    return this.prisma.user.count();
   }
 
   /**

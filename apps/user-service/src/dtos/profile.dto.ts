@@ -1,6 +1,27 @@
 import { z } from "zod";
 import { PREFERRED_CITY_ANYWHERE_IN_INDIA } from "@hmm/common";
 
+/** NBSP, figure/thin/en spaces, ideographic space → ASCII space (does not collapse runs of spaces). */
+function normalizeDisplayNameWhitespace(input: string): string {
+  return input.replace(/[\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]/g, " ");
+}
+
+/** Display name / username: letters, digits, underscore, ASCII spaces (including double spaces between parts). */
+export const DisplayNameSchema = z
+  .string()
+  .transform(normalizeDisplayNameWhitespace)
+  .pipe(
+    z
+      .string()
+      .trim()
+      .min(3, "Name must be at least 3 characters")
+      .max(50, "Name must be at most 50 characters")
+      .regex(
+        /^[a-zA-Z0-9_ ]+$/,
+        "Name can only contain letters, numbers, underscores, and spaces"
+      )
+  );
+
 export const GenderEnum = z.enum(["MALE", "FEMALE", "NON_BINARY", "PREFER_NOT_TO_SAY"]);
 
 export const UserStatusEnum = z.enum([
@@ -17,7 +38,7 @@ export const UserStatusEnum = z.enum([
 
 // Profile Creation/Update DTO
 export const CreateProfileSchema = z.object({
-  username: z.string().min(3).max(30).regex(/^[a-zA-Z0-9_]+$/, "Username can only contain letters, numbers, and underscores"),
+  username: DisplayNameSchema,
   dateOfBirth: z.string().datetime().or(z.date()).transform((val) => new Date(val)),
   gender: GenderEnum,
   displayPictureUrl: z.string().url(),
@@ -27,7 +48,10 @@ export const CreateProfileSchema = z.object({
 });
 
 export const UpdateProfileSchema = z.object({
-  username: z.string().min(3).max(30).regex(/^[a-zA-Z0-9_]+$/).optional(),
+  username: z.preprocess(
+    (val) => (val === null || val === "" ? undefined : val),
+    DisplayNameSchema.optional()
+  ),
   gender: GenderEnum.optional(),
   displayPictureUrl: z.string().url().optional(),
   intent: z.string().max(255).optional(),

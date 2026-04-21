@@ -516,6 +516,7 @@ export class UserController {
     return this.userService.getCitiesWithMaxUsers(limitNum);
   }
 
+  /** Returns total user profiles (all statuses). Path name kept for API compatibility. */
   @Get("metrics/active-meetings")
   async getActiveMeetingsCount() {
     const count = await this.userService.getActiveMeetingsCount();

@@ -130,9 +130,9 @@ export class FilesController {
 
   /**
    * Proxy external image URLs for client-side canvas export flows.
-   * GET /files/image-proxy?url=<encoded-image-url>
+   * GET /files/proxy/image?url=<encoded-image-url>
    */
-  @Get("files/image-proxy")
+  @Get("files/proxy/image")
   async proxyImage(@Query("url") rawUrl?: string, @Req() req?: FastifyRequest) {
     if (!rawUrl) {
       throw new HttpException("Missing url query param", HttpStatus.BAD_REQUEST);
@@ -149,14 +149,27 @@ export class FilesController {
       throw new HttpException("Unsupported url protocol", HttpStatus.BAD_REQUEST);
     }
 
-    const upstream = await fetch(parsed.toString(), {
-      redirect: "follow",
-      headers: {
-        "User-Agent": "beam-files-image-proxy/1.0",
-        Accept: "image/*,*/*;q=0.8",
-        ...(req?.headers?.referer ? { Referer: String(req.headers.referer) } : {}),
-      },
-    });
+    const fetchImage = async (url: string) =>
+      fetch(url, {
+        redirect: "follow",
+        headers: {
+          "User-Agent": "beam-files-image-proxy/1.0",
+          Accept: "image/*,*/*;q=0.8",
+          ...(req?.headers?.referer ? { Referer: String(req.headers.referer) } : {}),
+        },
+      });
+
+    let upstream = await fetchImage(parsed.toString());
+    // Many stored URLs are expiring presigned links; retry without query if host is public B2/S3.
+    if (
+      !upstream.ok &&
+      (upstream.status === 403 || upstream.status === 404) &&
+      parsed.search &&
+      (parsed.hostname.includes("backblazeb2.com") || parsed.hostname.includes("amazonaws.com"))
+    ) {
+      const unsignedUrl = `${parsed.origin}${parsed.pathname}`;
+      upstream = await fetchImage(unsignedUrl);
+    }
 
     if (!upstream.ok) {
       throw new HttpException(

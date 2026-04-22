@@ -10,10 +10,9 @@ import {
   HttpStatus,
   HttpCode,
   Query,
-  Req,
-  Res
+  Req
 } from "@nestjs/common";
-import { FastifyReply, FastifyRequest } from "fastify";
+import { FastifyRequest } from "fastify";
 import { FilesService } from "../services/files.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { z } from "zod";
@@ -144,7 +143,7 @@ export class FilesController {
    * GET /files/image-proxy?url=<encoded-image-url>
    */
   @Get("files/image-proxy")
-  async proxyImage(@Query("url") rawUrl?: string, @Req() req?: FastifyRequest, @Res() reply?: FastifyReply) {
+  async proxyImage(@Query("url") rawUrl?: string, @Req() req?: FastifyRequest) {
     if (!rawUrl) {
       throw new HttpException("Missing url query param", HttpStatus.BAD_REQUEST);
     }
@@ -177,15 +176,13 @@ export class FilesController {
     }
 
     const contentType = upstream.headers.get("content-type") || "application/octet-stream";
-    const cacheControl =
-      upstream.headers.get("cache-control") || "public, max-age=600, s-maxage=600";
     const body = Buffer.from(await upstream.arrayBuffer());
-
-    reply
-      .header("Content-Type", contentType)
-      .header("Cache-Control", cacheControl)
-      .header("Access-Control-Allow-Origin", "*")
-      .send(body);
+    const base64 = body.toString("base64");
+    const safeContentType = contentType.split(";")[0] || "application/octet-stream";
+    return {
+      contentType: safeContentType,
+      dataUrl: `data:${safeContentType};base64,${base64}`,
+    };
   }
 
   /**

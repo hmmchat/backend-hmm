@@ -551,12 +551,7 @@ export class AuthService implements OnModuleInit {
     const referrerCoins = parseInt(process.env.REFERRAL_REWARD_REFERRER || "100", 10);
     const referredCoins = parseInt(process.env.REFERRAL_REWARD_REFERRED || "50", 10);
     const successCriteriaLabel = process.env.REFERRAL_SUCCESS_CRITERIA_LABEL || "Profile completed";
-    // Production should set REFERRAL_SHARE_BASE_URL explicitly if this default is wrong.
-    const baseUrl =
-      process.env.REFERRAL_SHARE_BASE_URL || "https://sandbox.rbshstudio.com";
-    const paramName = process.env.REFERRAL_SHARE_QUERY_PARAM || "ref";
-    const separator = baseUrl.includes("?") ? "&" : "?";
-    const deepLink = `${baseUrl}${separator}${encodeURIComponent(paramName)}=${encodeURIComponent(referralCode)}`;
+    const deepLink = this.buildReferralShareDeepLink(referralCode);
     const rawTemplate = process.env.REFERRAL_SHARE_TEMPLATE
       || "Join me on Beam! Use my referral code {code} and get rewards: {link}";
 
@@ -594,6 +589,34 @@ export class AuthService implements OnModuleInit {
       },
       recentReferrals
     };
+  }
+
+  private buildReferralLandingLink(referralCode: string): string {
+    // Production should set REFERRAL_SHARE_BASE_URL explicitly if this default is wrong.
+    const baseUrl =
+      process.env.REFERRAL_SHARE_BASE_URL || "https://sandbox.rbshstudio.com";
+    const paramName = process.env.REFERRAL_SHARE_QUERY_PARAM || "ref";
+    const separator = baseUrl.includes("?") ? "&" : "?";
+    return `${baseUrl}${separator}${encodeURIComponent(paramName)}=${encodeURIComponent(referralCode)}`;
+  }
+
+  private buildReferralShareDeepLink(referralCode: string): string {
+    const shortBase = (process.env.REFERRAL_SHARE_SHORT_BASE_URL || "").trim();
+    if (!shortBase) {
+      return this.buildReferralLandingLink(referralCode);
+    }
+
+    const encodedCode = encodeURIComponent(referralCode);
+    if (shortBase.includes("{code}")) {
+      return shortBase.replaceAll("{code}", encodedCode);
+    }
+
+    const cleanBase = shortBase.endsWith("/") ? shortBase.slice(0, -1) : shortBase;
+    return `${cleanBase}/${encodedCode}`;
+  }
+
+  getReferralShareRedirectTarget(referralCode: string): string {
+    return this.buildReferralLandingLink(referralCode);
   }
 
   async trackReferralShareEvent(

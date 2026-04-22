@@ -295,9 +295,9 @@ const handleGoogleSignIn = async (credentialResponse) => {
     "successCriteriaLabel": "Profile completed"
   },
   "share": {
-    "deepLink": "https://ahmm.space/lander?ref=REFABCDE123",
-    "messageTemplate": "Join me on Beam! Use my referral code REFABCDE123 and get rewards: https://ahmm.space/lander?ref=REFABCDE123",
-    "copyText": "https://ahmm.space/lander?ref=REFABCDE123",
+    "deepLink": "https://ahmm.space/r/REFABCDE123",
+    "messageTemplate": "Join me on Beam! Use my referral code REFABCDE123 and get rewards: https://ahmm.space/r/REFABCDE123",
+    "copyText": "https://ahmm.space/r/REFABCDE123",
     "code": "REFABCDE123"
   },
   "stats": {
@@ -339,6 +339,13 @@ const handleGoogleSignIn = async (credentialResponse) => {
 - `channel` allowed values: `whatsapp | instagram | snapchat | copy | other`.
 - For Instagram/Snapchat where direct link share may vary by platform, still track tap intent with this endpoint.
 - Use `share.copyText` from overview to support the copy button shown in the UI mock.
+
+**Referral link format:**
+- `share.deepLink` can be either:
+  - short-link style: `https://<domain>/r/<referralCode>` (preferred for QR density), or
+  - query style: `https://<landing>?ref=<referralCode>` (fallback when short-link base is not configured).
+- Backend short-link redirects are exposed at `GET /v1/r/:referralCode` (or direct service route `/r/:referralCode`).
+- Frontend should continue to rely on `share.code` / `?ref=` capture semantics for signup attribution.
 
 ---
 

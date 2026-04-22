@@ -129,16 +129,6 @@ export class FilesController {
   }
 
   /**
-   * Get file info
-   * GET /files/:fileId
-   */
-  @Get("files/:fileId")
-  async getFile(@Param("fileId") fileId: string) {
-    const file = await this.filesService.getFile(fileId);
-    return { file };
-  }
-
-  /**
    * Proxy external image URLs for client-side canvas export flows.
    * GET /files/image-proxy?url=<encoded-image-url>
    */
@@ -183,6 +173,16 @@ export class FilesController {
       contentType: safeContentType,
       dataUrl: `data:${safeContentType};base64,${base64}`,
     };
+  }
+
+  /**
+   * Get file info
+   * GET /files/:fileId
+   */
+  @Get("files/:fileId")
+  async getFile(@Param("fileId") fileId: string) {
+    const file = await this.filesService.getFile(fileId);
+    return { file };
   }
 
   /**

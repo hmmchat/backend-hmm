@@ -10,9 +10,10 @@ import {
   HttpStatus,
   HttpCode,
   Query,
-  Req
+  Req,
+  Res
 } from "@nestjs/common";
-import { FastifyRequest } from "fastify";
+import { FastifyReply, FastifyRequest } from "fastify";
 import { FilesService } from "../services/files.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { z } from "zod";
@@ -136,6 +137,55 @@ export class FilesController {
   async getFile(@Param("fileId") fileId: string) {
     const file = await this.filesService.getFile(fileId);
     return { file };
+  }
+
+  /**
+   * Proxy external image URLs for client-side canvas export flows.
+   * GET /files/image-proxy?url=<encoded-image-url>
+   */
+  @Get("files/image-proxy")
+  async proxyImage(@Query("url") rawUrl?: string, @Req() req?: FastifyRequest, @Res() reply?: FastifyReply) {
+    if (!rawUrl) {
+      throw new HttpException("Missing url query param", HttpStatus.BAD_REQUEST);
+    }
+
+    let parsed: URL;
+    try {
+      parsed = new URL(rawUrl);
+    } catch {
+      throw new HttpException("Invalid url", HttpStatus.BAD_REQUEST);
+    }
+
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      throw new HttpException("Unsupported url protocol", HttpStatus.BAD_REQUEST);
+    }
+
+    const upstream = await fetch(parsed.toString(), {
+      redirect: "follow",
+      headers: {
+        "User-Agent": "beam-files-image-proxy/1.0",
+        Accept: "image/*,*/*;q=0.8",
+        ...(req?.headers?.referer ? { Referer: String(req.headers.referer) } : {}),
+      },
+    });
+
+    if (!upstream.ok) {
+      throw new HttpException(
+        `Upstream fetch failed with status ${upstream.status}`,
+        HttpStatus.BAD_GATEWAY,
+      );
+    }
+
+    const contentType = upstream.headers.get("content-type") || "application/octet-stream";
+    const cacheControl =
+      upstream.headers.get("cache-control") || "public, max-age=600, s-maxage=600";
+    const body = Buffer.from(await upstream.arrayBuffer());
+
+    reply
+      .header("Content-Type", contentType)
+      .header("Cache-Control", cacheControl)
+      .header("Access-Control-Allow-Origin", "*")
+      .send(body);
   }
 
   /**

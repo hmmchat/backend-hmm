@@ -9,14 +9,19 @@ import { ProviderPhone } from "./providers/phone.provider.js";
 
 import {
   signAccessToken,
-  signRefreshToken
+  signRefreshToken,
+  verifyToken,
+  type AccessPayload
 } from "@hmm/common";
+import type { JWK } from "jose";
 
 import * as argon2 from "argon2";
 
 @Injectable()
 export class AuthService implements OnModuleInit {
   private privateKey!: string;
+  /** Verifies refresh JWT (same claims as access) before hashing sessions. */
+  private verifyRefresh!: (token: string) => Promise<AccessPayload>;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -38,6 +43,39 @@ export class AuthService implements OnModuleInit {
 
     // Remove surrounding quotes if present
     this.privateKey = keyStr.trim().replace(/^['"]|['"]$/g, "");
+
+    const jwkStr = process.env.JWT_PUBLIC_JWK;
+    if (!jwkStr || jwkStr === "undefined") {
+      throw new Error("JWT_PUBLIC_JWK environment variable is not set or is invalid");
+    }
+    const cleanedJwk = jwkStr.trim().replace(/^['"]|['"]$/g, "");
+    const publicJwk = JSON.parse(cleanedJwk) as JWK;
+    this.verifyRefresh = await verifyToken(publicJwk);
+  }
+
+  /**
+   * Resolve DB session for a refresh token: JWT proves user, then argon2 only on that user's rows.
+   * Avoids scanning all active sessions (logout/refresh used to time out under load).
+   */
+  private async findSessionForRefreshToken(refreshToken: string) {
+    let userId: string;
+    try {
+      const payload = await this.verifyRefresh(refreshToken);
+      userId = payload.sub;
+    } catch {
+      return null;
+    }
+    if (!userId) return null;
+
+    const sessions = await this.prisma.session.findMany({
+      where: { userId, expiresAt: { gt: new Date() } }
+    });
+
+    for (const session of sessions) {
+      const valid = await argon2.verify(session.refreshHash, refreshToken);
+      if (valid) return session;
+    }
+    return null;
   }
 
   /* ---------- Auth flows ---------- */
@@ -98,37 +136,22 @@ export class AuthService implements OnModuleInit {
   /* ---------- Tokens ---------- */
 
   async refresh(refreshToken: string) {
-    const sessions = await this.prisma.session.findMany({
-      where: { expiresAt: { gt: new Date() } }
+    const session = await this.findSessionForRefreshToken(refreshToken);
+    if (!session) return null;
+
+    const accessToken = await signAccessToken(this.privateKey, {
+      sub: session.userId,
+      uid: session.userId
     });
 
-    for (const session of sessions) {
-      const valid = await argon2.verify(session.refreshHash, refreshToken);
-      if (!valid) continue;
-
-      const accessToken = await signAccessToken(this.privateKey, {
-        sub: session.userId,
-        uid: session.userId
-      });
-
-      return { accessToken };
-    }
-
-    return null;
+    return { accessToken };
   }
 
   async logout(refreshToken: string) {
-    const sessions = await this.prisma.session.findMany({
-      where: { expiresAt: { gt: new Date() } }
-    });
+    const session = await this.findSessionForRefreshToken(refreshToken);
+    if (!session) return;
 
-    for (const session of sessions) {
-      const valid = await argon2.verify(session.refreshHash, refreshToken);
-      if (!valid) continue;
-
-      await this.prisma.session.delete({ where: { id: session.id } });
-      return;
-    }
+    await this.prisma.session.delete({ where: { id: session.id } });
   }
 
   /* ---------- Internal ---------- */

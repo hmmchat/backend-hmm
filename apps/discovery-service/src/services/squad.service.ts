@@ -413,6 +413,25 @@ export class SquadService {
           // Continue even if friendship creation fails
         }
       }
+
+      // One squad at a time for invitee: expire other pending invites addressed to them
+      const resolvedInviteeId = invitation.inviteeId || inviteeId;
+      const expiredOthers = await tx.squadInvitation.updateMany({
+        where: {
+          inviteeId: resolvedInviteeId,
+          status: "PENDING",
+          id: { not: inviteId }
+        },
+        data: {
+          status: "EXPIRED",
+          updatedAt: new Date()
+        }
+      });
+      if (expiredOthers.count > 0) {
+        this.logger.log(
+          `Expired ${expiredOthers.count} other pending squad invites for invitee ${resolvedInviteeId}`
+        );
+      }
     });
 
     this.logger.log(

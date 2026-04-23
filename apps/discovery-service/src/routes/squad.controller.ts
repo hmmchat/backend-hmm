@@ -340,6 +340,9 @@ export class SquadController {
     // Mark lobby as IN_CALL
     await this.squadService.markLobbyInCall(userId);
 
+    // Host is in a live squad call — expire any other pending invites they had sent
+    await this.squadService.expireInvitations(userId, "Squad entered video call");
+
     return {
       success: true,
       roomId: roomResult.roomId,
@@ -703,6 +706,8 @@ export class SquadController {
 
     // Only mark lobby as IN_CALL after room is successfully created
     await this.squadService.markLobbyInCall(userId);
+
+    await this.squadService.expireInvitations(userId, "Squad entered video call");
 
     return {
       success: true,

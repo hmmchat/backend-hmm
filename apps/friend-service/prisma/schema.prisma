@@ -55,6 +55,8 @@ enum MessageType {
   GIFT_WITH_MESSAGE
   GIF
   GIF_WITH_MESSAGE
+  SQUAD_INVITE
+  SQUAD_INVITE_OUTCOME
 }
 
 model FriendMessage {
@@ -74,6 +76,8 @@ model FriendMessage {
   giftId        String?     // Gift sticker ID if sent with gift
   giftAmount    Int?        // Coins value of gift
   messageType   MessageType @default(TEXT) // TEXT, GIFT, GIFT_WITH_MESSAGE
+  /// JSON string for squad invite/outcome (invitationId, outcome, etc.)
+  squadMeta     String?
   createdAt     DateTime    @default(now())
   
   @@index([fromUserId, toUserId, createdAt])

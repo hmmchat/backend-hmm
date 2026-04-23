@@ -18,7 +18,8 @@ export class SquadService {
     private readonly matchingService: MatchingService
   ) {
     this.INVITATION_TIMEOUT_MS = parseInt(process.env.SQUAD_INVITATION_TIMEOUT_MS || "600000", 10); // 10 min default
-    this.MAX_SQUAD_SIZE = parseInt(process.env.MAX_SQUAD_SIZE || "3", 10); // 1 inviter + 2 invitees
+    // Total lobby members including inviter (default 4 = host + 3 invitees)
+    this.MAX_SQUAD_SIZE = parseInt(process.env.MAX_SQUAD_SIZE || "4", 10);
   }
 
   /**
@@ -30,20 +31,15 @@ export class SquadService {
       return;
     }
 
+    // Friend invites are delivered via inbox; do not require ONLINE presence.
     try {
-      const userProfile = await this.userClient.getUserFullProfileById(inviteeId);
-      if (userProfile.status !== "ONLINE") {
-        throw new HttpException(
-          `User must be ONLINE to receive invitations. Current status: ${userProfile.status}`,
-          HttpStatus.BAD_REQUEST
-        );
-      }
+      await this.userClient.getUserFullProfileById(inviteeId);
     } catch (error: any) {
       if (error instanceof HttpException) {
         throw error;
       }
       throw new HttpException(
-        "Failed to validate invitee status",
+        "Failed to validate invitee",
         HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
@@ -87,7 +83,7 @@ export class SquadService {
     const memberIds = lobby.memberIds as string[];
     if (memberIds.length >= this.MAX_SQUAD_SIZE) {
       throw new HttpException(
-        `Squad is full. Maximum ${this.MAX_SQUAD_SIZE} members allowed (1 inviter + 2 invitees).`,
+        `Squad is full. Maximum ${this.MAX_SQUAD_SIZE} members allowed (including host).`,
         HttpStatus.BAD_REQUEST
       );
     }
@@ -715,4 +711,31 @@ export class SquadService {
     this.logger.log(`Squad lobby deleted for inviter ${inviterId}`);
   }
 
+  /**
+   * Lobby row for any user who is listed in memberIds (host or accepted guest).
+   */
+  async getLobbyMembershipForUser(userId: string): Promise<{
+    id: string;
+    inviterId: string;
+    memberIds: string[];
+    status: string;
+  } | null> {
+    const rows: any[] = await (this.prisma as any).$queryRawUnsafe(
+      `SELECT id, "inviterId", "memberIds", status::text as status
+       FROM squad_lobbies
+       WHERE "memberIds"::jsonb @> jsonb_build_array($1::text)
+       LIMIT 1`,
+      userId
+    );
+    if (!rows?.length) return null;
+    const r = rows[0];
+    const raw = r.memberIds;
+    const memberIds = Array.isArray(raw) ? raw : JSON.parse(JSON.stringify(raw));
+    return {
+      id: r.id,
+      inviterId: r.inviterId,
+      memberIds,
+      status: r.status
+    };
+  }
 }

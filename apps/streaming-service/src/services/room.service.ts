@@ -318,9 +318,9 @@ export class RoomService {
           "Squad calls must have at least 2 participants to be created"
         );
       }
-      if (userIds.length > 3) {
+      if (userIds.length > 4) {
         throw new BadRequestException(
-          "Squad calls must have at most 3 participants (1 inviter + 2 invitees)"
+          "Squad calls must have at most 4 participants (1 inviter + 3 invitees)"
         );
       }
     }

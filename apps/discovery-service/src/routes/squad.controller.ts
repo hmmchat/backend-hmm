@@ -13,6 +13,7 @@ import { SquadService } from "../services/squad.service.js";
 import { NotificationService } from "../services/notification.service.js";
 import { UserClientService } from "../services/user-client.service.js";
 import { StreamingClientService } from "../services/streaming-client.service.js";
+import { FriendClientService } from "../services/friend-client.service.js";
 // DTOs are defined but not needed for test endpoints
 import { verifyToken, AccessPayload } from "@hmm/common";
 import { JWK } from "jose";
@@ -27,7 +28,8 @@ export class SquadController {
     private readonly squadService: SquadService,
     private readonly notificationService: NotificationService,
     private readonly userClientService: UserClientService,
-    private readonly streamingClientService: StreamingClientService
+    private readonly streamingClientService: StreamingClientService,
+    private readonly friendClientService: FriendClientService
   ) {}
 
   private async initializeJWT() {
@@ -85,6 +87,13 @@ export class SquadController {
     await this.notificationService.notifySquadInvitation(inviteeId, {
       invitationId: result.invitationId,
       inviterId: userId
+    });
+
+    await this.friendClientService.postSquadInboxMessage({
+      kind: "invite",
+      inviterId: userId,
+      inviteeId,
+      invitationId: result.invitationId
     });
 
     return {
@@ -150,6 +159,14 @@ export class SquadController {
     // Notify inviter
     await this.notificationService.notifyInvitationAccepted(invitation.inviterId, userId);
 
+    await this.friendClientService.postSquadInboxMessage({
+      kind: "outcome",
+      inviterId: invitation.inviterId,
+      inviteeId: userId,
+      invitationId: inviteId,
+      outcome: "accepted"
+    });
+
     // Notify all lobby members
     const lobby = await this.squadService.getSquadLobby(invitation.inviterId);
     if (lobby) {
@@ -162,7 +179,8 @@ export class SquadController {
     }
 
     return {
-      success: true
+      success: true,
+      inviterId: invitation.inviterId
     };
   }
 
@@ -194,8 +212,17 @@ export class SquadController {
     // Notify inviter
     await this.notificationService.notifyInvitationRejected(invitation.inviterId, userId);
 
+    await this.friendClientService.postSquadInboxMessage({
+      kind: "outcome",
+      inviterId: invitation.inviterId,
+      inviteeId: userId,
+      invitationId: inviteId,
+      outcome: "rejected"
+    });
+
     return {
-      success: true
+      success: true,
+      inviterId: invitation.inviterId
     };
   }
 
@@ -229,6 +256,52 @@ export class SquadController {
         status: lobby.status,
         createdAt: lobby.createdAt,
         updatedAt: lobby.updatedAt
+      }
+    };
+  }
+
+  /**
+   * Squad lobby for current user as host OR accepted member (for joiner UI / polling).
+   * GET /squad/lobby/membership
+   */
+  @Get("lobby/membership")
+  async getLobbyMembership(@Headers("authorization") authz?: string) {
+    const token = this.getTokenFromHeader(authz || "");
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+
+    const userId = await this.verifyTokenAndGetUserId(token);
+
+    const asHost = await this.squadService.getSquadLobby(userId);
+    if (asHost) {
+      return {
+        role: "host" as const,
+        lobby: {
+          id: asHost.id,
+          inviterId: asHost.inviterId,
+          memberIds: asHost.memberIds,
+          status: asHost.status,
+          createdAt: asHost.createdAt,
+          updatedAt: asHost.updatedAt
+        }
+      };
+    }
+
+    const membership = await this.squadService.getLobbyMembershipForUser(userId);
+    if (!membership) {
+      return { role: "none" as const, lobby: null };
+    }
+
+    return {
+      role: membership.inviterId === userId ? ("host" as const) : ("member" as const),
+      lobby: {
+        id: membership.id,
+        inviterId: membership.inviterId,
+        memberIds: membership.memberIds,
+        status: membership.status,
+        createdAt: null,
+        updatedAt: null
       }
     };
   }

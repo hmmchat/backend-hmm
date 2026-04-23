@@ -172,4 +172,44 @@ export class FriendClientService {
       throw error;
     }
   }
+
+  /**
+   * Record squad invite or outcome in friend inbox (best-effort; logs on failure).
+   */
+  async postSquadInboxMessage(
+    payload:
+      | { kind: "invite"; inviterId: string; inviteeId: string; invitationId: string }
+      | {
+          kind: "outcome";
+          inviterId: string;
+          inviteeId: string;
+          invitationId: string;
+          outcome: "accepted" | "rejected";
+        }
+  ): Promise<void> {
+    try {
+      const serviceToken = process.env.INTERNAL_SERVICE_TOKEN;
+      if (!serviceToken) {
+        this.logger.warn("INTERNAL_SERVICE_TOKEN not configured; skipping squad inbox message");
+        return;
+      }
+
+      const response = await fetch(`${this.friendServiceUrl}/internal/messages/squad`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-service-token": serviceToken
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(this.requestTimeoutMs)
+      } as any);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        this.logger.warn(`postSquadInboxMessage failed (${response.status}): ${errorText}`);
+      }
+    } catch (error: any) {
+      this.logger.warn(`postSquadInboxMessage error: ${error.message}`);
+    }
+  }
 }

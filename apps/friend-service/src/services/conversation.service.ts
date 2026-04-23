@@ -313,6 +313,7 @@ export class ConversationService {
           messageType: true,
           giftId: true,
           giftAmount: true,
+          squadMeta: true,
           createdAt: true
         }
       });
@@ -426,6 +427,7 @@ export class ConversationService {
           messageType: true,
           giftId: true,
           giftAmount: true,
+          squadMeta: true,
           createdAt: true
         }
       })
@@ -461,6 +463,7 @@ export class ConversationService {
               messageType: true,
               giftId: true,
               giftAmount: true,
+              squadMeta: true,
               createdAt: true
             }
           });
@@ -616,6 +619,7 @@ export class ConversationService {
             messageType: lastMessage.messageType,
             giftId: lastMessage.giftId,
             giftAmount: lastMessage.giftAmount,
+            squadMeta: lastMessage.squadMeta ?? null,
             createdAt: lastMessage.createdAt
           }
           : null,

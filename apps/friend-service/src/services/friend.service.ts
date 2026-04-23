@@ -1014,6 +1014,134 @@ export class FriendService {
   }
 
   /**
+   * Internal: squad invite row in the inviter↔invitee inbox (called by discovery-service).
+   */
+  async internalSendSquadInvite(params: {
+    inviterId: string;
+    inviteeId: string;
+    invitationId: string;
+  }): Promise<{ messageId: string }> {
+    const { inviterId, inviteeId, invitationId } = params;
+    if (inviterId === inviteeId) {
+      throw new BadRequestException("Cannot send squad invite to yourself");
+    }
+    const areFriends = await this.areFriends(inviterId, inviteeId);
+    if (!areFriends) {
+      throw new BadRequestException("Users are not friends");
+    }
+    const isUserBlocked = await this.isBlocked(inviterId, inviteeId);
+    if (isUserBlocked) {
+      throw new BadRequestException("You cannot message this user");
+    }
+
+    const squadMeta = JSON.stringify({ invitationId, kind: "invite" });
+    const bodyText = "You're invited to join my squad call.";
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const friendMessage = await tx.friendMessage.create({
+        data: {
+          fromUserId: inviterId,
+          toUserId: inviteeId,
+          message: bodyText,
+          messageType: "SQUAD_INVITE" as MessageType,
+          squadMeta
+        } as any
+      });
+
+      const [convId1, convId2] = [inviterId, inviteeId].sort();
+      await tx.conversation.upsert({
+        where: {
+          userId1_userId2: {
+            userId1: convId1,
+            userId2: convId2
+          }
+        },
+        create: {
+          userId1: convId1,
+          userId2: convId2,
+          section: ConversationSection.INBOX,
+          lastMessageId: friendMessage.id,
+          lastMessageAt: new Date()
+        },
+        update: {
+          section: ConversationSection.INBOX,
+          lastMessageId: friendMessage.id,
+          lastMessageAt: new Date()
+        }
+      });
+
+      return { messageId: friendMessage.id };
+    });
+
+    await this.invalidateNotificationCache(inviteeId);
+    this.emitRealtimeMessageUpdate(inviterId, inviteeId, result.messageId).catch(() => undefined);
+    return result;
+  }
+
+  /**
+   * Internal: squad accept/reject outcome message (from invitee → inviter) visible in shared thread.
+   */
+  async internalSendSquadOutcome(params: {
+    inviterId: string;
+    inviteeId: string;
+    invitationId: string;
+    outcome: "accepted" | "rejected";
+  }): Promise<{ messageId: string }> {
+    const { inviterId, inviteeId, invitationId, outcome } = params;
+    if (inviterId === inviteeId) {
+      throw new BadRequestException("Invalid squad outcome");
+    }
+    const areFriends = await this.areFriends(inviterId, inviteeId);
+    if (!areFriends) {
+      throw new BadRequestException("Users are not friends");
+    }
+
+    const squadMeta = JSON.stringify({ invitationId, kind: "outcome", outcome });
+    const bodyText =
+      outcome === "accepted" ? "Joined your squad call." : "Call rejected";
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const friendMessage = await tx.friendMessage.create({
+        data: {
+          fromUserId: inviteeId,
+          toUserId: inviterId,
+          message: bodyText,
+          messageType: "SQUAD_INVITE_OUTCOME" as MessageType,
+          squadMeta
+        } as any
+      });
+
+      const [convId1, convId2] = [inviterId, inviteeId].sort();
+      await tx.conversation.upsert({
+        where: {
+          userId1_userId2: {
+            userId1: convId1,
+            userId2: convId2
+          }
+        },
+        create: {
+          userId1: convId1,
+          userId2: convId2,
+          section: ConversationSection.INBOX,
+          lastMessageId: friendMessage.id,
+          lastMessageAt: new Date()
+        },
+        update: {
+          section: ConversationSection.INBOX,
+          lastMessageId: friendMessage.id,
+          lastMessageAt: new Date()
+        }
+      });
+
+      return { messageId: friendMessage.id };
+    });
+
+    await this.invalidateNotificationCache(inviterId);
+    this.emitRealtimeMessageUpdate(inviteeId, inviterId, result.messageId).catch(() => undefined);
+    return result;
+  }
+
+  /**
    * Get message history with a user (persisted messages)
    * Returns paginated message history from database
    */
@@ -1053,6 +1181,7 @@ export class FriendService {
       fromUserId: msg.fromUserId,
       toUserId: msg.toUserId,
       message: msg.message,
+      squadMeta: (msg as any).squadMeta ?? null,
       gif: (msg as any).gifId
         ? {
             provider: (msg as any).gifProvider,
@@ -1142,6 +1271,7 @@ export class FriendService {
       messageType: msg.messageType,
       giftId: msg.giftId,
       giftAmount: msg.giftAmount,
+      squadMeta: (msg as any).squadMeta ?? null,
       createdAt: msg.createdAt
     };
     // Each user gets their own authoritative unread count (matches GET /conversations/inbox).

@@ -1079,6 +1079,66 @@ export class FriendController {
     };
   }
 
+  /**
+   * Record squad invite / outcome in friend inbox (internal — discovery-service)
+   * POST /internal/messages/squad
+   */
+  @Post("internal/messages/squad")
+  async recordSquadInboxMessage(
+    @Headers("x-service-token") serviceToken: string | undefined,
+    @Body() body: unknown
+  ) {
+    const isTestMode = process.env.NODE_ENV === "test" || process.env.TEST_MODE === "true";
+    const expectedToken = process.env.INTERNAL_SERVICE_TOKEN;
+
+    if (!isTestMode) {
+      if (!expectedToken) {
+        throw new HttpException(
+          "Internal service token not configured",
+          HttpStatus.INTERNAL_SERVER_ERROR
+        );
+      }
+      if (serviceToken !== expectedToken) {
+        throw new HttpException("Invalid service token", HttpStatus.UNAUTHORIZED);
+      }
+    }
+
+    const SquadInboxBodySchema = z.discriminatedUnion("kind", [
+      z.object({
+        kind: z.literal("invite"),
+        inviterId: z.string(),
+        inviteeId: z.string(),
+        invitationId: z.string()
+      }),
+      z.object({
+        kind: z.literal("outcome"),
+        inviterId: z.string(),
+        inviteeId: z.string(),
+        invitationId: z.string(),
+        outcome: z.enum(["accepted", "rejected"])
+      })
+    ]);
+
+    const parsed = SquadInboxBodySchema.parse(body);
+
+    if (parsed.kind === "invite") {
+      const r = await this.friendService.internalSendSquadInvite({
+        inviterId: parsed.inviterId,
+        inviteeId: parsed.inviteeId,
+        invitationId: parsed.invitationId
+      });
+      return { ok: true, messageId: r.messageId };
+    }
+
+    const r = await this.friendService.internalSendSquadOutcome({
+      inviterId: parsed.inviterId,
+      inviteeId: parsed.inviteeId,
+      invitationId: parsed.invitationId,
+      outcome: parsed.outcome
+    });
+    return { ok: true, messageId: r.messageId };
+  }
+
   /* ---------- Test Endpoints for Messaging (No Auth Required) ---------- */
 
   /**

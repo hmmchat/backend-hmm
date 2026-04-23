@@ -182,4 +182,88 @@ export class StreamingClientService {
       throw error;
     }
   }
+
+  /**
+   * Active room for a user (participant or viewer), from streaming-service.
+   */
+  async getUserActiveRoom(
+    userId: string
+  ): Promise<{ exists: boolean; roomId?: string; sessionId?: string }> {
+    try {
+      const response = await fetch(
+        `${this.streamingServiceUrl}/streaming/users/${encodeURIComponent(userId)}/room`,
+        {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          signal: AbortSignal.timeout(this.requestTimeoutMs)
+        } as any
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        this.logger.warn(`getUserActiveRoom failed: ${errorText}`);
+        return { exists: false };
+      }
+
+      const data = (await response.json()) as {
+        exists?: boolean;
+        roomId?: string;
+        id?: string;
+      };
+      if (!data?.exists) {
+        return { exists: false };
+      }
+      return {
+        exists: true,
+        roomId: data.roomId,
+        sessionId: data.id
+      };
+    } catch (error: any) {
+      if (error.name === "AbortError" || error.name === "TimeoutError") {
+        this.logger.warn(`Timeout getUserActiveRoom for ${userId}`);
+        return { exists: false };
+      }
+      this.logger.error(`Error getUserActiveRoom:`, error.message);
+      return { exists: false };
+    }
+  }
+
+  /**
+   * Add a user to an existing room (squad late join). Requires streaming internal auth.
+   */
+  async addParticipantInternal(roomId: string, userId: string): Promise<void> {
+    const token = process.env.INTERNAL_SERVICE_TOKEN;
+    if (!token) {
+      throw new Error("INTERNAL_SERVICE_TOKEN is not configured");
+    }
+    try {
+      const response = await fetch(
+        `${this.streamingServiceUrl}/streaming/internal/rooms/${encodeURIComponent(roomId)}/add-participant`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-service-token": token
+          },
+          body: JSON.stringify({ userId }),
+          signal: AbortSignal.timeout(this.requestTimeoutMs)
+        } as any
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        this.logger.warn(`addParticipantInternal failed: ${errorText}`);
+        throw new Error(`Failed to add participant: ${errorText}`);
+      }
+    } catch (error: any) {
+      if (error.name === "AbortError" || error.name === "TimeoutError") {
+        this.logger.warn(`Timeout addParticipantInternal for room ${roomId}`);
+        throw new Error("Service timeout when adding squad participant");
+      }
+      this.logger.error(`Error addParticipantInternal:`, error.message);
+      throw error;
+    }
+  }
 }

@@ -8,6 +8,7 @@ import {
   HttpException,
   HttpStatus,
   Param,
+  Logger,
 } from "@nestjs/common";
 import { SquadService } from "../services/squad.service.js";
 import { NotificationService } from "../services/notification.service.js";
@@ -20,6 +21,7 @@ import { JWK } from "jose";
 
 @Controller("squad")
 export class SquadController {
+  private readonly logger = new Logger(SquadController.name);
   private verifyAccess!: (token: string) => Promise<AccessPayload>;
   private publicJwk!: JWK;
   private jwtInitialized = false;
@@ -155,6 +157,25 @@ export class SquadController {
 
     // Accept invitation
     await this.squadService.acceptSquadInvitation(inviteId, userId);
+
+    // If the host already started the call, add this user to the active streaming room
+    const lobbyAfterAccept = await this.squadService.getSquadLobby(invitation.inviterId);
+    if (lobbyAfterAccept?.status === "IN_CALL") {
+      try {
+        const room = await this.streamingClientService.getUserActiveRoom(invitation.inviterId);
+        if (room.exists && room.roomId) {
+          await this.streamingClientService.addParticipantInternal(room.roomId, userId);
+        } else {
+          this.logger.warn(
+            `Squad lobby IN_CALL but no active room for inviter ${invitation.inviterId}; invitee ${userId} is in lobby only`
+          );
+        }
+      } catch (e: any) {
+        this.logger.error(
+          `Failed to add squad late joiner ${userId} to inviter room: ${e?.message || e}`
+        );
+      }
+    }
 
     // Notify inviter
     await this.notificationService.notifyInvitationAccepted(invitation.inviterId, userId);
@@ -352,8 +373,7 @@ export class SquadController {
     // Mark lobby as IN_CALL
     await this.squadService.markLobbyInCall(userId);
 
-    // Host is in a live squad call — expire any other pending invites they had sent
-    await this.squadService.expireInvitations(userId, "Squad entered video call");
+    // Pending friend invites stay valid until timeout or host toggles solo; late acceptors join via accept handler.
 
     return {
       success: true,
@@ -605,6 +625,18 @@ export class SquadController {
 
     await this.squadService.acceptSquadInvitation(inviteId, inviteeId);
 
+    const lobbyAfterAccept = await this.squadService.getSquadLobby(invitation.inviterId);
+    if (lobbyAfterAccept?.status === "IN_CALL") {
+      try {
+        const room = await this.streamingClientService.getUserActiveRoom(invitation.inviterId);
+        if (room.exists && room.roomId) {
+          await this.streamingClientService.addParticipantInternal(room.roomId, inviteeId);
+        }
+      } catch (e: any) {
+        this.logger.error(`[test] Squad late join failed: ${e?.message || e}`);
+      }
+    }
+
     await this.notificationService.notifyInvitationAccepted(invitation.inviterId, inviteeId);
 
     const lobby = await this.squadService.getSquadLobby(invitation.inviterId);
@@ -718,8 +750,6 @@ export class SquadController {
 
     // Only mark lobby as IN_CALL after room is successfully created
     await this.squadService.markLobbyInCall(userId);
-
-    await this.squadService.expireInvitations(userId, "Squad entered video call");
 
     return {
       success: true,

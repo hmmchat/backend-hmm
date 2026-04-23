@@ -308,12 +308,13 @@ export class SquadService {
       throw new HttpException("Invitation has expired", HttpStatus.BAD_REQUEST);
     }
 
-    // Check inviter status - if inviter is not MATCHED, invitation expires
-    // Use invitationData.inviterId from the refetched data
+    // Friend squad invites stay valid while the host still has a squad lobby row.
+    // User-service status (e.g. ONLINE while browsing Inbox) is not authoritative here.
     try {
-      const inviterProfile = await this.userClient.getUserFullProfileById(invitationData.inviterId);
-      if (inviterProfile.status !== "MATCHED") {
-        // Mark as expired
+      const lobby = await (this.prisma as any).squadLobby.findUnique({
+        where: { inviterId: invitationData.inviterId as string }
+      });
+      if (!lobby) {
         await (this.prisma as any).squadInvitation.update({
           where: { id: invitationData.id },
           data: {
@@ -334,7 +335,7 @@ export class SquadService {
           this.logger.warn(`Squad expiry friend notice (inviter unavailable) failed:`, e?.message || e);
         }
         throw new HttpException(
-          "Invitation expired: inviter is no longer in squad mode",
+          "This squad invite is no longer active — the host ended squad setup.",
           HttpStatus.BAD_REQUEST
         );
       }
@@ -342,8 +343,7 @@ export class SquadService {
       if (error instanceof HttpException) {
         throw error;
       }
-      // If we can't verify status, still allow (graceful degradation)
-      this.logger.warn(`Failed to verify inviter status for invitation ${invitation.id}:`, error);
+      this.logger.warn(`Failed to verify inviter squad lobby for invitation ${invitation.id}:`, error);
     }
   }
 
@@ -582,9 +582,15 @@ export class SquadService {
 
     // Add member
     memberIds.push(memberId);
-    
-    // Update lobby status - READY if at least 2 members, otherwise WAITING
-    const newStatus = memberIds.length >= 2 ? "READY" : "WAITING";
+
+    // If the squad is already in a live call, keep IN_CALL (do not downgrade to READY).
+    const currentLobbyStatus = lobby.status as string;
+    const newStatus =
+      currentLobbyStatus === "IN_CALL"
+        ? "IN_CALL"
+        : memberIds.length >= 2
+          ? "READY"
+          : "WAITING";
 
     await (this.prisma as any).squadLobby.update({
       where: { inviterId },
@@ -703,8 +709,10 @@ export class SquadService {
       let statusChangedCount = 0;
       for (const invitation of pendingInvitations) {
         try {
-          const inviterProfile = await this.userClient.getUserFullProfileById(invitation.inviterId);
-          if (inviterProfile.status !== "MATCHED") {
+          const lobby = await (this.prisma as any).squadLobby.findUnique({
+            where: { inviterId: invitation.inviterId }
+          });
+          if (!lobby) {
             await (this.prisma as any).squadInvitation.update({
               where: { id: invitation.id },
               data: {
@@ -717,7 +725,7 @@ export class SquadService {
           }
         } catch (error) {
           this.logger.warn(
-            `Failed to verify inviter status for invitation ${invitation.id}:`,
+            `Failed to verify inviter squad lobby for invitation ${invitation.id}:`,
             error
           );
         }

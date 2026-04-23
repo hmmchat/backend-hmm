@@ -9,7 +9,8 @@ import {
   Headers,
   HttpException,
   HttpStatus,
-  Query
+  Query,
+  UnauthorizedException
 } from "@nestjs/common";
 import { RoomService } from "../services/room.service.js";
 import { ChatService } from "../services/chat.service.js";
@@ -42,6 +43,28 @@ export class StreamingController {
    * Create a room (typically called when users enter IN_SQUAD)
    * POST /streaming/rooms
    */
+  /**
+   * Service-to-service: add participant to an existing room (e.g. squad late accept while IN_CALL).
+   * POST /streaming/internal/rooms/:roomId/add-participant
+   */
+  @Post("internal/rooms/:roomId/add-participant")
+  async internalAddParticipant(
+    @Headers("x-service-token") serviceToken: string | undefined,
+    @Param("roomId") roomId: string,
+    @Body() body: { userId?: string }
+  ) {
+    const expected = process.env.INTERNAL_SERVICE_TOKEN;
+    if (!expected || !serviceToken || serviceToken !== expected) {
+      throw new UnauthorizedException("Invalid service token");
+    }
+    const userId = body?.userId?.trim();
+    if (!userId) {
+      throw new BadRequestException("userId is required");
+    }
+    await this.roomService.addParticipant(roomId, userId);
+    return { success: true, message: `User ${userId} added to room ${roomId}` };
+  }
+
   @Post("rooms")
   async createRoom(@Body() body: unknown) {
     try {

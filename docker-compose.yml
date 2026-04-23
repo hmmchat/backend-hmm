@@ -57,6 +57,7 @@ services:
       - PORT=3001
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/auth-service?schema=public
       - REDIS_URL=redis://redis:6379
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN}
     ports:
       - "3001:3001"
     depends_on:
@@ -83,6 +84,7 @@ services:
       - MODERATION_SERVICE_URL=http://moderation-service:3003
       - WALLET_SERVICE_URL=http://wallet-service:3005
       - AUTH_SERVICE_URL=http://auth-service:3001
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN}
     ports:
       - "3002:3002"
     depends_on:
@@ -134,6 +136,7 @@ services:
       - FRIEND_SERVICE_URL=http://friend-service:3009
       - STREAMING_SERVICE_URL=http://streaming-service:3006
       - WALLET_SERVICE_URL=http://wallet-service:3005
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN}
     ports:
       - "3004:3004"
     depends_on:
@@ -163,6 +166,7 @@ services:
       - DISCOVERY_SERVICE_URL=http://discovery-service:3004
       - FRIEND_SERVICE_URL=http://friend-service:3009
       - WALLET_SERVICE_URL=http://wallet-service:3005
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN}
     ports:
       - "3006:3006"
     depends_on:
@@ -186,6 +190,7 @@ services:
       - NODE_ENV=production
       - PORT=3005
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/wallet-service?schema=public
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN}
     ports:
       - "3005:3005"
     depends_on:
@@ -258,6 +263,7 @@ services:
       - WALLET_SERVICE_URL=http://wallet-service:3005
       - STREAMING_SERVICE_URL=http://streaming-service:3006
       - FILES_SERVICE_URL=http://files-service:3008
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN}
     ports:
       - "3009:3009"
     depends_on:

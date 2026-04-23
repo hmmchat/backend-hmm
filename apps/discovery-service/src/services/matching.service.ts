@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, HttpException, HttpStatus } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { UserClientService, DiscoveryUser } from "./user-client.service.js";
 import { CacheService } from "./cache.service.js";
@@ -783,7 +783,21 @@ export class MatchingService {
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`user-service ${response.status}: ${errorText}`);
+        const st = response.status;
+        const httpStatus =
+          st === 401
+            ? HttpStatus.UNAUTHORIZED
+            : st === 403
+              ? HttpStatus.FORBIDDEN
+              : st === 404
+                ? HttpStatus.NOT_FOUND
+                : st >= 400 && st < 500
+                  ? HttpStatus.BAD_REQUEST
+                  : HttpStatus.BAD_GATEWAY;
+        throw new HttpException(
+          `Could not update user status (user-service ${st}): ${errorText.slice(0, 400)}`,
+          httpStatus
+        );
       }
       console.log(`[DEBUG] Status updated via user-service for ${userId} -> ${status}`);
     } catch (httpError: any) {

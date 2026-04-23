@@ -65,6 +65,39 @@ export class SquadService {
   }
 
   /**
+   * If the lobby lists inviteeId but they are not a genuinely accepted member (stale row after
+   * failed/partial accept), remove them and expire stray PENDING rows so a new invite can succeed.
+   */
+  private async reconcileStaleLobbyInvitee(inviterId: string, inviteeId: string): Promise<void> {
+    const lobby = await this.getSquadLobby(inviterId);
+    if (!lobby) return;
+    const memberIds = lobby.memberIds as string[];
+    if (!memberIds.includes(inviteeId)) return;
+
+    const latest = await (this.prisma as any).squadInvitation.findFirst({
+      where: { inviterId, inviteeId },
+      orderBy: { updatedAt: "desc" }
+    });
+
+    if (latest?.status === "ACCEPTED") {
+      return;
+    }
+
+    this.logger.warn(
+      `Squad lobby cleanup: removing stale member ${inviteeId} from inviter ${inviterId} lobby (latest invite=${latest?.status ?? "none"})`
+    );
+
+    if (latest?.status === "PENDING") {
+      await (this.prisma as any).squadInvitation.updateMany({
+        where: { inviterId, inviteeId, status: "PENDING" },
+        data: { status: "EXPIRED", updatedAt: new Date() }
+      });
+    }
+
+    await this.removeFromSquadLobby(inviterId, inviteeId);
+  }
+
+  /**
    * Create invitation (friend or external)
    */
   async createSquadInvitation(
@@ -79,6 +112,14 @@ export class SquadService {
       lobby = await this.createSquadLobby(inviterId);
     }
 
+    if (inviteeId) {
+      await this.reconcileStaleLobbyInvitee(inviterId, inviteeId);
+      lobby = await this.getSquadLobby(inviterId);
+      if (!lobby) {
+        lobby = await this.createSquadLobby(inviterId);
+      }
+    }
+
     // Check if squad is full
     const memberIds = lobby.memberIds as string[];
     if (memberIds.length >= this.MAX_SQUAD_SIZE) {
@@ -88,7 +129,7 @@ export class SquadService {
       );
     }
 
-    // Check if invitee already in lobby
+    // Check if invitee already in lobby (only true accepts remain after reconcile)
     if (inviteeId && memberIds.includes(inviteeId)) {
       throw new HttpException(
         "User is already in the squad lobby",

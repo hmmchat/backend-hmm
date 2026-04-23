@@ -752,17 +752,34 @@ export class MatchingService {
    */
   async updateUserStatus(userId: string, status: string): Promise<void> {
     console.log(`[DEBUG] updateUserStatus called for user ${userId} to status ${status}`);
-    const url = `${this.userServiceUrl}/users/test/${userId}/status`;
+    const serviceToken = process.env.INTERNAL_SERVICE_TOKEN;
+    const internalUrl = `${this.userServiceUrl}/users/internal/${userId}/status`;
+    const testUrl = `${this.userServiceUrl}/users/test/${userId}/status`;
 
     try {
-      const response = await fetch(url, {
+      const jsonHeaders: Record<string, string> = {
+        "Content-Type": "application/json"
+      };
+      if (serviceToken) {
+        jsonHeaders["x-service-token"] = serviceToken;
+      }
+
+      let response = await fetch(serviceToken ? internalUrl : testUrl, {
         method: "PATCH",
-        headers: {
-          "Content-Type": "application/json"
-        },
+        headers: jsonHeaders,
         body: JSON.stringify({ status }),
         signal: AbortSignal.timeout(this.userServiceStatusTimeoutMs)
       } as any);
+
+      // Gradual rollout: older user-service images may not expose /users/internal/.../status yet.
+      if (!response.ok && serviceToken && response.status === 404) {
+        response = await fetch(testUrl, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status }),
+          signal: AbortSignal.timeout(this.userServiceStatusTimeoutMs)
+        } as any);
+      }
 
       if (!response.ok) {
         const errorText = await response.text();

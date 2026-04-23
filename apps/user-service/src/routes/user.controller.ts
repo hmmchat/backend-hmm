@@ -608,6 +608,35 @@ export class UserController {
     });
   }
 
+  /**
+   * Internal: update user status (discovery / squad flows). Requires x-service-token.
+   * PATCH /users/internal/:userId/status
+   */
+  @Patch("users/internal/:userId/status")
+  async updateStatusInternal(
+    @Headers("x-service-token") serviceToken: string | undefined,
+    @Param("userId") userId: string,
+    @Body() body: unknown
+  ) {
+    const isTestMode = process.env.NODE_ENV === "test" || process.env.TEST_MODE === "true";
+    const expectedToken = process.env.INTERNAL_SERVICE_TOKEN;
+
+    if (!isTestMode) {
+      if (!expectedToken) {
+        throw new HttpException(
+          "Internal service token not configured",
+          HttpStatus.INTERNAL_SERVER_ERROR
+        );
+      }
+      if (serviceToken !== expectedToken) {
+        throw new HttpException("Invalid service token", HttpStatus.UNAUTHORIZED);
+      }
+    }
+
+    const dto = UpdateStatusSchema.parse(body);
+    return this.userService.updateStatusForUser(userId, dto);
+  }
+
   /* ---------- Test Endpoints (No Auth Required) ---------- */
 
   /**

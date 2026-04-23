@@ -424,6 +424,21 @@ export class FriendController {
   }
 
   /**
+   * Mark messages as read (register before POST …/messages so routers never treat "read" as a body route).
+   * POST /me/friends/:friendId/messages/read
+   */
+  @Post("me/friends/:friendId/messages/read")
+  async markMessagesAsRead(
+    @Headers("authorization") authz: string,
+    @Param("friendId") friendId: string
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    const userId = await this.verifyTokenAndGetUserId(token!);
+    await this.friendService.markMessagesAsRead(userId, friendId);
+    return { ok: true };
+  }
+
+  /**
    * Send message to friend (free, supports gifts)
    * POST /me/friends/:friendId/messages
    */
@@ -729,21 +744,6 @@ export class FriendController {
       section,
       lastSeenAt: result.lastSeenAt.toISOString()
     };
-  }
-
-  /**
-   * Mark messages as read
-   * POST /me/friends/:friendId/messages/read
-   */
-  @Post("me/friends/:friendId/messages/read")
-  async markMessagesAsRead(
-    @Headers("authorization") authz: string,
-    @Param("friendId") friendId: string
-  ) {
-    const token = this.getTokenFromHeader(authz);
-    const userId = await this.verifyTokenAndGetUserId(token!);
-    await this.friendService.markMessagesAsRead(userId, friendId);
-    return { ok: true };
   }
 
   /**

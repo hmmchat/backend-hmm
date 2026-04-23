@@ -406,9 +406,8 @@ export class SquadService {
     const resolvedInviteeId = invitation.inviteeId || inviteeId;
     let supersededInvites: Array<{ id: string; inviterId: string; inviteeId: string | null }> = [];
 
-    // Use transaction for atomicity
+    // DB-only transaction — never call user-service/friend HTTP inside $transaction (timeouts → 500).
     await (this.prisma as any).$transaction(async (tx: any) => {
-      // Update invitation status
       await tx.squadInvitation.update({
         where: { id: inviteId },
         data: {
@@ -419,29 +418,8 @@ export class SquadService {
         }
       });
 
-      // Add to squad lobby
-      await this.addToSquadLobby(invitation.inviterId, inviteeId);
+      await this.appendMemberToSquadLobbyDb(tx, invitation.inviterId, inviteeId);
 
-      // Update invitee status to MATCHED
-      await this.matchingService.updateUserStatus(inviteeId, "MATCHED");
-
-      // If external user, auto-create friendship with inviter
-      if (!invitation.inviteeId) {
-        try {
-          await this.friendClient.autoCreateFriendship(invitation.inviterId, inviteeId);
-          this.logger.log(
-            `Auto-created friendship between ${invitation.inviterId} and ${inviteeId}`
-          );
-        } catch (error) {
-          this.logger.warn(
-            `Failed to auto-create friendship between ${invitation.inviterId} and ${inviteeId}:`,
-            error
-          );
-          // Continue even if friendship creation fails
-        }
-      }
-
-      // One squad at a time for invitee: expire other pending invites addressed to them
       supersededInvites = await tx.squadInvitation.findMany({
         where: {
           inviteeId: resolvedInviteeId,
@@ -468,6 +446,22 @@ export class SquadService {
         );
       }
     });
+
+    await this.matchingService.updateUserStatus(inviteeId, "MATCHED");
+
+    if (!invitation.inviteeId) {
+      try {
+        await this.friendClient.autoCreateFriendship(invitation.inviterId, inviteeId);
+        this.logger.log(
+          `Auto-created friendship between ${invitation.inviterId} and ${inviteeId}`
+        );
+      } catch (error) {
+        this.logger.warn(
+          `Failed to auto-create friendship between ${invitation.inviterId} and ${inviteeId}:`,
+          error
+        );
+      }
+    }
 
     for (const row of supersededInvites) {
       if (!row.inviteeId) continue;
@@ -557,22 +551,34 @@ export class SquadService {
   }
 
   /**
-   * Add member to lobby
+   * Add member to lobby (uses default Prisma client).
    */
   async addToSquadLobby(inviterId: string, memberId: string): Promise<void> {
-    const lobby = await this.getSquadLobby(inviterId);
+    await this.appendMemberToSquadLobbyDb(this.prisma as any, inviterId, memberId);
+  }
+
+  /**
+   * Append a member to the inviter's squad lobby row using the given Prisma client
+   * (root client or interactive transaction client).
+   */
+  private async appendMemberToSquadLobbyDb(
+    db: any,
+    inviterId: string,
+    memberId: string
+  ): Promise<void> {
+    const lobby = await db.squadLobby.findUnique({
+      where: { inviterId }
+    });
     if (!lobby) {
       throw new HttpException("Squad lobby not found", HttpStatus.NOT_FOUND);
     }
 
-    const memberIds = lobby.memberIds as string[];
-    
-    // Check if already in lobby
+    const memberIds = [...(lobby.memberIds as string[])];
+
     if (memberIds.includes(memberId)) {
-      return; // Already in lobby, no-op
+      return;
     }
 
-    // Check if squad is full
     if (memberIds.length >= this.MAX_SQUAD_SIZE) {
       throw new HttpException(
         `Squad is full. Maximum ${this.MAX_SQUAD_SIZE} members allowed.`,
@@ -580,10 +586,8 @@ export class SquadService {
       );
     }
 
-    // Add member
     memberIds.push(memberId);
 
-    // If the squad is already in a live call, keep IN_CALL (do not downgrade to READY).
     const currentLobbyStatus = lobby.status as string;
     const newStatus =
       currentLobbyStatus === "IN_CALL"
@@ -592,7 +596,7 @@ export class SquadService {
           ? "READY"
           : "WAITING";
 
-    await (this.prisma as any).squadLobby.update({
+    await db.squadLobby.update({
       where: { inviterId },
       data: {
         memberIds,
@@ -602,6 +606,17 @@ export class SquadService {
     });
 
     this.logger.log(`Member ${memberId} added to squad lobby for inviter ${inviterId}`);
+  }
+
+  /**
+   * Streaming room creation requires every participant in MATCHED; squad hosts may be ONLINE
+   * while browsing the app, so sync before enter-call.
+   */
+  async ensureSquadLobbyMembersMatchedForStreaming(memberIds: string[]): Promise<void> {
+    const unique = [...new Set(memberIds.filter(Boolean))];
+    for (const id of unique) {
+      await this.matchingService.updateUserStatus(id, "MATCHED");
+    }
   }
 
   /**

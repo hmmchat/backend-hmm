@@ -367,6 +367,8 @@ export class SquadController {
       );
     }
 
+    await this.squadService.ensureSquadLobbyMembersMatchedForStreaming(memberIds);
+
     // Create room via streaming service
     const roomResult = await this.streamingClientService.createSquadRoom(memberIds);
 
@@ -734,6 +736,8 @@ export class SquadController {
         HttpStatus.BAD_REQUEST
       );
     }
+
+    await this.squadService.ensureSquadLobbyMembersMatchedForStreaming(memberIds);
 
     // Create room first, then mark lobby as IN_CALL
     // This way if room creation fails, lobby status remains READY

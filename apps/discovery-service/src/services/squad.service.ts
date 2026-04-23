@@ -447,7 +447,40 @@ export class SquadService {
       }
     });
 
-    await this.matchingService.updateUserStatus(inviteeId, "MATCHED");
+    try {
+      await this.matchingService.updateUserStatus(inviteeId, "MATCHED");
+    } catch (statusErr: any) {
+      this.logger.error(
+        `Squad accept: user-service MATCHED failed after DB commit (inviteId=${inviteId}): ${statusErr?.message || statusErr}. Compensating.`
+      );
+      try {
+        await (this.prisma as any).$transaction(async (tx: any) => {
+          await tx.squadInvitation.update({
+            where: { id: inviteId },
+            data: {
+              status: "PENDING",
+              acceptedAt: null,
+              updatedAt: new Date()
+            }
+          });
+          await this.removeMemberFromSquadLobbyDb(tx, invitation.inviterId, inviteeId);
+          for (const row of supersededInvites) {
+            await tx.squadInvitation.update({
+              where: { id: row.id },
+              data: { status: "PENDING", updatedAt: new Date() }
+            });
+          }
+        });
+      } catch (compErr: any) {
+        this.logger.error(
+          `Squad accept compensation failed (inviteId=${inviteId}): ${compErr?.message || compErr}`
+        );
+      }
+      throw new HttpException(
+        "Could not finish joining the squad. Please try accepting again.",
+        HttpStatus.BAD_GATEWAY
+      );
+    }
 
     if (!invitation.inviteeId) {
       try {
@@ -623,26 +656,36 @@ export class SquadService {
    * Remove member from lobby
    */
   async removeFromSquadLobby(inviterId: string, memberId: string): Promise<void> {
-    const lobby = await this.getSquadLobby(inviterId);
+    await this.removeMemberFromSquadLobbyDb(this.prisma as any, inviterId, memberId);
+  }
+
+  private async removeMemberFromSquadLobbyDb(db: any, inviterId: string, memberId: string): Promise<void> {
+    const lobby = await db.squadLobby.findUnique({
+      where: { inviterId }
+    });
     if (!lobby) {
-      return; // Lobby doesn't exist, no-op
+      return;
     }
 
     const memberIds = (lobby.memberIds as string[]).filter((id) => id !== memberId);
 
-    // If no members left, delete lobby
     if (memberIds.length === 0) {
-      await (this.prisma as any).squadLobby.delete({
+      await db.squadLobby.delete({
         where: { inviterId }
       });
       this.logger.log(`Squad lobby deleted for inviter ${inviterId} (no members left)`);
       return;
     }
 
-    // Update lobby
-    const newStatus = memberIds.length >= 2 ? "READY" : "WAITING";
+    const currentLobbyStatus = lobby.status as string;
+    const newStatus =
+      currentLobbyStatus === "IN_CALL"
+        ? "IN_CALL"
+        : memberIds.length >= 2
+          ? "READY"
+          : "WAITING";
 
-    await (this.prisma as any).squadLobby.update({
+    await db.squadLobby.update({
       where: { inviterId },
       data: {
         memberIds,

@@ -274,7 +274,15 @@ export class SquadController {
 
     const userId = await this.verifyTokenAndGetUserId(token);
 
-    const lobby = await this.squadService.getSquadLobby(userId);
+    let lobby = await this.squadService.getSquadLobby(userId);
+    if (lobby) {
+      await this.squadService.reconcileGhostInCallSquadLobby(
+        lobby.inviterId,
+        lobby.memberIds as string[],
+        lobby.status as string
+      );
+      lobby = await this.squadService.getSquadLobby(userId);
+    }
     if (!lobby) {
       return {
         lobby: null
@@ -306,7 +314,15 @@ export class SquadController {
 
     const userId = await this.verifyTokenAndGetUserId(token);
 
-    const asHost = await this.squadService.getSquadLobby(userId);
+    let asHost = await this.squadService.getSquadLobby(userId);
+    if (asHost) {
+      await this.squadService.reconcileGhostInCallSquadLobby(
+        asHost.inviterId,
+        asHost.memberIds as string[],
+        asHost.status as string
+      );
+      asHost = await this.squadService.getSquadLobby(userId);
+    }
     if (asHost) {
       return {
         role: "host" as const,
@@ -321,7 +337,16 @@ export class SquadController {
       };
     }
 
-    const membership = await this.squadService.getLobbyMembershipForUser(userId);
+    let membership = await this.squadService.getLobbyMembershipForUser(userId);
+    if (!membership) {
+      return { role: "none" as const, lobby: null };
+    }
+    await this.squadService.reconcileGhostInCallSquadLobby(
+      membership.inviterId,
+      membership.memberIds,
+      membership.status
+    );
+    membership = await this.squadService.getLobbyMembershipForUser(userId);
     if (!membership) {
       return { role: "none" as const, lobby: null };
     }
@@ -395,6 +420,14 @@ export class SquadController {
         }
       }
       if (!roomId || !sessionId) {
+        const cleared = await this.squadService.reconcileGhostInCallSquadLobby(
+          inviterForLobby,
+          memberIds,
+          lobby.status as string
+        );
+        if (cleared) {
+          throw new HttpException("This squad call has already ended.", HttpStatus.GONE);
+        }
         throw new HttpException(
           "Squad call is active but room details could not be loaded",
           HttpStatus.BAD_GATEWAY
@@ -802,6 +835,14 @@ export class SquadController {
         }
       }
       if (!roomId || !sessionId) {
+        const cleared = await this.squadService.reconcileGhostInCallSquadLobby(
+          inviterForLobby,
+          memberIds,
+          lobby.status as string
+        );
+        if (cleared) {
+          throw new HttpException("This squad call has already ended.", HttpStatus.GONE);
+        }
         throw new HttpException(
           "Squad call is active but room details could not be loaded",
           HttpStatus.BAD_GATEWAY

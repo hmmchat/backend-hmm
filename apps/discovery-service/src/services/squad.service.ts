@@ -3,6 +3,7 @@ import { PrismaService } from "../prisma/prisma.service.js";
 import { UserClientService } from "./user-client.service.js";
 import { FriendClientService } from "./friend-client.service.js";
 import { MatchingService } from "./matching.service.js";
+import { StreamingClientService } from "./streaming-client.service.js";
 import { randomBytes } from "crypto";
 
 @Injectable()
@@ -15,7 +16,8 @@ export class SquadService {
     private readonly prisma: PrismaService,
     private readonly userClient: UserClientService,
     private readonly friendClient: FriendClientService,
-    private readonly matchingService: MatchingService
+    private readonly matchingService: MatchingService,
+    private readonly streamingClient: StreamingClientService
   ) {
     this.INVITATION_TIMEOUT_MS = parseInt(process.env.SQUAD_INVITATION_TIMEOUT_MS || "600000", 10); // 10 min default
     // Total lobby members including inviter (default 4 = host + 3 invitees)
@@ -875,13 +877,48 @@ export class SquadService {
   }
 
   /**
+   * If discovery still has status IN_CALL but no squad member has an active streaming room,
+   * the call-ended hook likely missed or failed — clear the lobby so clients stop polling a ghost call.
+   * Returns true if the lobby row was deleted.
+   */
+  async reconcileGhostInCallSquadLobby(
+    inviterId: string,
+    memberIds: string[],
+    status: string
+  ): Promise<boolean> {
+    if (status !== "IN_CALL" || !inviterId) {
+      return false;
+    }
+    const ids = [...new Set((memberIds || []).filter(Boolean))];
+    if (ids.length < 2) {
+      return false;
+    }
+    for (const uid of ids) {
+      const room = await this.streamingClient.getUserActiveRoom(uid);
+      if (room?.exists) {
+        return false;
+      }
+    }
+    try {
+      await this.expireInvitations(inviterId, "Squad call ended");
+    } catch (e: any) {
+      this.logger.warn(`reconcileGhostInCallSquadLobby expireInvitations: ${e?.message || e}`);
+    }
+    await this.deleteSquadLobby(inviterId);
+    this.logger.log(
+      `Disbanded ghost IN_CALL squad lobby inviter=${inviterId} (no active streaming room for any member)`
+    );
+    return true;
+  }
+
+  /**
    * When streaming notifies that a call ended, tear down squad lobbies still marked IN_CALL
    * if every lobby member appears in the ended participant/viewer id list.
    * Otherwise the home "squad" UI keeps showing stale avatars after the video room ends.
    */
   async disbandInCallLobbyIfMembersEndedCall(endedUserIds: string[]): Promise<void> {
     const ended = new Set(endedUserIds.filter(Boolean));
-    if (ended.size < 2) return;
+    if (ended.size < 1) return;
 
     let rows: any[];
     try {

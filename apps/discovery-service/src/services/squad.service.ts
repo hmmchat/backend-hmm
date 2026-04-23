@@ -293,6 +293,18 @@ export class SquadService {
           updatedAt: new Date()
         }
       });
+      try {
+        await this.notifyInviteeSquadInviteExpired(
+          {
+            id: invitationData.id as string,
+            inviterId: invitationData.inviterId as string,
+            inviteeId: (invitation as any).inviteeId ?? null
+          },
+          "timeout"
+        );
+      } catch (e: any) {
+        this.logger.warn(`Squad expiry friend notice (timeout) failed:`, e?.message || e);
+      }
       throw new HttpException("Invitation has expired", HttpStatus.BAD_REQUEST);
     }
 
@@ -309,6 +321,18 @@ export class SquadService {
             updatedAt: new Date()
           }
         });
+        try {
+          await this.notifyInviteeSquadInviteExpired(
+            {
+              id: invitationData.id as string,
+              inviterId: invitationData.inviterId as string,
+              inviteeId: (invitation as any).inviteeId ?? null
+            },
+            "inviter_unavailable"
+          );
+        } catch (e: any) {
+          this.logger.warn(`Squad expiry friend notice (inviter unavailable) failed:`, e?.message || e);
+        }
         throw new HttpException(
           "Invitation expired: inviter is no longer in squad mode",
           HttpStatus.BAD_REQUEST
@@ -379,6 +403,9 @@ export class SquadService {
       );
     }
 
+    const resolvedInviteeId = invitation.inviteeId || inviteeId;
+    let supersededInvites: Array<{ id: string; inviterId: string; inviteeId: string | null }> = [];
+
     // Use transaction for atomicity
     await (this.prisma as any).$transaction(async (tx: any) => {
       // Update invitation status
@@ -415,8 +442,16 @@ export class SquadService {
       }
 
       // One squad at a time for invitee: expire other pending invites addressed to them
-      const resolvedInviteeId = invitation.inviteeId || inviteeId;
-      const expiredOthers = await tx.squadInvitation.updateMany({
+      supersededInvites = await tx.squadInvitation.findMany({
+        where: {
+          inviteeId: resolvedInviteeId,
+          status: "PENDING",
+          id: { not: inviteId }
+        },
+        select: { id: true, inviterId: true, inviteeId: true }
+      });
+
+      await tx.squadInvitation.updateMany({
         where: {
           inviteeId: resolvedInviteeId,
           status: "PENDING",
@@ -427,12 +462,21 @@ export class SquadService {
           updatedAt: new Date()
         }
       });
-      if (expiredOthers.count > 0) {
+      if (supersededInvites.length > 0) {
         this.logger.log(
-          `Expired ${expiredOthers.count} other pending squad invites for invitee ${resolvedInviteeId}`
+          `Expired ${supersededInvites.length} other pending squad invites for invitee ${resolvedInviteeId}`
         );
       }
     });
+
+    for (const row of supersededInvites) {
+      if (!row.inviteeId) continue;
+      try {
+        await this.notifyInviterSupersededByInvitee(row.inviteeId, row.inviterId, row.id);
+      } catch (e: any) {
+        this.logger.warn(`Failed superseded squad friend notice for ${row.id}:`, e?.message || e);
+      }
+    }
 
     this.logger.log(
       `Squad invitation ${inviteId} accepted by ${inviteeId}`
@@ -593,19 +637,34 @@ export class SquadService {
    * Expire all pending invitations for inviter
    */
   async expireInvitations(inviterId: string, reason: string): Promise<void> {
-    const result = await (this.prisma as any).squadInvitation.updateMany({
-      where: {
-        inviterId,
-        status: "PENDING"
-      },
-      data: {
-        status: "EXPIRED",
-        updatedAt: new Date()
-      }
+    const pending = await (this.prisma as any).squadInvitation.findMany({
+      where: { inviterId, status: "PENDING" },
+      select: { id: true, inviteeId: true }
+    });
+    if (pending.length === 0) {
+      return;
+    }
+
+    await (this.prisma as any).squadInvitation.updateMany({
+      where: { inviterId, status: "PENDING" },
+      data: { status: "EXPIRED", updatedAt: new Date() }
     });
 
+    let variant: "host_solo" | "host_call" = "host_call";
+    if (reason.includes("solo") || reason.includes("Solo")) {
+      variant = "host_solo";
+    }
+
+    for (const row of pending) {
+      try {
+        await this.notifyInviteeSquadInviteExpired(row, variant);
+      } catch (e: any) {
+        this.logger.warn(`Failed squad expiry friend notice for ${row.id}:`, e?.message || e);
+      }
+    }
+
     this.logger.log(
-      `Expired ${result.count} invitations for inviter ${inviterId}. Reason: ${reason}`
+      `Expired ${pending.length} invitations for inviter ${inviterId}. Reason: ${reason}`
     );
   }
 
@@ -614,29 +673,31 @@ export class SquadService {
    */
   async cleanupExpiredInvitations(): Promise<void> {
     try {
-      // Expire invitations past timeout
-      const timeoutResult = await (this.prisma as any).squadInvitation.updateMany({
+      const now = new Date();
+
+      const timedOut = await (this.prisma as any).squadInvitation.findMany({
         where: {
           status: "PENDING",
-          expiresAt: {
-            lt: new Date()
-          }
+          expiresAt: { lt: now }
         },
-        data: {
-          status: "EXPIRED",
-          updatedAt: new Date()
-        }
+        select: { id: true, inviterId: true, inviteeId: true }
       });
 
-      // Check for invitations where inviter status changed
-      const pendingInvitations = await (this.prisma as any).squadInvitation.findMany({
-        where: {
-          status: "PENDING"
-        },
-        select: {
-          id: true,
-          inviterId: true
+      for (const row of timedOut) {
+        try {
+          await (this.prisma as any).squadInvitation.update({
+            where: { id: row.id },
+            data: { status: "EXPIRED", updatedAt: new Date() }
+          });
+          await this.notifyInviteeSquadInviteExpired(row, "timeout");
+        } catch (error) {
+          this.logger.warn(`Failed timeout-expire for invitation ${row.id}:`, error);
         }
+      }
+
+      const pendingInvitations = await (this.prisma as any).squadInvitation.findMany({
+        where: { status: "PENDING" },
+        select: { id: true, inviterId: true, inviteeId: true }
       });
 
       let statusChangedCount = 0;
@@ -651,10 +712,10 @@ export class SquadService {
                 updatedAt: new Date()
               }
             });
+            await this.notifyInviteeSquadInviteExpired(invitation, "inviter_unavailable");
             statusChangedCount++;
           }
         } catch (error) {
-          // Skip if can't verify status
           this.logger.warn(
             `Failed to verify inviter status for invitation ${invitation.id}:`,
             error
@@ -662,9 +723,9 @@ export class SquadService {
         }
       }
 
-      if (timeoutResult.count > 0 || statusChangedCount > 0) {
+      if (timedOut.length > 0 || statusChangedCount > 0) {
         this.logger.log(
-          `Cleaned up expired invitations: ${timeoutResult.count} by timeout, ${statusChangedCount} by status change`
+          `Cleaned up expired invitations: ${timedOut.length} by timeout, ${statusChangedCount} by status change`
         );
       }
     } catch (error) {
@@ -728,6 +789,68 @@ export class SquadService {
       where: { inviterId }
     });
     this.logger.log(`Squad lobby deleted for inviter ${inviterId}`);
+  }
+
+  private noticeBodyForInviteeExpiry(
+    variant: "timeout" | "inviter_unavailable" | "host_call" | "host_solo"
+  ): string {
+    switch (variant) {
+      case "timeout":
+        return "This squad invite has expired (timed out).";
+      case "inviter_unavailable":
+        return "This squad invite is no longer available — the host isn’t in squad mode anymore.";
+      case "host_call":
+        return "This squad invite expired — the squad already started without you.";
+      case "host_solo":
+        return "This squad invite ended — the host left squad mode.";
+      default:
+        return "This squad invite is no longer active.";
+    }
+  }
+
+  private async postSquadFriendThreadNotice(params: {
+    fromUserId: string;
+    toUserId: string;
+    invitationId: string;
+    noticeType: string;
+    body: string;
+  }): Promise<void> {
+    await this.friendClient.postSquadInboxMessage({
+      kind: "notice",
+      fromUserId: params.fromUserId,
+      toUserId: params.toUserId,
+      invitationId: params.invitationId,
+      noticeType: params.noticeType,
+      body: params.body
+    });
+  }
+
+  private async notifyInviteeSquadInviteExpired(
+    row: { id: string; inviterId: string; inviteeId: string | null },
+    variant: "timeout" | "inviter_unavailable" | "host_call" | "host_solo"
+  ): Promise<void> {
+    if (!row.inviteeId) return;
+    await this.postSquadFriendThreadNotice({
+      fromUserId: row.inviterId,
+      toUserId: row.inviteeId,
+      invitationId: row.id,
+      noticeType: `expired_${variant}`,
+      body: this.noticeBodyForInviteeExpiry(variant)
+    });
+  }
+
+  private async notifyInviterSupersededByInvitee(
+    inviteeId: string,
+    inviterId: string,
+    invitationId: string
+  ): Promise<void> {
+    await this.postSquadFriendThreadNotice({
+      fromUserId: inviteeId,
+      toUserId: inviterId,
+      invitationId,
+      noticeType: "superseded_joined_other_squad",
+      body: "They joined another squad — this invite is no longer active."
+    });
   }
 
   /**

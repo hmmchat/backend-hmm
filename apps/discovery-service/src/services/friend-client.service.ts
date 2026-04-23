@@ -185,6 +185,15 @@ export class FriendClientService {
           inviteeId: string;
           invitationId: string;
           outcome: "accepted" | "rejected";
+          message?: string;
+        }
+      | {
+          kind: "notice";
+          fromUserId: string;
+          toUserId: string;
+          invitationId: string;
+          noticeType: string;
+          body: string;
         }
   ): Promise<void> {
     try {

@@ -1086,8 +1086,10 @@ export class FriendService {
     inviteeId: string;
     invitationId: string;
     outcome: "accepted" | "rejected";
+    /** Optional override for the visible message body (e.g. include invitee name on accept). */
+    messageOverride?: string | null;
   }): Promise<{ messageId: string }> {
-    const { inviterId, inviteeId, invitationId, outcome } = params;
+    const { inviterId, inviteeId, invitationId, outcome, messageOverride } = params;
     if (inviterId === inviteeId) {
       throw new BadRequestException("Invalid squad outcome");
     }
@@ -1097,8 +1099,15 @@ export class FriendService {
     }
 
     const squadMeta = JSON.stringify({ invitationId, kind: "outcome", outcome });
+    const trimmedOverride =
+      typeof messageOverride === "string" && messageOverride.trim().length > 0
+        ? messageOverride.trim().slice(0, 500)
+        : null;
     const bodyText =
-      outcome === "accepted" ? "Joined your squad call." : "Call rejected";
+      trimmedOverride ||
+      (outcome === "accepted"
+        ? "Joined your squad call."
+        : "Your friend declined your squad invite.");
 
     const result = await this.prisma.$transaction(async (tx) => {
       const friendMessage = await tx.friendMessage.create({
@@ -1137,7 +1146,76 @@ export class FriendService {
     });
 
     await this.invalidateNotificationCache(inviterId);
+    await this.invalidateNotificationCache(inviteeId);
     this.emitRealtimeMessageUpdate(inviteeId, inviterId, result.messageId).catch(() => undefined);
+    return result;
+  }
+
+  /**
+   * Internal: squad system line in a friend thread (expiry, superseded invite, etc.).
+   * Uses SQUAD_INVITE_OUTCOME + squadMeta.kind === "notice" so clients can disable invite actions.
+   */
+  async internalSendSquadThreadNotice(params: {
+    fromUserId: string;
+    toUserId: string;
+    invitationId: string;
+    bodyText: string;
+    noticeType: string;
+  }): Promise<{ messageId: string }> {
+    const { fromUserId, toUserId, invitationId, bodyText, noticeType } = params;
+    if (fromUserId === toUserId) {
+      throw new BadRequestException("Invalid squad notice");
+    }
+    const areFriends = await this.areFriends(fromUserId, toUserId);
+    if (!areFriends) {
+      throw new BadRequestException("Users are not friends");
+    }
+
+    const squadMeta = JSON.stringify({
+      invitationId,
+      kind: "notice",
+      noticeType
+    });
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const friendMessage = await tx.friendMessage.create({
+        data: {
+          fromUserId,
+          toUserId,
+          message: bodyText.slice(0, 500),
+          messageType: "SQUAD_INVITE_OUTCOME" as MessageType,
+          squadMeta
+        } as any
+      });
+
+      const [convId1, convId2] = [fromUserId, toUserId].sort();
+      await tx.conversation.upsert({
+        where: {
+          userId1_userId2: {
+            userId1: convId1,
+            userId2: convId2
+          }
+        },
+        create: {
+          userId1: convId1,
+          userId2: convId2,
+          section: ConversationSection.INBOX,
+          lastMessageId: friendMessage.id,
+          lastMessageAt: new Date()
+        },
+        update: {
+          section: ConversationSection.INBOX,
+          lastMessageId: friendMessage.id,
+          lastMessageAt: new Date()
+        }
+      });
+
+      return { messageId: friendMessage.id };
+    });
+
+    await this.invalidateNotificationCache(toUserId);
+    await this.invalidateNotificationCache(fromUserId);
+    this.emitRealtimeMessageUpdate(fromUserId, toUserId, result.messageId).catch(() => undefined);
     return result;
   }
 

@@ -1115,7 +1115,16 @@ export class FriendController {
         inviterId: z.string(),
         inviteeId: z.string(),
         invitationId: z.string(),
-        outcome: z.enum(["accepted", "rejected"])
+        outcome: z.enum(["accepted", "rejected"]),
+        message: z.string().min(1).max(500).optional()
+      }),
+      z.object({
+        kind: z.literal("notice"),
+        fromUserId: z.string(),
+        toUserId: z.string(),
+        invitationId: z.string(),
+        noticeType: z.string().min(1).max(120),
+        body: z.string().min(1).max(500)
       })
     ]);
 
@@ -1130,11 +1139,23 @@ export class FriendController {
       return { ok: true, messageId: r.messageId };
     }
 
+    if (parsed.kind === "notice") {
+      const r = await this.friendService.internalSendSquadThreadNotice({
+        fromUserId: parsed.fromUserId,
+        toUserId: parsed.toUserId,
+        invitationId: parsed.invitationId,
+        bodyText: parsed.body,
+        noticeType: parsed.noticeType
+      });
+      return { ok: true, messageId: r.messageId };
+    }
+
     const r = await this.friendService.internalSendSquadOutcome({
       inviterId: parsed.inviterId,
       inviteeId: parsed.inviteeId,
       invitationId: parsed.invitationId,
-      outcome: parsed.outcome
+      outcome: parsed.outcome,
+      messageOverride: parsed.message ?? null
     });
     return { ok: true, messageId: r.messageId };
   }

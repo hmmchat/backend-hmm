@@ -159,12 +159,24 @@ export class SquadController {
     // Notify inviter
     await this.notificationService.notifyInvitationAccepted(invitation.inviterId, userId);
 
+    let acceptInboxMessage: string | undefined;
+    try {
+      const profile = await this.userClientService.getUserFullProfileById(userId);
+      const uname = profile?.username?.trim();
+      if (uname) {
+        acceptInboxMessage = `${uname} joined your squad call.`;
+      }
+    } catch {
+      // best-effort; fall back to default copy in friend-service
+    }
+
     await this.friendClientService.postSquadInboxMessage({
       kind: "outcome",
       inviterId: invitation.inviterId,
       inviteeId: userId,
       invitationId: inviteId,
-      outcome: "accepted"
+      outcome: "accepted",
+      ...(acceptInboxMessage ? { message: acceptInboxMessage } : {})
     });
 
     // Notify all lobby members

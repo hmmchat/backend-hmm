@@ -354,12 +354,29 @@ export class SquadController {
 
     const userId = await this.verifyTokenAndGetUserId(token);
 
-    const lobby = await this.squadService.getSquadLobby(userId);
+    let lobby = await this.squadService.getSquadLobby(userId);
+    let inviterForLobby = userId;
+
     if (!lobby) {
-      throw new HttpException("No squad lobby found", HttpStatus.NOT_FOUND);
+      const membership = await this.squadService.getLobbyMembershipForUser(userId);
+      if (!membership) {
+        throw new HttpException("No squad lobby found", HttpStatus.NOT_FOUND);
+      }
+      inviterForLobby = membership.inviterId;
+      lobby = {
+        id: membership.id,
+        inviterId: membership.inviterId,
+        memberIds: membership.memberIds,
+        status: membership.status,
+        createdAt: null,
+        updatedAt: null
+      };
     }
 
     const memberIds = lobby.memberIds as string[];
+    if (!memberIds.includes(userId)) {
+      throw new HttpException("You are not a member of this squad lobby", HttpStatus.FORBIDDEN);
+    }
     if (memberIds.length < 2) {
       throw new HttpException(
         "At least 2 members required to enter call",
@@ -367,15 +384,36 @@ export class SquadController {
       );
     }
 
+    if (lobby.status === "IN_CALL") {
+      const room = await this.streamingClientService.getUserActiveRoom(inviterForLobby);
+      let roomId = room.roomId;
+      let sessionId = room.sessionId;
+      if ((!roomId || !sessionId) && roomId) {
+        const details = await this.streamingClientService.getRoomById(roomId);
+        if (details?.exists && details.id) {
+          sessionId = details.id;
+        }
+      }
+      if (!roomId || !sessionId) {
+        throw new HttpException(
+          "Squad call is active but room details could not be loaded",
+          HttpStatus.BAD_GATEWAY
+        );
+      }
+      return {
+        success: true,
+        roomId,
+        sessionId,
+        memberIds,
+        roomType: "squad"
+      };
+    }
+
     await this.squadService.ensureSquadLobbyMembersMatchedForStreaming(memberIds);
 
-    // Create room via streaming service
     const roomResult = await this.streamingClientService.createSquadRoom(memberIds);
 
-    // Mark lobby as IN_CALL
-    await this.squadService.markLobbyInCall(userId);
-
-    // Pending friend invites stay valid until timeout or host toggles solo; late acceptors join via accept handler.
+    await this.squadService.markLobbyInCall(inviterForLobby);
 
     return {
       success: true,
@@ -724,12 +762,28 @@ export class SquadController {
       throw new HttpException("userId is required", HttpStatus.BAD_REQUEST);
     }
 
-    const lobby = await this.squadService.getSquadLobby(userId);
+    let lobby = await this.squadService.getSquadLobby(userId);
+    let inviterForLobby = userId;
     if (!lobby) {
-      throw new HttpException("No squad lobby found", HttpStatus.NOT_FOUND);
+      const membership = await this.squadService.getLobbyMembershipForUser(userId);
+      if (!membership) {
+        throw new HttpException("No squad lobby found", HttpStatus.NOT_FOUND);
+      }
+      inviterForLobby = membership.inviterId;
+      lobby = {
+        id: membership.id,
+        inviterId: membership.inviterId,
+        memberIds: membership.memberIds,
+        status: membership.status,
+        createdAt: null,
+        updatedAt: null
+      };
     }
 
     const memberIds = lobby.memberIds as string[];
+    if (!memberIds.includes(userId)) {
+      throw new HttpException("You are not a member of this squad lobby", HttpStatus.FORBIDDEN);
+    }
     if (memberIds.length < 2) {
       throw new HttpException(
         "At least 2 members required to enter call",
@@ -737,23 +791,44 @@ export class SquadController {
       );
     }
 
+    if (lobby.status === "IN_CALL") {
+      const room = await this.streamingClientService.getUserActiveRoom(inviterForLobby);
+      let roomId = room.roomId;
+      let sessionId = room.sessionId;
+      if ((!roomId || !sessionId) && roomId) {
+        const details = await this.streamingClientService.getRoomById(roomId);
+        if (details?.exists && details.id) {
+          sessionId = details.id;
+        }
+      }
+      if (!roomId || !sessionId) {
+        throw new HttpException(
+          "Squad call is active but room details could not be loaded",
+          HttpStatus.BAD_GATEWAY
+        );
+      }
+      return {
+        success: true,
+        roomId,
+        sessionId,
+        memberIds,
+        roomType: "squad"
+      };
+    }
+
     await this.squadService.ensureSquadLobbyMembersMatchedForStreaming(memberIds);
 
-    // Create room first, then mark lobby as IN_CALL
-    // This way if room creation fails, lobby status remains READY
     let roomResult;
     try {
       roomResult = await this.streamingClientService.createSquadRoom(memberIds);
     } catch (error: any) {
-      // Log error and rethrow with proper error message
       throw new HttpException(
         `Failed to create squad room: ${error.message}`,
         HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
 
-    // Only mark lobby as IN_CALL after room is successfully created
-    await this.squadService.markLobbyInCall(userId);
+    await this.squadService.markLobbyInCall(inviterForLobby);
 
     return {
       success: true,

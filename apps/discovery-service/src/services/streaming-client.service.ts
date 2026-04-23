@@ -184,6 +184,39 @@ export class StreamingClientService {
   }
 
   /**
+   * GET /streaming/rooms/:roomId — session metadata (used when user-room payload lacks session id).
+   */
+  async getRoomById(roomId: string): Promise<{
+    exists: boolean;
+    id?: string;
+    roomId?: string;
+    participants?: Array<{ userId: string }>;
+  } | null> {
+    try {
+      const response = await fetch(
+        `${this.streamingServiceUrl}/streaming/rooms/${encodeURIComponent(roomId)}`,
+        {
+          method: "GET",
+          headers: { "Content-Type": "application/json" },
+          signal: AbortSignal.timeout(this.requestTimeoutMs)
+        } as any
+      );
+      if (!response.ok) {
+        return null;
+      }
+      return (await response.json()) as {
+        exists: boolean;
+        id?: string;
+        roomId?: string;
+        participants?: Array<{ userId: string }>;
+      };
+    } catch (error: any) {
+      this.logger.warn(`getRoomById failed for ${roomId}: ${error?.message || error}`);
+      return null;
+    }
+  }
+
+  /**
    * Active room for a user (participant or viewer), from streaming-service.
    */
   async getUserActiveRoom(

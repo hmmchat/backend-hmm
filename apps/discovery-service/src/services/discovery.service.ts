@@ -6,6 +6,7 @@ import { LocationService } from "./location.service.js";
 import { MatchingService } from "./matching.service.js";
 import { StreamingClientService } from "./streaming-client.service.js";
 import { CacheService } from "./cache.service.js";
+import { SquadService } from "./squad.service.js";
 import {
   MATCH_SCORE_BRAND,
   MATCH_SCORE_INTEREST_EXACT,
@@ -122,7 +123,8 @@ export class DiscoveryService implements OnModuleInit {
     private readonly locationService: LocationService,
     private readonly matchingService: MatchingService,
     private readonly streamingClient: StreamingClientService,
-    private readonly cache: CacheService
+    private readonly cache: CacheService,
+    private readonly squadService: SquadService
   ) { }
 
   private isKycPriorityEnabled(): boolean {
@@ -2456,6 +2458,8 @@ export class DiscoveryService implements OnModuleInit {
   async handleCallEnded(roomId: string, userIds: string[]): Promise<void> {
     try {
       console.log(`[INFO] Call ended for room ${roomId} with users: ${userIds.join(", ")} - updating to AVAILABLE`);
+
+      await this.squadService.disbandInCallLobbyIfMembersEndedCall(userIds);
 
       // Update all users to AVAILABLE status
       await Promise.all(

@@ -875,6 +875,52 @@ export class SquadService {
   }
 
   /**
+   * When streaming notifies that a call ended, tear down squad lobbies still marked IN_CALL
+   * if every lobby member appears in the ended participant/viewer id list.
+   * Otherwise the home "squad" UI keeps showing stale avatars after the video room ends.
+   */
+  async disbandInCallLobbyIfMembersEndedCall(endedUserIds: string[]): Promise<void> {
+    const ended = new Set(endedUserIds.filter(Boolean));
+    if (ended.size < 2) return;
+
+    let rows: any[];
+    try {
+      rows = await (this.prisma as any).$queryRawUnsafe(
+        `SELECT id, "inviterId", "memberIds", status::text AS status
+         FROM squad_lobbies
+         WHERE status::text = 'IN_CALL'`
+      );
+    } catch (e: any) {
+      this.logger.warn(`disbandInCallLobbyIfMembersEndedCall scan failed: ${e?.message || e}`);
+      return;
+    }
+    if (!Array.isArray(rows) || rows.length === 0) return;
+
+    for (const row of rows) {
+      let mids: string[] = [];
+      try {
+        const raw = row.memberIds;
+        mids = Array.isArray(raw) ? [...raw] : JSON.parse(JSON.stringify(raw));
+      } catch {
+        continue;
+      }
+      const lobbyMembers = new Set(mids.filter(Boolean));
+      if (lobbyMembers.size < 2) continue;
+      if (![...lobbyMembers].every((id) => ended.has(id))) continue;
+
+      try {
+        await this.expireInvitations(row.inviterId as string, "Squad call ended");
+      } catch (e: any) {
+        this.logger.warn(`Squad post-call expireInvitations: ${e?.message || e}`);
+      }
+      await this.deleteSquadLobby(row.inviterId as string);
+      this.logger.log(
+        `Disbanded IN_CALL squad lobby for inviter ${row.inviterId} after call ended`
+      );
+    }
+  }
+
+  /**
    * Mark lobby as IN_CALL when squad enters call
    */
   async markLobbyInCall(inviterId: string): Promise<void> {

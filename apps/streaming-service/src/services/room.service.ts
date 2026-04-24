@@ -802,16 +802,39 @@ export class RoomService {
       previousStatus = "AVAILABLE";
     }
 
-    // Add to database
-    await this.prisma.callParticipant.create({
-      data: {
-        sessionId: session.id,
-        userId,
-        role: "PARTICIPANT",
-        status: "active",
-        previousStatus
+    // Upsert-like behavior for late join retries:
+    // if this user already has a historical (left) participant row for the same session,
+    // reactivate it instead of creating a new row (unique(sessionId,userId)).
+    const existingAnyParticipant = await this.prisma.callParticipant.findUnique({
+      where: {
+        sessionId_userId: {
+          sessionId: session.id,
+          userId
+        }
       }
     });
+
+    if (existingAnyParticipant) {
+      await this.prisma.callParticipant.update({
+        where: { id: existingAnyParticipant.id },
+        data: {
+          role: "PARTICIPANT",
+          status: "active",
+          leftAt: null,
+          previousStatus
+        }
+      });
+    } else {
+      await this.prisma.callParticipant.create({
+        data: {
+          sessionId: session.id,
+          userId,
+          role: "PARTICIPANT",
+          status: "active",
+          previousStatus
+        }
+      });
+    }
 
     await this.prisma.callEvent.create({
       data: {

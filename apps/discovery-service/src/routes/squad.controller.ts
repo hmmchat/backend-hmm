@@ -66,22 +66,38 @@ export class SquadController {
     roomId?: string;
     sessionId?: string;
   }> {
+    const squadSet = new Set((memberIds || []).filter(Boolean));
     const candidates = [...new Set([preferredUserId, ...memberIds].filter(Boolean) as string[])];
+    const roomIds = new Set<string>();
     for (const uid of candidates) {
       const room = await this.streamingClientService.getUserActiveRoom(uid);
-      if (!room?.exists || !room.roomId) continue;
-      let sessionId = room.sessionId;
-      if (!sessionId) {
-        const details = await this.streamingClientService.getRoomById(room.roomId);
-        if (details?.exists && details.id) {
-          sessionId = details.id;
-        }
-      }
-      if (room.roomId && sessionId) {
-        return { roomId: room.roomId, sessionId };
+      if (room?.exists && room.roomId) {
+        roomIds.add(room.roomId);
       }
     }
-    return {};
+    if (!roomIds.size) return {};
+
+    let best: { roomId: string; sessionId?: string; overlap: number; participants: number } | null = null;
+    for (const roomId of roomIds) {
+      const details = await this.streamingClientService.getRoomById(roomId);
+      if (!details?.exists) continue;
+      const participantIds = ((details.participants || []) as Array<{ userId: string }>)
+        .map((p) => p?.userId)
+        .filter(Boolean);
+      const overlap = participantIds.filter((id) => squadSet.has(id)).length;
+      const participants = participantIds.length;
+      const row = { roomId, sessionId: details.id, overlap, participants };
+      if (!best) {
+        best = row;
+        continue;
+      }
+      // Prefer the room with highest squad overlap, then larger participant count.
+      if (row.overlap > best.overlap || (row.overlap === best.overlap && row.participants > best.participants)) {
+        best = row;
+      }
+    }
+    if (!best?.roomId) return {};
+    return { roomId: best.roomId, sessionId: best.sessionId };
   }
 
   private async ensureUserJoinedSquadRoom(
@@ -97,6 +113,9 @@ export class SquadController {
       await this.streamingClientService.addParticipantInternal(roomId, userId);
     } catch (e: any) {
       const msg = String(e?.message || e || "");
+      if (/already (in room|a participant|participant)/i.test(msg)) {
+        return;
+      }
       if (/room is full|maximum|full/i.test(msg)) {
         // Defensive cleanup: if room is full, expire pending invites from current lobby members.
         const unique = [...new Set((memberIds || []).filter(Boolean))];
@@ -493,9 +512,9 @@ export class SquadController {
     }
 
     if (lobby.status === "IN_CALL") {
-      const room = await this.resolveLobbyRoom(memberIds, inviterForLobby);
-      const roomId = room.roomId;
-      const sessionId = room.sessionId;
+      let room = await this.resolveLobbyRoom(memberIds, inviterForLobby);
+      let roomId = room.roomId;
+      let sessionId = room.sessionId;
       if (!roomId || !sessionId) {
         const cleared = await this.squadService.reconcileGhostInCallSquadLobby(
           inviterForLobby,
@@ -513,18 +532,30 @@ export class SquadController {
       try {
         await this.ensureUserJoinedSquadRoom(roomId, userId, memberIds);
       } catch (e: any) {
-        const msg = String(e?.message || e || "");
-        if (/room is full|maximum|full/i.test(msg)) {
+        // Retry once with fresh resolution in case inviter's active room was stale.
+        try {
+          const retry = await this.resolveLobbyRoom(memberIds, userId);
+          if (retry.roomId && retry.sessionId && retry.roomId !== roomId) {
+            await this.ensureUserJoinedSquadRoom(retry.roomId, userId, memberIds);
+            roomId = retry.roomId;
+            sessionId = retry.sessionId;
+          } else {
+            throw e;
+          }
+        } catch {
+          const msg = String(e?.message || e || "");
+          if (/room is full|maximum|full/i.test(msg)) {
+            throw new HttpException(
+              "This squad call is full. Pending invites have been expired.",
+              HttpStatus.CONFLICT
+            );
+          }
+          this.logger.error(`IN_CALL join attach failed for ${userId} in ${roomId}: ${msg}`);
           throw new HttpException(
-            "This squad call is full. Pending invites have been expired.",
-            HttpStatus.CONFLICT
+            "Could not add you to the active squad call. Please try again.",
+            HttpStatus.BAD_GATEWAY
           );
         }
-        this.logger.error(`IN_CALL join attach failed for ${userId} in ${roomId}: ${msg}`);
-        throw new HttpException(
-          "Could not add you to the active squad call. Please try again.",
-          HttpStatus.BAD_GATEWAY
-        );
       }
       return {
         success: true,

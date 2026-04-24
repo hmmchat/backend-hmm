@@ -737,8 +737,9 @@ export class RoomService {
     // Only users with _AVAILABLE statuses (AVAILABLE, IN_SQUAD_AVAILABLE, IN_BROADCAST_AVAILABLE) can become MATCHED
     // Users with IN_SQUAD or IN_BROADCAST cannot join (they're already in a call)
     // In TEST_MODE, skip status validation
-    const isSquadSession = (session as any)?.callType === "squad";
-    const skipStatusValidation = options?.skipStatusValidation === true && isSquadSession;
+    // CallSession has no callType column; scope this bypass strictly to explicit internal
+    // late-join calls (service-token authenticated controller path).
+    const skipStatusValidation = options?.skipStatusValidation === true;
     if (process.env.TEST_MODE !== "true" && !skipStatusValidation) {
       try {
         const userStatus = await this.discoveryClient.getUserStatus(userId);

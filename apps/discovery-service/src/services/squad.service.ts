@@ -355,11 +355,22 @@ export class SquadService {
       throw new HttpException("Invitation has expired", HttpStatus.BAD_REQUEST);
     }
 
-    // Friend squad invites stay valid while the host still has a squad lobby row.
+    // Friend squad invites stay valid while the canonical lobby owner still has a squad lobby row.
+    // Invitations may be sent by non-host squad members, so resolve inviter -> host lobby owner first.
     // User-service status (e.g. ONLINE while browsing Inbox) is not authoritative here.
     try {
+      let effectiveInviterId = invitationData.inviterId as string;
+      try {
+        const inviterMembership = await this.getLobbyMembershipForUser(invitationData.inviterId as string);
+        if (inviterMembership?.inviterId) {
+          effectiveInviterId = inviterMembership.inviterId;
+        }
+      } catch {
+        // best effort; fall back to invitation inviter
+      }
+
       const lobby = await (this.prisma as any).squadLobby.findUnique({
-        where: { inviterId: invitationData.inviterId as string }
+        where: { inviterId: effectiveInviterId }
       });
       if (!lobby) {
         await (this.prisma as any).squadInvitation.update({

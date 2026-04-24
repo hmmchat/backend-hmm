@@ -684,7 +684,11 @@ export class RoomService {
   /**
    * Add a participant to an existing room (3rd or 4th person)
    */
-  async addParticipant(roomId: string, userId: string): Promise<void> {
+  async addParticipant(
+    roomId: string,
+    userId: string,
+    options?: { skipStatusValidation?: boolean }
+  ): Promise<void> {
     // Try to get room from memory, but continue even if not found (will check DB)
     let room: RoomState | null = null;
     try {
@@ -733,7 +737,9 @@ export class RoomService {
     // Only users with _AVAILABLE statuses (AVAILABLE, IN_SQUAD_AVAILABLE, IN_BROADCAST_AVAILABLE) can become MATCHED
     // Users with IN_SQUAD or IN_BROADCAST cannot join (they're already in a call)
     // In TEST_MODE, skip status validation
-    if (process.env.TEST_MODE !== "true") {
+    const isSquadSession = (session as any)?.callType === "squad";
+    const skipStatusValidation = options?.skipStatusValidation === true && isSquadSession;
+    if (process.env.TEST_MODE !== "true" && !skipStatusValidation) {
       try {
         const userStatus = await this.discoveryClient.getUserStatus(userId);
 
@@ -763,7 +769,10 @@ export class RoomService {
         );
       }
     } else {
-      this.logger.log(`[TEST_MODE] Skipping user status validation for adding participant ${userId}`);
+      const reason = skipStatusValidation ? "INTERNAL_LATE_JOIN_SQUAD" : "TEST_MODE";
+      this.logger.log(
+        `[${reason}] Skipping user status validation for adding participant ${userId}`
+      );
     }
 
     // Get user's previous status before joining

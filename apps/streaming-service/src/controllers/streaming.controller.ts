@@ -61,7 +61,9 @@ export class StreamingController {
     if (!userId) {
       throw new BadRequestException("userId is required");
     }
-    await this.roomService.addParticipant(roomId, userId);
+    // Internal squad late-join must bypass discovery MATCHED gate:
+    // existing squad participants are already IN_SQUAD while room is active.
+    await this.roomService.addParticipant(roomId, userId, { skipStatusValidation: true });
     return { success: true, message: `User ${userId} added to room ${roomId}` };
   }
 

@@ -212,11 +212,24 @@ export class SquadController {
 
     const userId = await this.verifyTokenAndGetUserId(token);
 
+    // If sender is a member in another host's lobby, attach external invite to that canonical lobby.
+    let lobbyOwnerId = userId;
+    const membership = await this.squadService.getLobbyMembershipForUser(userId);
+    if (membership?.inviterId) {
+      lobbyOwnerId = membership.inviterId;
+    }
+
     // Create external invitation
-    const result = await this.squadService.createSquadInvitation(userId);
+    const result = await this.squadService.createSquadInvitation(
+      userId,
+      undefined,
+      undefined,
+      userId,
+      lobbyOwnerId
+    );
 
     // Generate deep link
-    const inviteLink = `${process.env.APP_URL || "https://app.hmmchat.live"}/squad/${result.inviteToken}`;
+    const inviteLink = `${process.env.APP_URL || "https://app.hmmchat.live"}/squad?token=${encodeURIComponent(result.inviteToken || "")}`;
 
     return {
       success: true,
@@ -857,7 +870,7 @@ export class SquadController {
 
     const result = await this.squadService.createSquadInvitation(inviterId);
 
-    const inviteLink = `${process.env.APP_URL || "https://app.hmmchat.live"}/squad/${result.inviteToken}`;
+    const inviteLink = `${process.env.APP_URL || "https://app.hmmchat.live"}/squad?token=${encodeURIComponent(result.inviteToken || "")}`;
 
     return {
       success: true,

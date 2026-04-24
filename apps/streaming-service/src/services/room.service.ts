@@ -855,8 +855,6 @@ export class RoomService {
       this.logger.error(`Failed to notify discovery-service: ${err.message}`);
     });
 
-    await this.syncNewRoomParticipantsToInSquad([userId]);
-
     this.logger.log(`Participant ${userId} added to room ${roomId}`);
   }
 

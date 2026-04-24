@@ -171,10 +171,11 @@ export class SquadController {
 
     // Create invitation in resolved lobby, but validate friendship edge using the real actor (userId).
     const result = await this.squadService.createSquadInvitation(
-      lobbyOwnerId,
+      userId,
       inviteeId,
       undefined,
-      userId
+      userId,
+      lobbyOwnerId
     );
 
     // Notify invitee via WebSocket
@@ -257,6 +258,8 @@ export class SquadController {
       hostInviterId = acceptedMembership.inviterId;
     }
 
+    let lateJoinAttach: "not_needed" | "attached" | "no_active_room" | "failed" = "not_needed";
+
     // If the host already started the call, add this user to the active streaming room
     const lobbyAfterAccept = await this.squadService.getSquadLobby(hostInviterId);
     if (lobbyAfterAccept?.status === "IN_CALL") {
@@ -267,12 +270,15 @@ export class SquadController {
         );
         if (room.roomId) {
           await this.streamingClientService.addParticipantInternal(room.roomId, userId);
+          lateJoinAttach = "attached";
         } else {
+          lateJoinAttach = "no_active_room";
           this.logger.warn(
             `Squad lobby IN_CALL but no active room for inviter ${hostInviterId}; invitee ${userId} is in lobby only`
           );
         }
       } catch (e: any) {
+        lateJoinAttach = "failed";
         this.logger.error(
           `Failed to add squad late joiner ${userId} to inviter room: ${e?.message || e}`
         );
@@ -302,20 +308,10 @@ export class SquadController {
       ...(acceptInboxMessage ? { message: acceptInboxMessage } : {})
     });
 
-    // Notify all lobby members
-    const lobby = await this.squadService.getSquadLobby(hostInviterId);
-    if (lobby) {
-      const memberIds = lobby.memberIds as string[];
-      for (const memberId of memberIds) {
-        if (memberId !== userId) {
-          await this.notificationService.notifySquadMemberJoined(memberId, userId);
-        }
-      }
-    }
-
     return {
       success: true,
-      inviterId: hostInviterId
+      inviterId: hostInviterId,
+      lateJoinAttach
     };
   }
 

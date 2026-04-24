@@ -106,21 +106,23 @@ export class SquadService {
     inviterId: string,
     inviteeId?: string,
     inviteToken?: string,
-    actorUserId?: string
+    actorUserId?: string,
+    lobbyOwnerId?: string
   ): Promise<{ invitationId: string; inviteToken?: string }> {
     const friendEdgeUserId = actorUserId || inviterId;
+    const effectiveLobbyOwnerId = lobbyOwnerId || inviterId;
     // Validate inviter has squad lobby or create one
-    let lobby = await this.getSquadLobby(inviterId);
+    let lobby = await this.getSquadLobby(effectiveLobbyOwnerId);
     if (!lobby) {
       // Create lobby for inviter
-      lobby = await this.createSquadLobby(inviterId);
+      lobby = await this.createSquadLobby(effectiveLobbyOwnerId);
     }
 
     if (inviteeId) {
-      await this.reconcileStaleLobbyInvitee(inviterId, inviteeId);
-      lobby = await this.getSquadLobby(inviterId);
+      await this.reconcileStaleLobbyInvitee(effectiveLobbyOwnerId, inviteeId);
+      lobby = await this.getSquadLobby(effectiveLobbyOwnerId);
       if (!lobby) {
-        lobby = await this.createSquadLobby(inviterId);
+        lobby = await this.createSquadLobby(effectiveLobbyOwnerId);
       }
     }
 
@@ -197,7 +199,7 @@ export class SquadService {
       // Check for existing pending invitation
       const existing = await (this.prisma as any).squadInvitation.findFirst({
         where: {
-          inviterId,
+          inviterId: { in: [inviterId, effectiveLobbyOwnerId] },
           inviteeId,
           status: "PENDING"
         }
@@ -229,7 +231,7 @@ export class SquadService {
     });
 
     this.logger.log(
-      `Squad invitation created: ${invitation.id} from ${inviterId} (actor=${friendEdgeUserId}) to ${inviteeId || "external"}`
+      `Squad invitation created: ${invitation.id} from ${inviterId} (actor=${friendEdgeUserId}, lobbyOwner=${effectiveLobbyOwnerId}) to ${inviteeId || "external"}`
     );
 
     return {
@@ -995,7 +997,7 @@ export class SquadService {
     try {
       await this.notifyInviteeSquadInviteExpired(
         { id: existing.id, inviterId: existing.inviterId, inviteeId: existing.inviteeId ?? null },
-        "host_solo"
+        "cancelled"
       );
     } catch (e: any) {
       this.logger.warn(`cancelPendingInvitationInLobby notify failed for ${existing.id}: ${e?.message || e}`);
@@ -1159,7 +1161,7 @@ export class SquadService {
   }
 
   private noticeBodyForInviteeExpiry(
-    variant: "timeout" | "inviter_unavailable" | "host_call" | "host_solo" | "lobby_full"
+    variant: "timeout" | "inviter_unavailable" | "host_call" | "host_solo" | "lobby_full" | "cancelled"
   ): string {
     switch (variant) {
       case "timeout":
@@ -1172,6 +1174,8 @@ export class SquadService {
         return "This squad invite ended — the host left squad mode.";
       case "lobby_full":
         return "This squad invite expired — the squad is full.";
+      case "cancelled":
+        return "This squad invite was cancelled by the sender.";
       default:
         return "This squad invite is no longer active.";
     }
@@ -1196,7 +1200,7 @@ export class SquadService {
 
   private async notifyInviteeSquadInviteExpired(
     row: { id: string; inviterId: string; inviteeId: string | null },
-    variant: "timeout" | "inviter_unavailable" | "host_call" | "host_solo" | "lobby_full"
+    variant: "timeout" | "inviter_unavailable" | "host_call" | "host_solo" | "lobby_full" | "cancelled"
   ): Promise<void> {
     if (!row.inviteeId) return;
     await this.postSquadFriendThreadNotice({

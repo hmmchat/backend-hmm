@@ -821,6 +821,11 @@ export class RoomService {
       }
     });
 
+    // Keep user-service status aligned with the new active participant row.
+    // Without this, GET /streaming/users/:id/room reconcile can immediately remove
+    // the participant when status is still ONLINE/AVAILABLE from home/inbox flows.
+    await this.syncNewRoomParticipantsToInSquad([userId]);
+
     // Notify discovery-service of participant join
     this.discoveryClient.notifyParticipantJoined(roomId, userId).catch((err) => {
       this.logger.error(`Failed to notify discovery-service: ${err.message}`);

@@ -200,22 +200,34 @@ export class SquadController {
       throw new HttpException("Invitation not found", HttpStatus.NOT_FOUND);
     }
 
+    // Resolve canonical host lobby for this invite. Older invites may have been created by a
+    // non-host member; late-join and lobby notifications must target the host lobby.
+    let hostInviterId = invitation.inviterId;
+    let hostLobby = await this.squadService.getSquadLobby(hostInviterId);
+    if (!hostLobby) {
+      const inviterMembership = await this.squadService.getLobbyMembershipForUser(invitation.inviterId);
+      if (inviterMembership?.inviterId) {
+        hostInviterId = inviterMembership.inviterId;
+        hostLobby = await this.squadService.getSquadLobby(hostInviterId);
+      }
+    }
+
     // Accept invitation
     await this.squadService.acceptSquadInvitation(inviteId, userId);
 
     // If the host already started the call, add this user to the active streaming room
-    const lobbyAfterAccept = await this.squadService.getSquadLobby(invitation.inviterId);
+    const lobbyAfterAccept = await this.squadService.getSquadLobby(hostInviterId);
     if (lobbyAfterAccept?.status === "IN_CALL") {
       try {
         const room = await this.resolveLobbyRoom(
           (lobbyAfterAccept.memberIds as string[]) || [],
-          invitation.inviterId
+          hostInviterId
         );
         if (room.roomId) {
           await this.streamingClientService.addParticipantInternal(room.roomId, userId);
         } else {
           this.logger.warn(
-            `Squad lobby IN_CALL but no active room for inviter ${invitation.inviterId}; invitee ${userId} is in lobby only`
+            `Squad lobby IN_CALL but no active room for inviter ${hostInviterId}; invitee ${userId} is in lobby only`
           );
         }
       } catch (e: any) {
@@ -249,7 +261,7 @@ export class SquadController {
     });
 
     // Notify all lobby members
-    const lobby = await this.squadService.getSquadLobby(invitation.inviterId);
+    const lobby = await this.squadService.getSquadLobby(hostInviterId);
     if (lobby) {
       const memberIds = lobby.memberIds as string[];
       for (const memberId of memberIds) {
@@ -261,7 +273,7 @@ export class SquadController {
 
     return {
       success: true,
-      inviterId: invitation.inviterId
+      inviterId: hostInviterId
     };
   }
 
@@ -808,14 +820,24 @@ export class SquadController {
       throw new HttpException("Invitation not found", HttpStatus.NOT_FOUND);
     }
 
+    let hostInviterId = invitation.inviterId;
+    let hostLobby = await this.squadService.getSquadLobby(hostInviterId);
+    if (!hostLobby) {
+      const inviterMembership = await this.squadService.getLobbyMembershipForUser(invitation.inviterId);
+      if (inviterMembership?.inviterId) {
+        hostInviterId = inviterMembership.inviterId;
+        hostLobby = await this.squadService.getSquadLobby(hostInviterId);
+      }
+    }
+
     await this.squadService.acceptSquadInvitation(inviteId, inviteeId);
 
-    const lobbyAfterAccept = await this.squadService.getSquadLobby(invitation.inviterId);
+    const lobbyAfterAccept = await this.squadService.getSquadLobby(hostInviterId);
     if (lobbyAfterAccept?.status === "IN_CALL") {
       try {
         const room = await this.resolveLobbyRoom(
           (lobbyAfterAccept.memberIds as string[]) || [],
-          invitation.inviterId
+          hostInviterId
         );
         if (room.roomId) {
           await this.streamingClientService.addParticipantInternal(room.roomId, inviteeId);
@@ -827,7 +849,7 @@ export class SquadController {
 
     await this.notificationService.notifyInvitationAccepted(invitation.inviterId, inviteeId);
 
-    const lobby = await this.squadService.getSquadLobby(invitation.inviterId);
+    const lobby = await this.squadService.getSquadLobby(hostInviterId);
     if (lobby) {
       const memberIds = lobby.memberIds as string[];
       for (const memberId of memberIds) {

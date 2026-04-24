@@ -448,6 +448,18 @@ export class SquadService {
       );
     }
 
+    // Invitations created from older flows may carry a non-host inviterId.
+    // Resolve the canonical host lobby before mutating lobby membership.
+    let effectiveInviterId = invitation.inviterId as string;
+    try {
+      const inviterMembership = await this.getLobbyMembershipForUser(invitation.inviterId as string);
+      if (inviterMembership?.inviterId) {
+        effectiveInviterId = inviterMembership.inviterId;
+      }
+    } catch {
+      // best effort; fall back to invitation.inviterId
+    }
+
     const resolvedInviteeId = invitation.inviteeId || inviteeId;
     let supersededInvites: Array<{ id: string; inviterId: string; inviteeId: string | null }> = [];
     let lobbyFullExpiredInvites: Array<{ id: string; inviterId: string; inviteeId: string | null }> = [];
@@ -464,10 +476,10 @@ export class SquadService {
         }
       });
 
-      await this.appendMemberToSquadLobbyDb(tx, invitation.inviterId, inviteeId);
+      await this.appendMemberToSquadLobbyDb(tx, effectiveInviterId, inviteeId);
 
       const lobbyAfterAccept = await tx.squadLobby.findUnique({
-        where: { inviterId: invitation.inviterId },
+        where: { inviterId: effectiveInviterId },
         select: { memberIds: true }
       });
       const currentMemberIds = ((lobbyAfterAccept?.memberIds as string[]) || []).filter(Boolean);
@@ -497,7 +509,7 @@ export class SquadService {
 
       // A user can only actively belong to one squad context. If they had their own host lobby,
       // disband it after joining another host's lobby so future membership lookups stay deterministic.
-      if (invitation.inviterId !== inviteeId) {
+      if (effectiveInviterId !== inviteeId) {
         await tx.squadLobby.deleteMany({
           where: { inviterId: inviteeId }
         });
@@ -550,7 +562,7 @@ export class SquadService {
               updatedAt: new Date()
             }
           });
-          await this.removeMemberFromSquadLobbyDb(tx, invitation.inviterId, inviteeId);
+          await this.removeMemberFromSquadLobbyDb(tx, effectiveInviterId, inviteeId);
           for (const row of supersededInvites) {
             await tx.squadInvitation.update({
               where: { id: row.id },

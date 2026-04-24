@@ -200,20 +200,15 @@ export class SquadController {
       throw new HttpException("Invitation not found", HttpStatus.NOT_FOUND);
     }
 
-    // Resolve canonical host lobby for this invite. Older invites may have been created by a
-    // non-host member; late-join and lobby notifications must target the host lobby.
-    let hostInviterId = invitation.inviterId;
-    let hostLobby = await this.squadService.getSquadLobby(hostInviterId);
-    if (!hostLobby) {
-      const inviterMembership = await this.squadService.getLobbyMembershipForUser(invitation.inviterId);
-      if (inviterMembership?.inviterId) {
-        hostInviterId = inviterMembership.inviterId;
-        hostLobby = await this.squadService.getSquadLobby(hostInviterId);
-      }
-    }
-
     // Accept invitation
     await this.squadService.acceptSquadInvitation(inviteId, userId);
+
+    // Resolve canonical lobby from the newly accepted user's live membership.
+    let hostInviterId = invitation.inviterId;
+    const acceptedMembership = await this.squadService.getLobbyMembershipForUser(userId);
+    if (acceptedMembership?.inviterId) {
+      hostInviterId = acceptedMembership.inviterId;
+    }
 
     // If the host already started the call, add this user to the active streaming room
     const lobbyAfterAccept = await this.squadService.getSquadLobby(hostInviterId);
@@ -820,17 +815,13 @@ export class SquadController {
       throw new HttpException("Invitation not found", HttpStatus.NOT_FOUND);
     }
 
-    let hostInviterId = invitation.inviterId;
-    let hostLobby = await this.squadService.getSquadLobby(hostInviterId);
-    if (!hostLobby) {
-      const inviterMembership = await this.squadService.getLobbyMembershipForUser(invitation.inviterId);
-      if (inviterMembership?.inviterId) {
-        hostInviterId = inviterMembership.inviterId;
-        hostLobby = await this.squadService.getSquadLobby(hostInviterId);
-      }
-    }
-
     await this.squadService.acceptSquadInvitation(inviteId, inviteeId);
+
+    let hostInviterId = invitation.inviterId;
+    const acceptedMembership = await this.squadService.getLobbyMembershipForUser(inviteeId);
+    if (acceptedMembership?.inviterId) {
+      hostInviterId = acceptedMembership.inviterId;
+    }
 
     const lobbyAfterAccept = await this.squadService.getSquadLobby(hostInviterId);
     if (lobbyAfterAccept?.status === "IN_CALL") {

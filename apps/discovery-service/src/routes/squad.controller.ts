@@ -84,6 +84,34 @@ export class SquadController {
     return {};
   }
 
+  private async ensureUserJoinedSquadRoom(
+    roomId: string,
+    userId: string,
+    memberIds: string[]
+  ): Promise<void> {
+    const active = await this.streamingClientService.getUserActiveRoom(userId);
+    if (active?.exists && active.roomId === roomId) {
+      return;
+    }
+    try {
+      await this.streamingClientService.addParticipantInternal(roomId, userId);
+    } catch (e: any) {
+      const msg = String(e?.message || e || "");
+      if (/room is full|maximum|full/i.test(msg)) {
+        // Defensive cleanup: if room is full, expire pending invites from current lobby members.
+        const unique = [...new Set((memberIds || []).filter(Boolean))];
+        for (const mid of unique) {
+          try {
+            await this.squadService.expireInvitations(mid, "Squad lobby full");
+          } catch {
+            // best effort
+          }
+        }
+      }
+      throw e;
+    }
+  }
+
   /**
    * Invite friend to squad
    * POST /squad/invite
@@ -479,6 +507,22 @@ export class SquadController {
         }
         throw new HttpException(
           "Squad call is active but room details could not be loaded",
+          HttpStatus.BAD_GATEWAY
+        );
+      }
+      try {
+        await this.ensureUserJoinedSquadRoom(roomId, userId, memberIds);
+      } catch (e: any) {
+        const msg = String(e?.message || e || "");
+        if (/room is full|maximum|full/i.test(msg)) {
+          throw new HttpException(
+            "This squad call is full. Pending invites have been expired.",
+            HttpStatus.CONFLICT
+          );
+        }
+        this.logger.error(`IN_CALL join attach failed for ${userId} in ${roomId}: ${msg}`);
+        throw new HttpException(
+          "Could not add you to the active squad call. Please try again.",
           HttpStatus.BAD_GATEWAY
         );
       }
@@ -970,6 +1014,7 @@ export class SquadController {
           HttpStatus.BAD_GATEWAY
         );
       }
+      await this.ensureUserJoinedSquadRoom(roomId, userId, memberIds);
       return {
         success: true,
         roomId,

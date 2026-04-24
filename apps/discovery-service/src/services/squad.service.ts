@@ -465,6 +465,18 @@ export class SquadService {
 
       await this.appendMemberToSquadLobbyDb(tx, invitation.inviterId, inviteeId);
 
+      // A user can only actively belong to one squad context. If they had their own host lobby,
+      // disband it after joining another host's lobby so future membership lookups stay deterministic.
+      if (invitation.inviterId !== inviteeId) {
+        await tx.squadLobby.deleteMany({
+          where: { inviterId: inviteeId }
+        });
+        await tx.squadInvitation.updateMany({
+          where: { inviterId: inviteeId, status: "PENDING" },
+          data: { status: "EXPIRED", updatedAt: new Date() }
+        });
+      }
+
       supersededInvites = await tx.squadInvitation.findMany({
         where: {
           inviteeId: resolvedInviteeId,
@@ -1058,6 +1070,15 @@ export class SquadService {
       `SELECT id, "inviterId", "memberIds", status::text as status
        FROM squad_lobbies
        WHERE "memberIds"::jsonb @> jsonb_build_array($1::text)
+       ORDER BY
+         CASE WHEN "inviterId" = $1::text THEN 1 ELSE 0 END ASC,
+         CASE status::text
+           WHEN 'IN_CALL' THEN 0
+           WHEN 'READY' THEN 1
+           ELSE 2
+         END ASC,
+         jsonb_array_length("memberIds"::jsonb) DESC,
+         "updatedAt" DESC
        LIMIT 1`,
       userId
     );

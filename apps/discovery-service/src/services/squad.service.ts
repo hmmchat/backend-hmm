@@ -1273,4 +1273,113 @@ export class SquadService {
       status: r.status
     };
   }
+
+  /**
+   * Merge squad video co-participants into MRU list (max 3), friends-only.
+   * Called when a client leaves a squad video (or future: streaming lifecycle hook).
+   */
+  async recordQuickInviteCallPeers(userId: string, peerUserIds: unknown): Promise<void> {
+    if (!Array.isArray(peerUserIds) || peerUserIds.length === 0) return;
+    const normalized = [
+      ...new Set(
+        peerUserIds
+          .map((x) => String(x ?? "").trim())
+          .filter((id) => id.length > 0 && id !== userId)
+      )
+    ].slice(0, 8);
+
+    const friendsOnly: string[] = [];
+    for (const pid of normalized) {
+      try {
+        if (await this.friendClient.areFriends(userId, pid)) {
+          friendsOnly.push(pid);
+        }
+      } catch {
+        // skip on friend-service errors
+      }
+    }
+    if (friendsOnly.length === 0) return;
+
+    const row = await (this.prisma as any).squadQuickInviteHistory.findUnique({
+      where: { userId }
+    });
+    const raw = row?.peerIds;
+    const current: string[] = Array.isArray(raw)
+      ? raw.map(String)
+      : raw
+        ? (JSON.parse(JSON.stringify(raw)) as string[])
+        : [];
+
+    const merged: string[] = [];
+    for (const id of friendsOnly) {
+      if (!merged.includes(id)) merged.push(id);
+      if (merged.length >= 3) break;
+    }
+    for (const id of current) {
+      if (!merged.includes(id)) merged.push(id);
+      if (merged.length >= 3) break;
+    }
+    const final = merged.slice(0, 3);
+
+    await (this.prisma as any).squadQuickInviteHistory.upsert({
+      where: { userId },
+      create: { userId, peerIds: final },
+      update: { peerIds: final }
+    });
+  }
+
+  /**
+   * Return up to 3 suggested friends from stored squad video history (still friends + profile fields).
+   */
+  async getQuickInviteSuggestions(userId: string): Promise<{
+    hasUsedSquadVideo: boolean;
+    suggestions: Array<{ userId: string; username: string; displayPictureUrl: string }>;
+  }> {
+    const row = await (this.prisma as any).squadQuickInviteHistory.findUnique({
+      where: { userId }
+    });
+    const raw = row?.peerIds;
+    const stored: string[] = Array.isArray(raw)
+      ? raw.map(String)
+      : raw
+        ? (JSON.parse(JSON.stringify(raw)) as string[])
+        : [];
+
+    if (!stored.length) {
+      return { hasUsedSquadVideo: false, suggestions: [] };
+    }
+
+    const suggestions: Array<{ userId: string; username: string; displayPictureUrl: string }> = [];
+
+    for (const peerId of stored) {
+      let ok = false;
+      try {
+        ok = await this.friendClient.areFriends(userId, peerId);
+      } catch {
+        ok = false;
+      }
+      if (!ok) continue;
+
+      try {
+        const profile = await this.userClient.getUserFullProfileById(peerId);
+        suggestions.push({
+          userId: peerId,
+          username: (profile?.username && String(profile.username).trim()) || peerId,
+          displayPictureUrl: profile?.displayPictureUrl || ""
+        });
+      } catch {
+        suggestions.push({
+          userId: peerId,
+          username: peerId,
+          displayPictureUrl: ""
+        });
+      }
+      if (suggestions.length >= 3) break;
+    }
+
+    return {
+      hasUsedSquadVideo: stored.length > 0,
+      suggestions
+    };
+  }
 }

@@ -476,6 +476,42 @@ export class SquadController {
   }
 
   /**
+   * Quick-invite row on home squad: last up to 3 friends who were squad video co-participants (MRU, server-stored).
+   * GET /squad/me/quick-invite-suggestions
+   */
+  @Get("me/quick-invite-suggestions")
+  async getQuickInviteSuggestions(@Headers("authorization") authz?: string) {
+    const token = this.getTokenFromHeader(authz || "");
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+    const userId = await this.verifyTokenAndGetUserId(token);
+    return this.squadService.getQuickInviteSuggestions(userId);
+  }
+
+  /**
+   * Persist squad video co-participants for MRU quick-invite (friends only; merged server-side, max 3).
+   * POST /squad/me/quick-invite/record-call-peers
+   */
+  @Post("me/quick-invite/record-call-peers")
+  async recordQuickInviteCallPeers(
+    @Headers("authorization") authz: string,
+    @Body() body: any
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+    const userId = await this.verifyTokenAndGetUserId(token);
+    const peerUserIds = body?.peerUserIds;
+    if (!Array.isArray(peerUserIds)) {
+      throw new HttpException("peerUserIds must be an array", HttpStatus.BAD_REQUEST);
+    }
+    await this.squadService.recordQuickInviteCallPeers(userId, peerUserIds);
+    return { success: true };
+  }
+
+  /**
    * Enter call with squad (requires 2+ members)
    * POST /squad/lobby/enter-call
    */

@@ -18,13 +18,14 @@ import { PrismaService } from "../prisma/prisma.service.js";
 import { z } from "zod";
 import { verifyToken } from "@hmm/common";
 
+/** Query params are strings; coerce numeric fields so `?maxWidth=1600` validates. */
 const UploadFileSchema = z.object({
   userId: z.string().optional(),
   folder: z.string().optional(),
   processImage: z.boolean().optional().default(true),
-  maxWidth: z.number().positive().optional(),
-  maxHeight: z.number().positive().optional(),
-  quality: z.number().min(1).max(100).optional()
+  maxWidth: z.coerce.number().positive().optional(),
+  maxHeight: z.coerce.number().positive().optional(),
+  quality: z.coerce.number().min(1).max(100).optional()
 });
 
 const PresignedUrlSchema = z.object({

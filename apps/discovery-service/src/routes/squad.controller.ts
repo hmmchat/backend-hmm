@@ -62,6 +62,28 @@ export class SquadController {
     return payload.sub;
   }
 
+  private async resolveLobbyRoom(memberIds: string[], preferredUserId?: string): Promise<{
+    roomId?: string;
+    sessionId?: string;
+  }> {
+    const candidates = [...new Set([preferredUserId, ...memberIds].filter(Boolean) as string[])];
+    for (const uid of candidates) {
+      const room = await this.streamingClientService.getUserActiveRoom(uid);
+      if (!room?.exists || !room.roomId) continue;
+      let sessionId = room.sessionId;
+      if (!sessionId) {
+        const details = await this.streamingClientService.getRoomById(room.roomId);
+        if (details?.exists && details.id) {
+          sessionId = details.id;
+        }
+      }
+      if (room.roomId && sessionId) {
+        return { roomId: room.roomId, sessionId };
+      }
+    }
+    return {};
+  }
+
   /**
    * Invite friend to squad
    * POST /squad/invite
@@ -87,6 +109,17 @@ export class SquadController {
     const membership = await this.squadService.getLobbyMembershipForUser(userId);
     if (membership?.inviterId) {
       lobbyOwnerId = membership.inviterId;
+    }
+
+    const existingForLobby = await this.squadService.findPendingInvitationForInviteeInLobby(
+      lobbyOwnerId,
+      inviteeId
+    );
+    if (existingForLobby) {
+      return {
+        success: true,
+        invitationId: existingForLobby.id
+      };
     }
 
     // Create invitation in resolved lobby, but validate friendship edge using the real actor (userId).
@@ -174,8 +207,11 @@ export class SquadController {
     const lobbyAfterAccept = await this.squadService.getSquadLobby(invitation.inviterId);
     if (lobbyAfterAccept?.status === "IN_CALL") {
       try {
-        const room = await this.streamingClientService.getUserActiveRoom(invitation.inviterId);
-        if (room.exists && room.roomId) {
+        const room = await this.resolveLobbyRoom(
+          (lobbyAfterAccept.memberIds as string[]) || [],
+          invitation.inviterId
+        );
+        if (room.roomId) {
           await this.streamingClientService.addParticipantInternal(room.roomId, userId);
         } else {
           this.logger.warn(
@@ -422,15 +458,9 @@ export class SquadController {
     }
 
     if (lobby.status === "IN_CALL") {
-      const room = await this.streamingClientService.getUserActiveRoom(inviterForLobby);
-      let roomId = room.roomId;
-      let sessionId = room.sessionId;
-      if ((!roomId || !sessionId) && roomId) {
-        const details = await this.streamingClientService.getRoomById(roomId);
-        if (details?.exists && details.id) {
-          sessionId = details.id;
-        }
-      }
+      const room = await this.resolveLobbyRoom(memberIds, inviterForLobby);
+      const roomId = room.roomId;
+      const sessionId = room.sessionId;
       if (!roomId || !sessionId) {
         const cleared = await this.squadService.reconcileGhostInCallSquadLobby(
           inviterForLobby,
@@ -495,6 +525,76 @@ export class SquadController {
 
     return {
       success: true
+    };
+  }
+
+  /**
+   * Remove a member from current lobby (host removes others; member can remove self).
+   * POST /squad/lobby/remove-member
+   */
+  @Post("lobby/remove-member")
+  async removeLobbyMember(
+    @Headers("authorization") authz: string,
+    @Body() body: any
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+    const userId = await this.verifyTokenAndGetUserId(token);
+    const memberId = body?.memberId;
+    if (!memberId) {
+      throw new HttpException("memberId is required", HttpStatus.BAD_REQUEST);
+    }
+    await this.squadService.removeMemberFromCurrentLobby(userId, memberId);
+    return { success: true };
+  }
+
+  /**
+   * Cancel a pending invite targeting inviteeId within actor's current lobby.
+   * POST /squad/invitations/cancel
+   */
+  @Post("invitations/cancel")
+  async cancelInvitation(
+    @Headers("authorization") authz: string,
+    @Body() body: any
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+    const userId = await this.verifyTokenAndGetUserId(token);
+    const inviteeId = body?.inviteeId;
+    if (!inviteeId) {
+      throw new HttpException("inviteeId is required", HttpStatus.BAD_REQUEST);
+    }
+    const result = await this.squadService.cancelPendingInvitationInLobby(userId, inviteeId);
+    return { success: true, cancelled: result.cancelled, invitationId: result.invitationId ?? null };
+  }
+
+  /**
+   * Get pending invitations for actor's current lobby (host + members).
+   * GET /squad/invitations/pending/lobby
+   */
+  @Get("invitations/pending/lobby")
+  async getPendingInvitationsForLobby(
+    @Headers("authorization") authz?: string
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+    const userId = await this.verifyTokenAndGetUserId(token);
+    const invitations = await this.squadService.getPendingInvitationsForLobby(userId);
+    return {
+      invitations: invitations.map((inv: any) => ({
+        id: inv.id,
+        inviterId: inv.inviterId,
+        inviteeId: inv.inviteeId,
+        status: inv.status,
+        expiresAt: inv.expiresAt,
+        createdAt: inv.createdAt
+      }))
     };
   }
 
@@ -713,8 +813,11 @@ export class SquadController {
     const lobbyAfterAccept = await this.squadService.getSquadLobby(invitation.inviterId);
     if (lobbyAfterAccept?.status === "IN_CALL") {
       try {
-        const room = await this.streamingClientService.getUserActiveRoom(invitation.inviterId);
-        if (room.exists && room.roomId) {
+        const room = await this.resolveLobbyRoom(
+          (lobbyAfterAccept.memberIds as string[]) || [],
+          invitation.inviterId
+        );
+        if (room.roomId) {
           await this.streamingClientService.addParticipantInternal(room.roomId, inviteeId);
         }
       } catch (e: any) {
@@ -837,15 +940,9 @@ export class SquadController {
     }
 
     if (lobby.status === "IN_CALL") {
-      const room = await this.streamingClientService.getUserActiveRoom(inviterForLobby);
-      let roomId = room.roomId;
-      let sessionId = room.sessionId;
-      if ((!roomId || !sessionId) && roomId) {
-        const details = await this.streamingClientService.getRoomById(roomId);
-        if (details?.exists && details.id) {
-          sessionId = details.id;
-        }
-      }
+      const room = await this.resolveLobbyRoom(memberIds, inviterForLobby);
+      const roomId = room.roomId;
+      const sessionId = room.sessionId;
       if (!roomId || !sessionId) {
         const cleared = await this.squadService.reconcileGhostInCallSquadLobby(
           inviterForLobby,

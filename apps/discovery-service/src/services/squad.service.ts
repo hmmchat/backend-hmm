@@ -450,6 +450,7 @@ export class SquadService {
 
     const resolvedInviteeId = invitation.inviteeId || inviteeId;
     let supersededInvites: Array<{ id: string; inviterId: string; inviteeId: string | null }> = [];
+    let lobbyFullExpiredInvites: Array<{ id: string; inviterId: string; inviteeId: string | null }> = [];
 
     // DB-only transaction — never call user-service/friend HTTP inside $transaction (timeouts → 500).
     await (this.prisma as any).$transaction(async (tx: any) => {
@@ -464,6 +465,35 @@ export class SquadService {
       });
 
       await this.appendMemberToSquadLobbyDb(tx, invitation.inviterId, inviteeId);
+
+      const lobbyAfterAccept = await tx.squadLobby.findUnique({
+        where: { inviterId: invitation.inviterId },
+        select: { memberIds: true }
+      });
+      const currentMemberIds = ((lobbyAfterAccept?.memberIds as string[]) || []).filter(Boolean);
+      const lobbyReachedCapacity = currentMemberIds.length >= this.MAX_SQUAD_SIZE;
+      if (lobbyReachedCapacity) {
+        lobbyFullExpiredInvites = await tx.squadInvitation.findMany({
+          where: {
+            status: "PENDING",
+            inviteeId: { not: null },
+            inviterId: { in: currentMemberIds },
+            id: { not: inviteId }
+          },
+          select: { id: true, inviterId: true, inviteeId: true }
+        });
+        if (lobbyFullExpiredInvites.length > 0) {
+          await tx.squadInvitation.updateMany({
+            where: {
+              status: "PENDING",
+              inviteeId: { not: null },
+              inviterId: { in: currentMemberIds },
+              id: { not: inviteId }
+            },
+            data: { status: "EXPIRED", updatedAt: new Date() }
+          });
+        }
+      }
 
       // A user can only actively belong to one squad context. If they had their own host lobby,
       // disband it after joining another host's lobby so future membership lookups stay deterministic.
@@ -559,6 +589,14 @@ export class SquadService {
         await this.notifyInviterSupersededByInvitee(row.inviteeId, row.inviterId, row.id);
       } catch (e: any) {
         this.logger.warn(`Failed superseded squad friend notice for ${row.id}:`, e?.message || e);
+      }
+    }
+    for (const row of lobbyFullExpiredInvites) {
+      if (!row.inviteeId) continue;
+      try {
+        await this.notifyInviteeSquadInviteExpired(row, "lobby_full");
+      } catch (e: any) {
+        this.logger.warn(`Failed squad-full expiry notice for ${row.id}:`, e?.message || e);
       }
     }
 
@@ -891,6 +929,119 @@ export class SquadService {
   }
 
   /**
+   * Pending invites targeting specific users for the current lobby (host or member actor).
+   */
+  async getPendingInvitationsForLobby(actorUserId: string): Promise<any[]> {
+    const membership = await this.getLobbyMembershipForUser(actorUserId);
+    if (!membership) return [];
+    const lobby = await this.getSquadLobby(membership.inviterId);
+    if (!lobby) return [];
+    const memberIds = (Array.isArray(lobby.memberIds) ? lobby.memberIds : []) as string[];
+    const uniqueMemberIds = [...new Set(memberIds.filter(Boolean))];
+    if (!uniqueMemberIds.length) return [];
+
+    const invitations = await (this.prisma as any).squadInvitation.findMany({
+      where: {
+        inviterId: { in: uniqueMemberIds },
+        status: "PENDING",
+        inviteeId: { not: null }
+      },
+      orderBy: { createdAt: "desc" }
+    });
+    return invitations;
+  }
+
+  /**
+   * Cancel one pending invitation by invitee within actor's current lobby.
+   */
+  async cancelPendingInvitationInLobby(actorUserId: string, inviteeId: string): Promise<{
+    cancelled: boolean;
+    invitationId?: string;
+  }> {
+    const membership = await this.getLobbyMembershipForUser(actorUserId);
+    if (!membership) return { cancelled: false };
+    const lobby = await this.getSquadLobby(membership.inviterId);
+    if (!lobby) return { cancelled: false };
+    const memberIds = (Array.isArray(lobby.memberIds) ? lobby.memberIds : []) as string[];
+    const uniqueMemberIds = [...new Set(memberIds.filter(Boolean))];
+    if (!uniqueMemberIds.length) return { cancelled: false };
+
+    const existing = await (this.prisma as any).squadInvitation.findFirst({
+      where: {
+        inviterId: { in: uniqueMemberIds },
+        inviteeId,
+        status: "PENDING"
+      },
+      orderBy: { createdAt: "desc" }
+    });
+    if (!existing) return { cancelled: false };
+
+    await (this.prisma as any).squadInvitation.update({
+      where: { id: existing.id },
+      data: { status: "EXPIRED", updatedAt: new Date() }
+    });
+    try {
+      await this.notifyInviteeSquadInviteExpired(
+        { id: existing.id, inviterId: existing.inviterId, inviteeId: existing.inviteeId ?? null },
+        "host_solo"
+      );
+    } catch (e: any) {
+      this.logger.warn(`cancelPendingInvitationInLobby notify failed for ${existing.id}: ${e?.message || e}`);
+    }
+    return { cancelled: true, invitationId: existing.id };
+  }
+
+  /**
+   * Remove a member from actor's current lobby.
+   * - Host can remove any non-host member.
+   * - Any member can remove themselves (leave squad).
+   */
+  async removeMemberFromCurrentLobby(actorUserId: string, memberId: string): Promise<void> {
+    const membership = await this.getLobbyMembershipForUser(actorUserId);
+    if (!membership) {
+      throw new HttpException("No squad lobby found", HttpStatus.NOT_FOUND);
+    }
+    const inviterId = membership.inviterId;
+    if (memberId === inviterId) {
+      throw new HttpException("Host cannot be removed from lobby", HttpStatus.BAD_REQUEST);
+    }
+    if (!membership.memberIds.includes(memberId)) {
+      throw new HttpException("Member not found in squad", HttpStatus.NOT_FOUND);
+    }
+    if (!membership.memberIds.includes(actorUserId)) {
+      throw new HttpException("You are not a member of this squad", HttpStatus.FORBIDDEN);
+    }
+
+    await this.removeFromSquadLobby(inviterId, memberId);
+  }
+
+  /**
+   * Returns an existing pending invitation for inviteeId sent by any member
+   * of the given lobby, so repeated invites from the same squad are idempotent.
+   */
+  async findPendingInvitationForInviteeInLobby(
+    lobbyInviterId: string,
+    inviteeId: string
+  ): Promise<{ id: string; inviterId: string } | null> {
+    const lobby = await this.getSquadLobby(lobbyInviterId);
+    if (!lobby) return null;
+    const memberIds = (Array.isArray(lobby.memberIds) ? lobby.memberIds : []) as string[];
+    const uniqueMemberIds = [...new Set(memberIds.filter(Boolean))];
+    if (!uniqueMemberIds.length) return null;
+
+    const existing = await (this.prisma as any).squadInvitation.findFirst({
+      where: {
+        inviteeId,
+        status: "PENDING",
+        inviterId: { in: uniqueMemberIds }
+      },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, inviterId: true }
+    });
+    return existing || null;
+  }
+
+  /**
    * If discovery still has status IN_CALL but no squad member has an active streaming room,
    * the call-ended hook likely missed or failed — clear the lobby so clients stop polling a ghost call.
    * Returns true if the lobby row was deleted.
@@ -996,7 +1147,7 @@ export class SquadService {
   }
 
   private noticeBodyForInviteeExpiry(
-    variant: "timeout" | "inviter_unavailable" | "host_call" | "host_solo"
+    variant: "timeout" | "inviter_unavailable" | "host_call" | "host_solo" | "lobby_full"
   ): string {
     switch (variant) {
       case "timeout":
@@ -1007,6 +1158,8 @@ export class SquadService {
         return "This squad invite expired — the squad already started without you.";
       case "host_solo":
         return "This squad invite ended — the host left squad mode.";
+      case "lobby_full":
+        return "This squad invite expired — the squad is full.";
       default:
         return "This squad invite is no longer active.";
     }
@@ -1031,7 +1184,7 @@ export class SquadService {
 
   private async notifyInviteeSquadInviteExpired(
     row: { id: string; inviterId: string; inviteeId: string | null },
-    variant: "timeout" | "inviter_unavailable" | "host_call" | "host_solo"
+    variant: "timeout" | "inviter_unavailable" | "host_call" | "host_solo" | "lobby_full"
   ): Promise<void> {
     if (!row.inviteeId) return;
     await this.postSquadFriendThreadNotice({

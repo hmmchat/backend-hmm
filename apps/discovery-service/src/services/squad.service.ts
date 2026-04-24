@@ -105,8 +105,10 @@ export class SquadService {
   async createSquadInvitation(
     inviterId: string,
     inviteeId?: string,
-    inviteToken?: string
+    inviteToken?: string,
+    actorUserId?: string
   ): Promise<{ invitationId: string; inviteToken?: string }> {
+    const friendEdgeUserId = actorUserId || inviterId;
     // Validate inviter has squad lobby or create one
     let lobby = await this.getSquadLobby(inviterId);
     if (!lobby) {
@@ -147,7 +149,7 @@ export class SquadService {
       let areFriends = false;
       let friendServiceAvailable = true;
       try {
-        areFriends = await this.friendClient.areFriends(inviterId, inviteeId);
+        areFriends = await this.friendClient.areFriends(friendEdgeUserId, inviteeId);
         // If friend service returns false, it might be because service is unavailable
         // Check if INTERNAL_SERVICE_TOKEN is configured to determine if we should fall back
         if (!areFriends && !process.env.INTERNAL_SERVICE_TOKEN) {
@@ -162,7 +164,7 @@ export class SquadService {
       // If friend service is unavailable or returned false without token, check database directly (for testing)
       if (!areFriends && !friendServiceAvailable) {
         try {
-          const sortedIds = [inviterId, inviteeId].sort();
+          const sortedIds = [friendEdgeUserId, inviteeId].sort();
           // Use Prisma's tagged template for safe parameter binding
           const friendship = await (this.prisma as any).$queryRaw`
             SELECT 1 FROM friends 
@@ -227,7 +229,7 @@ export class SquadService {
     });
 
     this.logger.log(
-      `Squad invitation created: ${invitation.id} from ${inviterId} to ${inviteeId || "external"}`
+      `Squad invitation created: ${invitation.id} from ${inviterId} (actor=${friendEdgeUserId}) to ${inviteeId || "external"}`
     );
 
     return {

@@ -82,8 +82,20 @@ export class SquadController {
       throw new HttpException("inviteeId is required", HttpStatus.BAD_REQUEST);
     }
 
-    // Create invitation
-    const result = await this.squadService.createSquadInvitation(userId, inviteeId);
+    // If inviter is currently a member in another host's lobby, append invite flow to that same lobby.
+    let lobbyOwnerId = userId;
+    const membership = await this.squadService.getLobbyMembershipForUser(userId);
+    if (membership?.inviterId) {
+      lobbyOwnerId = membership.inviterId;
+    }
+
+    // Create invitation in resolved lobby, but validate friendship edge using the real actor (userId).
+    const result = await this.squadService.createSquadInvitation(
+      lobbyOwnerId,
+      inviteeId,
+      undefined,
+      userId
+    );
 
     // Notify invitee via WebSocket
     await this.notificationService.notifySquadInvitation(inviteeId, {

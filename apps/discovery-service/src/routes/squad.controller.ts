@@ -623,9 +623,23 @@ export class SquadController {
       await this.ensureUserJoinedSquadRoom(roomId, userId, memberIds);
     } else {
       await this.squadService.ensureSquadLobbyMembersMatchedForStreaming(memberIds);
-      const roomResult = await this.streamingClientService.createSquadRoom(memberIds);
-      roomId = roomResult.roomId;
-      sessionId = roomResult.sessionId;
+      try {
+        const roomResult = await this.streamingClientService.createSquadRoom(memberIds);
+        roomId = roomResult.roomId;
+        sessionId = roomResult.sessionId;
+      } catch (e: any) {
+        const msg = String(e?.message || e || "");
+        if (!/already.*active room|already.*room|active room/i.test(msg)) {
+          throw e;
+        }
+        const raced = await this.resolveLobbyRoom(memberIds, userId);
+        if (!raced?.roomId || !raced?.sessionId) {
+          throw e;
+        }
+        roomId = raced.roomId;
+        sessionId = raced.sessionId;
+        await this.ensureUserJoinedSquadRoom(roomId, userId, memberIds);
+      }
     }
 
     // Keep lobby in READY/WAITING during background audio setup.
@@ -1131,13 +1145,28 @@ export class SquadController {
       try {
         roomResult = await this.streamingClientService.createSquadRoom(memberIds);
       } catch (error: any) {
-        throw new HttpException(
-          `Failed to create squad room: ${error.message}`,
-          HttpStatus.INTERNAL_SERVER_ERROR
-        );
+        const msg = String(error?.message || error || "");
+        if (!/already.*active room|already.*room|active room/i.test(msg)) {
+          throw new HttpException(
+            `Failed to create squad room: ${error.message}`,
+            HttpStatus.INTERNAL_SERVER_ERROR
+          );
+        }
+        const raced = await this.resolveLobbyRoom(memberIds, userId);
+        if (!raced?.roomId || !raced?.sessionId) {
+          throw new HttpException(
+            `Failed to create squad room: ${error.message}`,
+            HttpStatus.INTERNAL_SERVER_ERROR
+          );
+        }
+        roomId = raced.roomId;
+        sessionId = raced.sessionId;
+        await this.ensureUserJoinedSquadRoom(roomId, userId, memberIds);
       }
-      roomId = roomResult.roomId;
-      sessionId = roomResult.sessionId;
+      if (roomResult) {
+        roomId = roomResult.roomId;
+        sessionId = roomResult.sessionId;
+      }
     }
 
     if (!backgroundOnly) {

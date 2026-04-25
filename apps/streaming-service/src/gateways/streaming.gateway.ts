@@ -27,7 +27,13 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
   private wss: WebSocketServer | null = null;
   private verifyAccess!: (token: string) => Promise<AccessPayload>;
   private publicJwk!: JWK;
-  private connections = new Map<string, { ws: any; userId: string; roomId?: string; isAnonymous?: boolean }>();
+  private connections = new Map<string, {
+    ws: any;
+    userId: string;
+    roomId?: string;
+    isAnonymous?: boolean;
+    preserveParticipantOnClose?: boolean;
+  }>();
   private readonly testMode: boolean;
 
   constructor(
@@ -178,7 +184,13 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     ws.on("close", () => {
       const conn = this.connections.get(connectionId);
       const roomIdFromConn = conn?.roomId ?? null;
-      void this.handleDisconnection(connectionId, userId!, roomIdFromConn).catch((err) => {
+      const preserveParticipantOnClose = Boolean(conn?.preserveParticipantOnClose);
+      void this.handleDisconnection(
+        connectionId,
+        userId!,
+        roomIdFromConn,
+        preserveParticipantOnClose
+      ).catch((err) => {
         this.logger.error(`[Disconnect] handleDisconnection error for ${userId}: ${err?.message || err}`);
       });
       this.connections.delete(connectionId);
@@ -396,7 +408,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     data: any,
     ws: any
   ) {
-    const { roomId } = data;
+    const { roomId, preserveParticipantOnClose } = data;
     if (!roomId) {
       this.sendError(ws, "roomId is required");
       return;
@@ -413,6 +425,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       const conn = this.connections.get(connectionId);
       if (conn) {
         conn.roomId = roomId;
+        conn.preserveParticipantOnClose = Boolean(preserveParticipantOnClose);
       }
 
       // Check if user is already a participant (from room creation or previous join)
@@ -1369,7 +1382,8 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
   private async handleDisconnection(
     connectionId: string,
     userId: string,
-    roomId: string | null
+    roomId: string | null,
+    preserveParticipantOnClose: boolean = false
   ) {
     let resolvedRoomId = roomId;
     if (!resolvedRoomId && !this.isAnonymousUser(userId)) {
@@ -1386,6 +1400,13 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
 
     if (!resolvedRoomId) {
       this.logger.log(`WebSocket connection closed: ${connectionId} (user: ${userId}, no room)`);
+      return;
+    }
+
+    if (preserveParticipantOnClose) {
+      this.logger.log(
+        `WebSocket connection closed: ${connectionId} (user: ${userId}, room: ${resolvedRoomId}, preserving participant)`
+      );
       return;
     }
 

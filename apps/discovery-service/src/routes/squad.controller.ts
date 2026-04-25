@@ -517,7 +517,8 @@ export class SquadController {
    */
   @Post("lobby/enter-call")
   async enterCall(
-    @Headers("authorization") authz: string
+    @Headers("authorization") authz: string,
+    @Body() body?: any
   ) {
     const token = this.getTokenFromHeader(authz);
     if (!token) {
@@ -546,6 +547,7 @@ export class SquadController {
     }
 
     const memberIds = lobby.memberIds as string[];
+    const backgroundOnly = Boolean(body?.background);
     if (!memberIds.includes(userId)) {
       throw new HttpException("You are not a member of this squad lobby", HttpStatus.FORBIDDEN);
     }
@@ -611,16 +613,31 @@ export class SquadController {
       };
     }
 
-    await this.squadService.ensureSquadLobbyMembersMatchedForStreaming(memberIds);
+    // If a squad room already exists (e.g., background lobby audio), reuse it.
+    let roomId: string | undefined;
+    let sessionId: string | undefined;
+    const existing = await this.resolveLobbyRoom(memberIds, inviterForLobby);
+    if (existing?.roomId && existing?.sessionId) {
+      roomId = existing.roomId;
+      sessionId = existing.sessionId;
+      await this.ensureUserJoinedSquadRoom(roomId, userId, memberIds);
+    } else {
+      await this.squadService.ensureSquadLobbyMembersMatchedForStreaming(memberIds);
+      const roomResult = await this.streamingClientService.createSquadRoom(memberIds);
+      roomId = roomResult.roomId;
+      sessionId = roomResult.sessionId;
+    }
 
-    const roomResult = await this.streamingClientService.createSquadRoom(memberIds);
-
-    await this.squadService.markLobbyInCall(inviterForLobby);
+    // Keep lobby in READY/WAITING during background audio setup.
+    // Lobby transitions to IN_CALL only on explicit "Meet someone now".
+    if (!backgroundOnly) {
+      await this.squadService.markLobbyInCall(inviterForLobby);
+    }
 
     return {
       success: true,
-      roomId: roomResult.roomId,
-      sessionId: roomResult.sessionId,
+      roomId,
+      sessionId,
       memberIds,
       roomType: "squad"
     };
@@ -1062,6 +1079,7 @@ export class SquadController {
     }
 
     const memberIds = lobby.memberIds as string[];
+    const backgroundOnly = Boolean(body?.background);
     if (!memberIds.includes(userId)) {
       throw new HttpException("You are not a member of this squad lobby", HttpStatus.FORBIDDEN);
     }
@@ -1100,24 +1118,36 @@ export class SquadController {
       };
     }
 
-    await this.squadService.ensureSquadLobbyMembersMatchedForStreaming(memberIds);
-
-    let roomResult;
-    try {
-      roomResult = await this.streamingClientService.createSquadRoom(memberIds);
-    } catch (error: any) {
-      throw new HttpException(
-        `Failed to create squad room: ${error.message}`,
-        HttpStatus.INTERNAL_SERVER_ERROR
-      );
+    let roomId: string | undefined;
+    let sessionId: string | undefined;
+    const existing = await this.resolveLobbyRoom(memberIds, inviterForLobby);
+    if (existing?.roomId && existing?.sessionId) {
+      roomId = existing.roomId;
+      sessionId = existing.sessionId;
+      await this.ensureUserJoinedSquadRoom(roomId, userId, memberIds);
+    } else {
+      await this.squadService.ensureSquadLobbyMembersMatchedForStreaming(memberIds);
+      let roomResult;
+      try {
+        roomResult = await this.streamingClientService.createSquadRoom(memberIds);
+      } catch (error: any) {
+        throw new HttpException(
+          `Failed to create squad room: ${error.message}`,
+          HttpStatus.INTERNAL_SERVER_ERROR
+        );
+      }
+      roomId = roomResult.roomId;
+      sessionId = roomResult.sessionId;
     }
 
-    await this.squadService.markLobbyInCall(inviterForLobby);
+    if (!backgroundOnly) {
+      await this.squadService.markLobbyInCall(inviterForLobby);
+    }
 
     return {
       success: true,
-      roomId: roomResult.roomId,
-      sessionId: roomResult.sessionId,
+      roomId,
+      sessionId,
       memberIds,
       roomType: "squad"
     };

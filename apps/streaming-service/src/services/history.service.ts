@@ -88,6 +88,25 @@ function toEventPresentation(eventType: string): { title: string; description: s
   return map[eventType] ?? { title: eventType.replaceAll("_", " "), description: "Room event" };
 }
 
+function visibleParticipantsForViewer<T extends { userId: string; joinedAt: Date; leftAt: Date | null }>(
+  participants: T[],
+  viewerUserId: string,
+  sessionEndedAt: Date | null
+): T[] {
+  const viewer = participants.find((p) => p.userId === viewerUserId);
+  if (!viewer) return [];
+
+  const viewerStart = viewer.joinedAt.getTime();
+  const viewerEnd = (viewer.leftAt ?? sessionEndedAt ?? new Date()).getTime();
+
+  return participants.filter((participant) => {
+    if (participant.userId === viewerUserId) return true;
+    const participantStart = participant.joinedAt.getTime();
+    const participantEnd = (participant.leftAt ?? sessionEndedAt ?? new Date()).getTime();
+    return participantStart < viewerEnd && viewerStart < participantEnd;
+  });
+}
+
 @Injectable()
 export class HistoryService {
   private readonly maxHistoryPerUser = 10;
@@ -197,8 +216,13 @@ export class HistoryService {
 
     const slice = sessions.slice(0, limit);
 
+    const visibleParticipantsBySession = new Map<string, typeof slice[number]["participants"]>();
     const participantUserIds = new Set<string>();
-    slice.forEach((s) => s.participants.forEach((p) => participantUserIds.add(p.userId)));
+    slice.forEach((s) => {
+      const visible = visibleParticipantsForViewer(s.participants, userId, s.endedAt ?? null);
+      visibleParticipantsBySession.set(s.id, visible);
+      visible.forEach((p) => participantUserIds.add(p.userId));
+    });
     const otherUserIds = [...participantUserIds].filter((id) => id !== userId);
 
     type RelMap = Record<
@@ -229,7 +253,8 @@ export class HistoryService {
       const endedAt = session.endedAt ?? null;
       const dropIns = dropInBySession.get(session.id) ?? new Set<string>();
 
-      const participants: HistoryParticipant[] = session.participants.map((p) => {
+      const sessionParticipants = visibleParticipantsBySession.get(session.id) ?? [];
+      const participants: HistoryParticipant[] = sessionParticipants.map((p) => {
         const profile = profiles.get(p.userId);
         const rel = p.userId === userId ? null : relationships[p.userId];
         const isDropIn = dropIns.has(p.userId);
@@ -325,7 +350,8 @@ export class HistoryService {
       return null;
     }
 
-    const participantUserIds = session.participants.map((p) => p.userId);
+    const sessionParticipants = visibleParticipantsForViewer(session.participants, userId, session.endedAt ?? null);
+    const participantUserIds = sessionParticipants.map((p) => p.userId);
     const otherUserIds = participantUserIds.filter((id) => id !== userId);
 
     type RelMap = Record<
@@ -350,7 +376,7 @@ export class HistoryService {
     const callType: CallType = session.isBroadcasting || hasBroadcastStarted ? "Broadcast" : "Squad";
     const endedAt = session.endedAt ?? null;
 
-    const participants: HistoryParticipant[] = session.participants.map((p) => {
+    const participants: HistoryParticipant[] = sessionParticipants.map((p) => {
       const profile = profiles.get(p.userId);
       const rel = p.userId === userId ? null : relationships[p.userId];
       const isDropIn = dropIns.has(p.userId);

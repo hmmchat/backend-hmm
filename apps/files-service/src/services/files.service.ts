@@ -46,13 +46,15 @@ export class FilesService {
     options: UploadFileDto = {}
   ): Promise<FileInfo> {
     const { userId, folder, processImage = true } = options;
+    const isImage = this.imageProcessing.isImage(mimeType);
+    const shouldProcessImage = isImage && processImage && !this.imageProcessing.isAnimatedImage(mimeType);
 
     // Validate image if it's an image
-    if (this.imageProcessing.isImage(mimeType)) {
+    if (isImage) {
       await this.imageProcessing.validateImage(buffer, mimeType);
 
-      // Process image if requested
-      if (processImage) {
+      // Process static images only. Animated GIFs must be preserved as-is.
+      if (shouldProcessImage) {
         const processed = await this.imageProcessing.processImage(buffer, {
           maxWidth: options.maxWidth,
           maxHeight: options.maxHeight,
@@ -74,7 +76,7 @@ export class FilesService {
     // Get image metadata if it's an image
     let width: number | undefined;
     let height: number | undefined;
-    if (this.imageProcessing.isImage(mimeType)) {
+    if (isImage) {
       const metadata = await this.imageProcessing.getImageMetadata(buffer);
       width = metadata.width;
       height = metadata.height;
@@ -92,7 +94,8 @@ export class FilesService {
         height,
         metadata: {
           originalFilename: filename,
-          processed: processImage && this.imageProcessing.isImage(mimeType)
+          processed: shouldProcessImage,
+          animationPreserved: this.imageProcessing.isAnimatedImage(mimeType)
         }
       }
     });

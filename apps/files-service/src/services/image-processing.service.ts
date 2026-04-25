@@ -45,6 +45,13 @@ export class ImageProcessingService {
   }
 
   /**
+   * Animated images must be stored as-is; optimization would flatten them.
+   */
+  isAnimatedImage(mimeType: string): boolean {
+    return mimeType.toLowerCase() === "image/gif";
+  }
+
+  /**
    * Validate image file
    */
   async validateImage(buffer: Buffer, mimeType: string): Promise<void> {

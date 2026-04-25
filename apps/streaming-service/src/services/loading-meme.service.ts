@@ -84,6 +84,7 @@ export class LoadingMemeService {
     text: string;
     imageUrl: string;
     category: string | null;
+    order: number | null;
   }>> {
     return await (this.prisma as any).loadingScreenMeme.findMany({
       where: { isActive: true },
@@ -91,7 +92,8 @@ export class LoadingMemeService {
         id: true,
         text: true,
         imageUrl: true,
-        category: true
+        category: true,
+        order: true
       },
       orderBy: [
         { order: "asc" },

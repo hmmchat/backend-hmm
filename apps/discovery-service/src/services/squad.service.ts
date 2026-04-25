@@ -834,9 +834,11 @@ export class SquadService {
       data: { status: "EXPIRED", updatedAt: new Date() }
     });
 
-    let variant: "host_solo" | "host_call" = "host_call";
+    let variant: "host_solo" | "host_call" | "call_ended" = "host_call";
     if (reason.includes("solo") || reason.includes("Solo")) {
       variant = "host_solo";
+    } else if (reason.includes("ended") || reason.includes("Ended")) {
+      variant = "call_ended";
     }
 
     for (const row of pending) {
@@ -887,8 +889,18 @@ export class SquadService {
       let statusChangedCount = 0;
       for (const invitation of pendingInvitations) {
         try {
+          let effectiveInviterId = invitation.inviterId;
+          try {
+            const inviterMembership = await this.getLobbyMembershipForUser(invitation.inviterId);
+            if (inviterMembership?.inviterId) {
+              effectiveInviterId = inviterMembership.inviterId;
+            }
+          } catch {
+            // Best effort; fall back to checking inviter-owned lobby.
+          }
+
           const lobby = await (this.prisma as any).squadLobby.findUnique({
-            where: { inviterId: invitation.inviterId }
+            where: { inviterId: effectiveInviterId }
           });
           if (!lobby) {
             await (this.prisma as any).squadInvitation.update({
@@ -1090,7 +1102,10 @@ export class SquadService {
       }
     }
     try {
-      await this.expireInvitations(inviterId, "Squad call ended");
+      const unique = [...new Set((memberIds || []).filter(Boolean))];
+      for (const memberId of unique) {
+        await this.expireInvitations(memberId, "Squad call ended");
+      }
     } catch (e: any) {
       this.logger.warn(`reconcileGhostInCallSquadLobby expireInvitations: ${e?.message || e}`);
     }
@@ -1136,7 +1151,9 @@ export class SquadService {
       if (![...lobbyMembers].every((id) => ended.has(id))) continue;
 
       try {
-        await this.expireInvitations(row.inviterId as string, "Squad call ended");
+        for (const memberId of [...lobbyMembers]) {
+          await this.expireInvitations(memberId, "Squad call ended");
+        }
       } catch (e: any) {
         this.logger.warn(`Squad post-call expireInvitations: ${e?.message || e}`);
       }
@@ -1172,7 +1189,7 @@ export class SquadService {
   }
 
   private noticeBodyForInviteeExpiry(
-    variant: "timeout" | "inviter_unavailable" | "host_call" | "host_solo" | "lobby_full" | "cancelled"
+    variant: "timeout" | "inviter_unavailable" | "host_call" | "host_solo" | "lobby_full" | "cancelled" | "call_ended"
   ): string {
     switch (variant) {
       case "timeout":
@@ -1183,6 +1200,8 @@ export class SquadService {
         return "This squad invite expired — the squad already started without you.";
       case "host_solo":
         return "This squad invite ended — the host left squad mode.";
+      case "call_ended":
+        return "This squad invite expired — the squad call ended.";
       case "lobby_full":
         return "This squad invite expired — the squad is full.";
       case "cancelled":
@@ -1211,7 +1230,7 @@ export class SquadService {
 
   private async notifyInviteeSquadInviteExpired(
     row: { id: string; inviterId: string; inviteeId: string | null },
-    variant: "timeout" | "inviter_unavailable" | "host_call" | "host_solo" | "lobby_full" | "cancelled"
+    variant: "timeout" | "inviter_unavailable" | "host_call" | "host_solo" | "lobby_full" | "cancelled" | "call_ended"
   ): Promise<void> {
     if (!row.inviteeId) return;
     await this.postSquadFriendThreadNotice({

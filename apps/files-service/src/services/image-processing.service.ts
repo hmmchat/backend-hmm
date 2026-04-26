@@ -45,10 +45,29 @@ export class ImageProcessingService {
   }
 
   /**
-   * Animated images must be stored as-is; optimization would flatten them.
+   * Declared MIME is GIF — never run the static image pipeline (would drop frames / change format).
    */
   isAnimatedImage(mimeType: string): boolean {
     return mimeType.toLowerCase() === "image/gif";
+  }
+
+  /**
+   * True if this buffer must be uploaded without Sharp resize/re-encode.
+   * Browsers and clients often mislabel animated GIFs (e.g. application/octet-stream); MIME-only
+   * checks flatten them to single-frame JPEG via processImage().
+   */
+  async shouldPreserveImageWithoutReencode(buffer: Buffer, mimeType: string): Promise<boolean> {
+    if (this.isAnimatedImage(mimeType)) return true;
+
+    try {
+      const meta = await sharp(buffer).metadata();
+      if (meta.format === "gif") return true;
+      const pages = meta.pages ?? 1;
+      if (pages > 1) return true;
+    } catch {
+      return false;
+    }
+    return false;
   }
 
   /**

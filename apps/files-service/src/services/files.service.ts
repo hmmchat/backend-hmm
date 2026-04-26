@@ -47,7 +47,9 @@ export class FilesService {
   ): Promise<FileInfo> {
     const { userId, folder, processImage = true } = options;
     const isImage = this.imageProcessing.isImage(mimeType);
-    const shouldProcessImage = isImage && processImage && !this.imageProcessing.isAnimatedImage(mimeType);
+    const preserveBytes =
+      isImage && (await this.imageProcessing.shouldPreserveImageWithoutReencode(buffer, mimeType));
+    const shouldProcessImage = isImage && processImage && !preserveBytes;
 
     // Validate image if it's an image
     if (isImage) {
@@ -95,7 +97,7 @@ export class FilesService {
         metadata: {
           originalFilename: filename,
           processed: shouldProcessImage,
-          animationPreserved: this.imageProcessing.isAnimatedImage(mimeType)
+          animationPreserved: preserveBytes
         }
       }
     });

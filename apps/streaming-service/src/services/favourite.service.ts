@@ -1,12 +1,14 @@
 import { Injectable, BadRequestException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { RoomService } from "./room.service.js";
+import { DiscoveryClientService } from "./discovery-client.service.js";
 
 @Injectable()
 export class FavouriteService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly roomService: RoomService
+    private readonly roomService: RoomService,
+    private readonly discoveryClient: DiscoveryClientService
   ) {}
 
   /**
@@ -84,5 +86,67 @@ export class FavouriteService {
       limit,
       offset: 0
     });
+  }
+
+  /**
+   * Get all favourite broadcasters with live/offline status for Beam TV shortcut strip.
+   */
+  async getAllFavouritesWithLiveStatus(
+    userId: string,
+    limit: number = 100
+  ): Promise<{
+    favourites: Array<{
+      userId: string;
+      username?: string | null;
+      displayPictureUrl?: string | null;
+      age?: number | null;
+      isLive: boolean;
+      liveRoomId?: string;
+    }>;
+  }> {
+    const rows = await this.prisma.userFavouriteBroadcaster.findMany({
+      where: { userId },
+      orderBy: { createdAt: "desc" },
+      take: limit,
+      select: { targetUserId: true }
+    });
+
+    const favouriteUserIds = rows.map((r) => r.targetUserId);
+    if (favouriteUserIds.length === 0) {
+      return { favourites: [] };
+    }
+
+    const [profiles, activeFavouriteBroadcasts] = await Promise.all([
+      this.discoveryClient.getUserProfilesBatch(favouriteUserIds),
+      this.roomService.getActiveBroadcasts({
+        filter: { participantUserIds: favouriteUserIds },
+        limit: 200,
+        offset: 0
+      })
+    ]);
+
+    const liveRoomByUserId = new Map<string, string>();
+    for (const b of activeFavouriteBroadcasts.broadcasts) {
+      for (const p of b.participants) {
+        if (favouriteUserIds.includes(p.userId) && !liveRoomByUserId.has(p.userId)) {
+          liveRoomByUserId.set(p.userId, b.roomId);
+        }
+      }
+    }
+
+    const favourites = favouriteUserIds.map((id) => {
+      const profile = profiles.get(id);
+      const liveRoomId = liveRoomByUserId.get(id);
+      return {
+        userId: id,
+        username: profile?.username || null,
+        displayPictureUrl: profile?.displayPictureUrl || null,
+        age: profile?.age ?? null,
+        isLive: Boolean(liveRoomId),
+        liveRoomId
+      };
+    });
+
+    return { favourites };
   }
 }

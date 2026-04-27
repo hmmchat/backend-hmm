@@ -226,6 +226,23 @@ export class StreamingController {
   }
 
   /**
+   * Get all favourite broadcasters with live status for Beam TV quick strip.
+   * GET /streaming/favourites?limit=100
+   */
+  @Get("favourites")
+  async getAllFavouritesWithLiveStatus(
+    @Headers("x-user-id") xUserId: string | undefined,
+    @Query("limit") limitStr?: string
+  ) {
+    const userId = xUserId?.trim();
+    if (!userId) {
+      throw new HttpException("Missing x-user-id", HttpStatus.UNAUTHORIZED);
+    }
+    const limit = Math.min(Math.max(parseInt(limitStr ?? "100", 10) || 100, 1), 200);
+    return this.favouriteService.getAllFavouritesWithLiveStatus(userId, limit);
+  }
+
+  /**
    * Get chat history
    * GET /streaming/rooms/:roomId/chat
    */

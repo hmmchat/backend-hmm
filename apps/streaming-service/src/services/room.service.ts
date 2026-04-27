@@ -1950,31 +1950,44 @@ export class RoomService {
       throw new BadRequestException("Room is not broadcasting");
     }
 
-    // Check if user is already a viewer (check both memory and database)
+    // Idempotent join: if user is already an active viewer, treat as success.
+    // This avoids reconnect/raincheck races failing the flow.
     if (room.viewers.has(userId)) {
-      throw new BadRequestException(`User ${userId} is already a viewer`);
+      this.logger.log(`Viewer ${userId} already present in-memory for room ${roomId}; skipping duplicate add`);
+      return;
     }
 
-    // Also check database
-    const existingViewer = await this.prisma.callViewer.findFirst({
+    // Reactivate historical viewer row when present (unique(sessionId,userId)),
+    // otherwise create a new one.
+    const existingAnyViewer = await this.prisma.callViewer.findUnique({
       where: {
-        sessionId: session.id,
-        userId,
-        leftAt: null
+        sessionId_userId: {
+          sessionId: session.id,
+          userId
+        }
       }
     });
 
-    if (existingViewer) {
-      throw new BadRequestException(`User ${userId} is already a viewer in this room`);
+    if (existingAnyViewer) {
+      if (existingAnyViewer.leftAt === null) {
+        this.logger.log(`Viewer ${userId} already active in room ${roomId}; skipping duplicate add`);
+        return;
+      }
+      await this.prisma.callViewer.update({
+        where: { id: existingAnyViewer.id },
+        data: {
+          joinedAt: new Date(),
+          leftAt: null
+        }
+      });
+    } else {
+      await this.prisma.callViewer.create({
+        data: {
+          sessionId: session.id,
+          userId
+        }
+      });
     }
-
-    // Add to database
-    await this.prisma.callViewer.create({
-      data: {
-        sessionId: session.id,
-        userId
-      }
-    });
 
     this.logger.log(`Viewer ${userId} added to room ${roomId}`);
   }

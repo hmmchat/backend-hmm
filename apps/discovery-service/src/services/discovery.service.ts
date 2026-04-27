@@ -2900,16 +2900,11 @@ export class DiscoveryService implements OnModuleInit {
       b => !viewedRoomIds.includes(b.roomId)
     );
 
-    if (availableBroadcasts.length === 0) {
-      // All broadcasts have been viewed - return exhausted
-      return {
-        broadcast: null,
-        exhausted: true
-      };
-    }
-
-    // Return the first available broadcast (most recent)
-    const nextBroadcast = availableBroadcasts[0];
+    // Infinite scroll behavior: when all broadcasts are viewed,
+    // recycle from the start instead of returning exhausted.
+    const nextBroadcast = availableBroadcasts.length > 0
+      ? availableBroadcasts[0]
+      : broadcasts[0];
 
     return {
       broadcast: nextBroadcast,
@@ -2959,16 +2954,10 @@ export class DiscoveryService implements OnModuleInit {
       b => !viewedRoomIds.includes(b.roomId)
     );
 
-    if (availableBroadcasts.length === 0) {
-      return {
-        broadcast: null,
-        exhausted: true
-      };
-    }
-
-    // Return the first available broadcast (most recent)
+    // Infinite scroll behavior: when all broadcasts are viewed,
+    // recycle from the start instead of returning exhausted.
     return {
-      broadcast: availableBroadcasts[0],
+      broadcast: availableBroadcasts.length > 0 ? availableBroadcasts[0] : broadcasts[0],
       exhausted: false
     };
   }
@@ -3152,16 +3141,14 @@ export class DiscoveryService implements OnModuleInit {
       b => !viewedRoomIds.includes(b.roomId)
     );
 
-    if (availableBroadcasts.length === 0) {
-      // All broadcasts have been viewed - return exhausted
-      return {
-        broadcast: null,
-        exhausted: true
-      };
-    }
+    // Infinite scroll behavior: when all broadcasts are viewed,
+    // recycle from the start instead of returning exhausted.
+    const candidateBroadcasts = availableBroadcasts.length > 0
+      ? availableBroadcasts
+      : broadcasts;
 
     // Apply recommendation algorithm for personalized feed
-    const recommendedBroadcast = await this.getRecommendedBroadcast(userId, availableBroadcasts);
+    const recommendedBroadcast = await this.getRecommendedBroadcast(userId, candidateBroadcasts);
 
     return {
       broadcast: recommendedBroadcast,

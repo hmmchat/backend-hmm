@@ -2691,31 +2691,43 @@ export class RoomService {
       ];
     }
 
-    // Handle cursor-based pagination
-    if (cursor) {
-      where.id = { gt: cursor };
-    }
+    const isLikelyUuid = (value: string) =>
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 
-    const sessions = await this.prisma.callSession.findMany({
-      where,
-      include: {
-        participants: {
-          where: { leftAt: null },
-          select: {
-            userId: true,
-            role: true,
-            joinedAt: true
+    const fetchSessions = async (effectiveCursor?: string) => {
+      const queryWhere = { ...where };
+      if (effectiveCursor && isLikelyUuid(effectiveCursor)) {
+        queryWhere.id = { gt: effectiveCursor };
+      }
+
+      return this.prisma.callSession.findMany({
+        where: queryWhere,
+        include: {
+          participants: {
+            where: { leftAt: null },
+            select: {
+              userId: true,
+              role: true,
+              joinedAt: true
+            }
+          },
+          viewers: {
+            where: { leftAt: null },
+            select: { userId: true }
           }
         },
-        viewers: {
-          where: { leftAt: null },
-          select: { userId: true }
-        }
-      },
-      orderBy,
-      take: limit + 1, // Fetch one extra to determine hasMore
-      skip: cursor ? 0 : offset
-    });
+        orderBy,
+        take: limit + 1, // Fetch one extra to determine hasMore
+        skip: effectiveCursor ? 0 : offset
+      });
+    };
+
+    let sessions = await fetchSessions(cursor);
+
+    // Infinite scroll loop: when cursor reaches end, restart from first page.
+    if (cursor && sessions.length === 0) {
+      sessions = await fetchSessions(undefined);
+    }
 
     const hasMore = sessions.length > limit;
     const sessionsToReturn = sessions.slice(0, limit);

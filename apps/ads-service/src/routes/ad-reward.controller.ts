@@ -9,11 +9,17 @@ import {
   HttpStatus
 } from "@nestjs/common";
 import { AdRewardService } from "../services/ad-reward.service.js";
+import { AdRewardConfigService } from "../config/ad-reward.config.js";
 import { z } from "zod";
 
 const VerifyAdRewardSchema = z.object({
   adUnitId: z.string().min(1, "adUnitId is required"),
-  adNetwork: z.string().optional()
+  adNetwork: z.string().optional(),
+  providerTransactionId: z.string().min(1).optional(),
+  rewardToken: z.string().min(1).optional(),
+  rewardSignature: z.string().min(1).optional(),
+  revenue: z.number().nonnegative().optional(),
+  eCPM: z.number().nonnegative().optional()
 });
 
 const UpdateConfigSchema = z.object({
@@ -25,7 +31,10 @@ const UpdateConfigSchema = z.object({
 
 @Controller()
 export class AdRewardController {
-  constructor(private readonly adRewardService: AdRewardService) {}
+  constructor(
+    private readonly adRewardService: AdRewardService,
+    private readonly configService: AdRewardConfigService
+  ) {}
 
   private getTokenFromHeader(h?: string) {
     if (!h) return null;
@@ -46,6 +55,22 @@ export class AdRewardController {
     return payload.sub;
   }
 
+  private assertInternalRequest(internalToken?: string) {
+    const expectedToken = this.configService.getInternalServiceToken();
+    if (!expectedToken) {
+      throw new HttpException("INTERNAL_SERVICE_TOKEN is not configured", HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+    if (!internalToken || internalToken !== expectedToken) {
+      throw new HttpException("Unauthorized internal request", HttpStatus.UNAUTHORIZED);
+    }
+  }
+
+  private assertTestEndpointsEnabled() {
+    if (!this.configService.areTestEndpointsEnabled()) {
+      throw new HttpException("Test endpoints are disabled", HttpStatus.NOT_FOUND);
+    }
+  }
+
   /**
    * Verify ad completion and award coins
    * POST /me/ads/reward/verify
@@ -64,11 +89,16 @@ export class AdRewardController {
     const dto = VerifyAdRewardSchema.parse(body);
 
     try {
-      return await this.adRewardService.verifyAndAwardReward(
+      return await this.adRewardService.verifyAndAwardReward({
         userId,
-        dto.adUnitId,
-        dto.adNetwork
-      );
+        adUnitId: dto.adUnitId,
+        adNetwork: dto.adNetwork,
+        providerTransactionId: dto.providerTransactionId,
+        rewardToken: dto.rewardToken,
+        rewardSignature: dto.rewardSignature,
+        revenue: dto.revenue,
+        eCPM: dto.eCPM
+      });
     } catch (error) {
       if (error instanceof HttpException) {
         throw error;
@@ -124,8 +154,8 @@ export class AdRewardController {
    * POST /ads/reward/config
    */
   @Post("ads/reward/config")
-  async updateRewardConfig(@Body() body: any) {
-    // TODO: Add admin authentication check
+  async updateRewardConfig(@Body() body: any, @Headers("x-internal-token") internalToken?: string) {
+    this.assertInternalRequest(internalToken);
     const dto = UpdateConfigSchema.parse(body);
 
     return this.adRewardService.updateRewardConfig(
@@ -145,13 +175,17 @@ export class AdRewardController {
    */
   @Post("test/ads/reward/verify")
   async verifyAdRewardTest(@Body() body: any) {
-    const { userId, adUnitId, adNetwork } = body;
+    this.assertTestEndpointsEnabled();
+    const dto = VerifyAdRewardSchema.extend({
+      userId: z.string().min(1)
+    }).parse(body);
+    const { userId, adUnitId } = dto;
     if (!userId || !adUnitId) {
       throw new HttpException("userId and adUnitId are required", HttpStatus.BAD_REQUEST);
     }
 
     try {
-      return await this.adRewardService.verifyAndAwardReward(userId, adUnitId, adNetwork);
+      return await this.adRewardService.verifyAndAwardReward(dto);
     } catch (error) {
       if (error instanceof HttpException) {
         throw error;
@@ -173,6 +207,7 @@ export class AdRewardController {
     @Query("limit") limit?: string,
     @Query("offset") offset?: string
   ) {
+    this.assertTestEndpointsEnabled();
     if (!userId) {
       throw new HttpException("userId is required", HttpStatus.BAD_REQUEST);
     }

@@ -368,6 +368,37 @@ export class WalletController {
   /* ---------- Internal Endpoints (for other services) ---------- */
 
   /**
+   * Add coins to a wallet from a trusted internal service.
+   * POST /internal/wallet/add-coins
+   * Body: { userId: string, amount: number, description?: string, giftId?: string }
+   */
+  @Post("internal/wallet/add-coins")
+  async addCoinsInternal(@Body() body: any, @Headers("x-internal-token") internalToken?: string) {
+    this.assertInternalRequest(internalToken);
+    const schema = z.object({
+      userId: z.string().min(1),
+      amount: z.number().positive(),
+      description: z.string().optional(),
+      giftId: z.string().optional()
+    });
+    const dto = schema.parse(body);
+
+    try {
+      return await this.walletService.addCoinsForUser(
+        dto.userId,
+        dto.amount,
+        dto.description,
+        dto.giftId
+      );
+    } catch (error) {
+      throw new HttpException(
+        error instanceof Error ? error.message : "Failed to add coins",
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  /**
    * Award referral rewards (internal endpoint for user-service)
    * POST /internal/referral-rewards
    * Body: { referrerId: string, referredUserId: string, referrerReward: number, referredReward: number }

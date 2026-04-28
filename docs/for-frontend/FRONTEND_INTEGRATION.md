@@ -2645,7 +2645,12 @@ Rewarded video ads allow users to earn coins by watching ads. Use the API Gatewa
 ```json
 {
   "adUnitId": "string (required)",
-  "adNetwork": "string (optional)"
+  "adNetwork": "string (optional)",
+  "providerTransactionId": "string (required unless rewardToken is provided)",
+  "rewardToken": "string (optional; provider reward token)",
+  "rewardSignature": "string (required when server verification secret is configured)",
+  "revenue": "number (optional; INR)",
+  "eCPM": "number (optional; INR)"
 }
 ```
 
@@ -2659,7 +2664,7 @@ Rewarded video ads allow users to earn coins by watching ads. Use the API Gatewa
 }
 ```
 
-**Use Case:** Call after user completes a rewarded video ad. The backend validates and credits coins. Enforces cooldown and daily limits.
+**Use Case:** Call after the rewarded-ad SDK confirms completion. Send the provider transaction/proof returned by the SDK or SSV bridge. The backend validates the proof, rejects duplicate provider transactions, credits coins, and enforces cooldown and daily limits.
 
 **Errors:**
 - `400` - Ad rewards disabled

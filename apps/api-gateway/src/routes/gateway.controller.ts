@@ -183,6 +183,10 @@ export class GatewayController {
         throw new HttpException(`No route found for: ${path}`, HttpStatus.NOT_FOUND);
       }
 
+      if (process.env.NODE_ENV === "production" && path.includes("/test/")) {
+        throw new HttpException("Not found", HttpStatus.NOT_FOUND);
+      }
+
       // Check authentication if required
       // Use middleware's requiresAuth method to check path (bypasses /test/ endpoints)
       let userId: string | undefined;

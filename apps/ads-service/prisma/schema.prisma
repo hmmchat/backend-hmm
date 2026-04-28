@@ -13,20 +13,24 @@ generator client {
 // These tables are in the ads-service database
 
 model AdReward {
-  id          String   @id @default(cuid())
-  userId      String
-  adUnitId    String   // Ad Manager/AdSense ad unit path or ID
-  adNetwork   String?  // Which network served the ad (AdManager, AdSense, etc.)
-  coinsAwarded Int
-  eCPM        Float?   // Revenue data if available
-  revenue     Float?   // Actual revenue earned (in INR)
-  status      AdRewardStatus @default(PENDING)
-  verifiedAt  DateTime?
-  createdAt   DateTime @default(now())
+  id                    String   @id @default(cuid())
+  userId                String
+  adUnitId              String   // Ad Manager/AdSense ad unit path or ID
+  adNetwork             String?  // Which network served the ad (AdManager, AdSense, etc.)
+  providerTransactionId String?  // Provider/SSV reward transaction ID for idempotency
+  providerProofHash     String?  // Hash of provider proof data for audit without storing raw tokens
+  transactionId         String?  // Wallet transaction ID created after successful credit
+  coinsAwarded          Int
+  eCPM                  Float?   // Revenue data if available
+  revenue               Float?   // Actual revenue earned (in INR)
+  status                AdRewardStatus @default(PENDING)
+  verifiedAt            DateTime?
+  createdAt             DateTime @default(now())
 
   @@index([userId])
   @@index([createdAt])
   @@index([status])
+  @@unique([adNetwork, providerTransactionId])
   @@map("ad_rewards")
 }
 

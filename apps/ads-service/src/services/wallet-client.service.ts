@@ -6,9 +6,11 @@ import { AdRewardConfigService } from "../config/ad-reward.config.js";
 export class WalletClientService {
   private readonly logger = new Logger(WalletClientService.name);
   private readonly walletServiceUrl: string;
+  private readonly internalServiceToken: string | null;
 
   constructor(configService: AdRewardConfigService) {
     this.walletServiceUrl = configService.getWalletServiceUrl();
+    this.internalServiceToken = configService.getInternalServiceToken();
   }
 
   /**
@@ -21,12 +23,19 @@ export class WalletClientService {
     retries: number = 3
   ): Promise<{ newBalance: number; transactionId: string }> {
     let lastError: any;
+
+    if (!this.internalServiceToken) {
+      throw new BadRequestException("INTERNAL_SERVICE_TOKEN is not configured");
+    }
     
     for (let attempt = 1; attempt <= retries; attempt++) {
       try {
-        const response = await fetch(`${this.walletServiceUrl}/test/wallet/add-coins`, {
+        const response = await fetch(`${this.walletServiceUrl}/internal/wallet/add-coins`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "x-internal-token": this.internalServiceToken
+          },
           body: JSON.stringify({
             userId,
             amount,

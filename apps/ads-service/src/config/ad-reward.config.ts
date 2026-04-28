@@ -26,6 +26,36 @@ export class AdRewardConfigService {
     return process.env.AD_REWARD_ENABLED !== "false";
   }
 
+  // Shared secret used to validate provider/server-signed reward completions.
+  getRewardVerificationSecret(): string | null {
+    const secret = process.env.AD_REWARD_VERIFICATION_SECRET;
+    if (!secret || secret === "undefined") {
+      return null;
+    }
+    return secret;
+  }
+
+  // Allows local/web fallback while a real rewarded-ad provider is not configured.
+  allowsClientAttestation(): boolean {
+    if (process.env.AD_REWARD_ALLOW_CLIENT_ATTESTATION === "true") {
+      return true;
+    }
+    return !this.getRewardVerificationSecret() && process.env.NODE_ENV !== "production";
+  }
+
+  // Test routes should not be reachable in production unless explicitly enabled.
+  areTestEndpointsEnabled(): boolean {
+    return process.env.TEST_ENDPOINTS_ENABLED === "true" || process.env.NODE_ENV !== "production";
+  }
+
+  getInternalServiceToken(): string | null {
+    const token = process.env.INTERNAL_SERVICE_TOKEN;
+    if (!token || token === "undefined") {
+      return null;
+    }
+    return token;
+  }
+
   // Wallet service URL
   getWalletServiceUrl(): string {
     return process.env.WALLET_SERVICE_URL || "http://localhost:3005";

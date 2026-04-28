@@ -18,6 +18,8 @@ export class RateLimitService implements OnModuleInit {
     ["/auth", { windowMs: 60000, maxRequests: 10 }], // 10 requests per minute
     ["/files/upload", { windowMs: 3600000, maxRequests: 20 }], // 20 uploads per hour
     ["/payments", { windowMs: 3600000, maxRequests: 10 }], // 10 payment attempts per hour
+    ["/v1/ads/me/ads/reward/verify", { windowMs: 3600000, maxRequests: 30 }], // 30 rewarded-ad verifies per hour
+    ["/ads/me/ads/reward/verify", { windowMs: 3600000, maxRequests: 30 }],
     ["default", { windowMs: 60000, maxRequests: 100 }] // 100 requests per minute for other endpoints
   ]);
 

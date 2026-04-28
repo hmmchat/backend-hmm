@@ -2,6 +2,10 @@ import { Injectable, Logger, BadRequestException, ForbiddenException } from "@ne
 import { PrismaService } from "../prisma/prisma.service.js";
 import { WalletClientService } from "./wallet-client.service.js";
 import { AdRewardConfigService } from "../config/ad-reward.config.js";
+import {
+  AdRewardVerificationInput,
+  AdRewardVerificationService
+} from "./ad-reward-verification.service.js";
 
 @Injectable()
 export class AdRewardService {
@@ -10,21 +14,23 @@ export class AdRewardService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly walletClient: WalletClientService,
-    private readonly configService: AdRewardConfigService
+    private readonly configService: AdRewardConfigService,
+    private readonly verificationService: AdRewardVerificationService
   ) {}
 
   /**
    * Verify ad completion and award coins to user
    */
   async verifyAndAwardReward(
-    userId: string,
-    adUnitId: string,
-    adNetwork?: string
+    input: AdRewardVerificationInput
   ): Promise<{ success: boolean; coinsAwarded: number; newBalance: number; transactionId: string }> {
+    const { userId, adUnitId } = input;
     // Check if ad rewards are enabled
     if (!this.configService.isAdRewardEnabled()) {
       throw new BadRequestException("Ad rewards are currently disabled");
     }
+
+    const verifiedProof = this.verificationService.verifyCompletion(input);
 
     // Get or create default config
     let config = await this.prisma.adRewardConfig.findUnique({
@@ -94,16 +100,39 @@ export class AdRewardService {
       }
     }
 
-    // Create AdReward record with PENDING status
-    const adReward = await this.prisma.adReward.create({
-      data: {
-        userId,
-        adUnitId,
-        adNetwork: adNetwork || null,
-        coinsAwarded: config.coinsPerAd,
-        status: "PENDING"
+    const duplicateReward = await this.prisma.adReward.findFirst({
+      where: {
+        adNetwork: verifiedProof.adNetwork,
+        providerTransactionId: verifiedProof.providerTransactionId
       }
-    });
+    } as any);
+
+    if (duplicateReward) {
+      throw new ForbiddenException("This ad reward has already been processed");
+    }
+
+    // Create AdReward record with PENDING status before wallet credit for idempotency.
+    let adReward;
+    try {
+      adReward = await this.prisma.adReward.create({
+        data: {
+          userId,
+          adUnitId,
+          adNetwork: verifiedProof.adNetwork,
+          providerTransactionId: verifiedProof.providerTransactionId,
+          providerProofHash: verifiedProof.providerProofHash,
+          coinsAwarded: config.coinsPerAd,
+          revenue: verifiedProof.revenue,
+          eCPM: verifiedProof.eCPM,
+          status: "PENDING"
+        } as any
+      });
+    } catch (error: any) {
+      if (error?.code === "P2002") {
+        throw new ForbiddenException("This ad reward has already been processed");
+      }
+      throw error;
+    }
 
     try {
       // Credit coins to user wallet
@@ -118,8 +147,9 @@ export class AdRewardService {
         where: { id: adReward.id },
         data: {
           status: "VERIFIED",
-          verifiedAt: new Date()
-        }
+          verifiedAt: new Date(),
+          transactionId: walletResult.transactionId
+        } as any
       });
 
       this.logger.log(

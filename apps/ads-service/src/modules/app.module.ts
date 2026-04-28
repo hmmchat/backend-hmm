@@ -6,6 +6,7 @@ import { WalletClientService } from "../services/wallet-client.service.js";
 import { AdRewardConfigService } from "../config/ad-reward.config.js";
 import { AdRewardController } from "../routes/ad-reward.controller.js";
 import { HealthController } from "../routes/health.controller.js";
+import { AdRewardVerificationService } from "../services/ad-reward-verification.service.js";
 
 @Module({
   imports: [ConfigModule.forRoot()],
@@ -13,6 +14,7 @@ import { HealthController } from "../routes/health.controller.js";
   providers: [
     PrismaService,
     AdRewardConfigService,
+    AdRewardVerificationService,
     WalletClientService,
     AdRewardService
   ]

@@ -260,6 +260,38 @@ export class RoomService {
   }
 
   /**
+   * After waitlist accept, ensure user-service reflects IN_BROADCAST / IN_SQUAD before clients poll GET /users/:id/room.
+   */
+  private async syncParticipantStatusAfterWaitlistAccept(
+    userId: string,
+    status: "IN_BROADCAST" | "IN_SQUAD"
+  ): Promise<void> {
+    const maxAttempts = 5;
+    const baseDelayMs = 150;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await this.discoveryClient.updateUserStatus(userId, status);
+        this.logger.log(
+          `[acceptFromWaitlist] User-service ${status} sync ok for ${userId} (attempt ${attempt})`
+        );
+        return;
+      } catch (err: any) {
+        const msg = err?.message || String(err);
+        this.logger.warn(
+          `[acceptFromWaitlist] ${status} sync attempt ${attempt}/${maxAttempts} failed for ${userId}: ${msg}`
+        );
+        if (attempt >= maxAttempts) {
+          this.logger.error(
+            `[acceptFromWaitlist] ${status} sync failed after ${maxAttempts} attempts for ${userId}`
+          );
+          return;
+        }
+        await new Promise((r) => setTimeout(r, baseDelayMs * 2 ** (attempt - 1)));
+      }
+    }
+  }
+
+  /**
    * After call_participants rows exist, push user-service MATCHED → IN_SQUAD with retries.
    * Awaited from createRoom to shrink the window where GET /users/:id/room reconcile could
    * see stale MATCHED (mitigated further by IN_CALL_PARTICIPANT_STATUSES including MATCHED).
@@ -1911,10 +1943,8 @@ export class RoomService {
     // Determine status to set based on room's broadcasting state
     const statusToSet = session.isBroadcasting ? "IN_BROADCAST" : "IN_SQUAD";
 
-    // Update user status: MATCHED → IN_BROADCAST or IN_SQUAD
-    await this.discoveryClient.updateUserStatus(targetUserId, statusToSet).catch((err) => {
-      this.logger.error(`Failed to update user ${targetUserId} status to ${statusToSet}: ${err.message}`);
-    });
+    // Await status sync so GET /users/:id/room reconcile does not strip the new participant row.
+    await this.syncParticipantStatusAfterWaitlistAccept(targetUserId, statusToSet);
 
     // Notify discovery-service of participant join
     this.discoveryClient.notifyParticipantJoined(roomId, targetUserId).catch((err) => {

@@ -33,6 +33,8 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     roomId?: string;
     isAnonymous?: boolean;
     preserveParticipantOnClose?: boolean;
+    /** join-as-viewer sockets must not remove participant rows on disconnect (waitlist → call redirect). */
+    connectionKind?: "participant" | "viewer";
   }>();
   private readonly testMode: boolean;
 
@@ -185,15 +187,17 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       const conn = this.connections.get(connectionId);
       const roomIdFromConn = conn?.roomId ?? null;
       const preserveParticipantOnClose = Boolean(conn?.preserveParticipantOnClose);
+      const connectionKind = conn?.connectionKind;
+      this.connections.delete(connectionId);
       void this.handleDisconnection(
         connectionId,
         userId!,
         roomIdFromConn,
-        preserveParticipantOnClose
+        preserveParticipantOnClose,
+        connectionKind
       ).catch((err) => {
         this.logger.error(`[Disconnect] handleDisconnection error for ${userId}: ${err?.message || err}`);
       });
-      this.connections.delete(connectionId);
     });
 
     // Handle errors
@@ -318,6 +322,10 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
           await this.handleJoinAsViewer(connectionId, userId, data, ws);
           break;
 
+        case "preserve-participant-on-close":
+          await this.handlePreserveParticipantOnClose(connectionId, data, ws);
+          break;
+
         case "create-viewer-transport":
           // Allow anonymous users to create viewer transport
           await this.handleCreateViewerTransport(connectionId, userId, data, ws);
@@ -425,6 +433,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       const conn = this.connections.get(connectionId);
       if (conn) {
         conn.roomId = roomId;
+        conn.connectionKind = "participant";
         conn.preserveParticipantOnClose = Boolean(preserveParticipantOnClose);
       }
 
@@ -1000,6 +1009,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     const conn = this.connections.get(connectionId);
     if (conn) {
       conn.roomId = roomId;
+      conn.connectionKind = "viewer";
     }
 
     try {
@@ -1376,6 +1386,28 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Client is leaving Beam TV but was promoted to participant (waitlist accept).
+   * Prevents viewer-socket disconnect from calling removeParticipant.
+   */
+  private async handlePreserveParticipantOnClose(
+    connectionId: string,
+    data: any,
+    ws: any
+  ) {
+    const { roomId } = data || {};
+    const conn = this.connections.get(connectionId);
+    if (!conn) {
+      this.sendError(ws, "Connection not found");
+      return;
+    }
+    if (roomId) {
+      conn.roomId = roomId;
+    }
+    conn.preserveParticipantOnClose = true;
+    this.send(ws, { type: "preserve-participant-on-close-ack", data: { roomId: conn.roomId } });
+  }
+
+  /**
    * Handle disconnection
    * Removes user from room (as participant or viewer) even if room not in memory
    */
@@ -1383,14 +1415,15 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     connectionId: string,
     userId: string,
     roomId: string | null,
-    preserveParticipantOnClose: boolean = false
+    preserveParticipantOnClose: boolean = false,
+    connectionKind?: "participant" | "viewer"
   ) {
     let resolvedRoomId = roomId;
     if (!resolvedRoomId && !this.isAnonymousUser(userId)) {
       const viewerRoom = await this.roomService.getUserActiveRoomAsViewer(userId);
       if (viewerRoom) {
         resolvedRoomId = viewerRoom.roomId;
-      } else {
+      } else if (connectionKind !== "viewer") {
         const participantRoom = await this.roomService.getUserActiveRoom(userId);
         if (participantRoom) {
           resolvedRoomId = participantRoom.roomId;
@@ -1416,6 +1449,23 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     const roomExists = await this.roomService.roomExists(resolvedRoomId);
     if (!roomExists) {
       this.logger.debug(`[Disconnect] Room ${resolvedRoomId} does not exist, skipping removal for user ${userId}`);
+      return;
+    }
+
+    // Beam TV viewer sockets: only drop viewer row. Never remove participant (waitlist accept → /video-chat).
+    if (connectionKind === "viewer") {
+      try {
+        const removedViewer = await this.roomService.removeViewer(resolvedRoomId, userId);
+        if (removedViewer) {
+          this.logger.log(
+            `[Disconnect] Viewer socket: removed ${userId} as viewer from room ${resolvedRoomId} (participant preserved)`
+          );
+        }
+      } catch (error: any) {
+        this.logger.debug(
+          `[Disconnect] Viewer socket removeViewer failed for user ${userId} in room ${resolvedRoomId}: ${error.message}`
+        );
+      }
       return;
     }
 

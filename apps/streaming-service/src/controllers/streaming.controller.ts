@@ -92,7 +92,8 @@ export class StreamingController {
     if (!details) {
       return { exists: false };
     }
-    return { exists: true, ...details };
+    const sfuNode = await this.roomService.getRoomNode(roomId);
+    return { exists: true, ...details, sfuNode };
   }
 
   /**
@@ -417,14 +418,16 @@ export class StreamingController {
         }
         
         // Find the user's specific role (HOST or PARTICIPANT)
-        const userParticipant = roomDetails.participants.find(p => p.userId === userId);
+        const userParticipant = roomDetails.participants.find((p: { userId: string }) => p.userId === userId);
         const userRole = userParticipant?.role || 'PARTICIPANT';
         
+        const sfuNode = await this.roomService.getRoomNode(participantRoom.roomId);
         return {
           exists: true,
           role: 'participant',
           userRole: userRole, // 'HOST' or 'PARTICIPANT'
-          ...roomDetails
+          ...roomDetails,
+          sfuNode
         };
       } catch (error: any) {
         // Room might have been ended between query and details fetch
@@ -442,11 +445,13 @@ export class StreamingController {
           return { exists: false };
         }
         
+        const sfuNode = await this.roomService.getRoomNode(viewerRoom.roomId);
         return {
           exists: true,
           role: 'viewer',
           userRole: 'VIEWER',
-          ...roomDetails
+          ...roomDetails,
+          sfuNode
         };
       } catch (error: any) {
         // Room might have been ended between query and details fetch
@@ -521,7 +526,7 @@ export class StreamingController {
           return { exists: false };
         }
         
-        const userParticipant = roomDetails.participants.find(p => p.userId === userId);
+        const userParticipant = roomDetails.participants.find((p: { userId: string }) => p.userId === userId);
         const userRole = userParticipant?.role || 'PARTICIPANT';
         
         return {

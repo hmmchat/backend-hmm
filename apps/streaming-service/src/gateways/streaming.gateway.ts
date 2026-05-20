@@ -13,6 +13,7 @@ import { ChatService } from "../services/chat.service.js";
 import { DareService } from "../services/dare.service.js";
 import { IcebreakerService } from "../services/icebreaker.service.js";
 import { FriendClientService } from "../services/friend-client.service.js";
+import { StreamingNodeRegistryService } from "../services/streaming-node-registry.service.js";
 import { verifyToken, AccessPayload } from "@hmm/common";
 import { JWK } from "jose";
 
@@ -35,7 +36,10 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     preserveParticipantOnClose?: boolean;
     /** join-as-viewer sockets must not remove participant rows on disconnect (waitlist → call redirect). */
     connectionKind?: "participant" | "viewer";
+    membershipVerified?: boolean;
   }>();
+  private roomConnections = new Map<string, Set<string>>();
+  private userConnections = new Map<string, Set<string>>();
   private readonly testMode: boolean;
 
   constructor(
@@ -46,7 +50,8 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     private chatService: ChatService,
     private dareService: DareService,
     private icebreakerService: IcebreakerService,
-    private friendClient: FriendClientService
+    private friendClient: FriendClientService,
+    private nodeRegistry: StreamingNodeRegistryService
   ) {
     this.testMode = process.env.TEST_MODE === "true" || process.env.NODE_ENV === "test";
   }
@@ -161,6 +166,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       }
 
       this.connections.set(connectionId, { ws: ws, userId, isAnonymous });
+      this.addUserConnection(userId, connectionId);
     } catch (error) {
       this.logger.error("WebSocket authentication failed:", error);
       this.sendError(ws, "Invalid or expired token");
@@ -188,6 +194,8 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       const roomIdFromConn = conn?.roomId ?? null;
       const preserveParticipantOnClose = Boolean(conn?.preserveParticipantOnClose);
       const connectionKind = conn?.connectionKind;
+      this.unindexRoomConnection(connectionId, roomIdFromConn);
+      this.removeUserConnection(userId!, connectionId);
       this.connections.delete(connectionId);
       void this.handleDisconnection(
         connectionId,
@@ -204,6 +212,83 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     ws.on("error", (error: Error) => {
       this.logger.error(`WebSocket error for ${connectionId}:`, error);
     });
+  }
+
+  private addUserConnection(userId: string, connectionId: string): void {
+    let set = this.userConnections.get(userId);
+    if (!set) {
+      set = new Set<string>();
+      this.userConnections.set(userId, set);
+    }
+    set.add(connectionId);
+  }
+
+  private removeUserConnection(userId: string, connectionId: string): void {
+    const set = this.userConnections.get(userId);
+    if (!set) return;
+    set.delete(connectionId);
+    if (set.size === 0) {
+      this.userConnections.delete(userId);
+    }
+  }
+
+  private indexRoomConnection(connectionId: string, roomId: string): void {
+    let set = this.roomConnections.get(roomId);
+    if (!set) {
+      set = new Set<string>();
+      this.roomConnections.set(roomId, set);
+    }
+    set.add(connectionId);
+  }
+
+  private unindexRoomConnection(connectionId: string, roomId?: string | null): void {
+    if (!roomId) return;
+    const set = this.roomConnections.get(roomId);
+    if (!set) return;
+    set.delete(connectionId);
+    if (set.size === 0) {
+      this.roomConnections.delete(roomId);
+    }
+  }
+
+  private setConnectionRoom(connectionId: string, roomId: string): void {
+    const conn = this.connections.get(connectionId);
+    if (!conn) return;
+    if (conn.roomId && conn.roomId !== roomId) {
+      this.unindexRoomConnection(connectionId, conn.roomId);
+    }
+    conn.roomId = roomId;
+    this.indexRoomConnection(connectionId, roomId);
+  }
+
+  private clearConnectionRoom(connectionId: string): void {
+    const conn = this.connections.get(connectionId);
+    if (!conn) return;
+    this.unindexRoomConnection(connectionId, conn.roomId);
+    delete conn.roomId;
+  }
+
+  private parsePreferredLayers(input: any) {
+    if (!input || typeof input !== "object") return undefined;
+    const spatialLayer = Number(input.spatialLayer);
+    const temporalLayer = Number(input.temporalLayer);
+    if (!Number.isInteger(spatialLayer) || !Number.isInteger(temporalLayer)) {
+      return undefined;
+    }
+    return {
+      spatialLayer: Math.max(0, Math.min(spatialLayer, 2)),
+      temporalLayer: Math.max(0, Math.min(temporalLayer, 2))
+    };
+  }
+
+  private hasVerifiedParticipantConnection(connectionId: string, roomId: string, userId: string): boolean {
+    const conn = this.connections.get(connectionId);
+    return Boolean(
+      conn?.membershipVerified &&
+      conn.connectionKind === "participant" &&
+      conn.roomId === roomId &&
+      String(conn.userId) === String(userId)
+    );
   }
 
   /**
@@ -225,6 +310,11 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     const { type, data } = message;
 
     try {
+      const routedRoomId = this.getRoomIdForRouting(type, data);
+      if (routedRoomId && !(await this.ensureRoomRoutedToLocalNode(routedRoomId, ws))) {
+        return;
+      }
+
       switch (type) {
         // Room management
         case "join-room":
@@ -407,6 +497,57 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  private getRoomIdForRouting(type: string, data: any): string | null {
+    const roomBoundTypes = new Set([
+      "join-room",
+      "leave-room",
+      "kick-user",
+      "create-transport",
+      "connect-transport",
+      "produce",
+      "close-producer",
+      "consume",
+      "get-producers",
+      "start-broadcast",
+      "stop-broadcast",
+      "join-as-viewer",
+      "preserve-participant-on-close",
+      "create-viewer-transport",
+      "connect-viewer-transport",
+      "get-broadcast-producers",
+      "consume-broadcast",
+      "chat-message",
+      "dare-view",
+      "dare-assign",
+      "dare-send",
+      "get-icebreaker",
+      "send-friend-request"
+    ]);
+    if (!roomBoundTypes.has(type)) return null;
+    const roomId = data?.roomId;
+    return typeof roomId === "string" && roomId.trim() ? roomId : null;
+  }
+
+  private async ensureRoomRoutedToLocalNode(roomId: string, ws: any): Promise<boolean> {
+    const assignedNode = await this.nodeRegistry.getRoomNode(roomId);
+    if (!assignedNode || this.nodeRegistry.isLocalNode(assignedNode.nodeId)) {
+      return true;
+    }
+
+    this.send(ws, {
+      type: "room-reroute",
+      data: {
+        roomId,
+        nodeId: assignedNode.nodeId,
+        httpUrl: assignedNode.httpUrl,
+        wsUrl: assignedNode.wsUrl,
+        region: assignedNode.region
+      }
+    });
+    this.sendError(ws, `Room ${roomId} is hosted on streaming node ${assignedNode.nodeId}`);
+    return false;
+  }
+
   /**
    * Handle join room
    */
@@ -432,9 +573,10 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
 
       const conn = this.connections.get(connectionId);
       if (conn) {
-        conn.roomId = roomId;
+        this.setConnectionRoom(connectionId, roomId);
         conn.connectionKind = "participant";
         conn.preserveParticipantOnClose = Boolean(preserveParticipantOnClose);
+        conn.membershipVerified = true;
       }
 
       // Check if user is already a participant (from room creation or previous join)
@@ -479,13 +621,16 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
         this.logger.warn(`[JoinRoom] Could not load participant roles for ${roomId}: ${err?.message || err}`);
       }
 
+      const producers = await this.callService.getProducers(roomId, userId);
+
       this.send(ws, {
         type: "room-joined",
         data: {
           roomId,
           rtpCapabilities,
           myRole,
-          participantRoles
+          participantRoles,
+          producers
         }
       });
     } catch (error: any) {
@@ -568,7 +713,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
 
     const conn = this.connections.get(connectionId);
     if (conn) {
-      delete conn.roomId;
+      this.clearConnectionRoom(connectionId);
     }
   }
 
@@ -592,17 +737,17 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       await this.roomService.kickUser(roomId, userId, targetUserId);
 
       // Notify the kicked user (if they're connected)
-      for (const [, conn] of this.connections.entries()) {
-        if (String(conn.userId) === String(targetUserId)) {
-          this.send(conn.ws, {
-            type: "user-kicked",
-            data: {
-              roomId,
-              kickedBy: userId
-            }
-          });
-          break;
-        }
+      const targetConnections = this.userConnections.get(targetUserId);
+      for (const connId of targetConnections ?? []) {
+        const conn = this.connections.get(connId);
+        if (!conn) continue;
+        this.send(conn.ws, {
+          type: "user-kicked",
+          data: {
+            roomId,
+            kickedBy: userId
+          }
+        });
       }
 
       // Notify everyone in the room (including the kicker) so all clients drop the kicked
@@ -632,7 +777,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
    * Handle create transport
    */
   private async handleCreateTransport(
-    _connectionId: string,
+    connectionId: string,
     userId: string,
     data: any,
     ws: any
@@ -642,18 +787,20 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       throw new Error("roomId is required");
     }
 
-    // Validate user is a participant in the room
-    try {
-      const isParticipant = await this.roomService.isParticipant(roomId, userId);
-      if (!isParticipant) {
-        throw new Error(`User ${userId} is not a participant in room ${roomId}`);
+    if (!this.hasVerifiedParticipantConnection(connectionId, roomId, userId)) {
+      // Validate user is a participant in the room
+      try {
+        const isParticipant = await this.roomService.isParticipant(roomId, userId);
+        if (!isParticipant) {
+          throw new Error(`User ${userId} is not a participant in room ${roomId}`);
+        }
+      } catch (error: any) {
+        // If room doesn't exist or other error, let it bubble up
+        if (error.message?.includes("not found")) {
+          throw new Error(`Room ${roomId} not found`);
+        }
+        throw error;
       }
-    } catch (error: any) {
-      // If room doesn't exist or other error, let it bubble up
-      if (error.message?.includes("not found")) {
-        throw new Error(`Room ${roomId} not found`);
-      }
-      throw error;
     }
 
     const transport = await this.callService.createTransport(
@@ -694,7 +841,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
    * Handle produce (send audio/video)
    */
   private async handleProduce(
-    _connectionId: string,
+    connectionId: string,
     userId: string,
     data: any,
     ws: any
@@ -715,10 +862,12 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       source = rawSource;
     }
 
-    // Validate user is a participant (only participants can produce)
-    const isParticipant = await this.roomService.isParticipant(roomId, userId);
-    if (!isParticipant) {
-      throw new Error(`User ${userId} is not a participant in room ${roomId}. Only participants can produce media.`);
+    if (!this.hasVerifiedParticipantConnection(connectionId, roomId, userId)) {
+      // Validate user is a participant (only participants can produce)
+      const isParticipant = await this.roomService.isParticipant(roomId, userId);
+      if (!isParticipant) {
+        throw new Error(`User ${userId} is not a participant in room ${roomId}. Only participants can produce media.`);
+      }
     }
 
     const producer = await this.callService.produce(
@@ -786,14 +935,21 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
    * Handle consume (receive audio/video)
    */
   private async handleConsume(
-    _connectionId: string,
+    connectionId: string,
     userId: string,
     data: any,
     ws: any
   ) {
-    const { roomId, transportId, producerId, rtpCapabilities } = data;
+    const { roomId, transportId, producerId, rtpCapabilities, preferredLayers } = data;
     if (!roomId || !transportId || !producerId || !rtpCapabilities) {
       throw new Error("roomId, transportId, producerId, and rtpCapabilities are required");
+    }
+
+    if (!this.hasVerifiedParticipantConnection(connectionId, roomId, userId)) {
+      const isParticipant = await this.roomService.isParticipant(roomId, userId);
+      if (!isParticipant) {
+        throw new Error(`User ${userId} is not a participant in room ${roomId}. Only participants can consume media.`);
+      }
     }
 
     const consumer = await this.callService.consume(
@@ -801,7 +957,8 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       userId,
       transportId,
       producerId,
-      rtpCapabilities
+      rtpCapabilities,
+      this.parsePreferredLayers(preferredLayers)
     );
 
     // Prefer explicit producer→owner map (avoids missed lookups when participant shape or key types differ)
@@ -1008,7 +1165,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
 
     const conn = this.connections.get(connectionId);
     if (conn) {
-      conn.roomId = roomId;
+      this.setConnectionRoom(connectionId, roomId);
       conn.connectionKind = "viewer";
     }
 
@@ -1401,7 +1558,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       return;
     }
     if (roomId) {
-      conn.roomId = roomId;
+      this.setConnectionRoom(connectionId, roomId);
     }
     conn.preserveParticipantOnClose = true;
     this.send(ws, { type: "preserve-participant-on-close-ack", data: { roomId: conn.roomId } });
@@ -1534,15 +1691,23 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     message: any,
     excludeUserId?: string
   ) {
-    for (const [connId, conn] of this.connections.entries()) {
+    const connectionIds = this.roomConnections.get(roomId);
+    if (!connectionIds || connectionIds.size === 0) {
+      return;
+    }
+    for (const connId of connectionIds) {
+      const conn = this.connections.get(connId);
+      if (!conn) {
+        connectionIds.delete(connId);
+        continue;
+      }
       const excluded =
         excludeUserId !== undefined && String(conn.userId) === String(excludeUserId);
-      if (conn.roomId === roomId && !excluded) {
-        try {
-          this.send(conn.ws, message);
-        } catch (error) {
-          this.logger.error(`Error broadcasting to ${connId}:`, error);
-        }
+      if (excluded) continue;
+      try {
+        this.send(conn.ws, message);
+      } catch (error) {
+        this.logger.error(`Error broadcasting to ${connId}:`, error);
       }
     }
   }
@@ -1708,7 +1873,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     data: any,
     ws: any
   ) {
-    const { roomId, transportId, producerId, rtpCapabilities } = data;
+    const { roomId, transportId, producerId, rtpCapabilities, preferredLayers } = data;
     if (!roomId || !transportId || !producerId || !rtpCapabilities) {
       this.sendError(ws, "roomId, transportId, producerId, and rtpCapabilities are required");
       return;
@@ -1720,13 +1885,15 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
         userId,
         transportId,
         producerId,
-        rtpCapabilities
+        rtpCapabilities,
+        this.parsePreferredLayers(preferredLayers)
       );
 
       const videoSource =
         consumer.kind === "video"
           ? this.callService.getVideoProducerSource(roomId, producerId)
           : undefined;
+      const producerUserId = this.roomService.getProducerOwner(roomId, producerId);
 
       this.send(ws, {
         type: "broadcast-consumed",
@@ -1735,6 +1902,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
           producerId: consumer.producerId,
           kind: consumer.kind,
           rtpParameters: consumer.rtpParameters,
+          userId: producerUserId,
           ...(consumer.kind === "video" && videoSource ? { source: videoSource } : {})
         }
       });

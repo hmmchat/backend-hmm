@@ -9,11 +9,18 @@ export type VideoProducerSource = "camera" | "screen";
 @Injectable()
 export class CallService {
   private readonly logger = new Logger(CallService.name);
+  private readonly realtimeDebugLogs = process.env.STREAMING_REALTIME_DEBUG === "true";
 
   constructor(
     private roomService: RoomService,
     private mediasoup: MediasoupService
   ) { }
+
+  private realtimeDebug(message: string): void {
+    if (this.realtimeDebugLogs) {
+      this.logger.debug(message);
+    }
+  }
 
   /**
    * Create a WebRTC transport for a participant
@@ -23,12 +30,6 @@ export class CallService {
     userId: string,
     options: { producing?: boolean; consuming?: boolean } = {}
   ): Promise<MediasoupTypes.WebRtcTransport> {
-    // Ensure room exists and is in memory (will reload if needed)
-    const roomExists = await this.roomService.roomExists(roomId);
-    if (!roomExists) {
-      throw new NotFoundException(`Room ${roomId} not found`);
-    }
-
     const room = this.roomService.getRoom(roomId);
     const transport = await this.mediasoup.createWebRtcTransport(room.router, options);
 
@@ -61,12 +62,6 @@ export class CallService {
     transportId: string,
     dtlsParameters: MediasoupTypes.DtlsParameters
   ): Promise<void> {
-    // Ensure room exists and is in memory
-    const roomExists = await this.roomService.roomExists(roomId);
-    if (!roomExists) {
-      throw new NotFoundException(`Room ${roomId} not found`);
-    }
-
     const participant = this.roomService.getParticipant(roomId, userId);
     if (!participant) {
       // Participant might exist in database but not have transport yet
@@ -84,7 +79,7 @@ export class CallService {
     }
 
     await transport.connect({ dtlsParameters });
-    this.logger.log(`Transport ${transportId} connected for user ${userId}`);
+    this.realtimeDebug(`Transport ${transportId} connected for user ${userId}`);
   }
 
   private cleanupConsumersForProducer(roomId: string, producerId: string): void {
@@ -122,12 +117,6 @@ export class CallService {
     rtpParameters: MediasoupTypes.RtpParameters,
     options?: { source?: VideoProducerSource }
   ): Promise<MediasoupTypes.Producer> {
-    // Ensure room exists and is in memory
-    const roomExists = await this.roomService.roomExists(roomId);
-    if (!roomExists) {
-      throw new NotFoundException(`Room ${roomId} not found`);
-    }
-
     const participant = this.roomService.getParticipant(roomId, userId);
     if (!participant) {
       // Participant might exist in database but not have transport yet
@@ -190,7 +179,7 @@ export class CallService {
     this.roomService.registerProducerOwner(roomId, producer.id, userId);
     this.roomService.setParticipant(roomId, userId, participant);
 
-    this.logger.log(
+    this.realtimeDebug(
       `Producer created: ${producer.id} (${kind}${kind === "video" ? `, ${videoSource}` : ""}) for user ${userId}`
     );
 
@@ -201,11 +190,6 @@ export class CallService {
    * Close a producer owned by this participant (e.g. user stops screen share).
    */
   async closeProducer(roomId: string, userId: string, producerId: string): Promise<void> {
-    const roomExists = await this.roomService.roomExists(roomId);
-    if (!roomExists) {
-      throw new NotFoundException(`Room ${roomId} not found`);
-    }
-
     const participant = this.roomService.getParticipant(roomId, userId);
     if (!participant) {
       const isParticipant = await this.roomService.isParticipant(roomId, userId);
@@ -262,14 +246,9 @@ export class CallService {
     userId: string,
     transportId: string,
     producerId: string,
-    rtpCapabilities: MediasoupTypes.RtpCapabilities
+    rtpCapabilities: MediasoupTypes.RtpCapabilities,
+    preferredLayers?: MediasoupTypes.ConsumerLayers
   ): Promise<MediasoupTypes.Consumer> {
-    // Ensure room exists and is in memory
-    const roomExists = await this.roomService.roomExists(roomId);
-    if (!roomExists) {
-      throw new NotFoundException(`Room ${roomId} not found`);
-    }
-
     const participant = this.roomService.getParticipant(roomId, userId);
     if (!participant) {
       // Participant might exist in database but not have transport yet
@@ -290,14 +269,15 @@ export class CallService {
       room.router,
       transport,
       producerId,
-      rtpCapabilities
+      rtpCapabilities,
+      preferredLayers
     );
 
     // Store consumer
     participant.consumers.set(producerId, consumer);
     this.roomService.setParticipant(roomId, userId, participant);
 
-    this.logger.log(`Consumer created: ${consumer.id} for producer ${producerId} (user ${userId})`);
+    this.realtimeDebug(`Consumer created: ${consumer.id} for producer ${producerId} (user ${userId})`);
 
     return consumer;
   }
@@ -312,12 +292,6 @@ export class CallService {
     /** Present for video: camera vs screen/application share */
     source?: VideoProducerSource;
   }>> {
-    // Ensure room exists and is in memory
-    const roomExists = await this.roomService.roomExists(roomId);
-    if (!roomExists) {
-      throw new NotFoundException(`Room ${roomId} not found`);
-    }
-
     const room = this.roomService.getRoom(roomId);
     const producers: Array<{
       userId: string;

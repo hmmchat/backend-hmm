@@ -6,11 +6,41 @@ export class StreamingClientService {
   private readonly logger = new Logger(StreamingClientService.name);
   private readonly streamingServiceUrl: string;
   private readonly requestTimeoutMs: number;
+  private readonly activeBroadcastsCacheTtlMs: number;
+  private readonly activeBroadcastsLimit: number;
+  private activeBroadcastsCache: {
+    expiresAt: number;
+    data: Array<{
+      roomId: string;
+      participantCount: number;
+      viewerCount: number;
+      participants: Array<{
+        userId: string;
+        role: string;
+        joinedAt: Date;
+      }>;
+      startedAt: Date | null;
+      createdAt: Date;
+    }>;
+  } | null = null;
 
   constructor() {
     this.streamingServiceUrl = process.env.STREAMING_SERVICE_URL || "http://localhost:3005";
     // Room creation chains user-service checks in streaming; allow enough time for cross-service calls
     this.requestTimeoutMs = parseInt(process.env.STREAMING_SERVICE_TIMEOUT_MS || "30000", 10);
+    this.activeBroadcastsCacheTtlMs = this.parseNonNegativeInt(
+      process.env.ACTIVE_BROADCASTS_CLIENT_CACHE_TTL_MS,
+      1500
+    );
+    this.activeBroadcastsLimit = Math.min(
+      100,
+      Math.max(1, this.parseNonNegativeInt(process.env.ACTIVE_BROADCASTS_CLIENT_LIMIT, 50))
+    );
+  }
+
+  private parseNonNegativeInt(raw: string | undefined, fallback: number): number {
+    const parsed = raw !== undefined && raw !== "" ? Number.parseInt(raw, 10) : fallback;
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
   }
 
   /**
@@ -101,7 +131,14 @@ export class StreamingClientService {
     createdAt: Date;
   }>> {
     try {
-      const response = await fetch(`${this.streamingServiceUrl}/streaming/broadcasts`, {
+      if (this.activeBroadcastsCache && this.activeBroadcastsCache.expiresAt > Date.now()) {
+        return this.activeBroadcastsCache.data;
+      }
+
+      const params = new URLSearchParams({
+        limit: String(this.activeBroadcastsLimit)
+      });
+      const response = await fetch(`${this.streamingServiceUrl}/streaming/broadcasts?${params.toString()}`, {
         method: "GET",
         headers: {
           "Content-Type": "application/json"
@@ -120,7 +157,13 @@ export class StreamingClientService {
       const broadcasts = Array.isArray(result)
         ? result
         : (result.broadcasts || []);
-      this.logger.log(`Retrieved ${broadcasts.length} active broadcasts`);
+      if (this.activeBroadcastsCacheTtlMs > 0) {
+        this.activeBroadcastsCache = {
+          expiresAt: Date.now() + this.activeBroadcastsCacheTtlMs,
+          data: broadcasts
+        };
+      }
+      this.logger.debug(`Retrieved ${broadcasts.length} active broadcasts`);
       return broadcasts;
     } catch (error: any) {
       if (error.name === "AbortError" || error.name === "TimeoutError") {

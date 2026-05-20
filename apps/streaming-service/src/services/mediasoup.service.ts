@@ -1,27 +1,47 @@
 import { Injectable, OnModuleInit, Logger } from "@nestjs/common";
 import * as mediasoup from "mediasoup";
+import os from "node:os";
 
 @Injectable()
 export class MediasoupService implements OnModuleInit {
   private readonly logger = new Logger(MediasoupService.name);
   private workers: mediasoup.types.Worker[] = [];
+  private routersPerWorker = new Map<number, number>();
   private workerRestartAttempts: Map<number, number> = new Map(); // Track restart attempts per worker index
-  private nextWorkerIndex = 0;
   private readonly numWorkers: number;
   private readonly listenIp: string;
   private readonly announcedIp: string;
   private readonly maxRestartAttempts: number;
   private readonly restartBackoffBaseMs: number;
   private readonly restartBackoffMaxMs: number;
+  private readonly rtcMinPort: number;
+  private readonly rtcMaxPort: number;
+  private readonly maxIncomingBitrate: number | null;
+  private readonly realtimeDebugLogs: boolean;
 
   constructor() {
-    // Use 1 worker for local dev to reduce resource usage and startup time
-    this.numWorkers = parseInt(process.env.MEDIASOUP_WORKERS || "1", 10);
+    // Use 1 worker for local dev, but default production to CPU-aware worker count.
+    const defaultWorkers = process.env.NODE_ENV === "production"
+      ? Math.max(1, Math.min(os.cpus().length - 1, 16))
+      : 1;
+    this.numWorkers = this.parsePositiveInt(process.env.MEDIASOUP_WORKERS, defaultWorkers);
     this.listenIp = process.env.MEDIASOUP_LISTEN_IP || "0.0.0.0";
     this.announcedIp = process.env.MEDIASOUP_ANNOUNCED_IP || "127.0.0.1";
-    this.maxRestartAttempts = parseInt(process.env.MEDIASOUP_MAX_RESTART_ATTEMPTS || "5", 10);
-    this.restartBackoffBaseMs = parseInt(process.env.MEDIASOUP_RESTART_BACKOFF_BASE_MS || "2000", 10);
-    this.restartBackoffMaxMs = parseInt(process.env.MEDIASOUP_RESTART_BACKOFF_MAX_MS || "32000", 10);
+    this.maxRestartAttempts = this.parsePositiveInt(process.env.MEDIASOUP_MAX_RESTART_ATTEMPTS, 5);
+    this.restartBackoffBaseMs = this.parsePositiveInt(process.env.MEDIASOUP_RESTART_BACKOFF_BASE_MS, 2000);
+    this.restartBackoffMaxMs = this.parsePositiveInt(process.env.MEDIASOUP_RESTART_BACKOFF_MAX_MS, 32000);
+    this.rtcMinPort = this.parsePositiveInt(process.env.MEDIASOUP_RTC_MIN_PORT, 40000);
+    this.rtcMaxPort = this.parsePositiveInt(process.env.MEDIASOUP_RTC_MAX_PORT, 49999);
+    const incoming = process.env.MEDIASOUP_MAX_INCOMING_BITRATE;
+    this.maxIncomingBitrate = incoming && incoming !== ""
+      ? this.parsePositiveInt(incoming, 0)
+      : null;
+    this.realtimeDebugLogs = process.env.STREAMING_REALTIME_DEBUG === "true";
+  }
+
+  private parsePositiveInt(raw: string | undefined, fallback: number): number {
+    const parsed = raw !== undefined && raw !== "" ? Number.parseInt(raw, 10) : fallback;
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
   }
 
   /** Higher default for multi-party SFU (2.5 Mbps); override with MEDIASOUP_INITIAL_OUT_BITRATE */
@@ -43,21 +63,10 @@ export class MediasoupService implements OnModuleInit {
       let lastError: Error | null = null;
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-          const worker = await mediasoup.createWorker({
-            logLevel: "warn",
-            logTags: ["info", "ice", "dtls", "rtp", "srtp", "rtcp"],
-            rtcMinPort: 40000,
-            rtcMaxPort: 49999
-          });
-
-          worker.on("died", () => {
-            this.logger.error(`Mediasoup worker ${i} died, attempting to restart...`);
-            this.restartWorker(i).catch(err => {
-              this.logger.error(`Failed to restart worker ${i}: ${err.message}`);
-            });
-          });
+          const worker = await this.createWorkerAtIndex(i);
 
           this.workers.push(worker);
+          this.routersPerWorker.set(i, 0);
           this.logger.log(`Mediasoup worker ${i} created (PID: ${worker.pid})`);
           lastError = null;
           break;
@@ -79,20 +88,59 @@ export class MediasoupService implements OnModuleInit {
     this.logger.log(`✅ All ${this.numWorkers} Mediasoup workers created successfully`);
   }
 
-  /**
-   * Get the next available worker (round-robin)
-   */
-  private getNextWorker(): mediasoup.types.Worker {
-    const worker = this.workers[this.nextWorkerIndex];
-    this.nextWorkerIndex = (this.nextWorkerIndex + 1) % this.workers.length;
+  private getWorkerPortRange(workerIndex: number): { rtcMinPort: number; rtcMaxPort: number } {
+    const totalPorts = this.rtcMaxPort - this.rtcMinPort + 1;
+    const portsPerWorker = Math.max(1, Math.floor(totalPorts / Math.max(1, this.numWorkers)));
+    const rtcMinPort = this.rtcMinPort + workerIndex * portsPerWorker;
+    const isLast = workerIndex === this.numWorkers - 1;
+    const rtcMaxPort = isLast ? this.rtcMaxPort : Math.min(this.rtcMaxPort, rtcMinPort + portsPerWorker - 1);
+    return { rtcMinPort, rtcMaxPort };
+  }
+
+  private async createWorkerAtIndex(workerIndex: number): Promise<mediasoup.types.Worker> {
+    const { rtcMinPort, rtcMaxPort } = this.getWorkerPortRange(workerIndex);
+    const worker = await mediasoup.createWorker({
+      logLevel: "warn",
+      logTags: ["info", "ice", "dtls", "rtp", "srtp", "rtcp"],
+      rtcMinPort,
+      rtcMaxPort
+    });
+
+    worker.on("died", () => {
+      this.logger.error(`Mediasoup worker ${workerIndex} died, attempting to restart...`);
+      this.restartWorker(workerIndex).catch(err => {
+        this.logger.error(`Failed to restart worker ${workerIndex}: ${err.message}`);
+      });
+    });
+
     return worker;
+  }
+
+  private getLeastLoadedWorker(): { worker: mediasoup.types.Worker; workerIndex: number } {
+    let selected: { worker: mediasoup.types.Worker; workerIndex: number; routerCount: number } | null = null;
+    for (const [workerIndex, worker] of this.workers.entries()) {
+      if (!worker || worker.closed) continue;
+      const routerCount = this.routersPerWorker.get(workerIndex) ?? 0;
+      if (!selected || routerCount < selected.routerCount) {
+        selected = { worker, workerIndex, routerCount };
+      }
+    }
+
+    if (!selected) {
+      throw new Error("No live Mediasoup workers available");
+    }
+    return selected;
   }
 
   /**
    * Create a new router for a room
    */
   async createRouter(): Promise<mediasoup.types.Router> {
-    const worker = this.getNextWorker();
+    return (await this.createRouterForRoom()).router;
+  }
+
+  async createRouterForRoom(): Promise<{ router: mediasoup.types.Router; workerIndex: number }> {
+    const { worker, workerIndex } = this.getLeastLoadedWorker();
     
     const router = await worker.createRouter({
       mediaCodecs: [
@@ -143,8 +191,19 @@ export class MediasoupService implements OnModuleInit {
       ]
     });
 
-    this.logger.log(`Router created (ID: ${router.id})`);
-    return router;
+    this.routersPerWorker.set(workerIndex, (this.routersPerWorker.get(workerIndex) ?? 0) + 1);
+    router.observer.once("close", () => {
+      this.routersPerWorker.set(workerIndex, Math.max(0, (this.routersPerWorker.get(workerIndex) ?? 1) - 1));
+    });
+
+    this.realtimeDebug(`Router created (ID: ${router.id}, workerIndex: ${workerIndex})`);
+    return { router, workerIndex };
+  }
+
+  private realtimeDebug(message: string): void {
+    if (this.realtimeDebugLogs) {
+      this.logger.debug(message);
+    }
   }
 
   /**
@@ -177,7 +236,11 @@ export class MediasoupService implements OnModuleInit {
       initialAvailableOutgoingBitrate: this.getInitialAvailableOutgoingBitrate()
     });
 
-    this.logger.log(
+    if (this.maxIncomingBitrate !== null) {
+      await transport.setMaxIncomingBitrate(this.maxIncomingBitrate);
+    }
+
+    this.realtimeDebug(
       `WebRTC transport created (ID: ${transport.id}, producing: ${options.producing}, consuming: ${options.consuming})`
     );
 
@@ -203,7 +266,7 @@ export class MediasoupService implements OnModuleInit {
       appData && typeof (appData as { source?: string }).source === "string"
         ? `, source: ${(appData as { source: string }).source}`
         : "";
-    this.logger.log(`Producer created (ID: ${producer.id}, kind: ${kind}${src})`);
+    this.realtimeDebug(`Producer created (ID: ${producer.id}, kind: ${kind}${src})`);
     return producer;
   }
 
@@ -214,7 +277,8 @@ export class MediasoupService implements OnModuleInit {
     router: mediasoup.types.Router,
     transport: mediasoup.types.WebRtcTransport,
     producerId: string,
-    rtpCapabilities: mediasoup.types.RtpCapabilities
+    rtpCapabilities: mediasoup.types.RtpCapabilities,
+    preferredLayers?: mediasoup.types.ConsumerLayers
   ): Promise<mediasoup.types.Consumer> {
     if (!router.canConsume({ producerId, rtpCapabilities })) {
       throw new Error("Cannot consume this producer");
@@ -226,8 +290,27 @@ export class MediasoupService implements OnModuleInit {
       paused: false
     });
 
-    this.logger.log(`Consumer created (ID: ${consumer.id}, producerId: ${producerId})`);
+    if (preferredLayers && consumer.kind === "video") {
+      await this.applyPreferredLayers(consumer, preferredLayers);
+    }
+
+    this.realtimeDebug(`Consumer created (ID: ${consumer.id}, producerId: ${producerId})`);
     return consumer;
+  }
+
+  async applyPreferredLayers(
+    consumer: mediasoup.types.Consumer,
+    preferredLayers?: mediasoup.types.ConsumerLayers
+  ): Promise<void> {
+    if (!preferredLayers || consumer.kind !== "video") return;
+    try {
+      await consumer.setPreferredLayers(preferredLayers);
+      this.realtimeDebug(
+        `Consumer ${consumer.id} preferred layers set to spatial=${preferredLayers.spatialLayer}, temporal=${preferredLayers.temporalLayer}`
+      );
+    } catch (error: any) {
+      this.realtimeDebug(`Preferred layers ignored for consumer ${consumer.id}: ${error?.message || error}`);
+    }
   }
 
   /**
@@ -255,21 +338,10 @@ export class MediasoupService implements OnModuleInit {
     await new Promise(resolve => setTimeout(resolve, backoffDelay));
 
     try {
-      const newWorker = await mediasoup.createWorker({
-        logLevel: "warn",
-        logTags: ["info", "ice", "dtls", "rtp", "srtp", "rtcp"],
-        rtcMinPort: 40000,
-        rtcMaxPort: 49999
-      });
-
-      newWorker.on("died", () => {
-        this.logger.error(`Mediasoup worker ${workerIndex} died again, will retry...`);
-        this.restartWorker(workerIndex).catch(err => {
-          this.logger.error(`Failed to restart worker ${workerIndex}: ${err.message}`);
-        });
-      });
+      const newWorker = await this.createWorkerAtIndex(workerIndex);
 
       this.workers[workerIndex] = newWorker;
+      this.routersPerWorker.set(workerIndex, 0);
       this.workerRestartAttempts.delete(workerIndex); // Reset on successful restart
       this.logger.log(`✅ Worker ${workerIndex} restarted successfully (PID: ${newWorker.pid})`);
     } catch (error: any) {
@@ -289,5 +361,23 @@ export class MediasoupService implements OnModuleInit {
       }
     }
     this.logger.log("✅ All Mediasoup workers closed");
+  }
+
+  getLiveWorkerCount(): number {
+    return this.workers.filter((worker) => worker && !worker.closed).length;
+  }
+
+  getWorkerStats() {
+    return this.workers.map((worker, workerIndex) => {
+      const portRange = this.getWorkerPortRange(workerIndex);
+      return {
+        workerIndex,
+        pid: worker?.pid ?? null,
+        closed: !worker || worker.closed,
+        routerCount: this.routersPerWorker.get(workerIndex) ?? 0,
+        rtcMinPort: portRange.rtcMinPort,
+        rtcMaxPort: portRange.rtcMaxPort
+      };
+    });
   }
 }

@@ -1,10 +1,18 @@
 import { Controller, Get, HttpCode, HttpStatus } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { HealthChecker, HealthCheckResult, ServiceDiscovery } from "@hmm/common";
+import { MediasoupService } from "../services/mediasoup.service.js";
+import { RoomService } from "../services/room.service.js";
+import { StreamingNodeRegistryService } from "../services/streaming-node-registry.service.js";
 
 @Controller()
 export class HealthController {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private mediasoup: MediasoupService,
+    private roomService: RoomService,
+    private nodeRegistry: StreamingNodeRegistryService
+  ) {}
 
   @Get("ready")
   @HttpCode(HttpStatus.OK)
@@ -83,5 +91,23 @@ export class HealthController {
       dependencies,
       process.env.npm_package_version || "0.0.1"
     );
+  }
+
+  @Get("metrics/sfu")
+  @HttpCode(HttpStatus.OK)
+  async getSfuMetrics() {
+    const workerStats = this.mediasoup.getWorkerStats();
+    return {
+      status: this.mediasoup.getLiveWorkerCount() > 0 ? "up" : "down",
+      timestamp: new Date().toISOString(),
+      localNode: this.nodeRegistry.getLocalNodeInfo(),
+      knownNodes: await this.nodeRegistry.listKnownNodes(),
+      rooms: this.roomService.getInMemoryRoomCount(),
+      participants: this.roomService.getInMemoryParticipantCount(),
+      viewers: this.roomService.getInMemoryViewerCount(),
+      liveWorkers: this.mediasoup.getLiveWorkerCount(),
+      workers: workerStats,
+      roomWorkerDistribution: this.roomService.getRoomWorkerDistribution()
+    };
   }
 }

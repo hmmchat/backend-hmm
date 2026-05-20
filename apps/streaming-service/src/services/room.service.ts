@@ -2,11 +2,13 @@ import { Injectable, Logger, NotFoundException, BadRequestException } from "@nes
 import { PrismaService } from "../prisma/prisma.service.js";
 import { MediasoupService } from "./mediasoup.service.js";
 import { DiscoveryClientService } from "./discovery-client.service.js";
+import { StreamingNodeRegistryService } from "./streaming-node-registry.service.js";
 import { types as MediasoupTypes } from "mediasoup";
 import { v4 as uuidv4 } from "uuid";
 
 interface RoomState {
   router: MediasoupTypes.Router;
+  workerIndex: number;
   participants: Map<string, ParticipantState>;
   viewers: Map<string, ViewerState>;
   isBroadcasting: boolean;
@@ -40,6 +42,10 @@ export class RoomService {
   private readonly historyPruneBatchSize = 200;
   private rooms = new Map<string, RoomState>();
   private readonly maxParticipants = parseInt(process.env.MAX_PARTICIPANTS_PER_CALL || "4", 10);
+  private readonly maxViewersPerBroadcast = this.parseNonNegativeInt(
+    process.env.MAX_VIEWERS_PER_BROADCAST,
+    1000
+  );
   private readonly pullStrangerWindowMs = this.getPullStrangerWindowMs();
   private pullStrangerExpiryTimers = new Map<string, NodeJS.Timeout>();
   /**
@@ -48,18 +54,97 @@ export class RoomService {
    * Set ROOM_RECONCILE_MIN_INTERVAL_MS=0 to disable (always reconcile).
    */
   private readonly roomReconcileMinIntervalMs: number;
+  private readonly roomDetailsCacheTtlMs: number;
+  private readonly activeRoomLookupCacheTtlMs: number;
+  private readonly activeBroadcastsCacheTtlMs: number;
+  private readonly membershipCacheTtlMs: number;
   private lastParticipantReconcileAt = new Map<string, number>();
   private lastViewerReconcileAt = new Map<string, number>();
+  private roomDetailsCache = new Map<string, { expiresAt: number; data: any | null }>();
+  private activeParticipantRoomCache = new Map<string, { expiresAt: number; data: { roomId: string } | null }>();
+  private activeViewerRoomCache = new Map<string, { expiresAt: number; data: { roomId: string } | null }>();
+  private activeBroadcastsCache = new Map<string, { expiresAt: number; data: any }>();
+  private participantMembershipCache = new Map<string, { expiresAt: number; data: boolean }>();
+  private hostMembershipCache = new Map<string, { expiresAt: number; data: boolean }>();
 
   constructor(
     private prisma: PrismaService,
     private mediasoup: MediasoupService,
-    private discoveryClient: DiscoveryClientService
+    private discoveryClient: DiscoveryClientService,
+    private nodeRegistry: StreamingNodeRegistryService
   ) {
-    const raw = process.env.ROOM_RECONCILE_MIN_INTERVAL_MS;
-    const parsed = raw !== undefined && raw !== "" ? Number.parseInt(raw, 10) : 4000;
-    this.roomReconcileMinIntervalMs =
-      Number.isFinite(parsed) && parsed >= 0 ? parsed : 4000;
+    this.roomReconcileMinIntervalMs = this.parseNonNegativeInt(
+      process.env.ROOM_RECONCILE_MIN_INTERVAL_MS,
+      30000
+    );
+    this.roomDetailsCacheTtlMs = this.parseNonNegativeInt(
+      process.env.ROOM_DETAILS_CACHE_TTL_MS,
+      1000
+    );
+    this.activeRoomLookupCacheTtlMs = this.parseNonNegativeInt(
+      process.env.ACTIVE_ROOM_LOOKUP_CACHE_TTL_MS,
+      1000
+    );
+    this.activeBroadcastsCacheTtlMs = this.parseNonNegativeInt(
+      process.env.ACTIVE_BROADCASTS_CACHE_TTL_MS,
+      1500
+    );
+    this.membershipCacheTtlMs = this.parseNonNegativeInt(
+      process.env.ROOM_MEMBERSHIP_CACHE_TTL_MS,
+      5000
+    );
+  }
+
+  private parseNonNegativeInt(raw: string | undefined, fallback: number): number {
+    const parsed = raw !== undefined && raw !== "" ? Number.parseInt(raw, 10) : fallback;
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+  }
+
+  private getCached<T>(cache: Map<string, { expiresAt: number; data: T }>, key: string): T | undefined {
+    const hit = cache.get(key);
+    if (!hit) return undefined;
+    if (hit.expiresAt <= Date.now()) {
+      cache.delete(key);
+      return undefined;
+    }
+    return hit.data;
+  }
+
+  private setCached<T>(
+    cache: Map<string, { expiresAt: number; data: T }>,
+    key: string,
+    ttlMs: number,
+    data: T
+  ): void {
+    if (ttlMs <= 0) return;
+    cache.set(key, { expiresAt: Date.now() + ttlMs, data });
+  }
+
+  private clearHotReadCaches(roomId?: string, userIds: string[] = []): void {
+    if (roomId) {
+      this.roomDetailsCache.delete(roomId);
+      if (userIds.length === 0) {
+        for (const key of this.participantMembershipCache.keys()) {
+          if (key.startsWith(`${roomId}:`)) this.participantMembershipCache.delete(key);
+        }
+        for (const key of this.hostMembershipCache.keys()) {
+          if (key.startsWith(`${roomId}:`)) this.hostMembershipCache.delete(key);
+        }
+      }
+    }
+    for (const userId of userIds) {
+      this.activeParticipantRoomCache.delete(userId);
+      this.activeViewerRoomCache.delete(userId);
+      if (roomId) {
+        this.participantMembershipCache.delete(this.membershipCacheKey(roomId, userId));
+        this.hostMembershipCache.delete(this.membershipCacheKey(roomId, userId));
+      }
+    }
+    this.activeBroadcastsCache.clear();
+  }
+
+  private membershipCacheKey(roomId: string, userId: string): string {
+    return `${roomId}:${userId}`;
   }
 
   private getPullStrangerWindowMs(): number {
@@ -330,7 +415,7 @@ export class RoomService {
   async createRoom(
     userIds: string[],
     callType: "matched" | "squad" = "matched"
-  ): Promise<{ roomId: string; sessionId: string }> {
+  ): Promise<{ roomId: string; sessionId: string; sfuNode: string }> {
     // Validate input first - minimum 2 users required to create a room
     if (userIds.length < 2 || userIds.length > this.maxParticipants) {
       throw new BadRequestException(
@@ -481,7 +566,7 @@ export class RoomService {
 
     try {
       // Create router for this room
-      const router = await this.mediasoup.createRouter();
+      const { router, workerIndex } = await this.mediasoup.createRouterForRoom();
 
       // Generate room ID
       const roomId = uuidv4();
@@ -549,6 +634,7 @@ export class RoomService {
       // Create in-memory room state
       const roomState: RoomState = {
         router,
+        workerIndex,
         participants: new Map(),
         viewers: new Map(),
         isBroadcasting: false,
@@ -556,10 +642,11 @@ export class RoomService {
       };
 
       this.rooms.set(roomId, roomState);
+      const sfuNode = await this.nodeRegistry.assignRoomToLocalNode(roomId);
 
       const hostCount = participantRoles.filter(p => p.role === "HOST").length;
       this.logger.log(
-        `Room created: ${roomId} with ${userIds.length} participants (${hostCount} hosts, callType: ${callType})`
+        `Room created: ${roomId} with ${userIds.length} participants (${hostCount} hosts, callType: ${callType}, workerIndex: ${workerIndex})`
       );
 
       // BUSINESS RULE: user-service status IN_SQUAD — await + retry so clients polling room are less
@@ -569,7 +656,8 @@ export class RoomService {
       // Notify discovery-service (Redis / internal hooks); does not throw on HTTP failure
       await this.discoveryClient.notifyRoomCreated(roomId, userIds);
 
-      return { roomId, sessionId: session.id };
+      this.clearHotReadCaches(roomId, userIds);
+      return { roomId, sessionId: session.id, sfuNode: sfuNode.nodeId };
     } catch (error: any) {
       // If it's already a BadRequestException, re-throw it
       if (error instanceof BadRequestException) {
@@ -600,6 +688,11 @@ export class RoomService {
    * Get room details from database
    */
   async getRoomDetails(roomId: string) {
+    const cached = this.getCached(this.roomDetailsCache, roomId);
+    if (cached !== undefined) {
+      return cached;
+    }
+
     const session = await this.prisma.callSession.findUnique({
       where: { roomId },
       include: {
@@ -627,13 +720,14 @@ export class RoomService {
     });
 
     if (!session) {
+      this.setCached(this.roomDetailsCache, roomId, this.roomDetailsCacheTtlMs, null);
       return null;  // Return null to indicate room doesn't exist
     }
 
     // If room is ENDED, ensure isBroadcasting is false (data consistency)
     const isBroadcasting = session.status === "ENDED" ? false : session.isBroadcasting;
 
-    return {
+    const details = {
       id: session.id,
       roomId: session.roomId,
       status: session.status,
@@ -645,6 +739,8 @@ export class RoomService {
       createdAt: session.createdAt,
       startedAt: session.startedAt
     };
+    this.setCached(this.roomDetailsCache, roomId, this.roomDetailsCacheTtlMs, details);
+    return details;
   }
 
   /**
@@ -657,6 +753,14 @@ export class RoomService {
       return true;
     }
 
+    const assignedNode = await this.nodeRegistry.getRoomNode(roomId);
+    if (assignedNode && !this.nodeRegistry.isLocalNode(assignedNode.nodeId)) {
+      this.logger.warn(
+        `Room ${roomId} is assigned to streaming node ${assignedNode.nodeId}; refusing local reload on ${this.nodeRegistry.nodeId}`
+      );
+      return false;
+    }
+
     // If not in memory, check database
     const session = await this.prisma.callSession.findUnique({
       where: { roomId },
@@ -667,7 +771,7 @@ export class RoomService {
       // Room exists in database but not in memory - reload it
       this.logger.log(`Room ${roomId} exists in database but not in memory - reloading into memory`);
       try {
-        await this.reloadRoomIntoMemory(roomId);
+      await this.reloadRoomIntoMemory(roomId);
         return true;
       } catch (error: any) {
         this.logger.error(`Failed to reload room ${roomId} into memory: ${error.message}`);
@@ -697,12 +801,18 @@ export class RoomService {
       throw new NotFoundException(`Room ${roomId} not found or already ended`);
     }
 
+    const assignedNode = await this.nodeRegistry.getRoomNode(roomId);
+    if (assignedNode && !this.nodeRegistry.isLocalNode(assignedNode.nodeId)) {
+      throw new Error(`Room ${roomId} is assigned to streaming node ${assignedNode.nodeId}`);
+    }
+
     // Create new router for the room
-    const router = await this.mediasoup.createRouter();
+    const { router, workerIndex } = await this.mediasoup.createRouterForRoom();
 
     // Create in-memory room state
     const roomState: RoomState = {
       router,
+      workerIndex,
       participants: new Map(),
       viewers: new Map(),
       isBroadcasting: session.isBroadcasting || false,
@@ -710,7 +820,10 @@ export class RoomService {
     };
 
     this.rooms.set(roomId, roomState);
-    this.logger.log(`Room ${roomId} reloaded into memory (status: ${session.status}, broadcasting: ${session.isBroadcasting})`);
+    await this.nodeRegistry.assignRoomToLocalNode(roomId);
+    this.logger.log(
+      `Room ${roomId} reloaded into memory (status: ${session.status}, broadcasting: ${session.isBroadcasting}, workerIndex: ${workerIndex}). Active media must reconnect.`
+    );
   }
 
   /**
@@ -887,6 +1000,7 @@ export class RoomService {
       this.logger.error(`Failed to notify discovery-service: ${err.message}`);
     });
 
+    this.clearHotReadCaches(roomId, [userId]);
     this.logger.log(`Participant ${userId} added to room ${roomId}`);
   }
 
@@ -954,6 +1068,7 @@ export class RoomService {
       this.logger.error(`Failed to update user ${userId} status to ${statusAfterLeave}: ${err.message}`);
     });
 
+    this.clearHotReadCaches(roomId, [userId]);
     this.logger.log(`Participant ${userId} removed from database for room ${roomId}, status updated to ${statusAfterLeave}`);
   }
 
@@ -1072,6 +1187,7 @@ export class RoomService {
       this.logger.error(`Failed to update user ${userId} status to ${statusAfterLeave}: ${err.message}`);
     });
 
+    this.clearHotReadCaches(roomId, [userId]);
     this.logger.log(`Participant ${userId} removed from room ${roomId}, status updated to ${statusAfterLeave}`);
     return true;
   }
@@ -1183,6 +1299,7 @@ export class RoomService {
       this.logger.error(`Failed to update user statuses: ${err.message}`);
     });
 
+    this.clearHotReadCaches(roomId, participantUserIds);
     this.logger.log(`Broadcasting enabled for room ${roomId} by HOST ${userId}`);
   }
 
@@ -1285,6 +1402,7 @@ export class RoomService {
       });
     }
 
+    this.clearHotReadCaches(roomId, [...participantUserIds, ...viewerUserIds]);
     this.logger.log(`Broadcasting disabled for room ${roomId} by HOST ${userId} - returning to IN_SQUAD`);
   }
 
@@ -1365,6 +1483,7 @@ export class RoomService {
     // Automatically end pull mode after configured window if no one joins.
     this.schedulePullStrangerExpiry(roomId, userId);
 
+    this.clearHotReadCaches(roomId, participantUserIds);
     this.logger.log(
       `Pull stranger mode enabled for room ${roomId} by HOST ${userId}. ` +
       `Status sync complete: host=${userId}->IN_SQUAD_AVAILABLE, others->IN_SQUAD`
@@ -1606,6 +1725,7 @@ export class RoomService {
         `All participants restored to ${statusToRestore} status. Pull stranger mode disabled.`
       );
 
+      this.clearHotReadCaches(roomId, allParticipantUserIds);
       return { roomId, sessionId: session.id };
     }, {
       isolationLevel: "Serializable", // Highest isolation to prevent concurrent joins (race condition protection)
@@ -2003,6 +2123,17 @@ export class RoomService {
         this.logger.log(`Viewer ${userId} already active in room ${roomId}; skipping duplicate add`);
         return;
       }
+      if (this.maxViewersPerBroadcast > 0) {
+        const activeViewerCount = await this.prisma.callViewer.count({
+          where: {
+            sessionId: session.id,
+            leftAt: null
+          }
+        });
+        if (activeViewerCount >= this.maxViewersPerBroadcast) {
+          throw new BadRequestException("Broadcast is at viewer capacity");
+        }
+      }
       await this.prisma.callViewer.update({
         where: { id: existingAnyViewer.id },
         data: {
@@ -2011,6 +2142,17 @@ export class RoomService {
         }
       });
     } else {
+      if (this.maxViewersPerBroadcast > 0) {
+        const activeViewerCount = await this.prisma.callViewer.count({
+          where: {
+            sessionId: session.id,
+            leftAt: null
+          }
+        });
+        if (activeViewerCount >= this.maxViewersPerBroadcast) {
+          throw new BadRequestException("Broadcast is at viewer capacity");
+        }
+      }
       await this.prisma.callViewer.create({
         data: {
           sessionId: session.id,
@@ -2019,6 +2161,7 @@ export class RoomService {
       });
     }
 
+    this.clearHotReadCaches(roomId, [userId]);
     this.logger.log(`Viewer ${userId} added to room ${roomId}`);
   }
 
@@ -2151,6 +2294,7 @@ export class RoomService {
       }
     }
 
+    this.clearHotReadCaches(roomId, [userId]);
     return dbViewerUpdated;
   }
 
@@ -2175,6 +2319,7 @@ export class RoomService {
 
     if (!session) {
       this.logger.warn(`Cannot end room ${roomId}: session not found in database`);
+      this.clearHotReadCaches(roomId);
       return;
     }
 
@@ -2203,6 +2348,7 @@ export class RoomService {
       // Remove from memory
       this.rooms.delete(roomId);
     }
+    await this.nodeRegistry.removeRoom(roomId);
 
     // Update database - stop broadcasting if active (room ending stops broadcast)
     await this.prisma.callSession.update({
@@ -2402,6 +2548,11 @@ export class RoomService {
       this.logger.warn(`History prune skipped due to error: ${error?.message || error}`);
     });
 
+    this.clearHotReadCaches(roomId, [
+      ...participantUserIds,
+      ...viewerUserIds,
+      ...waitlistUserIds
+    ]);
     this.logger.log(`Room ${roomId} ended`);
   }
 
@@ -2477,6 +2628,18 @@ export class RoomService {
    * Check if user is a participant in the room (checks database)
    */
   async isParticipant(roomId: string, userId: string): Promise<boolean> {
+    const cacheKey = this.membershipCacheKey(roomId, userId);
+    const cached = this.getCached(this.participantMembershipCache, cacheKey);
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    const memoryParticipant = this.rooms.get(roomId)?.participants.get(userId);
+    if (memoryParticipant) {
+      this.setCached(this.participantMembershipCache, cacheKey, this.membershipCacheTtlMs, true);
+      return true;
+    }
+
     const session = await this.prisma.callSession.findUnique({
       where: { roomId },
       include: {
@@ -2489,13 +2652,21 @@ export class RoomService {
       }
     });
 
-    return !!(session?.participants && session.participants.length > 0);
+    const isParticipant = !!(session?.participants && session.participants.length > 0);
+    this.setCached(this.participantMembershipCache, cacheKey, this.membershipCacheTtlMs, isParticipant);
+    return isParticipant;
   }
 
   /**
    * Check if user is a HOST in the room (checks database)
    */
   async isHost(roomId: string, userId: string): Promise<boolean> {
+    const cacheKey = this.membershipCacheKey(roomId, userId);
+    const cached = this.getCached(this.hostMembershipCache, cacheKey);
+    if (cached !== undefined) {
+      return cached;
+    }
+
     const session = await this.prisma.callSession.findUnique({
       where: { roomId },
       include: {
@@ -2509,7 +2680,9 @@ export class RoomService {
       }
     });
 
-    return !!(session?.participants && session.participants.length > 0);
+    const isHost = !!(session?.participants && session.participants.length > 0);
+    this.setCached(this.hostMembershipCache, cacheKey, this.membershipCacheTtlMs, isHost);
+    return isHost;
   }
 
   /**
@@ -2593,6 +2766,51 @@ export class RoomService {
     room.viewers.set(userId, state);
   }
 
+  getInMemoryRoomCount(): number {
+    return this.rooms.size;
+  }
+
+  getInMemoryParticipantCount(): number {
+    let count = 0;
+    for (const room of this.rooms.values()) {
+      count += room.participants.size;
+    }
+    return count;
+  }
+
+  getInMemoryViewerCount(): number {
+    let count = 0;
+    for (const room of this.rooms.values()) {
+      count += room.viewers.size;
+    }
+    return count;
+  }
+
+  getRoomWorkerDistribution(): Array<{
+    workerIndex: number;
+    roomCount: number;
+    participantCount: number;
+    viewerCount: number;
+  }> {
+    const byWorker = new Map<number, { roomCount: number; participantCount: number; viewerCount: number }>();
+    for (const room of this.rooms.values()) {
+      const current = byWorker.get(room.workerIndex) ?? { roomCount: 0, participantCount: 0, viewerCount: 0 };
+      current.roomCount += 1;
+      current.participantCount += room.participants.size;
+      current.viewerCount += room.viewers.size;
+      byWorker.set(room.workerIndex, current);
+    }
+
+    return Array.from(byWorker.entries()).map(([workerIndex, value]) => ({
+      workerIndex,
+      ...value
+    }));
+  }
+
+  async getRoomNode(roomId: string) {
+    return this.nodeRegistry.getRoomNode(roomId);
+  }
+
   /**
    * Raw DB lookup: active participant row (no user-service reconcile).
    */
@@ -2621,14 +2839,24 @@ export class RoomService {
    * Returns the most recently started room if user is in multiple rooms
    */
   async getUserActiveRoom(userId: string): Promise<{ roomId: string } | null> {
+    const cached = this.getCached(this.activeParticipantRoomCache, userId);
+    if (cached !== undefined) {
+      return cached;
+    }
     await this.runParticipantReconcileThrottled(userId);
-    return this.fetchActiveParticipantRoom(userId);
+    const room = await this.fetchActiveParticipantRoom(userId);
+    this.setCached(this.activeParticipantRoomCache, userId, this.activeRoomLookupCacheTtlMs, room);
+    return room;
   }
 
   /**
    * Get user's active room (as viewer)
    */
   async getUserActiveRoomAsViewer(userId: string): Promise<{ roomId: string } | null> {
+    const cached = this.getCached(this.activeViewerRoomCache, userId);
+    if (cached !== undefined) {
+      return cached;
+    }
     await this.runViewerReconcileThrottled(userId);
 
     const viewer = await this.prisma.callViewer.findFirst({
@@ -2642,14 +2870,18 @@ export class RoomService {
     });
 
     if (!viewer || !viewer.session) {
+      this.setCached(this.activeViewerRoomCache, userId, this.activeRoomLookupCacheTtlMs, null);
       return null;
     }
 
     if (viewer.session.status !== "IN_BROADCAST") {
+      this.setCached(this.activeViewerRoomCache, userId, this.activeRoomLookupCacheTtlMs, null);
       return null;
     }
 
-    return { roomId: viewer.session.roomId };
+    const room = { roomId: viewer.session.roomId };
+    this.setCached(this.activeViewerRoomCache, userId, this.activeRoomLookupCacheTtlMs, room);
+    return room;
   }
 
   /**
@@ -2693,6 +2925,12 @@ export class RoomService {
     nextCursor?: string;
     hasMore: boolean;
   }> {
+    const cacheKey = JSON.stringify(options || {});
+    const cached = this.getCached(this.activeBroadcastsCache, cacheKey);
+    if (cached !== undefined) {
+      return cached;
+    }
+
     const {
       sort = 'recent',
       filter = {},
@@ -2754,9 +2992,10 @@ export class RoomService {
               joinedAt: true
             }
           },
-          viewers: {
-            where: { leftAt: null },
-            select: { userId: true }
+          _count: {
+            select: {
+              viewers: { where: { leftAt: null } }
+            }
           }
         },
         orderBy,
@@ -2814,7 +3053,7 @@ export class RoomService {
 
     // Sort by viewer count if requested
     if (sort === 'viewers') {
-      filteredSessions.sort((a, b) => b.viewers.length - a.viewers.length);
+      filteredSessions.sort((a, b) => b._count.viewers - a._count.viewers);
     }
 
     const broadcasts = filteredSessions.map(session => {
@@ -2833,7 +3072,7 @@ export class RoomService {
       return {
         roomId: session.roomId,
         participantCount: session.participants.length,
-        viewerCount: session.viewers.length,
+        viewerCount: session._count.viewers,
         participants,
         startedAt: session.startedAt,
         createdAt: session.createdAt,
@@ -2845,10 +3084,12 @@ export class RoomService {
       };
     });
 
-    return {
+    const result = {
       broadcasts,
       nextCursor: hasMore ? filteredSessions[filteredSessions.length - 1].id : undefined,
       hasMore
     };
+    this.setCached(this.activeBroadcastsCache, cacheKey, this.activeBroadcastsCacheTtlMs, result);
+    return result;
   }
 }

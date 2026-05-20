@@ -5,6 +5,7 @@ import { RoutingService } from "../services/routing.service.js";
 import { AggregationService } from "../services/aggregation.service.js";
 import { HealthService } from "../services/health.service.js";
 import { RateLimitService } from "../services/rate-limit.service.js";
+import { StreamingAffinityService } from "../services/streaming-affinity.service.js";
 import { AuthMiddleware } from "../middleware/auth.middleware.js";
 
 @Module({
@@ -15,6 +16,7 @@ import { AuthMiddleware } from "../middleware/auth.middleware.js";
     AggregationService,
     HealthService,
     RateLimitService,
+    StreamingAffinityService,
     AuthMiddleware
   ]
 })

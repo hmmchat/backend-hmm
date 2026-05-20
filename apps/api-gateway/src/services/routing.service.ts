@@ -3,7 +3,9 @@ import { ConfigService } from "@nestjs/config";
 import fetch from "node-fetch";
 import * as http from "node:http";
 import * as https from "node:https";
+import type { Duplex } from "node:stream";
 import { v4 as uuidv4 } from "uuid";
+import { StreamingAffinityService } from "./streaming-affinity.service.js";
 
 export interface RouteConfig {
   path: string;
@@ -29,7 +31,10 @@ export class RoutingService implements OnModuleInit {
   private readonly CIRCUIT_BREAKER_WINDOW: number;
   private readonly PROXY_DEFAULT_TIMEOUT_MS: number;
 
-  constructor(private configService: ConfigService) {
+  constructor(
+    private configService: ConfigService,
+    private streamingAffinity: StreamingAffinityService
+  ) {
     this.CIRCUIT_BREAKER_THRESHOLD = parseInt(this.configService.get<string>("CIRCUIT_BREAKER_THRESHOLD") || "5", 10);
     this.CIRCUIT_BREAKER_TIMEOUT = parseInt(this.configService.get<string>("CIRCUIT_BREAKER_RECOVERY_MS") || "15000", 10);
     this.CIRCUIT_BREAKER_WINDOW = parseInt(this.configService.get<string>("CIRCUIT_BREAKER_WINDOW_MS") || "60000", 10);
@@ -389,7 +394,8 @@ export class RoutingService implements OnModuleInit {
       }
     }
 
-    const url = `${route.serviceUrl}${servicePath}`;
+    const targetServiceUrl = await this.resolveTargetServiceUrl(route, cleanPath, body);
+    const url = `${targetServiceUrl}${servicePath}`;
     const timeout = route.timeout || this.PROXY_DEFAULT_TIMEOUT_MS;
 
     // Prepare headers
@@ -403,18 +409,18 @@ export class RoutingService implements OnModuleInit {
     delete requestHeaders.host;
 
     // Check circuit breaker
-    const circuitBreaker = this.getCircuitBreaker(route.serviceUrl);
+    const circuitBreaker = this.getCircuitBreaker(targetServiceUrl);
     if (circuitBreaker.state === 'open') {
       const timeSinceLastFailure = Date.now() - circuitBreaker.lastFailure;
       if (timeSinceLastFailure < this.CIRCUIT_BREAKER_TIMEOUT) {
         // Circuit breaker is open, but try recovery attempt anyway (half-open state)
         // This allows services to recover even if health checks are failing
         circuitBreaker.state = 'half-open';
-        this.logger.log(`Circuit breaker HALF-OPEN for ${route.serviceUrl}, attempting recovery`);
+          this.logger.log(`Circuit breaker HALF-OPEN for ${targetServiceUrl}, attempting recovery`);
       } else {
         // Enough time has passed, attempt recovery
         circuitBreaker.state = 'half-open';
-        this.logger.log(`Circuit breaker HALF-OPEN for ${route.serviceUrl}, attempting recovery`);
+        this.logger.log(`Circuit breaker HALF-OPEN for ${targetServiceUrl}, attempting recovery`);
       }
     }
 
@@ -464,7 +470,7 @@ export class RoutingService implements OnModuleInit {
           circuitBreaker.state = 'closed';
           circuitBreaker.failures = 0;
           circuitBreaker.lastFailure = 0;
-          this.logger.log(`Circuit breaker CLOSED for ${route.serviceUrl} after successful recovery`);
+          this.logger.log(`Circuit breaker CLOSED for ${targetServiceUrl} after successful recovery`);
         } else if (circuitBreaker.state === 'closed') {
           // Reset failure count on success
           circuitBreaker.failures = 0;
@@ -492,7 +498,7 @@ export class RoutingService implements OnModuleInit {
         // Don't retry on certain errors (4xx client errors, AbortError on last attempt)
         if (error.name === "AbortError" && attempt === maxRetries) {
           // Final timeout - record failure and throw
-          this.recordFailure(route.serviceUrl);
+          this.recordFailure(targetServiceUrl);
           throw new HttpException(
             `Request timeout after ${timeout}ms: ${url}`,
             HttpStatus.GATEWAY_TIMEOUT
@@ -511,7 +517,7 @@ export class RoutingService implements OnModuleInit {
           );
 
           if (!isTransientNetworkError || attempt === maxRetries) {
-            this.recordFailure(route.serviceUrl);
+            this.recordFailure(targetServiceUrl);
           }
           throw this.createErrorResponse(error, url, timeout);
         }
@@ -522,8 +528,114 @@ export class RoutingService implements OnModuleInit {
     }
 
     // Should never reach here, but just in case
-    this.recordFailure(route.serviceUrl);
+    this.recordFailure(targetServiceUrl);
     throw this.createErrorResponse(lastError, url, timeout);
+  }
+
+  private async resolveTargetServiceUrl(route: RouteConfig, cleanPath: string, body?: any): Promise<string> {
+    if (route.path !== "/streaming" && route.path !== "/streaming/admin") {
+      return route.serviceUrl;
+    }
+
+    const roomId = this.extractStreamingRoomId(cleanPath, body);
+    if (!roomId) {
+      return route.serviceUrl;
+    }
+
+    const node = await this.streamingAffinity.getRoomNode(roomId);
+    if (!node?.httpUrl) {
+      return route.serviceUrl;
+    }
+
+    return node.httpUrl.replace(/\/+$/, "");
+  }
+
+  private extractStreamingRoomId(pathWithQuery: string, body?: any): string | null {
+    const [pathOnly, query = ""] = pathWithQuery.split("?");
+    const pathPatterns = [
+      /^\/streaming\/rooms\/([^/?]+)(?:\/|$)/,
+      /^\/streaming\/internal\/rooms\/([^/?]+)(?:\/|$)/,
+      /^\/streaming\/test\/rooms\/([^/?]+)(?:\/|$)/
+    ];
+
+    for (const pattern of pathPatterns) {
+      const match = pathOnly.match(pattern);
+      if (match?.[1]) return decodeURIComponent(match[1]);
+    }
+
+    const params = new URLSearchParams(query);
+    const queryRoomId = params.get("roomId");
+    if (queryRoomId) return queryRoomId;
+
+    if (body && typeof body === "object" && typeof body.roomId === "string") {
+      return body.roomId;
+    }
+
+    return null;
+  }
+
+  async proxyWebSocketUpgrade(req: http.IncomingMessage, socket: Duplex, head: Buffer): Promise<boolean> {
+    const requestUrl = req.url || "";
+    const [pathOnly, query = ""] = requestUrl.split("?");
+    if (pathOnly !== "/v1/streaming/ws" && pathOnly !== "/streaming/ws") {
+      return false;
+    }
+
+    const route = this.findRoute(pathOnly);
+    if (!route) {
+      socket.destroy();
+      return true;
+    }
+
+    const params = new URLSearchParams(query);
+    const roomId = params.get("roomId");
+    let targetBaseUrl = route.serviceUrl;
+    if (roomId) {
+      const node = await this.streamingAffinity.getRoomNode(roomId);
+      targetBaseUrl = node?.wsUrl || node?.httpUrl || targetBaseUrl;
+    }
+
+    const target = new URL(targetBaseUrl);
+    const targetProtocol = target.protocol === "wss:" ? "https:" : target.protocol === "ws:" ? "http:" : target.protocol;
+    const transport = targetProtocol === "https:" ? https : http;
+    const servicePath = `/streaming/ws${query ? `?${query}` : ""}`;
+    const port = target.port || (targetProtocol === "https:" ? "443" : "80");
+
+    const headers = { ...req.headers };
+    headers.host = target.host;
+
+    const proxyReq = transport.request({
+      protocol: targetProtocol,
+      hostname: target.hostname,
+      port,
+      path: servicePath,
+      method: "GET",
+      headers
+    });
+
+    proxyReq.on("upgrade", (proxyRes, proxySocket, proxyHead) => {
+      socket.write(
+        `HTTP/${proxyRes.httpVersion} ${proxyRes.statusCode} ${proxyRes.statusMessage}\r\n` +
+        Object.entries(proxyRes.headers)
+          .map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(", ") : value}`)
+          .join("\r\n") +
+        "\r\n\r\n"
+      );
+      if (head.length) proxySocket.write(head);
+      if (proxyHead.length) socket.write(proxyHead);
+      proxySocket.pipe(socket).pipe(proxySocket);
+    });
+
+    proxyReq.on("error", (error) => {
+      this.logger.warn(`Streaming WebSocket proxy failed: ${error.message}`);
+      if (!socket.destroyed) {
+        socket.write("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n");
+        socket.destroy();
+      }
+    });
+
+    proxyReq.end();
+    return true;
   }
 
   /**

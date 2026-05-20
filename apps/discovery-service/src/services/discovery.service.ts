@@ -1,4 +1,4 @@
-import { Injectable, HttpException, HttpStatus, OnModuleInit } from "@nestjs/common";
+import { Injectable, HttpException, HttpStatus, OnModuleInit, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { UserClientService } from "./user-client.service.js";
 import { GenderFilterService } from "./gender-filter.service.js";
@@ -116,6 +116,12 @@ interface CardResponse {
 
 @Injectable()
 export class DiscoveryService implements OnModuleInit {
+  private readonly logger = new Logger(DiscoveryService.name);
+  private readonly viewedBroadcastHistoryLimit = Math.min(
+    500,
+    Math.max(1, Number.parseInt(process.env.VIEWED_BROADCAST_HISTORY_LIMIT || "100", 10) || 100)
+  );
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly userClient: UserClientService,
@@ -126,6 +132,12 @@ export class DiscoveryService implements OnModuleInit {
     private readonly cache: CacheService,
     private readonly squadService: SquadService
   ) { }
+
+  private debugLog(message: string): void {
+    if (process.env.DISCOVERY_DEBUG_LOGS === "true") {
+      this.logger.debug(message);
+    }
+  }
 
   private isKycPriorityEnabled(): boolean {
     return process.env.KYC_ENABLED === "true" && process.env.KYC_MODERATOR_PRIORITY_ENABLED === "true";
@@ -410,7 +422,7 @@ export class DiscoveryService implements OnModuleInit {
     }
 
     // No match found, check fallback options
-    console.log(`[DEBUG] getNextCardForUser - findMatchForUser returned null for user ${userId}, city: ${poolCity || 'null (Anywhere)'}`);
+    this.debugLog(`[DEBUG] getNextCardForUser - findMatchForUser returned null for user ${userId}, city: ${poolCity || 'null (Anywhere)'}`);
     // Determine statuses to filter
     const statuses: ("AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE")[] = soloOnly
       ? ["AVAILABLE"]
@@ -493,7 +505,7 @@ export class DiscoveryService implements OnModuleInit {
       );
       const usersBeforeLocation = poolCity !== null ? usersInPoolCity : usersAnywhere;
 
-      console.log(`[DEBUG] getNextCardForUser - usersBeforeLocation: ${usersBeforeLocation.length} users found for city ${poolCity || 'null (Anywhere)'}`);
+      this.debugLog(`[DEBUG] getNextCardForUser - usersBeforeLocation: ${usersBeforeLocation.length} users found for city ${poolCity || 'null (Anywhere)'}`);
 
       // If users are available, show them instead of location cards
       if (usersBeforeLocation.length > 0) {
@@ -506,7 +518,7 @@ export class DiscoveryService implements OnModuleInit {
             await this.genderFilterService.decrementScreen(userId);
           }
 
-          console.log(`[DEBUG] getNextCardForUser - Successfully created match and card for user ${selectedUser.id}`);
+          this.debugLog(`[DEBUG] getNextCardForUser - Successfully created match and card for user ${selectedUser.id}`);
           return {
             card,
             exhausted: false
@@ -540,7 +552,7 @@ export class DiscoveryService implements OnModuleInit {
               raincheckedUserIds
             );
 
-      console.log(`[DEBUG] getNextCardForUser - usersRecheck: ${usersRecheck.length} users found for city ${poolCity || 'null (Anywhere)'}`);
+      this.debugLog(`[DEBUG] getNextCardForUser - usersRecheck: ${usersRecheck.length} users found for city ${poolCity || 'null (Anywhere)'}`);
 
       // If users are now available, show them instead of location cards
       if (usersRecheck.length > 0) {
@@ -553,7 +565,7 @@ export class DiscoveryService implements OnModuleInit {
             await this.genderFilterService.decrementScreen(userId);
           }
 
-          console.log(`[DEBUG] getNextCardForUser - Successfully created match and card for user ${selectedUser.id}`);
+          this.debugLog(`[DEBUG] getNextCardForUser - Successfully created match and card for user ${selectedUser.id}`);
           return {
             card,
             exhausted: false
@@ -1451,17 +1463,17 @@ export class DiscoveryService implements OnModuleInit {
         // Reset rainchecked user to AVAILABLE when MATCHED/IN_SQUAD.
         const raincheckedUserProfile = await this.userClient.getUserFullProfileById(raincheckedUserId);
         if (resettableStatuses.has(String(raincheckedUserProfile.status || ""))) {
-          console.log(`[DEBUG] Resetting rainchecked user ${raincheckedUserId} status from ${raincheckedUserProfile.status} to AVAILABLE (due to raincheck)`);
+          this.debugLog(`[DEBUG] Resetting rainchecked user ${raincheckedUserId} status from ${raincheckedUserProfile.status} to AVAILABLE (due to raincheck)`);
           await this.matchingService.updateUserStatus(raincheckedUserId, "AVAILABLE");
-          console.log(`[DEBUG] Status reset completed for rainchecked user ${raincheckedUserId}`);
+          this.debugLog(`[DEBUG] Status reset completed for rainchecked user ${raincheckedUserId}`);
         }
 
         // Also reset current user to AVAILABLE (they rainchecked, so they want to see new cards)
         const currentUserProfile = await this.userClient.getUserFullProfileById(userId);
         if (resettableStatuses.has(String(currentUserProfile.status || ""))) {
-          console.log(`[DEBUG] Resetting current user ${userId} status from ${currentUserProfile.status} to AVAILABLE (they rainchecked)`);
+          this.debugLog(`[DEBUG] Resetting current user ${userId} status from ${currentUserProfile.status} to AVAILABLE (they rainchecked)`);
           await this.matchingService.updateUserStatus(userId, "AVAILABLE");
-          console.log(`[DEBUG] Status reset completed for current user ${userId}`);
+          this.debugLog(`[DEBUG] Status reset completed for current user ${userId}`);
         }
       } catch (error) {
         console.error(`[ERROR] Failed to check/reset user statuses after raincheck:`, error);
@@ -2067,7 +2079,7 @@ export class DiscoveryService implements OnModuleInit {
     }
 
     // No mutual match found, use fallback logic
-    console.log(`[DEBUG] getNextCardForUser - No mutual match found, using fallback logic. poolCity: ${poolCity}`);
+    this.debugLog(`[DEBUG] getNextCardForUser - No mutual match found, using fallback logic. poolCity: ${poolCity}`);
 
     // Determine statuses to filter
     const statuses: ("AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE")[] = soloOnly
@@ -2075,7 +2087,7 @@ export class DiscoveryService implements OnModuleInit {
       : ["AVAILABLE", "IN_SQUAD_AVAILABLE", "IN_BROADCAST_AVAILABLE"];
 
     // Find matching users (using a fake token - won't be validated in test mode)
-    console.log(`[DEBUG] getNextCardForUser - Calling findMatchingUsersForUser with city: ${poolCity}`);
+    this.debugLog(`[DEBUG] getNextCardForUser - Calling findMatchingUsersForUser with city: ${poolCity}`);
     const matchingUsers = await this.findMatchingUsersForUser(
       userId,
       poolCity,
@@ -2084,11 +2096,11 @@ export class DiscoveryService implements OnModuleInit {
       soloOnly,
       raincheckedUserIds
     );
-    console.log(`[DEBUG] getNextCardForUser - findMatchingUsersForUser returned ${matchingUsers.length} users`);
+    this.debugLog(`[DEBUG] getNextCardForUser - findMatchingUsersForUser returned ${matchingUsers.length} users`);
 
     // If matches found, return the best match
     if (matchingUsers.length > 0) {
-      console.log(`[DEBUG] getNextCardForUser - Found ${matchingUsers.length} users, selecting best match`);
+      this.debugLog(`[DEBUG] getNextCardForUser - Found ${matchingUsers.length} users, selecting best match`);
       const selectedUser = await this.selectBestMatchAndCreate(userId, matchingUsers, currentUser);
       const card = await this.buildCard(selectedUser, poolCity, currentUser);
 
@@ -2104,14 +2116,14 @@ export class DiscoveryService implements OnModuleInit {
 
     // If no matches found and pool is global, try searching in suggested cities
     if (matchingUsers.length === 0 && poolCity === null) {
-      console.log(`[DEBUG] getNextCardForUser - No matches found and poolCity is null, trying suggested cities fallback`);
+      this.debugLog(`[DEBUG] getNextCardForUser - No matches found and poolCity is null, trying suggested cities fallback`);
       // User has no city preference - try searching in cities with available users
       const suggestedCities = await this.locationService.getCitiesWithMaxUsers(5);
-      console.log(`[DEBUG] getNextCardForUser - Got ${suggestedCities.length} suggested cities:`, suggestedCities.map(c => `${c.city} (${c.availableCount})`).join(', '));
+      this.debugLog(`[DEBUG] getNextCardForUser - Got ${suggestedCities.length} suggested cities: ${suggestedCities.map(c => `${c.city} (${c.availableCount})`).join(', ')}`);
 
       for (const cityInfo of suggestedCities) {
         if (cityInfo.availableCount > 0) {
-          console.log(`[DEBUG] getNextCardForUser - Trying city: ${cityInfo.city} (${cityInfo.availableCount} available)`);
+          this.debugLog(`[DEBUG] getNextCardForUser - Trying city: ${cityInfo.city} (${cityInfo.availableCount} available)`);
           const usersInCity = await this.findMatchingUsersForUser(
             userId,
             cityInfo.city,
@@ -2120,10 +2132,10 @@ export class DiscoveryService implements OnModuleInit {
             soloOnly,
             raincheckedUserIds
           );
-          console.log(`[DEBUG] getNextCardForUser - City ${cityInfo.city} returned ${usersInCity.length} users`);
+          this.debugLog(`[DEBUG] getNextCardForUser - City ${cityInfo.city} returned ${usersInCity.length} users`);
 
           if (usersInCity.length > 0) {
-            console.log(`[DEBUG] getNextCardForUser - Found users in ${cityInfo.city}, creating match and card`);
+            this.debugLog(`[DEBUG] getNextCardForUser - Found users in ${cityInfo.city}, creating match and card`);
             const selectedUser = await this.selectBestMatchAndCreate(userId, usersInCity, currentUser);
             const card = await this.buildCard(selectedUser, cityInfo.city, currentUser);
 
@@ -2138,7 +2150,7 @@ export class DiscoveryService implements OnModuleInit {
           }
         }
       }
-      console.log(`[DEBUG] getNextCardForUser - Tried all suggested cities, no users found`);
+      this.debugLog(`[DEBUG] getNextCardForUser - Tried all suggested cities, no users found`);
     }
 
     // If no matches found, check if we should show fallback
@@ -2371,7 +2383,7 @@ export class DiscoveryService implements OnModuleInit {
       return true;
     });
 
-    console.log(`[DEBUG] findMatchingUsersForUser - users from service: ${users.length}, after filtering: ${filteredUsers.length}`);
+    this.debugLog(`[DEBUG] findMatchingUsersForUser - users from service: ${users.length}, after filtering: ${filteredUsers.length}`);
     return filteredUsers;
   }
 
@@ -2852,7 +2864,7 @@ export class DiscoveryService implements OnModuleInit {
       return true;
     });
 
-    console.log(`[DEBUG] findOfflineMatchingUsersForUser - users from service: ${users.length}, after filtering: ${filteredUsers.length}`);
+    this.debugLog(`[DEBUG] findOfflineMatchingUsersForUser - users from service: ${users.length}, after filtering: ${filteredUsers.length}`);
     return filteredUsers;
   }
 
@@ -3046,7 +3058,9 @@ export class DiscoveryService implements OnModuleInit {
         select: {
           roomId: true
         },
-        distinct: ['roomId']
+        distinct: ['roomId'],
+        orderBy: { viewedAt: 'desc' },
+        take: this.viewedBroadcastHistoryLimit
       });
 
       if (views.length > 0) {
@@ -3065,7 +3079,8 @@ export class DiscoveryService implements OnModuleInit {
         },
         select: {
           raincheckedUserId: true
-        }
+        },
+        take: this.viewedBroadcastHistoryLimit
       });
 
       return rainchecks.map((r: { raincheckedUserId: string }) =>
@@ -3087,7 +3102,8 @@ export class DiscoveryService implements OnModuleInit {
             },
             select: {
               raincheckedUserId: true
-            }
+            },
+            take: this.viewedBroadcastHistoryLimit
           });
           return rainchecks.map((r: { raincheckedUserId: string }) =>
             r.raincheckedUserId.replace("BROADCAST:", "")

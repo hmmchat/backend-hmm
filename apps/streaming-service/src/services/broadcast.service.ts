@@ -232,7 +232,8 @@ export class BroadcastService {
     userId: string,
     transportId: string,
     producerId: string,
-    rtpCapabilities: MediasoupTypes.RtpCapabilities
+    rtpCapabilities: MediasoupTypes.RtpCapabilities,
+    preferredLayers?: MediasoupTypes.ConsumerLayers
   ): Promise<MediasoupTypes.Consumer> {
     // Ensure room exists and is in memory
     const roomExists = await this.roomService.roomExists(roomId);
@@ -298,7 +299,8 @@ export class BroadcastService {
       room.router,
       viewer.transport,
       producerId,
-      rtpCapabilities
+      rtpCapabilities,
+      preferredLayers
     );
 
     // Store consumer

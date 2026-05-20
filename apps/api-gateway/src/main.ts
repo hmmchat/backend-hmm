@@ -4,6 +4,7 @@ import multipart from "@fastify/multipart";
 import { AppModule } from "./modules/app.module.js";
 import { ConfigService } from "@nestjs/config";
 import { ZodExceptionFilter } from "./filters/zod-exception.filter.js";
+import { RoutingService } from "./services/routing.service.js";
 
 async function bootstrap() {
   const app = await NestFactory.create<NestFastifyApplication>(
@@ -39,6 +40,14 @@ async function bootstrap() {
 
   // Register global exception filter for Zod validation errors
   app.useGlobalFilters(new ZodExceptionFilter());
+
+  const routingService = app.get(RoutingService);
+  app.getHttpServer().on("upgrade", (req, socket, head) => {
+    routingService.proxyWebSocketUpgrade(req, socket, head).catch((error) => {
+      console.error("WebSocket proxy upgrade failed:", error);
+      socket.destroy();
+    });
+  });
 
   // Note: We don't set global prefix because:
   // - /health should be accessible without /v1

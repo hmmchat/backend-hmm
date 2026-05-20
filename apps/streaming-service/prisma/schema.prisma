@@ -51,6 +51,9 @@ model CallSession {
   @@index([status])
   @@index([createdAt])
   @@index([isBroadcasting])
+  @@index([status, startedAt])
+  @@index([isBroadcasting, status, startedAt])
+  @@index([isTrending, isBroadcasting, status, popularityScore])
   @@index([isTrending])
   @@index([popularityScore])
 }
@@ -71,6 +74,8 @@ model CallParticipant {
   @@map("call_participants")
   @@index([sessionId])
   @@index([userId])
+  @@index([userId, status, leftAt])
+  @@index([sessionId, status, leftAt])
 }
 
 model CallViewer {
@@ -86,6 +91,8 @@ model CallViewer {
   @@map("call_viewers")
   @@index([sessionId])
   @@index([userId])
+  @@index([userId, leftAt])
+  @@index([sessionId, leftAt])
 }
 
 model CallEvent {

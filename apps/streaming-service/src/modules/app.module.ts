@@ -24,6 +24,7 @@ import { FriendClientService } from "../services/friend-client.service.js";
 import { HistoryService } from "../services/history.service.js";
 import { FavouriteService } from "../services/favourite.service.js";
 import { GiphyService } from "../services/giphy.service.js";
+import { StreamingNodeRegistryService } from "../services/streaming-node-registry.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 
 @Module({
@@ -55,6 +56,7 @@ import { PrismaService } from "../prisma/prisma.service.js";
     HistoryService,
     FavouriteService,
     GiphyService,
+    StreamingNodeRegistryService,
     StreamingGateway
   ]
 })

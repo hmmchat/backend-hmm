@@ -1211,11 +1211,27 @@ export class RoomService {
     // Capture loop intent before writing the kick event. Join events should not stop the loop;
     // only explicit cancel or expiry should.
     const session = await this.prisma.callSession.findUnique({
-      where: { roomId }
+      where: { roomId },
+      include: {
+        participants: {
+          where: {
+            role: "HOST",
+            status: "active",
+            leftAt: null
+          },
+          select: {
+            userId: true
+          }
+        }
+      }
     });
     const shouldReenablePullStranger = session
       ? await this.isPullStrangerLoopActive(session.id)
       : false;
+    const activeHostIds = session?.participants.map((p) => p.userId) ?? [];
+    const pullStrangerEnabledBy = session
+      ? await this.getPullStrangerLoopVisibleHost(session.id, activeHostIds, kickerUserId)
+      : kickerUserId;
 
     if (session) {
       await this.prisma.callEvent.create({
@@ -1237,7 +1253,7 @@ export class RoomService {
     let pullStrangerReenabled = false;
     if (shouldReenablePullStranger) {
       try {
-        await this.enablePullStranger(roomId, kickerUserId);
+        await this.enablePullStranger(roomId, pullStrangerEnabledBy);
         pullStrangerReenabled = true;
       } catch (error: any) {
         this.logger.error(
@@ -1253,7 +1269,7 @@ export class RoomService {
 
     return {
       pullStrangerReenabled,
-      pullStrangerEnabledBy: pullStrangerReenabled ? kickerUserId : undefined
+      pullStrangerEnabledBy: pullStrangerReenabled ? pullStrangerEnabledBy : undefined
     };
   }
 
@@ -1280,6 +1296,67 @@ export class RoomService {
 
     return latestLoopEvent?.eventType === "pull_stranger_enabled" ||
       latestLoopEvent?.eventType === "participant_joined_via_pull_stranger";
+  }
+
+  private async getPullStrangerLoopVisibleHost(
+    sessionId: string,
+    activeHostIds: string[],
+    fallbackUserId: string
+  ): Promise<string> {
+    const latestEnableEvent = await this.prisma.callEvent.findFirst({
+      where: {
+        sessionId,
+        eventType: "pull_stranger_enabled"
+      },
+      orderBy: {
+        createdAt: "desc"
+      },
+      select: {
+        userId: true,
+        metadata: true
+      }
+    });
+
+    let visibleHostId = latestEnableEvent?.userId || fallbackUserId;
+    if (latestEnableEvent?.metadata) {
+      try {
+        const metadata = JSON.parse(latestEnableEvent.metadata);
+        visibleHostId = metadata.visibleInDiscoveryUserId || metadata.enabledBy || visibleHostId;
+      } catch {
+        // Fall back to event userId if older malformed metadata is ever present.
+      }
+    }
+
+    return activeHostIds.includes(visibleHostId) ? visibleHostId : fallbackUserId;
+  }
+
+  private async syncPullStrangerVisibilityStatuses(
+    participantUserIds: string[],
+    visibleInDiscoveryUserId: string
+  ): Promise<void> {
+    const maxAttempts = 4;
+    const baseDelayMs = 200;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        for (const participantId of participantUserIds) {
+          const targetStatus = participantId === visibleInDiscoveryUserId ? "IN_SQUAD_AVAILABLE" : "IN_SQUAD";
+          await this.discoveryClient.updateUserStatus(participantId, targetStatus);
+        }
+        return;
+      } catch (err: any) {
+        const message = err?.message || String(err);
+        this.logger.warn(
+          `Pull-stranger discovery status sync attempt ${attempt}/${maxAttempts} failed for visibleHost=${visibleInDiscoveryUserId}: ${message}`
+        );
+
+        if (attempt >= maxAttempts) {
+          throw err;
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, baseDelayMs * 2 ** (attempt - 1)));
+      }
+    }
   }
 
   /**
@@ -1513,10 +1590,7 @@ export class RoomService {
     // - enabled host => IN_SQUAD_AVAILABLE
     // - everyone else => IN_SQUAD
     const participantUserIds = session.participants.map((p) => p.userId);
-    for (const participantId of participantUserIds) {
-      const targetStatus = participantId === userId ? "IN_SQUAD_AVAILABLE" : "IN_SQUAD";
-      await this.discoveryClient.updateUserStatus(participantId, targetStatus);
-    }
+    await this.syncPullStrangerVisibilityStatuses(participantUserIds, userId);
 
     // Log event
     await this.prisma.callEvent.create({

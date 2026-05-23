@@ -1264,6 +1264,7 @@ export class RoomService {
         eventType: {
           in: [
             "pull_stranger_enabled",
+            "participant_joined_via_pull_stranger",
             "pull_stranger_cancelled",
             "pull_stranger_expired"
           ]
@@ -1277,7 +1278,8 @@ export class RoomService {
       }
     });
 
-    return latestLoopEvent?.eventType === "pull_stranger_enabled";
+    return latestLoopEvent?.eventType === "pull_stranger_enabled" ||
+      latestLoopEvent?.eventType === "participant_joined_via_pull_stranger";
   }
 
   /**

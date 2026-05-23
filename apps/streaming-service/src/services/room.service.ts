@@ -1195,7 +1195,11 @@ export class RoomService {
   /**
    * Kick a participant from the room (HOST only)
    */
-  async kickUser(roomId: string, kickerUserId: string, targetUserId: string): Promise<void> {
+  async kickUser(
+    roomId: string,
+    kickerUserId: string,
+    targetUserId: string
+  ): Promise<{ pullStrangerReenabled: boolean; pullStrangerEnabledBy?: string }> {
     // Validate that kicker can kick the target
     const canKick = await this.canKickUser(roomId, kickerUserId, targetUserId);
     if (!canKick) {
@@ -1204,10 +1208,14 @@ export class RoomService {
       );
     }
 
-    // Log the kick event
+    // Capture loop intent before writing the kick event. Join events should not stop the loop;
+    // only explicit cancel or expiry should.
     const session = await this.prisma.callSession.findUnique({
       where: { roomId }
     });
+    const shouldReenablePullStranger = session
+      ? await this.isPullStrangerLoopActive(session.id)
+      : false;
 
     if (session) {
       await this.prisma.callEvent.create({
@@ -1226,7 +1234,50 @@ export class RoomService {
     // Remove the participant (this handles all cleanup)
     await this.removeParticipant(roomId, targetUserId);
 
-    this.logger.log(`User ${targetUserId} was kicked from room ${roomId} by HOST ${kickerUserId}`);
+    let pullStrangerReenabled = false;
+    if (shouldReenablePullStranger) {
+      try {
+        await this.enablePullStranger(roomId, kickerUserId);
+        pullStrangerReenabled = true;
+      } catch (error: any) {
+        this.logger.error(
+          `Failed to auto re-enable pull stranger after kick in room ${roomId}: ${error?.message || error}`
+        );
+      }
+    }
+
+    this.logger.log(
+      `User ${targetUserId} was kicked from room ${roomId} by HOST ${kickerUserId}. ` +
+      `pullStrangerReenabled=${pullStrangerReenabled}`
+    );
+
+    return {
+      pullStrangerReenabled,
+      pullStrangerEnabledBy: pullStrangerReenabled ? kickerUserId : undefined
+    };
+  }
+
+  private async isPullStrangerLoopActive(sessionId: string): Promise<boolean> {
+    const latestLoopEvent = await this.prisma.callEvent.findFirst({
+      where: {
+        sessionId,
+        eventType: {
+          in: [
+            "pull_stranger_enabled",
+            "pull_stranger_cancelled",
+            "pull_stranger_expired"
+          ]
+        }
+      },
+      orderBy: {
+        createdAt: "desc"
+      },
+      select: {
+        eventType: true
+      }
+    });
+
+    return latestLoopEvent?.eventType === "pull_stranger_enabled";
   }
 
   /**
@@ -1527,6 +1578,21 @@ export class RoomService {
           this.logger.error(`Failed to restore users after pull-stranger no-op disable: ${err.message}`);
         });
       }
+
+      await this.prisma.callEvent.create({
+        data: {
+          sessionId: session.id,
+          eventType: "pull_stranger_cancelled",
+          userId,
+          metadata: JSON.stringify({
+            roomId,
+            cancelledBy: userId,
+            restoredStatus: statusToRestore,
+            wasActive: false
+          })
+        }
+      });
+
       this.clearHotReadCaches(roomId, participantUserIds);
       this.logger.log(`Pull stranger mode already disabled for room ${roomId}; restored users to ${statusToRestore}.`);
       return;

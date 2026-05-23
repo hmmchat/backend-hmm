@@ -734,7 +734,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     }
 
     try {
-      await this.roomService.kickUser(roomId, userId, targetUserId);
+      const kickResult = await this.roomService.kickUser(roomId, userId, targetUserId);
 
       // Notify the kicked user (if they're connected)
       const targetConnections = this.userConnections.get(targetUserId);
@@ -757,7 +757,9 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
         data: {
           roomId,
           kickedUserId: targetUserId,
-          kickedBy: userId
+          kickedBy: userId,
+          pullStrangerReenabled: kickResult.pullStrangerReenabled,
+          pullStrangerEnabledBy: kickResult.pullStrangerEnabledBy
         }
       });
 
@@ -765,7 +767,9 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
         type: "user-kicked-success",
         data: {
           roomId,
-          targetUserId
+          targetUserId,
+          pullStrangerReenabled: kickResult.pullStrangerReenabled,
+          pullStrangerEnabledBy: kickResult.pullStrangerEnabledBy
         }
       });
     } catch (error: any) {

@@ -864,6 +864,16 @@ export class DiscoveryService implements OnModuleInit {
    */
   private async createMatchForCard(userId: string, matchedUserId: string, currentUser: UserProfile, matchedUser: DiscoveryUser): Promise<void> {
     try {
+      if (matchedUser.status === "IN_SQUAD_AVAILABLE") {
+        const eligible = await this.streamingClient.canViewPullStrangerCard(matchedUserId, userId);
+        if (!eligible) {
+          throw new Error(`Pull-stranger card ${matchedUserId} is not eligible for viewer ${userId}`);
+        }
+        // Pull-stranger cards are one-way joins, not mutual MATCHED flows. Do not create
+        // active_matches or set either user to MATCHED, otherwise stale cards block replacements.
+        return;
+      }
+
       // Check if match already exists
       const existingMatch = await this.matchingService.getMatchForUser(userId);
       if (existingMatch && (existingMatch.user1Id === matchedUserId || existingMatch.user2Id === matchedUserId)) {

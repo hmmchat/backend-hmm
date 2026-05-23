@@ -2,6 +2,7 @@ import { Injectable, HttpException, HttpStatus } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { UserClientService, DiscoveryUser } from "./user-client.service.js";
 import { CacheService } from "./cache.service.js";
+import { StreamingClientService } from "./streaming-client.service.js";
 import {
   MATCH_SCORE_BRAND,
   MATCH_SCORE_INTEREST_EXACT,
@@ -47,7 +48,8 @@ export class MatchingService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly userClient: UserClientService,
-    private readonly cacheService: CacheService
+    private readonly cacheService: CacheService,
+    private readonly streamingClient: StreamingClientService
   ) {
     this.userServiceUrl = process.env.USER_SERVICE_URL || "http://localhost:3002";
     this.userServiceStatusTimeoutMs = parseInt(process.env.USER_SERVICE_STATUS_TIMEOUT_MS || "10000", 10);
@@ -331,9 +333,19 @@ export class MatchingService {
       // User is not in matched list, so they're available
       return true;
     });
+
+    const eligibility = await Promise.all(
+      filteredUsers.map(async (user) => {
+        if (user.status !== "IN_SQUAD_AVAILABLE" || !requestingUser?.id) {
+          return true;
+        }
+        return this.streamingClient.canViewPullStrangerCard(user.id, requestingUser.id);
+      })
+    );
+    const eligibleUsers = filteredUsers.filter((_, index) => eligibility[index]);
     
-    console.log(`[DEBUG] getPoolUsers - filteredUsers count: ${filteredUsers.length}`);
-    return filteredUsers;
+    console.log(`[DEBUG] getPoolUsers - filteredUsers count: ${eligibleUsers.length}`);
+    return eligibleUsers;
   }
 
   /**

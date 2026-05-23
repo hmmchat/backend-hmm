@@ -1491,6 +1491,79 @@ export class RoomService {
   }
 
   /**
+   * Disable pull stranger mode for a room (HOST only)
+   * Used when the host stops the summoning loop before another stranger joins.
+   */
+  async disablePullStranger(roomId: string, userId: string): Promise<void> {
+    const session = await this.prisma.callSession.findUnique({
+      where: { roomId },
+      include: {
+        participants: {
+          where: {
+            status: "active",
+            leftAt: null
+          }
+        }
+      }
+    });
+
+    if (!session) {
+      throw new NotFoundException(`Room ${roomId} not found`);
+    }
+
+    const isUserHost = await this.isHost(roomId, userId);
+    if (!isUserHost) {
+      throw new BadRequestException(`Only HOST can disable pull stranger mode`);
+    }
+
+    const participantUserIds = session.participants.map((p) => p.userId);
+    const statusToRestore = session.isBroadcasting ? "IN_BROADCAST" : "IN_SQUAD";
+
+    this.clearPullStrangerExpiryTimer(roomId);
+
+    if (!session.pullStrangerEnabled) {
+      if (participantUserIds.length > 0) {
+        await this.discoveryClient.updateUserStatuses(participantUserIds, statusToRestore).catch((err) => {
+          this.logger.error(`Failed to restore users after pull-stranger no-op disable: ${err.message}`);
+        });
+      }
+      this.clearHotReadCaches(roomId, participantUserIds);
+      this.logger.log(`Pull stranger mode already disabled for room ${roomId}; restored users to ${statusToRestore}.`);
+      return;
+    }
+
+    await this.prisma.callSession.update({
+      where: { id: session.id },
+      data: { pullStrangerEnabled: false }
+    });
+
+    if (participantUserIds.length > 0) {
+      await this.discoveryClient.updateUserStatuses(participantUserIds, statusToRestore).catch((err) => {
+        this.logger.error(`Failed to restore users after pull-stranger disable: ${err.message}`);
+      });
+    }
+
+    await this.prisma.callEvent.create({
+      data: {
+        sessionId: session.id,
+        eventType: "pull_stranger_cancelled",
+        userId,
+        metadata: JSON.stringify({
+          roomId,
+          cancelledBy: userId,
+          restoredStatus: statusToRestore
+        })
+      }
+    });
+
+    this.clearHotReadCaches(roomId, participantUserIds);
+    this.logger.log(
+      `Pull stranger mode disabled for room ${roomId} by HOST ${userId}. ` +
+      `Participants restored to ${statusToRestore}.`
+    );
+  }
+
+  /**
    * Join room via pull stranger (one-way acceptance)
    * C accepts A's card → C joins room directly (no match record needed)
    * Uses transaction with Serializable isolation to prevent race conditions

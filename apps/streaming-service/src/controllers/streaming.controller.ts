@@ -305,6 +305,22 @@ export class StreamingController {
   }
 
   /**
+   * Disable pull stranger mode (HOST only)
+   * POST /streaming/rooms/:roomId/disable-pull-stranger
+   */
+  @Post("rooms/:roomId/disable-pull-stranger")
+  async disablePullStranger(
+    @Param("roomId") roomId: string,
+    @Body() body: { userId: string }
+  ) {
+    if (!body.userId) {
+      throw new BadRequestException("userId is required");
+    }
+    await this.roomService.disablePullStranger(roomId, body.userId);
+    return { success: true, message: "Pull stranger mode disabled" };
+  }
+
+  /**
    * Join room via pull stranger (one-way acceptance)
    * POST /streaming/rooms/:roomId/join-via-pull-stranger
    */
@@ -654,6 +670,22 @@ export class StreamingController {
     }
     await this.roomService.enablePullStranger(roomId, body.userId);
     return { success: true, message: "Pull stranger mode enabled" };
+  }
+
+  /**
+   * Test endpoint: Disable pull stranger mode (bypasses auth)
+   * POST /streaming/test/rooms/:roomId/disable-pull-stranger
+   */
+  @Post("test/rooms/:roomId/disable-pull-stranger")
+  async disablePullStrangerTest(
+    @Param("roomId") roomId: string,
+    @Body() body: { userId: string }
+  ) {
+    if (!body.userId) {
+      throw new BadRequestException("userId is required");
+    }
+    await this.roomService.disablePullStranger(roomId, body.userId);
+    return { success: true, message: "Pull stranger mode disabled" };
   }
 
   /**

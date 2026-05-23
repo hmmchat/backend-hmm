@@ -358,6 +358,19 @@ export class StreamingController {
     return { exists: true, roomId };
   }
 
+  @Get("pull-stranger/room/:userId/eligibility/:joiningUserId")
+  async getPullStrangerEligibility(
+    @Param("userId") userId: string,
+    @Param("joiningUserId") joiningUserId: string
+  ) {
+    const result = await this.roomService.canUserJoinPullStrangerRoom(userId, joiningUserId);
+    return {
+      exists: Boolean(result.roomId),
+      eligible: result.eligible,
+      roomId: result.roomId
+    };
+  }
+
   /**
    * Request to join broadcast (viewer clicks "Join" button)
    * POST /streaming/rooms/:roomId/request-to-join

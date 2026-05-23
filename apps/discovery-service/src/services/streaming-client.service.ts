@@ -306,6 +306,38 @@ export class StreamingClientService {
     }
   }
 
+  async canViewPullStrangerCard(
+    visibleUserId: string,
+    viewerUserId: string
+  ): Promise<boolean> {
+    try {
+      const response = await fetch(
+        `${this.streamingServiceUrl}/streaming/pull-stranger/room/${encodeURIComponent(visibleUserId)}/eligibility/${encodeURIComponent(viewerUserId)}`,
+        {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          signal: AbortSignal.timeout(this.requestTimeoutMs)
+        } as any
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        this.logger.warn(`canViewPullStrangerCard failed: ${errorText}`);
+        return false;
+      }
+
+      const data = await response.json() as { eligible?: boolean };
+      return data.eligible === true;
+    } catch (error: any) {
+      this.logger.warn(
+        `canViewPullStrangerCard error for visible=${visibleUserId}, viewer=${viewerUserId}: ${error?.message || error}`
+      );
+      return false;
+    }
+  }
+
   /**
    * Add a user to an existing room (squad late join). Requires streaming internal auth.
    */

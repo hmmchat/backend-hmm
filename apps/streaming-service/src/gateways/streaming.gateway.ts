@@ -341,6 +341,14 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
           await this.handleKickUser(connectionId, userId, data, ws);
           break;
 
+        case "disable-pull-stranger":
+          if (this.isAnonymousUser(userId)) {
+            this.sendError(ws, "Authentication required. Please sign up to use this feature.");
+            return;
+          }
+          await this.handleDisablePullStranger(connectionId, userId, data, ws);
+          break;
+
         // Call signaling (for participants)
         case "create-transport":
           if (this.isAnonymousUser(userId)) {
@@ -502,6 +510,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       "join-room",
       "leave-room",
       "kick-user",
+      "disable-pull-stranger",
       "create-transport",
       "connect-transport",
       "produce",
@@ -774,6 +783,40 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       });
     } catch (error: any) {
       this.sendError(ws, error.message || "Failed to kick user");
+    }
+  }
+
+  private async handleDisablePullStranger(
+    _connectionId: string,
+    userId: string,
+    data: any,
+    ws: any
+  ) {
+    const { roomId } = data;
+    if (!roomId) {
+      this.sendError(ws, "roomId is required");
+      return;
+    }
+
+    try {
+      await this.roomService.disablePullStranger(roomId, userId);
+
+      await this.broadcastToRoom(roomId, {
+        type: "pull-stranger-cancelled",
+        data: {
+          roomId,
+          cancelledBy: userId
+        }
+      });
+
+      this.send(ws, {
+        type: "disable-pull-stranger-success",
+        data: {
+          roomId
+        }
+      });
+    } catch (error: any) {
+      this.sendError(ws, error.message || "Failed to disable pull stranger");
     }
   }
 

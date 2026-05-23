@@ -1734,6 +1734,21 @@ export class RoomService {
         throw new NotFoundException(`Room ${roomId} not found`);
       }
 
+      const previousParticipant = await tx.callParticipant.findFirst({
+        where: {
+          sessionId: session.id,
+          userId: joiningUserId
+        },
+        select: {
+          id: true
+        }
+      });
+      if (previousParticipant) {
+        throw new BadRequestException(
+          `User ${joiningUserId} has already participated in this pull-stranger room and cannot rejoin as a replacement.`
+        );
+      }
+
       // Verify pull stranger mode is enabled
       if (!session.pullStrangerEnabled) {
         throw new BadRequestException(
@@ -1969,6 +1984,47 @@ export class RoomService {
     });
 
     return session?.roomId || null;
+  }
+
+  async canUserJoinPullStrangerRoom(
+    visibleUserId: string,
+    joiningUserId: string
+  ): Promise<{ eligible: boolean; roomId?: string }> {
+    const session = await this.prisma.callSession.findFirst({
+      where: {
+        pullStrangerEnabled: true,
+        status: { in: ["IN_SQUAD", "IN_BROADCAST"] },
+        participants: {
+          some: {
+            userId: visibleUserId,
+            status: "active",
+            leftAt: null
+          }
+        }
+      },
+      include: {
+        participants: {
+          where: {
+            userId: joiningUserId
+          },
+          select: {
+            id: true
+          }
+        }
+      }
+    });
+
+    if (!session) {
+      return { eligible: false };
+    }
+
+    // A user who already joined this session, even if kicked/left, must not see or rejoin
+    // the same pull-stranger call again. Replacement should come from a new stranger.
+    if (session.participants.length > 0) {
+      return { eligible: false, roomId: session.roomId };
+    }
+
+    return { eligible: true, roomId: session.roomId };
   }
 
   /**

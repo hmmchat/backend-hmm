@@ -664,7 +664,7 @@ export class DiscoveryService implements OnModuleInit {
       limit: DISCOVERY_POOL_LIMIT
     });
 
-    return users.filter((candidate) => {
+    const locallyEligibleUsers = users.filter((candidate) => {
       if (requesterModeratorCardsOnly) {
         return Boolean(candidate.isModerator);
       }
@@ -680,6 +680,17 @@ export class DiscoveryService implements OnModuleInit {
       }
       return true;
     });
+
+    const eligibility = await Promise.all(
+      locallyEligibleUsers.map(async (candidate) => {
+        if (candidate.status !== "IN_SQUAD_AVAILABLE") {
+          return true;
+        }
+        return this.streamingClient.canViewPullStrangerCard(candidate.id, userId);
+      })
+    );
+
+    return locallyEligibleUsers.filter((_, index) => eligibility[index]);
   }
 
   /**

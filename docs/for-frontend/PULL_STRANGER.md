@@ -495,7 +495,86 @@ Interactive HTML tester: `tests/html-interfaces/comprehensive-test-interface.htm
 
 ---
 
-## 8) Related docs
+## 8) Frontend wiring checklist (HMM..)
 
-- **[FRONTEND_INTEGRATION.md](./FRONTEND_INTEGRATION.md)** — Discovery cards, WebSocket/mediasoup, streaming overview
+Use this as a quick map from backend contracts to client behavior. Constants live in `lib/api.js` under `API.STREAMING`.
+
+| Constant | HTTP |
+|----------|------|
+| `ENABLE_PULL_STRANGER(roomId)` | `POST …/enable-pull-stranger` |
+| `DISABLE_PULL_STRANGER(roomId)` | `POST …/disable-pull-stranger` (fallback if WS unavailable) |
+| `JOIN_VIA_PULL_STRANGER(roomId)` | `POST …/join-via-pull-stranger` |
+| `GET_PULL_STRANGER_ROOM(userId)` | `GET …/pull-stranger/room/:userId` |
+
+### 8.1 Host — enable and summoning UI
+
+1. On **Pull stranger** tap, call **`ENABLE_PULL_STRANGER`** immediately (optimistic UI is fine).
+2. Show the **next grid slot** with “Summoning…” + **X** as soon as enable is tapped — do not wait for a stranger to join.
+3. Drive the visible summoning state from an active window timer (e.g. 60s aligned with `PULL_STRANGER_WINDOW_MS`), not from “loop armed” alone.
+4. On window expiry with no join, hide the placeholder and restore the previous grid layout.
+
+### 8.2 Host — cancel (X)
+
+1. Prefer WebSocket:
+
+```json
+{ "type": "disable-pull-stranger", "data": { "roomId": "<room-id>" } }
+```
+
+2. Listen for **`pull-stranger-cancelled`** (room broadcast) and clear summoning UI for **all** participants, not only the user who tapped X.
+3. Fallback: **`DISABLE_PULL_STRANGER`** HTTP if the socket is closed.
+
+### 8.3 Host — kick replacement loop
+
+1. On **`participant-kicked`** / **`user-kicked-success`**, if `data.pullStrangerReenabled === true`:
+   - Re-show summoning placeholder immediately.
+   - Do **not** call `enable-pull-stranger` again from the client; backend already re-enabled.
+2. `pullStrangerEnabledBy` is the user who should appear in discovery (`IN_SQUAD_AVAILABLE`).
+
+### 8.4 Stranger — discovery join
+
+File: `components/Home/MeetSomeoneDynamic.jsx`
+
+1. If `card.status === "IN_SQUAD_AVAILABLE"`:
+   - **`GET_PULL_STRANGER_ROOM(card.userId)`** → `{ exists, roomId }`
+   - **`JOIN_VIA_PULL_STRANGER(roomId)`** with `{ joiningUserId, targetUserId }`
+   - **Do not** call `POST /discovery/proceed`
+2. Retry GET + POST on transient failures (room may be re-opening after a kick).
+3. After join success, WebSocket **`join-room`** + normal mediasoup flow.
+
+### 8.5 WebSocket handlers (video chat)
+
+In your streaming WS `onmessage` switch, handle at minimum:
+
+| Event | Action |
+|-------|--------|
+| `pull-stranger-cancelled` | Clear summoning UI for everyone in `data.roomId` |
+| `disable-pull-stranger-success` | Optional ack for initiator |
+| `participant-kicked` | If `pullStrangerReenabled`, arm summoning UI |
+| `user-kicked-success` | Same as above for kicker |
+
+### 8.6 Loop vs explicit enable (product rule)
+
+| Trigger | Expected behavior |
+|---------|-------------------|
+| Host taps **Pull stranger** (2 on call → invite 3rd) | One summoning cycle; stops after join, cancel, or timeout |
+| Host **kicks** pulled stranger while loop is active | Backend auto re-enables; summoning UI returns; **new** strangers only (kicked user excluded) |
+| Host taps **Pull stranger** with 3 already in call | Separate explicit enable for a 4th — not the post-kick replacement loop |
+
+Kicked users are filtered server-side via eligibility (`GET …/eligibility/:joiningUserId`); frontend should still handle join errors gracefully.
+
+### 8.7 Suggested `api.js` addition (optional)
+
+Eligibility is normally enforced by discovery; add only if you need client-side pre-checks:
+
+```javascript
+GET_PULL_STRANGER_ELIGIBILITY: (visibleUserId, joiningUserId) =>
+  `${STREAMING_SERVICE_URL}/streaming/pull-stranger/room/${visibleUserId}/eligibility/${joiningUserId}`,
+```
+
+---
+
+## 9) Related docs
+
+- **[FRONTEND_INTEGRATION.md](./FRONTEND_INTEGRATION.md)** — Discovery cards, WebSocket/mediasoup, streaming overview (see §4 Pull Stranger summary)
 - **[USER_STATUS_AND_APIS.md](./USER_STATUS_AND_APIS.md)** — `IN_SQUAD_AVAILABLE` and status checklist

@@ -490,6 +490,7 @@ export class MatchingService {
         this.updateUserStatus(userId, "MATCHED"),
         this.updateUserStatus(pair.user.id, "MATCHED")
       ]);
+      void this.notifyDiscoveryMatched(userId, pair.user.id);
       return pair.user;
     }
 
@@ -727,6 +728,44 @@ export class MatchingService {
       console.error(`[ERROR] Failed to create match between ${user1Id} and ${user2Id}:`, errorDetails);
       console.error(`[ERROR] Full error object:`, JSON.stringify(errorDetails, null, 2));
       return { success: false, created: false, error: errorDetails };
+    }
+  }
+
+  /**
+   * Push both users to refresh discovery so each sees the other's face card immediately.
+   */
+  async notifyDiscoveryMatched(userId: string, partnerId: string): Promise<void> {
+    const at = Date.now();
+    await Promise.all([
+      this.notificationGateway.sendNotification(userId, {
+        type: "discovery:matched",
+        data: { partnerId, at }
+      }),
+      this.notificationGateway.sendNotification(partnerId, {
+        type: "discovery:matched",
+        data: { partnerId: userId, at }
+      })
+    ]);
+  }
+
+  /**
+   * When active_matches exists but statuses drifted, restore MATCHED instead of deleting the pair.
+   */
+  async ensureMatchedStatuses(userId: string, partnerId: string): Promise<void> {
+    const [userProfile, partnerProfile] = await Promise.all([
+      this.userClient.getUserFullProfileById(userId),
+      this.userClient.getUserFullProfileById(partnerId)
+    ]);
+    const heal: Promise<void>[] = [];
+    if (String((userProfile as any).status || "") !== "MATCHED") {
+      heal.push(this.updateUserStatus(userId, "MATCHED"));
+    }
+    if (String((partnerProfile as any).status || "") !== "MATCHED") {
+      heal.push(this.updateUserStatus(partnerId, "MATCHED"));
+    }
+    if (heal.length > 0) {
+      await Promise.all(heal);
+      void this.notifyDiscoveryMatched(userId, partnerId);
     }
   }
 

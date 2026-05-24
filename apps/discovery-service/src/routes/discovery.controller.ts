@@ -292,7 +292,7 @@ export class DiscoveryController {
       sessionId: dto.sessionId,
       city: dto.city,
       persistPreference: dto.persistPreference,
-      soloOnly: false
+      soloOnly: dto.soloOnly ?? false
     });
   }
 
@@ -376,7 +376,8 @@ export class DiscoveryController {
     const dto = SelectLocationRequestSchema.parse({
       sessionId,
       city: body.city,
-      persistPreference: body.persistPreference
+      persistPreference: body.persistPreference,
+      soloOnly: body.soloOnly
     });
 
     if (!userId) {
@@ -388,7 +389,7 @@ export class DiscoveryController {
       sessionId: dto.sessionId,
       city: dto.city,
       persistPreference: dto.persistPreference,
-      soloOnly: false
+      soloOnly: dto.soloOnly ?? false
     });
   }
 

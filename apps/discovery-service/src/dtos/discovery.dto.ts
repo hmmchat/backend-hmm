@@ -19,7 +19,8 @@ export const SelectLocationRequestSchema = z.object({
   sessionId: z.string().min(1, "Session ID is required"),
   city: z.string().nullable(), // null means "Anywhere" / all cities for this action
   /** When false, only updates the in-session discovery pool (face-card accept); profile city is unchanged. */
-  persistPreference: z.boolean().optional().default(true)
+  persistPreference: z.boolean().optional().default(true),
+  soloOnly: z.boolean().optional().default(false)
 });
 
 export const ProceedRequestSchema = z.object({

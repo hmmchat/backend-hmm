@@ -364,34 +364,33 @@ export class DiscoveryService implements OnModuleInit {
       const currentUserStatus = String((userProfileResponse as any).status || "");
       const matchedUserStatus = String((matchedUser as any).status || "");
 
-      // Guard against stale active_matches: keep match card only while both users are MATCHED.
+      // Heal status drift: never delete active_matches while both users should see each other.
       if (currentUserStatus !== "MATCHED" || matchedUserStatus !== "MATCHED") {
-        await this.matchingService.removeMatchAcceptances(existingMatch.user1Id, existingMatch.user2Id);
-        await this.matchingService.removeMatch(existingMatch.user1Id, existingMatch.user2Id);
-      } else {
-        // User is actively matched, return their match's card
-        const card = await this.buildCard(this.convertToDiscoveryUser(matchedUser), poolCity, currentUser);
-
-        // Surface acceptance hint: if the other user already accepted but current user hasn't,
-        // frontend can show "X has accepted your match".
-        const acceptanceState = await this.matchingService.getAcceptanceState(existingMatch.user1Id, existingMatch.user2Id);
-        const currentUserAccepted = acceptanceState.acceptedBy.has(userId);
-        const matchedUserAccepted = acceptanceState.acceptedBy.has(matchedUserId);
-        (card as any).otherUserAccepted = matchedUserAccepted && !currentUserAccepted;
-        (card as any).currentUserAccepted = currentUserAccepted;
-
-        // Decrement gender filter if active
-        const genderFilter = await this.genderFilterService.getCurrentPreference(userId);
-        const hasActiveGenderFilter = genderFilter && genderFilter.screensRemaining > 0;
-        if (hasActiveGenderFilter) {
-          await this.genderFilterService.decrementScreen(userId);
-        }
-
-        return {
-          card,
-          exhausted: false
-        };
+        await this.matchingService.ensureMatchedStatuses(userId, matchedUserId);
       }
+
+      // User is actively matched, return their match's card
+      const card = await this.buildCard(this.convertToDiscoveryUser(matchedUser), poolCity, currentUser);
+
+      // Surface acceptance hint: if the other user already accepted but current user hasn't,
+      // frontend can show "X has accepted your match".
+      const acceptanceState = await this.matchingService.getAcceptanceState(existingMatch.user1Id, existingMatch.user2Id);
+      const currentUserAccepted = acceptanceState.acceptedBy.has(userId);
+      const matchedUserAccepted = acceptanceState.acceptedBy.has(matchedUserId);
+      (card as any).otherUserAccepted = matchedUserAccepted && !currentUserAccepted;
+      (card as any).currentUserAccepted = currentUserAccepted;
+
+      // Decrement gender filter if active
+      const genderFilter = await this.genderFilterService.getCurrentPreference(userId);
+      const hasActiveGenderFilter = genderFilter && genderFilter.screensRemaining > 0;
+      if (hasActiveGenderFilter) {
+        await this.genderFilterService.decrementScreen(userId);
+      }
+
+      return {
+        card,
+        exhausted: false
+      };
       }
     }
 
@@ -457,7 +456,7 @@ export class DiscoveryService implements OnModuleInit {
 
         // If users exist in other cities, use them (unlimited scroll)
         if (usersInOtherCities.length > 0) {
-          const selectedUser = this.selectBestMatch(usersInOtherCities, currentUser);
+          const selectedUser = await this.selectBestMatchAndCreate(userId, usersInOtherCities, currentUser);
           const card = await this.buildCard(selectedUser, poolCity, currentUser);
 
           if (hasActiveGenderFilter) {
@@ -482,7 +481,7 @@ export class DiscoveryService implements OnModuleInit {
         );
 
         if (usersWithoutGenderFilter.length > 0) {
-          const selectedUser = this.selectBestMatch(usersWithoutGenderFilter, currentUser);
+          const selectedUser = await this.selectBestMatchAndCreate(userId, usersWithoutGenderFilter, currentUser);
           const card = await this.buildCard(selectedUser, poolCity, currentUser);
 
           return {
@@ -896,6 +895,7 @@ export class DiscoveryService implements OnModuleInit {
           this.matchingService.updateUserStatus(userId, "MATCHED"),
           this.matchingService.updateUserStatus(matchedUserId, "MATCHED")
         ]);
+        void this.matchingService.notifyDiscoveryMatched(userId, matchedUserId);
         console.log(`[INFO] Match already exists between ${userId} and ${matchedUserId}`);
         return;
       }
@@ -957,6 +957,7 @@ export class DiscoveryService implements OnModuleInit {
         this.matchingService.updateUserStatus(userId, "MATCHED"),
         this.matchingService.updateUserStatus(matchedUserId, "MATCHED")
       ]);
+      void this.matchingService.notifyDiscoveryMatched(userId, matchedUserId);
 
       console.log(`[INFO] Created match between ${userId} and ${matchedUserId} when showing card`);
     } catch (error: any) {
@@ -2031,26 +2032,25 @@ export class DiscoveryService implements OnModuleInit {
       const currentUserStatus = String((userProfileResponse as any).status || "");
       const matchedUserStatus = String((matchedUser as any).status || "");
 
-      // Guard against stale active_matches: keep match card only while both users are MATCHED.
+      // Heal status drift: never delete active_matches while both users should see each other.
       if (currentUserStatus !== "MATCHED" || matchedUserStatus !== "MATCHED") {
-        await this.matchingService.removeMatchAcceptances(existingMatch.user1Id, existingMatch.user2Id);
-        await this.matchingService.removeMatch(existingMatch.user1Id, existingMatch.user2Id);
-      } else {
-        // User is actively matched, return their match's card
-        const card = await this.buildCard(this.convertToDiscoveryUser(matchedUser), poolCity, currentUser);
-
-        // Decrement gender filter if active
-        const genderFilter = await this.genderFilterService.getCurrentPreference(userId);
-        const hasActiveGenderFilter = genderFilter && genderFilter.screensRemaining > 0;
-        if (hasActiveGenderFilter) {
-          await this.genderFilterService.decrementScreen(userId);
-        }
-
-        return {
-          card,
-          exhausted: false
-        };
+        await this.matchingService.ensureMatchedStatuses(userId, matchedUserId);
       }
+
+      // User is actively matched, return their match's card
+      const card = await this.buildCard(this.convertToDiscoveryUser(matchedUser), poolCity, currentUser);
+
+      // Decrement gender filter if active
+      const genderFilter = await this.genderFilterService.getCurrentPreference(userId);
+      const hasActiveGenderFilter = genderFilter && genderFilter.screensRemaining > 0;
+      if (hasActiveGenderFilter) {
+        await this.genderFilterService.decrementScreen(userId);
+      }
+
+      return {
+        card,
+        exhausted: false
+      };
       }
     }
 
@@ -2210,7 +2210,7 @@ export class DiscoveryService implements OnModuleInit {
 
         // If users exist in other cities, use them (unlimited scroll)
         if (usersInOtherCities.length > 0) {
-          const selectedUser = this.selectBestMatch(usersInOtherCities, currentUser);
+          const selectedUser = await this.selectBestMatchAndCreate(userId, usersInOtherCities, currentUser);
           const card = await this.buildCard(selectedUser, poolCity, currentUser);
 
           if (hasActiveGenderFilter) {
@@ -2234,7 +2234,7 @@ export class DiscoveryService implements OnModuleInit {
         );
 
         if (usersWithoutGenderFilter.length > 0) {
-          const selectedUser = this.selectBestMatch(usersWithoutGenderFilter, currentUser);
+          const selectedUser = await this.selectBestMatchAndCreate(userId, usersWithoutGenderFilter, currentUser);
           const card = await this.buildCard(selectedUser, poolCity, currentUser);
 
           return {
@@ -2267,7 +2267,7 @@ export class DiscoveryService implements OnModuleInit {
 
       // If users are available, show them instead of location cards
       if (usersBeforeLocation.length > 0) {
-        const selectedUser = this.selectBestMatch(usersBeforeLocation, currentUser);
+        const selectedUser = await this.selectBestMatchAndCreate(userId, usersBeforeLocation, currentUser);
         const card = await this.buildCard(selectedUser, poolCity, currentUser);
 
         if (hasActiveGenderFilter) {
@@ -2300,7 +2300,7 @@ export class DiscoveryService implements OnModuleInit {
             );
 
       if (usersRecheck.length > 0) {
-        const selectedUser = this.selectBestMatch(usersRecheck, currentUser);
+        const selectedUser = await this.selectBestMatchAndCreate(userId, usersRecheck, currentUser);
         const card = await this.buildCard(selectedUser, poolCity, currentUser);
 
         if (hasActiveGenderFilter) {

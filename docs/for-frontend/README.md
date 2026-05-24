@@ -45,7 +45,14 @@ Dedicated integration guide for OFFLINE cards:
 - Optional related actions (`/v1/streaming/offline-cards/gifts`, `/v1/users/report`)
 - Behavior notes (no match creation, session isolation, edge cases)
 
-### 5. **`USER_STATUS_AND_APIS.md`**
+### 5. **`PULL_STRANGER.md`** — Pull stranger (summon stranger into call)
+
+Integration guide for the in-call “pull stranger” feature:
+- Host enable/cancel, timed discovery window, replacement loop after kick
+- Stranger discovery card flow (`IN_SQUAD_AVAILABLE`) — join via streaming, not `proceed`
+- HTTP + WebSocket APIs with curl examples
+
+### 6. **`USER_STATUS_AND_APIS.md`**
 
 User status and related APIs (see file for scope).
 
@@ -64,6 +71,7 @@ docs/for-frontend/
 ├── FRONTEND_INTEGRATION.md — Complete API documentation
 ├── DISCOVERY_LOCATION_CARDS.md — LOCATION promos & discovery session APIs
 ├── OFFLINE_CARDS.md — OFFLINE cards integration guide
+├── PULL_STRANGER.md — Pull stranger integration guide
 └── USER_STATUS_AND_APIS.md — User status APIs
 ```
 

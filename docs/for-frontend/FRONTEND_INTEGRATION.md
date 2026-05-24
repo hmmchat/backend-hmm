@@ -1233,34 +1233,22 @@ See `apps/streaming-service/README.md` in the backend repo for the full WebSocke
 ]
 ```
 
-### 4. Enable Pull Stranger Mode
+### 4. Pull Stranger (summon stranger into call)
 
-**Endpoint:** `POST /streaming/rooms/:roomId/enable-pull-stranger`
+> **Full guide:** **[PULL_STRANGER.md](./PULL_STRANGER.md)** — flows, curl examples, WebSocket cancel/kick events, discovery `IN_SQUAD_AVAILABLE` cards, and edge cases.
 
-**Request:**
-```json
-{
-  "userId": "string"  // Must be host
-}
-```
+**Endpoints:**
 
-**Use Case:** Host enables mode to allow strangers to join call.
+| Action | Method | Path |
+|--------|--------|------|
+| Enable (HOST) | `POST` | `/streaming/rooms/:roomId/enable-pull-stranger` |
+| Cancel (HOST) | `POST` | `/streaming/rooms/:roomId/disable-pull-stranger` |
+| Resolve room | `GET` | `/streaming/pull-stranger/room/:userId` |
+| Join (stranger) | `POST` | `/streaming/rooms/:roomId/join-via-pull-stranger` |
 
-### 5. Join via Pull Stranger
+**Use case:** Host in an active call opens a timed window; only the host appears in discovery as `IN_SQUAD_AVAILABLE`. Strangers accept via **`join-via-pull-stranger`**, not `POST /discovery/proceed`. Cancel in-call via WebSocket `disable-pull-stranger`.
 
-**Endpoint:** `POST /streaming/rooms/:roomId/join-via-pull-stranger`
-
-**Request:**
-```json
-{
-  "joiningUserId": "string",
-  "targetUserId": "string"  // User to join (one-way acceptance)
-}
-```
-
-**Use Case:** Stranger joins call with specific user (no mutual match required).
-
-### 6. End Call
+### 5. End Call
 
 **Endpoint:** `POST /streaming/rooms/:roomId/end`
 

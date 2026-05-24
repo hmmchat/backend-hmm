@@ -6,6 +6,7 @@ import { ModerationClientService } from "./moderation-client.service.js";
 import { BrandService } from "./brand.service.js";
 import { WalletClientService } from "./wallet-client.service.js";
 import { AuthClientService } from "./auth-client.service.js";
+import { DiscoveryClientService } from "./discovery-client.service.js";
 import { verifyToken, AccessPayload, PREFERRED_CITY_ANYWHERE_IN_INDIA } from "@hmm/common";
 import { JWK } from "jose";
 import {
@@ -65,7 +66,8 @@ export class UserService implements OnModuleInit {
     private readonly moderationClient: ModerationClientService,
     private readonly brandService: BrandService,
     private readonly walletClient: WalletClientService,
-    private readonly authClient: AuthClientService
+    private readonly authClient: AuthClientService,
+    private readonly discoveryClient: DiscoveryClientService
   ) { }
 
   async onModuleInit() {
@@ -1352,6 +1354,20 @@ export class UserService implements OnModuleInit {
 
   async updateStatus(accessToken: string, data: UpdateStatusDto) {
     const userId = await this.verifyAccessToken(accessToken);
+
+    if (data.status === "AVAILABLE") {
+      const hasSession = await this.discoveryClient.hasActiveDiscoverySession(userId);
+      if (!hasSession) {
+        throw new HttpException(
+          "AVAILABLE requires an active discovery session. Start search via Meet Someone first.",
+          HttpStatus.CONFLICT
+        );
+      }
+    }
+
+    if (data.status === "ONLINE" || data.status === "OFFLINE") {
+      // Best-effort: discovery session/end is invoked by the client; no hard dependency here.
+    }
 
     const user = await this.prisma.user.update({
       where: { id: userId },

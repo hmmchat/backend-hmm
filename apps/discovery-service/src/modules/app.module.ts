@@ -21,6 +21,7 @@ import { FriendClientService } from "../services/friend-client.service.js";
 import { StreamingClientService } from "../services/streaming-client.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { CacheService } from "../services/cache.service.js";
+import { DiscoverySessionService } from "../services/discovery-session.service.js";
 
 @Module({
   imports: [ConfigModule.forRoot()],
@@ -47,7 +48,8 @@ import { CacheService } from "../services/cache.service.js";
     FriendClientService,
     StreamingClientService,
     PrismaService,
-    CacheService
+    CacheService,
+    DiscoverySessionService
   ]
 })
 export class AppModule {}

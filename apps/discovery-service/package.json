@@ -16,7 +16,7 @@
     "prisma:seed": "tsx prisma/seed.ts",
     "postinstall": "node scripts/postinstall-prisma.js",
     "lint": "echo \"no lint configured yet\"",
-    "test": "echo \"no tests yet\""
+    "test": "tsx --test tests/status-rules.test.ts"
   },
   "dependencies": {
     "@hmm/common": "*",

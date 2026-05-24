@@ -26,6 +26,16 @@ export const ProceedRequestSchema = z.object({
   matchedUserId: z.string().min(1, "Matched user ID is required")
 });
 
+export const DiscoverySessionHeartbeatSchema = z.object({
+  sessionId: z.string().min(1, "Session ID is required")
+});
+
+export const DiscoverySessionEnterSchema = z.object({
+  sessionId: z.string().min(1, "Session ID is required")
+});
+
+export const DiscoverySessionEndSchema = z.object({});
+
 // Type exports
 export type GetCardQuery = z.infer<typeof GetCardQuerySchema>;
 export type RaincheckRequest = z.infer<typeof RaincheckRequestSchema>;

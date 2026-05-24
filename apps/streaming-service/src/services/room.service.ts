@@ -5,6 +5,7 @@ import { DiscoveryClientService } from "./discovery-client.service.js";
 import { StreamingNodeRegistryService } from "./streaming-node-registry.service.js";
 import { types as MediasoupTypes } from "mediasoup";
 import { v4 as uuidv4 } from "uuid";
+import { resolveRoomEndParticipantStatus } from "@hmm/common";
 
 interface RoomState {
   router: MediasoupTypes.Router;
@@ -578,11 +579,9 @@ export class RoomService {
 
       for (const userId of userIds) {
         try {
-          // Future enhancement: persist exact pre-match status history.
-          // Safe fallback for homepage-centric flow is ONLINE.
-          previousStatuses.set(userId, "ONLINE");
+          const status = await this.discoveryClient.getUserStatus(userId);
+          previousStatuses.set(userId, status || "ONLINE");
         } catch (error) {
-          // Default to ONLINE if we can't determine.
           previousStatuses.set(userId, "ONLINE");
         }
       }
@@ -2737,12 +2736,7 @@ export class RoomService {
       this.logger.log(`Marked ${viewerUserIds.length} viewer(s) as left due to room ending: ${viewerUserIds.join(", ")}`);
     }
 
-    // Notify discovery-service that call ended
-    this.discoveryClient.notifyCallEnded(roomId, [...participantUserIds, ...viewerUserIds]).catch((err) => {
-      this.logger.error(`Failed to notify discovery-service: ${err.message}`);
-    });
-
-    // Cancel all pending waitlist entries
+    // Cancel all pending waitlist entries first (status applied below with other users).
     if (waitlistUserIds.length > 0) {
       await this.prisma.callWaitlist.updateMany({
         where: {
@@ -2753,66 +2747,61 @@ export class RoomService {
           status: "cancelled"
         }
       });
-
-      // Update waitlist users: MATCHED → VIEWER (users still in HMM_TV)
-      this.logger.log(`Cancelling ${waitlistUserIds.length} waitlist entry(ies) and updating status: MATCHED → VIEWER`);
-      this.discoveryClient.updateUserStatuses(waitlistUserIds, "VIEWER").catch((err) => {
-        this.logger.error(`Failed to update waitlist user statuses: ${err.message}`);
-      });
+      this.logger.log(`Cancelled ${waitlistUserIds.length} waitlist entry(ies) for room ${roomId}`);
     }
 
-    // BUSINESS RULE: When entire room ends:
-    // - Participants revert to their previousStatus (excluding MATCHED)
-    // - Viewers (not on waitlist) → VIEWER (still in HMM_TV)
+    // BUSINESS RULE: When entire room ends — single deterministic status writer:
+    // - Participants revert to previousStatus (never MATCHED; default ONLINE; preserve AVAILABLE)
+    // - Waitlist users → VIEWER
+    // - Other active viewers → VIEWER
+  const statusGroups = new Map<string, string[]>();
+
     if (participantUserIds.length > 0) {
-      // Group participants by previousStatus for batch updates
-      const statusGroups = new Map<string, string[]>();
-
       for (const p of participants as any[]) {
-        const previousStatus = p.previousStatus || "ONLINE"; // Default to ONLINE for legacy data
-        let statusToRestore = previousStatus;
-
-        // If user is already AVAILABLE (e.g. raincheck flow), do not downgrade to ONLINE.
+        let currentStatus: string | undefined;
         try {
-          const currentStatus = await this.discoveryClient.getUserStatus(p.userId);
-          if (currentStatus === "AVAILABLE") {
-            statusToRestore = "AVAILABLE";
-          }
+          currentStatus = await this.discoveryClient.getUserStatus(p.userId);
         } catch (error: any) {
           this.logger.warn(`Failed to read current status for ${p.userId} during endRoom: ${error?.message || error}`);
         }
 
-        // Never revert to MATCHED (it's transitional)
-        if (statusToRestore !== "MATCHED") {
-          if (!statusGroups.has(statusToRestore)) {
-            statusGroups.set(statusToRestore, []);
-          }
-          statusGroups.get(statusToRestore)!.push(p.userId);
-        } else {
-          // If previousStatus is MATCHED (shouldn't happen, but handle gracefully), default to ONLINE
-          if (!statusGroups.has("ONLINE")) {
-            statusGroups.set("ONLINE", []);
-          }
-          statusGroups.get("ONLINE")!.push(p.userId);
-        }
-      }
+        const statusToRestore = resolveRoomEndParticipantStatus(p.previousStatus, currentStatus);
 
-      // Update each group to their previousStatus
-      for (const [status, userIds] of statusGroups.entries()) {
-        this.logger.log(`Reverting ${userIds.length} participant(s) to ${status} status: ${userIds.join(", ")}`);
-        this.discoveryClient.updateUserStatuses(userIds, status as any).catch((err) => {
-          this.logger.error(`Failed to update participant statuses to ${status}: ${err.message}`);
-        });
+        if (!statusGroups.has(statusToRestore)) {
+          statusGroups.set(statusToRestore, []);
+        }
+        statusGroups.get(statusToRestore)!.push(p.userId);
       }
     }
 
-    // Viewers (not on waitlist) revert to VIEWER (still in HMM_TV)
-    const viewersNotOnWaitlist = viewerUserIds.filter(vId => !waitlistUserIds.includes(vId));
+    const viewersNotOnWaitlist = viewerUserIds.filter((vId) => !waitlistUserIds.includes(vId));
+    if (waitlistUserIds.length > 0) {
+      if (!statusGroups.has("VIEWER")) {
+        statusGroups.set("VIEWER", []);
+      }
+      statusGroups.get("VIEWER")!.push(...waitlistUserIds);
+    }
     if (viewersNotOnWaitlist.length > 0) {
-      this.logger.log(`Updating ${viewersNotOnWaitlist.length} viewer(s) to VIEWER status (still in HMM_TV): ${viewersNotOnWaitlist.join(", ")}`);
-      this.discoveryClient.updateUserStatuses(viewersNotOnWaitlist, "VIEWER").catch((err) => {
-        this.logger.error(`Failed to update viewer statuses: ${err.message}`);
-      });
+      if (!statusGroups.has("VIEWER")) {
+        statusGroups.set("VIEWER", []);
+      }
+      statusGroups.get("VIEWER")!.push(...viewersNotOnWaitlist);
+    }
+
+    for (const [status, userIds] of statusGroups.entries()) {
+      this.logger.log(`Setting ${userIds.length} user(s) to ${status} after room end: ${userIds.join(", ")}`);
+      try {
+        await this.discoveryClient.updateUserStatuses(userIds, status);
+      } catch (err: any) {
+        this.logger.error(`Failed to update user statuses to ${status}: ${err.message}`);
+      }
+    }
+
+    // Squad lobby cleanup only — status already applied above.
+    try {
+      await this.discoveryClient.notifyCallEnded(roomId, [...participantUserIds, ...viewerUserIds]);
+    } catch (err: any) {
+      this.logger.error(`Failed to notify discovery-service: ${err.message}`);
     }
 
     await this.pruneGloballyObsoleteHistorySessions().catch((error: any) => {

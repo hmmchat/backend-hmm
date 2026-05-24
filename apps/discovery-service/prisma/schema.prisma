@@ -214,3 +214,18 @@ model SessionDiscoveryCityOverride {
   @@index([userId])
   @@map("session_discovery_city_overrides")
 }
+
+// Active solo-discovery intent — user must have a live session to appear as AVAILABLE in the pool.
+model DiscoverySession {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  sessionId     String
+  intent        String   @default("solo") // solo | pull_stranger_host
+  lastHeartbeat DateTime @default(now())
+  expiresAt     DateTime
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([expiresAt])
+  @@map("discovery_sessions")
+}

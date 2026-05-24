@@ -9,6 +9,13 @@ export {
   PREFERRED_CITY_ANYWHERE_IN_INDIA,
   isPreferredCityAnywhere
 } from "./preferred-city.js";
+export {
+  resolveAcceptanceTimeoutStatus,
+  resolveRaincheckPartnerStatus,
+  resolveRoomEndParticipantStatus,
+  type PresenceStatus,
+  type RestorablePresenceStatus
+} from "./status-rules.js";
 
 /* ---------- Types ---------- */
 export type Provider = "google" | "apple" | "facebook" | "phone";

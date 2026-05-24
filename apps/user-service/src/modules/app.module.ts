@@ -16,6 +16,7 @@ import { BrandService } from "../services/brand.service.js";
 import { BadgeService } from "../services/badge.service.js";
 import { WalletClientService } from "../services/wallet-client.service.js";
 import { AuthClientService } from "../services/auth-client.service.js";
+import { DiscoveryClientService } from "../services/discovery-client.service.js";
 
 @Module({
   imports: [ConfigModule.forRoot()],
@@ -28,7 +29,7 @@ import { AuthClientService } from "../services/auth-client.service.js";
     ZodiacAdminController,
     UsersAdminController
   ],
-  providers: [PrismaService, UserService, ProfileCompletionService, ModerationClientService, MusicService, BrandService, BadgeService, WalletClientService, AuthClientService]
+  providers: [PrismaService, UserService, ProfileCompletionService, ModerationClientService, MusicService, BrandService, BadgeService, WalletClientService, AuthClientService, DiscoveryClientService]
 })
 export class AppModule {}
 

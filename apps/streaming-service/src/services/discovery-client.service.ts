@@ -113,23 +113,40 @@ export class DiscoveryClientService {
   }
 
   /**
-   * Update user status (single user)
+   * Update user status (single user) via internal user-service path when configured.
    */
   async updateUserStatus(userId: string, status: string): Promise<void> {
-    try {
-      const response = await fetch(`${this.userServiceUrl}/users/test/${userId}/status`, {
+    const serviceToken = process.env.INTERNAL_SERVICE_TOKEN;
+    const internalUrl = `${this.userServiceUrl}/users/internal/${userId}/status`;
+    const testUrl = `${this.userServiceUrl}/users/test/${userId}/status`;
+
+  try {
+      const jsonHeaders: Record<string, string> = {
+        "Content-Type": "application/json"
+      };
+      if (serviceToken) {
+        jsonHeaders["x-service-token"] = serviceToken;
+      }
+
+      let response = await fetch(serviceToken ? internalUrl : testUrl, {
         method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: jsonHeaders,
         body: JSON.stringify({ status }),
         signal: AbortSignal.timeout(this.userServiceRequestTimeoutMs)
       } as any);
 
+      if (!response.ok && serviceToken && response.status === 404) {
+        response = await fetch(testUrl, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status }),
+          signal: AbortSignal.timeout(this.userServiceRequestTimeoutMs)
+        } as any);
+      }
+
       if (!response.ok) {
         const error = await response.text();
         this.logger.warn(`Failed to update user status (user-service may not be available): ${error}`);
-        // In test mode or when user-service is unavailable, don't throw - just log
         if (process.env.TEST_MODE !== "true") {
           throw new Error(`Failed to update user ${userId} status to ${status}`);
         }
@@ -139,7 +156,6 @@ export class DiscoveryClientService {
       this.logger.log(`User ${userId} status updated to ${status}`);
     } catch (error: any) {
       this.logger.warn(`Error updating user status (user-service may not be available): ${error.message}`);
-      // In test mode, don't throw - just log the warning
       if (process.env.TEST_MODE !== "true") {
         throw error;
       }
@@ -171,15 +187,31 @@ export class DiscoveryClientService {
    * Uses test endpoint: GET /users/test/:userId?fields=status
    */
   async getUserStatus(userId: string): Promise<string> {
+    const serviceToken = process.env.INTERNAL_SERVICE_TOKEN;
+    const internalUrl = `${this.userServiceUrl}/users/internal/${userId}?fields=status`;
+    const testUrl = `${this.userServiceUrl}/users/test/${userId}?fields=status`;
+
     try {
-      // Use test endpoint that doesn't require auth (works in TEST_MODE)
-      const response = await fetch(`${this.userServiceUrl}/users/test/${userId}?fields=status`, {
+      const jsonHeaders: Record<string, string> = {
+        "Content-Type": "application/json"
+      };
+      if (serviceToken) {
+        jsonHeaders["x-service-token"] = serviceToken;
+      }
+
+      let response = await fetch(serviceToken ? internalUrl : testUrl, {
         method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: jsonHeaders,
         signal: AbortSignal.timeout(this.userServiceRequestTimeoutMs)
       } as any);
+
+      if (!response.ok && serviceToken && response.status === 404) {
+        response = await fetch(testUrl, {
+          method: "GET",
+          headers: { "Content-Type": "application/json" },
+          signal: AbortSignal.timeout(this.userServiceRequestTimeoutMs)
+        } as any);
+      }
 
       if (!response.ok) {
         const error = await response.text();

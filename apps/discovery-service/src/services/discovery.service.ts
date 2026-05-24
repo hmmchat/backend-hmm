@@ -7,6 +7,7 @@ import { MatchingService } from "./matching.service.js";
 import { StreamingClientService } from "./streaming-client.service.js";
 import { CacheService } from "./cache.service.js";
 import { SquadService } from "./squad.service.js";
+import { DiscoverySessionService } from "./discovery-session.service.js";
 import {
   MATCH_SCORE_BRAND,
   MATCH_SCORE_INTEREST_EXACT,
@@ -29,6 +30,7 @@ import {
   computeReportLayer,
   getDiscoveryReportLayerConfig
 } from "../config/report-layers.config.js";
+import { resolveRaincheckPartnerStatus } from "../status/status-rules.js";
 
 // DiscoveryUser interface is imported from user-client.service.ts
 // Import it to avoid duplication
@@ -130,13 +132,19 @@ export class DiscoveryService implements OnModuleInit {
     private readonly matchingService: MatchingService,
     private readonly streamingClient: StreamingClientService,
     private readonly cache: CacheService,
-    private readonly squadService: SquadService
+    private readonly squadService: SquadService,
+    private readonly discoverySessionService: DiscoverySessionService
   ) { }
 
   private debugLog(message: string): void {
     if (process.env.DISCOVERY_DEBUG_LOGS === "true") {
       this.logger.debug(message);
     }
+  }
+
+  /** Normalize client session ids so offline cards do not double-prefix. */
+  private toOfflineSessionId(sessionId: string): string {
+    return sessionId.startsWith("offline-") ? sessionId : `offline-${sessionId}`;
   }
 
   private isKycPriorityEnabled(): boolean {
@@ -301,6 +309,10 @@ export class DiscoveryService implements OnModuleInit {
     // Get current user profile
     const userProfileResponse = await this.userClient.getUserFullProfile(token);
     const userId = userProfileResponse.id;
+
+    if (soloOnly) {
+      await this.discoverySessionService.upsertSession(userId, sessionId, "solo");
+    }
 
     const cityResponse = await this.locationService.getPreferredCity(token);
     const storedPreferred = cityResponse.city;
@@ -681,8 +693,10 @@ export class DiscoveryService implements OnModuleInit {
       return true;
     });
 
+    const sessionEligibleUsers = await this.discoverySessionService.filterSoloPoolCandidates(locallyEligibleUsers);
+
     const eligibility = await Promise.all(
-      locallyEligibleUsers.map(async (candidate) => {
+      sessionEligibleUsers.map(async (candidate) => {
         if (candidate.status !== "IN_SQUAD_AVAILABLE") {
           return true;
         }
@@ -690,7 +704,7 @@ export class DiscoveryService implements OnModuleInit {
       })
     );
 
-    return locallyEligibleUsers.filter((_, index) => eligibility[index]);
+    return sessionEligibleUsers.filter((_, index) => eligibility[index]);
   }
 
   /**
@@ -1475,26 +1489,28 @@ export class DiscoveryService implements OnModuleInit {
       }
 
       // Status reset rules:
-      // - Caller (the one who rainchecked) should always return to AVAILABLE when MATCHED/IN_SQUAD.
-      // - Other user should also return to AVAILABLE when MATCHED/IN_SQUAD so they can be
-      //   considered immediately for next matches in the same session.
+      // - Caller (rainchecked) returns to AVAILABLE when MATCHED/IN_SQUAD (still searching).
+      // - Passive partner returns to ONLINE unless they have an active solo discovery session.
       try {
         const resettableStatuses = new Set(["MATCHED", "IN_SQUAD"]);
 
-        // Reset rainchecked user to AVAILABLE when MATCHED/IN_SQUAD.
         const raincheckedUserProfile = await this.userClient.getUserFullProfileById(raincheckedUserId);
         if (resettableStatuses.has(String(raincheckedUserProfile.status || ""))) {
-          this.debugLog(`[DEBUG] Resetting rainchecked user ${raincheckedUserId} status from ${raincheckedUserProfile.status} to AVAILABLE (due to raincheck)`);
-          await this.matchingService.updateUserStatus(raincheckedUserId, "AVAILABLE");
-          this.debugLog(`[DEBUG] Status reset completed for rainchecked user ${raincheckedUserId}`);
+          const passiveHasSession = await this.discoverySessionService.hasActiveSession(raincheckedUserId);
+          const passiveStatus = resolveRaincheckPartnerStatus(passiveHasSession);
+          this.debugLog(
+            `[DEBUG] Resetting rainchecked user ${raincheckedUserId} status from ${raincheckedUserProfile.status} to ${passiveStatus}`
+          );
+          await this.matchingService.updateUserStatus(raincheckedUserId, passiveStatus);
+          if (!passiveHasSession) {
+            await this.discoverySessionService.clearSession(raincheckedUserId);
+          }
         }
 
-        // Also reset current user to AVAILABLE (they rainchecked, so they want to see new cards)
         const currentUserProfile = await this.userClient.getUserFullProfileById(userId);
         if (resettableStatuses.has(String(currentUserProfile.status || ""))) {
-          this.debugLog(`[DEBUG] Resetting current user ${userId} status from ${currentUserProfile.status} to AVAILABLE (they rainchecked)`);
+          this.debugLog(`[DEBUG] Resetting current user ${userId} status to AVAILABLE (they rainchecked)`);
           await this.matchingService.updateUserStatus(userId, "AVAILABLE");
-          this.debugLog(`[DEBUG] Status reset completed for current user ${userId}`);
         }
       } catch (error) {
         console.error(`[ERROR] Failed to check/reset user statuses after raincheck:`, error);
@@ -1962,6 +1978,10 @@ export class DiscoveryService implements OnModuleInit {
     // Get current user profile directly by userId
     const userProfileResponse = await this.userClient.getUserFullProfileById(userId);
 
+    if (soloOnly) {
+      await this.discoverySessionService.upsertSession(userId, sessionId, "solo");
+    }
+
     const storedPreferred = await this.userClient.getPreferredCityById(userId);
     const poolCity = await this.getEffectiveDiscoveryPoolCity(userId, sessionId, storedPreferred);
 
@@ -2405,7 +2425,85 @@ export class DiscoveryService implements OnModuleInit {
     });
 
     this.debugLog(`[DEBUG] findMatchingUsersForUser - users from service: ${users.length}, after filtering: ${filteredUsers.length}`);
-    return filteredUsers;
+    return this.discoverySessionService.filterSoloPoolCandidates(filteredUsers);
+  }
+
+  /**
+   * Renew an active solo discovery session heartbeat.
+   */
+  async heartbeatDiscoverySession(token: string, sessionId: string): Promise<{ success: boolean; active: boolean }> {
+    const userProfileResponse = await this.userClient.getUserFullProfile(token);
+    const userId = userProfileResponse.id;
+    const active = await this.discoverySessionService.heartbeat(userId, sessionId);
+    if (active) {
+      await this.discoverySessionService.upsertSession(userId, sessionId, "solo");
+    }
+    return { success: true, active };
+  }
+
+  /**
+   * Atomically start solo discovery: session row + AVAILABLE status (internal).
+   */
+  async enterDiscoverySession(token: string, sessionId: string): Promise<{ success: boolean; status: string }> {
+    const userProfileResponse = await this.userClient.getUserFullProfile(token);
+    const userId = userProfileResponse.id;
+    await this.discoverySessionService.upsertSession(userId, sessionId, "solo");
+    await this.matchingService.updateUserStatus(userId, "AVAILABLE");
+    return { success: true, status: "AVAILABLE" };
+  }
+
+  /**
+   * Service-to-service: does user have a non-expired discovery session?
+   */
+  async hasActiveDiscoverySessionForUser(userId: string): Promise<boolean> {
+    return this.discoverySessionService.hasActiveSession(userId);
+  }
+
+  /**
+   * Demote AVAILABLE users who have no active discovery session row.
+   */
+  async reconcileOrphanAvailableUsers(): Promise<string[]> {
+    const limit = parseInt(process.env.DISCOVERY_ORPHAN_RECONCILE_LIMIT || "500", 10);
+    const availableUsers = await this.userClient.getUsersForDiscoveryById("", {
+      city: null,
+      statuses: ["AVAILABLE"],
+      limit
+    });
+    if (!availableUsers.length) {
+      return [];
+    }
+
+    const activeSessionIds = await this.discoverySessionService.getActiveSessionUserIds();
+    const orphanIds: string[] = [];
+    for (const user of availableUsers) {
+      if (!activeSessionIds.has(user.id)) {
+        orphanIds.push(user.id);
+      }
+    }
+
+    for (const userId of orphanIds) {
+      try {
+        await this.matchingService.updateUserStatus(userId, "ONLINE");
+      } catch (error) {
+        console.error(`[ERROR] Failed to demote orphan AVAILABLE user ${userId}:`, error);
+      }
+    }
+
+    if (orphanIds.length > 0) {
+      console.log(`[INFO] Reconciled ${orphanIds.length} orphan AVAILABLE user(s) to ONLINE`);
+    }
+    return orphanIds;
+  }
+
+  /**
+   * Clear discovery session and return user to ONLINE (not in matchmaking pool).
+   */
+  async endDiscoverySession(token: string): Promise<{ success: boolean }> {
+    const userProfileResponse = await this.userClient.getUserFullProfile(token);
+    const userId = userProfileResponse.id;
+    await this.discoverySessionService.clearSession(userId);
+    await this.matchingService.updateUserStatus(userId, "ONLINE");
+    return { success: true };
   }
 
   /**
@@ -2430,6 +2528,24 @@ export class DiscoveryService implements OnModuleInit {
         console.error("[ERROR] Failed to cleanup expired matches:", error);
       }
     }, cleanupIntervalMs);
+
+    const sessionReconcileIntervalMs = parseInt(process.env.DISCOVERY_SESSION_RECONCILE_MS || "30000", 10);
+    setInterval(async () => {
+      try {
+        const expiredUserIds = await this.discoverySessionService.reconcileExpiredSessions();
+        for (const userId of expiredUserIds) {
+          try {
+            await this.matchingService.updateUserStatus(userId, "ONLINE");
+          } catch (error) {
+            console.error(`[ERROR] Failed to demote ${userId} after session expiry:`, error);
+          }
+        }
+        await this.reconcileOrphanAvailableUsers();
+        await this.matchingService.reconcileStaleMatchedUsers();
+      } catch (error) {
+        console.error("[ERROR] Failed to reconcile discovery sessions:", error);
+      }
+    }, sessionReconcileIntervalMs);
 
     // Periodic reconciliation to heal any unexpected conflicting rows at runtime.
     setInterval(async () => {
@@ -2485,21 +2601,16 @@ export class DiscoveryService implements OnModuleInit {
   }
 
   /**
-   * Handle call ended notification from streaming-service
-   * Updates all users in the room to AVAILABLE status
+   * Handle call ended notification from streaming-service.
+   * Status restoration is owned by streaming RoomService.endRoom; this hook only disbands squad lobbies.
    */
   async handleCallEnded(roomId: string, userIds: string[]): Promise<void> {
     try {
-      console.log(`[INFO] Call ended for room ${roomId} with users: ${userIds.join(", ")} - updating to AVAILABLE`);
+      console.log(`[INFO] Call ended for room ${roomId} with users: ${userIds.join(", ")} - disbanding squad lobbies`);
 
       await this.squadService.disbandInCallLobbyIfMembersEndedCall(userIds);
 
-      // Update all users to AVAILABLE status
-      await Promise.all(
-        userIds.map((userId) => this.matchingService.updateUserStatus(userId, "AVAILABLE"))
-      );
-
-      console.log(`[INFO] Successfully updated ${userIds.length} users to AVAILABLE after call ended in room ${roomId}`);
+      console.log(`[INFO] Squad lobby cleanup completed for room ${roomId}`);
     } catch (error: any) {
       console.error(`[ERROR] Failed to handle call ended for room ${roomId}:`, error.message);
       throw error;
@@ -2522,7 +2633,7 @@ export class DiscoveryService implements OnModuleInit {
 
     const cityResponse = await this.locationService.getPreferredCity(token);
     const storedPreferred = cityResponse.city;
-    const offlineSessionId = `offline-${sessionId}`;
+    const offlineSessionId = this.toOfflineSessionId(sessionId);
     const poolCity = await this.getEffectiveDiscoveryPoolCity(userId, offlineSessionId, storedPreferred);
 
     // Get viewer's actual city from location if in "anywhere" mode
@@ -2690,7 +2801,7 @@ export class DiscoveryService implements OnModuleInit {
   ): Promise<void> {
     try {
       // Use prefixed sessionId to avoid conflicts with video call rainchecks
-      const offlineSessionId = `offline-${sessionId}`;
+      const offlineSessionId = this.toOfflineSessionId(sessionId);
 
       // IMPORTANT: Do NOT check for matches or reset statuses - OFFLINE cards don't create matches
       // Just mark as rainchecked in session (bidirectionally - both users should exclude each other)
@@ -2757,7 +2868,7 @@ export class DiscoveryService implements OnModuleInit {
     const userProfileResponse = await this.userClient.getUserFullProfileById(userId);
 
     const storedPreferred = await this.userClient.getPreferredCityById(userId);
-    const offlineSessionId = `offline-${sessionId}`;
+    const offlineSessionId = this.toOfflineSessionId(sessionId);
     const poolCity = await this.getEffectiveDiscoveryPoolCity(userId, offlineSessionId, storedPreferred);
 
     // Get viewer's actual city from location if in "anywhere" mode

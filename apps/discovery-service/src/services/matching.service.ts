@@ -3,6 +3,8 @@ import { PrismaService } from "../prisma/prisma.service.js";
 import { UserClientService, DiscoveryUser } from "./user-client.service.js";
 import { CacheService } from "./cache.service.js";
 import { StreamingClientService } from "./streaming-client.service.js";
+import { DiscoverySessionService } from "./discovery-session.service.js";
+import { NotificationGateway } from "../gateways/notification.gateway.js";
 import {
   MATCH_SCORE_BRAND,
   MATCH_SCORE_INTEREST_EXACT,
@@ -16,6 +18,7 @@ import {
 import { DISCOVERY_POOL_LIMIT } from "../config/limits.config.js";
 import fetch from "node-fetch";
 import { isPreferredCityAnywhere } from "@hmm/common";
+import { resolveAcceptanceTimeoutStatus } from "../status/status-rules.js";
 
 interface UserProfile {
   id: string;
@@ -49,7 +52,9 @@ export class MatchingService {
     private readonly prisma: PrismaService,
     private readonly userClient: UserClientService,
     private readonly cacheService: CacheService,
-    private readonly streamingClient: StreamingClientService
+    private readonly streamingClient: StreamingClientService,
+    private readonly discoverySessionService: DiscoverySessionService,
+    private readonly notificationGateway: NotificationGateway
   ) {
     this.userServiceUrl = process.env.USER_SERVICE_URL || "http://localhost:3002";
     this.userServiceStatusTimeoutMs = parseInt(process.env.USER_SERVICE_STATUS_TIMEOUT_MS || "10000", 10);
@@ -343,9 +348,10 @@ export class MatchingService {
       })
     );
     const eligibleUsers = filteredUsers.filter((_, index) => eligibility[index]);
-    
-    console.log(`[DEBUG] getPoolUsers - filteredUsers count: ${eligibleUsers.length}`);
-    return eligibleUsers;
+    const sessionEligibleUsers = await this.discoverySessionService.filterSoloPoolCandidates(eligibleUsers);
+
+    console.log(`[DEBUG] getPoolUsers - filteredUsers count: ${sessionEligibleUsers.length}`);
+    return sessionEligibleUsers;
   }
 
   /**
@@ -812,6 +818,10 @@ export class MatchingService {
         );
       }
       console.log(`[DEBUG] Status updated via user-service for ${userId} -> ${status}`);
+      void this.notificationGateway.sendNotification(userId, {
+        type: "user:status",
+        data: { userId, status, at: Date.now() }
+      });
     } catch (httpError: any) {
       if (process.env.DISCOVERY_STATUS_USE_DIRECT_DB === "true") {
         console.warn(
@@ -1034,18 +1044,31 @@ export class MatchingService {
       for (const match of expiredAcceptances || []) {
         const user1Id = match.user1Id;
         const user2Id = match.user2Id;
-        
-        // Remove the match (acceptance timeout expired - both go back to AVAILABLE)
+        const [id1, id2] = [user1Id, user2Id].sort();
+        const escapedId1 = id1.replace(/'/g, "''");
+        const escapedId2 = id2.replace(/'/g, "''");
+
+        const expiredAcceptanceRows = await (this.prisma as any).$queryRawUnsafe(
+          `SELECT "acceptedBy" FROM match_acceptances
+           WHERE "user1Id" = '${escapedId1}' AND "user2Id" = '${escapedId2}'
+           AND "expiresAt" <= CURRENT_TIMESTAMP`
+        );
+        const acceptedBy = new Set<string>(
+          (expiredAcceptanceRows || []).map((row: any) => String(row.acceptedBy))
+        );
+
         await this.removeMatch(user1Id, user2Id);
-        
-        // Remove acceptances
         await this.removeMatchAcceptances(user1Id, user2Id);
-        
-        // Revert both users to AVAILABLE (they can see new cards now)
-        await this.updateUserStatus(user1Id, "AVAILABLE");
-        await this.updateUserStatus(user2Id, "AVAILABLE");
-        
-        console.log(`[INFO] Cleaned up expired match acceptance between ${user1Id} and ${user2Id} (acceptance timeout expired - both reset to AVAILABLE)`);
+
+        for (const uid of [user1Id, user2Id]) {
+          const hasSession = await this.discoverySessionService.hasActiveSession(uid);
+          const nextStatus = resolveAcceptanceTimeoutStatus(uid, acceptedBy, hasSession);
+          await this.updateUserStatus(uid, nextStatus);
+        }
+
+        console.log(
+          `[INFO] Cleaned up expired match acceptance between ${user1Id} and ${user2Id} (acceptance timeout — targeted status reset)`
+        );
       }
     } catch (error: any) {
       console.error(`[ERROR] Failed to cleanup expired matches:`, error?.message || error);
@@ -1090,6 +1113,92 @@ export class MatchingService {
       console.error(`[ERROR] Failed to reconcile active_matches conflicts:`, error?.message || error);
       return { removed: 0 };
     }
+  }
+
+  /**
+   * Heal users stuck in MATCHED or orphaned active_matches rows.
+   */
+  async reconcileStaleMatchedUsers(): Promise<{ cleaned: number }> {
+    let cleaned = 0;
+    try {
+      const matchedIds = await this.getMatchedUserIds();
+      if (matchedIds.size === 0) {
+        return { cleaned: 0 };
+      }
+
+      const processedPairs = new Set<string>();
+
+      for (const userId of matchedIds) {
+        const match = await this.getMatchForUser(userId);
+        if (!match) {
+          continue;
+        }
+
+        const pairKey = [match.user1Id, match.user2Id].sort().join(":");
+        if (processedPairs.has(pairKey)) {
+          continue;
+        }
+        processedPairs.add(pairKey);
+
+        let user1Status = "ONLINE";
+        let user2Status = "ONLINE";
+        try {
+          const [p1, p2] = await Promise.all([
+            this.userClient.getUserFullProfileById(match.user1Id),
+            this.userClient.getUserFullProfileById(match.user2Id)
+          ]);
+          user1Status = String((p1 as any).status || "ONLINE");
+          user2Status = String((p2 as any).status || "ONLINE");
+        } catch (error: any) {
+          console.warn(`[WARN] reconcileStaleMatchedUsers profile read failed for pair ${pairKey}:`, error?.message || error);
+          continue;
+        }
+
+        const acceptance = await this.getAcceptanceState(match.user1Id, match.user2Id);
+        const hasActiveAcceptance = acceptance.acceptedBy.size > 0;
+
+        const shouldResetUser = async (uid: string, status: string): Promise<boolean> => {
+          if (status !== "MATCHED") {
+            return true;
+          }
+          const hasSession = await this.discoverySessionService.hasActiveSession(uid);
+          return !hasSession && !hasActiveAcceptance;
+        };
+
+        const reset1 = await shouldResetUser(match.user1Id, user1Status);
+        const reset2 = await shouldResetUser(match.user2Id, user2Status);
+
+        if (!reset1 && !reset2) {
+          continue;
+        }
+
+        await this.removeMatch(match.user1Id, match.user2Id);
+        await this.removeMatchAcceptances(match.user1Id, match.user2Id);
+
+        if (reset1) {
+          const hasSession = await this.discoverySessionService.hasActiveSession(match.user1Id);
+          await this.updateUserStatus(match.user1Id, hasSession ? "AVAILABLE" : "ONLINE");
+          cleaned += 1;
+        }
+        if (reset2) {
+          const hasSession = await this.discoverySessionService.hasActiveSession(match.user2Id);
+          await this.updateUserStatus(match.user2Id, hasSession ? "AVAILABLE" : "ONLINE");
+          cleaned += 1;
+        }
+
+        console.log(
+          `[INFO] Reconciled stale match ${match.user1Id} <-> ${match.user2Id} ` +
+            `(statuses: ${user1Status}/${user2Status}, reset: ${reset1}/${reset2})`
+        );
+      }
+
+      if (cleaned > 0) {
+        await this.cacheService.del("matched:user:ids");
+      }
+    } catch (error: any) {
+      console.error(`[ERROR] Failed to reconcile stale MATCHED users:`, error?.message || error);
+    }
+    return { cleaned };
   }
 }
 

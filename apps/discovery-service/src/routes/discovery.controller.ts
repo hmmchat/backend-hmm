@@ -22,7 +22,10 @@ import {
   BroadcastStartedRequestSchema,
   CallEndedRequestSchema,
   GetOfflineCardQuerySchema,
-  OfflineRaincheckRequestSchema
+  OfflineRaincheckRequestSchema,
+  DiscoverySessionHeartbeatSchema,
+  DiscoverySessionEndSchema,
+  DiscoverySessionEnterSchema
 } from "../dtos/discovery.dto.js";
 
 @Controller("discovery")
@@ -57,6 +60,57 @@ export class DiscoveryController {
     const soloOnly = dto.soloOnly || false;
 
     return this.discoveryService.getNextCard(token, dto.sessionId, soloOnly);
+  }
+
+  /**
+   * Keep solo discovery session alive while user is actively searching.
+   * POST /discovery/session/heartbeat
+   */
+  @Post("session/heartbeat")
+  async discoverySessionHeartbeat(
+    @Headers("authorization") authz: string,
+    @Body() body: any
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+
+    const dto = DiscoverySessionHeartbeatSchema.parse(body);
+    return this.discoveryService.heartbeatDiscoverySession(token, dto.sessionId);
+  }
+
+  /**
+   * Enter solo discovery pool atomically (session + AVAILABLE).
+   * POST /discovery/session/enter
+   */
+  @Post("session/enter")
+  async discoverySessionEnter(
+    @Headers("authorization") authz: string,
+    @Body() body: any
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+
+    const dto = DiscoverySessionEnterSchema.parse(body);
+    return this.discoveryService.enterDiscoverySession(token, dto.sessionId);
+  }
+
+  /**
+   * End solo discovery session (user cancelled search or left pool).
+   * POST /discovery/session/end
+   */
+  @Post("session/end")
+  async discoverySessionEnd(@Headers("authorization") authz: string) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+
+    DiscoverySessionEndSchema.parse({});
+    return this.discoveryService.endDiscoverySession(token);
   }
 
   /**
@@ -430,8 +484,18 @@ export class DiscoveryController {
 
     return {
       success: true,
-      message: `Updated ${dto.userIds.length} users to AVAILABLE after call ended in room ${dto.roomId}`
+      message: `Squad lobby cleanup completed for room ${dto.roomId}`
     };
+  }
+
+  /**
+   * Internal: check whether user has an active discovery session.
+   * GET /discovery/internal/session/:userId/active
+   */
+  @Get("internal/session/:userId/active")
+  async internalSessionActive(@Param("userId") userId: string) {
+    const active = await this.discoveryService.hasActiveDiscoverySessionForUser(userId);
+    return { active };
   }
 
   /* ---------- OFFLINE Cards Endpoints ---------- */

@@ -3,15 +3,16 @@ import { FastifyAdapter, NestFastifyApplication } from "@nestjs/platform-fastify
 import { AppModule } from "./modules/app.module.js";
 import { ConfigService } from "@nestjs/config";
 import { ZodExceptionFilter } from "./filters/zod-exception.filter.js";
+import { allowEmptyJsonBody } from "./fastify-allow-empty-json.js";
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestFastifyApplication>(
-    AppModule,
-    new FastifyAdapter({ 
-      logger: true,
-      requestTimeout: 8000  // 8 second request timeout (less than gateway's 10s)
-    })
-  );
+  const fastifyAdapter = new FastifyAdapter({
+    logger: true,
+    requestTimeout: 8000  // 8 second request timeout (less than gateway's 10s)
+  });
+  allowEmptyJsonBody(fastifyAdapter);
+
+  const app = await NestFactory.create<NestFastifyApplication>(AppModule, fastifyAdapter);
 
   const config = app.get(ConfigService);
   const port = config.get<number>("PORT") || 3002;

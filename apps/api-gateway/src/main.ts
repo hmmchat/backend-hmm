@@ -5,15 +5,16 @@ import { AppModule } from "./modules/app.module.js";
 import { ConfigService } from "@nestjs/config";
 import { ZodExceptionFilter } from "./filters/zod-exception.filter.js";
 import { RoutingService } from "./services/routing.service.js";
+import { allowEmptyJsonBody } from "./fastify-allow-empty-json.js";
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestFastifyApplication>(
-    AppModule,
-    new FastifyAdapter({
-      logger: true,
-      requestTimeout: 12000  // 12 second request timeout (slightly more than proxy timeout)
-    })
-  );
+  const fastifyAdapter = new FastifyAdapter({
+    logger: true,
+    requestTimeout: 12000  // 12 second request timeout (slightly more than proxy timeout)
+  });
+  allowEmptyJsonBody(fastifyAdapter);
+
+  const app = await NestFactory.create<NestFastifyApplication>(AppModule, fastifyAdapter);
 
   const config = app.get(ConfigService);
   const port = config.get<number>("PORT") || 3000;

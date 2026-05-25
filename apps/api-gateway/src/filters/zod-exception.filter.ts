@@ -34,6 +34,17 @@ export class ZodExceptionFilter implements ExceptionFilter {
       return;
     }
 
+    const fastifyCode = (exception as { code?: string })?.code;
+    if (fastifyCode === "FST_ERR_CTP_EMPTY_JSON_BODY") {
+      reply.status(HttpStatus.BAD_REQUEST).send({
+        statusCode: HttpStatus.BAD_REQUEST,
+        message:
+          (exception as Error).message ||
+          "Body cannot be empty when content-type is application/json"
+      });
+      return;
+    }
+
     // Unknown error
     reply.status(HttpStatus.INTERNAL_SERVER_ERROR).send({
       statusCode: HttpStatus.INTERNAL_SERVER_ERROR,

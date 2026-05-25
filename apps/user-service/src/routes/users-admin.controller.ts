@@ -264,14 +264,26 @@ async function authFetch(path: string, init?: Parameters<typeof fetch>[1]) {
   return fetch(url, { ...init, headers });
 }
 
+function authAdminUserPath(userId: string, ...segments: string[]): string {
+  const base = `/auth/admin/users/${encodeURIComponent(userId)}`;
+  return segments.length ? `${base}/${segments.map((s) => encodeURIComponent(s)).join("/")}` : base;
+}
+
+type AuthFetchOpts = { allowStatuses?: number[] };
+
+/** Shared admin-dashboard proxy to auth-service (ban, unban, list, deactivate, etc.). */
 async function authFetchOrThrow(
   path: string,
   init: Parameters<typeof fetch>[1] | undefined,
-  label: string
+  label: string,
+  opts?: AuthFetchOpts
 ): Promise<Awaited<ReturnType<typeof fetch>>> {
   try {
     const res = await authFetch(path, init);
     if (!res.ok) {
+      if (opts?.allowStatuses?.includes(res.status)) {
+        return res;
+      }
       const t = await res.text();
       if (res.status === HttpStatus.NOT_FOUND) {
         throw new HttpException("User not found", HttpStatus.NOT_FOUND);
@@ -293,11 +305,11 @@ async function authFetchOrThrow(
   }
 }
 
-async function authJson<T>(res: Awaited<ReturnType<typeof fetch>>): Promise<T> {
+async function parseAuthJsonResponse<T>(res: Awaited<ReturnType<typeof fetch>>, label: string): Promise<T> {
   try {
     return (await res.json()) as T;
   } catch {
-    throw new HttpException("Auth service returned invalid JSON", HttpStatus.BAD_GATEWAY);
+    throw new HttpException(`Auth service returned invalid JSON (${label})`, HttpStatus.BAD_GATEWAY);
   }
 }
 
@@ -356,21 +368,12 @@ export class UsersAdminController {
    */
   @Get()
   async list() {
-    const authRes = await authFetch("/auth/admin/users", { method: "GET" });
-    if (!authRes.ok) {
-      const text = await authRes.text();
-      throw new HttpException(
-        `Auth service admin list failed: ${authRes.status} ${text}`,
-        HttpStatus.BAD_GATEWAY
-      );
-    }
-    let authJson: { ok?: boolean; users?: AuthAdminUser[] };
-    try {
-      authJson = (await authRes.json()) as { ok?: boolean; users?: AuthAdminUser[] };
-    } catch {
-      throw new HttpException("Auth service returned invalid JSON for admin user list", HttpStatus.BAD_GATEWAY);
-    }
-    const authUsers = Array.isArray(authJson.users) ? authJson.users : [];
+    const authRes = await authFetchOrThrow("/auth/admin/users", { method: "GET" }, "Admin user list");
+    const authPayload = await parseAuthJsonResponse<{ ok?: boolean; users?: AuthAdminUser[] }>(
+      authRes,
+      "admin user list"
+    );
+    const authUsers = Array.isArray(authPayload.users) ? authPayload.users : [];
     if (authUsers.length === 0) {
       return { ok: true, users: [] };
     }
@@ -393,24 +396,12 @@ export class UsersAdminController {
    */
   @Get(":id")
   async getOne(@Param("id") id: string) {
-    const authRes = await authFetch(`/auth/admin/users/${encodeURIComponent(id)}`, { method: "GET" });
-    if (!authRes.ok) {
-      if (authRes.status === 404) {
-        throw new HttpException("User not found", HttpStatus.NOT_FOUND);
-      }
-      const text = await authRes.text();
-      throw new HttpException(
-        `Auth service admin user failed: ${authRes.status} ${text}`,
-        HttpStatus.BAD_GATEWAY
-      );
-    }
-    let authJson: { ok?: boolean; user?: AuthAdminUser };
-    try {
-      authJson = (await authRes.json()) as { ok?: boolean; user?: AuthAdminUser };
-    } catch {
-      throw new HttpException("Auth service returned invalid JSON for admin user", HttpStatus.BAD_GATEWAY);
-    }
-    const a = authJson.user;
+    const authRes = await authFetchOrThrow(authAdminUserPath(id), { method: "GET" }, "Admin user");
+    const authPayload = await parseAuthJsonResponse<{ ok?: boolean; user?: AuthAdminUser }>(
+      authRes,
+      "admin user"
+    );
+    const a = authPayload.user;
     if (!a || a.id !== id) {
       throw new HttpException("User not found", HttpStatus.NOT_FOUND);
     }
@@ -454,20 +445,17 @@ export class UsersAdminController {
     }
 
     if (data.isActive === true) {
-      const restoreRes = await authFetch(`/auth/admin/users/${id}/restore-login`, { method: "POST" });
-      if (!restoreRes.ok) {
-        const t = await restoreRes.text();
-        throw new HttpException(
-          `Restore login failed: ${restoreRes.status} ${t}. If the user is banned, use Unban instead of Edit → active.`,
-          HttpStatus.BAD_GATEWAY
-        );
-      }
+      await authFetchOrThrow(
+        authAdminUserPath(id, "restore-login"),
+        { method: "POST" },
+        "Restore login"
+      );
     } else if (data.isActive === false) {
-      const deactivateRes = await authFetch(`/auth/admin/users/${id}/deactivate`, { method: "POST" });
-      if (!deactivateRes.ok) {
-        const t = await deactivateRes.text();
-        throw new HttpException(`Deactivate failed: ${deactivateRes.status} ${t}`, HttpStatus.BAD_GATEWAY);
-      }
+      await authFetchOrThrow(
+        authAdminUserPath(id, "deactivate"),
+        { method: "POST" },
+        "Deactivate"
+      );
     }
 
     if (data.reportCount !== undefined) {
@@ -531,7 +519,7 @@ export class UsersAdminController {
       "Unban"
     );
     await this.userService.clearReportDiscoveryRestriction(id);
-    return authJson<{ ok: boolean; message?: string }>(res);
+    return parseAuthJsonResponse<{ ok: boolean; message?: string }>(res, "Unban");
   }
 
   @Post(":id/report")

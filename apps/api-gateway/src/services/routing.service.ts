@@ -460,6 +460,10 @@ export class RoutingService implements OnModuleInit {
             requestHeaders["content-type"] = "application/json";
             fetchOptions.body = JSON.stringify(body);
           }
+        } else if (method === "POST" || method === "PUT" || method === "PATCH") {
+          // Do not forward application/json + empty body (Fastify rejects downstream).
+          delete requestHeaders["content-type"];
+          delete requestHeaders["content-length"];
         }
 
         const response = await fetch(url, fetchOptions);

@@ -6,7 +6,8 @@ import {
   Headers,
   HttpException,
   HttpStatus,
-  Param
+  Param,
+  Logger
 } from "@nestjs/common";
 import { BadgeService } from "../services/badge.service.js";
 import { z } from "zod";
@@ -17,6 +18,8 @@ const setBadgeSchema = z.object({
 
 @Controller("users/:userId/badges")
 export class BadgeController {
+  private readonly logger = new Logger(BadgeController.name);
+
   constructor(private readonly badgeService: BadgeService) {}
 
   private getTokenFromHeader(h?: string) {
@@ -57,8 +60,14 @@ export class BadgeController {
       throw new HttpException("Unauthorized", HttpStatus.FORBIDDEN);
     }
 
-    // Sync badges from transactions first
-    await this.badgeService.syncBadgesFromTransactions(userId);
+    // Sync badges from transactions first (non-fatal if wallet-service is unavailable)
+    try {
+      await this.badgeService.syncBadgesFromTransactions(userId);
+    } catch (error: any) {
+      this.logger.warn(
+        `Badge sync failed for user ${userId}: ${error?.message || error}`
+      );
+    }
 
     // Return badges
     return this.badgeService.getReceivedGifts(userId);

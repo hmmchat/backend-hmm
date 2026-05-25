@@ -2496,13 +2496,30 @@ export class DiscoveryService implements OnModuleInit {
   }
 
   /**
-   * Clear discovery session and return user to ONLINE (not in matchmaking pool).
+   * Clear discovery session. Only demote to ONLINE when the user was actively in the
+   * discovery pool — not when MATCHED / IN_SQUAD / in-call (e.g. Meet RN → video-chat).
    */
   async endDiscoverySession(token: string): Promise<{ success: boolean }> {
     const userProfileResponse = await this.userClient.getUserFullProfile(token);
     const userId = userProfileResponse.id;
     await this.discoverySessionService.clearSession(userId);
-    await this.matchingService.updateUserStatus(userId, "ONLINE");
+
+    const currentStatus = String(userProfileResponse.status || "ONLINE");
+    const preserveStatuses = new Set([
+      "MATCHED",
+      "IN_SQUAD",
+      "IN_BROADCAST",
+      "IN_SQUAD_AVAILABLE",
+      "IN_BROADCAST_AVAILABLE",
+      "VIEWER"
+    ]);
+    if (!preserveStatuses.has(currentStatus)) {
+      await this.matchingService.updateUserStatus(userId, "ONLINE");
+    } else {
+      console.log(
+        `[INFO] endDiscoverySession: preserving status ${currentStatus} for user ${userId} (entering or in call)`
+      );
+    }
     return { success: true };
   }
 

@@ -264,6 +264,43 @@ async function authFetch(path: string, init?: Parameters<typeof fetch>[1]) {
   return fetch(url, { ...init, headers });
 }
 
+async function authFetchOrThrow(
+  path: string,
+  init: Parameters<typeof fetch>[1] | undefined,
+  label: string
+): Promise<Awaited<ReturnType<typeof fetch>>> {
+  try {
+    const res = await authFetch(path, init);
+    if (!res.ok) {
+      const t = await res.text();
+      if (res.status === HttpStatus.NOT_FOUND) {
+        throw new HttpException("User not found", HttpStatus.NOT_FOUND);
+      }
+      if (res.status >= 400 && res.status < 500) {
+        throw new HttpException(`${label} failed: ${t || res.statusText}`, res.status);
+      }
+      throw new HttpException(`${label} failed: ${res.status} ${t}`, HttpStatus.BAD_GATEWAY);
+    }
+    return res;
+  } catch (err) {
+    if (err instanceof HttpException) {
+      throw err;
+    }
+    throw new HttpException(
+      `${label} failed: ${err instanceof Error ? err.message : String(err)}`,
+      HttpStatus.BAD_GATEWAY
+    );
+  }
+}
+
+async function authJson<T>(res: Awaited<ReturnType<typeof fetch>>): Promise<T> {
+  try {
+    return (await res.json()) as T;
+  } catch {
+    throw new HttpException("Auth service returned invalid JSON", HttpStatus.BAD_GATEWAY);
+  }
+}
+
 @Controller("admin/users")
 export class UsersAdminController {
   private readonly logger = new Logger(UsersAdminController.name);
@@ -488,13 +525,13 @@ export class UsersAdminController {
   @Post(":id/unban")
   @HttpCode(HttpStatus.OK)
   async unban(@Param("id") id: string) {
-    const res = await authFetch(`/auth/admin/users/${id}/unban`, { method: "POST" });
-    if (!res.ok) {
-      const t = await res.text();
-      throw new HttpException(`Unban failed: ${res.status} ${t}`, HttpStatus.BAD_GATEWAY);
-    }
+    const res = await authFetchOrThrow(
+      `/auth/admin/users/${encodeURIComponent(id)}/unban`,
+      { method: "POST" },
+      "Unban"
+    );
     await this.userService.clearReportDiscoveryRestriction(id);
-    return res.json();
+    return authJson<{ ok: boolean; message?: string }>(res);
   }
 
   @Post(":id/report")

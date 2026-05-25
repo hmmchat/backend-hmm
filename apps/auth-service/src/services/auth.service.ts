@@ -798,19 +798,52 @@ export class AuthService implements OnModuleInit {
   }
 
   /**
-   * Clear ban and restore active status (admin-initiated)
+   * Clear ban/suspension and restore active status (admin-initiated).
    */
   async unbanAccount(userId: string): Promise<void> {
-    await this.prisma.user.update({
+    const exists = await this.prisma.user.findUnique({
       where: { id: userId },
-      data: {
-        accountStatus: "ACTIVE",
-        bannedAt: null,
-        banReason: null,
-        reportAutoBanActive: false,
-        reportBanNoLoginUntil: null
-      }
+      select: { id: true }
     });
+    if (!exists) {
+      throw new HttpException("User not found", HttpStatus.NOT_FOUND);
+    }
+
+    const restoreActive = {
+      accountStatus: "ACTIVE" as const,
+      bannedAt: null,
+      banReason: null,
+      suspendedAt: null,
+      suspensionReason: null
+    };
+    const restoreWithReportFields = {
+      ...restoreActive,
+      reportAutoBanActive: false,
+      reportBanNoLoginUntil: null
+    };
+
+    try {
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: restoreWithReportFields
+      });
+    } catch (error: any) {
+      if (error?.code === "P2025") {
+        throw new HttpException("User not found", HttpStatus.NOT_FOUND);
+      }
+      const msg = String(error?.message ?? "");
+      const missingReportColumns =
+        error?.code === "P2022" ||
+        /reportAutoBanActive|reportBanNoLoginUntil/i.test(msg);
+      if (missingReportColumns) {
+        await this.prisma.user.update({
+          where: { id: userId },
+          data: restoreActive
+        });
+        return;
+      }
+      throw error;
+    }
   }
 
   /**

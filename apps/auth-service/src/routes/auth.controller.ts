@@ -274,6 +274,7 @@ export class AuthController {
    * POST /auth/admin/users/:userId/unban
    */
   @Post("admin/users/:userId/unban")
+  @HttpCode(HttpStatus.OK)
   async unbanAccount(@Param("userId") userId: string, @Headers("authorization") _authz?: string) {
     await this.auth.unbanAccount(userId);
     return { ok: true, message: `Account ${userId} unbanned` };

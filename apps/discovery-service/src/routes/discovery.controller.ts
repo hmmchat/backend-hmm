@@ -12,6 +12,7 @@ import {
 import { DiscoveryService } from "../services/discovery.service.js";
 import { LocationService } from "../services/location.service.js";
 import { CacheService } from "../services/cache.service.js";
+import { MeetRnWaitingMessageService } from "../services/meet-rn-waiting-message.service.js";
 import {
   GetCardQuerySchema,
   RaincheckRequestSchema,
@@ -33,7 +34,8 @@ export class DiscoveryController {
   constructor(
     private readonly discoveryService: DiscoveryService,
     private readonly locationService: LocationService,
-    private readonly cache: CacheService
+    private readonly cache: CacheService,
+    private readonly meetRnWaitingMessageService: MeetRnWaitingMessageService
   ) { }
 
   private getTokenFromHeader(h?: string) {
@@ -201,6 +203,42 @@ export class DiscoveryController {
     return {
       success: true,
       ...result
+    };
+  }
+
+  /**
+   * Subtext for the Meet RN "waiting for response" loading screen.
+   * GET /discovery/meet-rn/waiting-message
+   */
+  @Get("meet-rn/waiting-message")
+  async getMeetRnWaitingMessage(@Headers("authorization") authz?: string) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+
+    const message = await this.meetRnWaitingMessageService.getRandomMessage();
+    return {
+      ok: true,
+      message
+    };
+  }
+
+  /**
+   * Active Meet RN waiting subtexts for client-side rotation.
+   * GET /discovery/meet-rn/waiting-messages
+   */
+  @Get("meet-rn/waiting-messages")
+  async getMeetRnWaitingMessages(@Headers("authorization") authz?: string) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+
+    const messages = await this.meetRnWaitingMessageService.getActiveMessages();
+    return {
+      ok: true,
+      messages
     };
   }
 

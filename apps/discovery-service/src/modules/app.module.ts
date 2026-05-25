@@ -22,6 +22,8 @@ import { StreamingClientService } from "../services/streaming-client.service.js"
 import { PrismaService } from "../prisma/prisma.service.js";
 import { CacheService } from "../services/cache.service.js";
 import { DiscoverySessionService } from "../services/discovery-session.service.js";
+import { MeetRnWaitingMessageAdminController } from "../routes/meet-rn-waiting-message-admin.controller.js";
+import { MeetRnWaitingMessageService } from "../services/meet-rn-waiting-message.service.js";
 
 @Module({
   imports: [ConfigModule.forRoot()],
@@ -32,7 +34,8 @@ import { DiscoverySessionService } from "../services/discovery-session.service.j
     LocationController,
     DiscoveryController,
     SquadController,
-    HealthController
+    HealthController,
+    MeetRnWaitingMessageAdminController
   ],
   providers: [
     MetricService,
@@ -49,7 +52,8 @@ import { DiscoverySessionService } from "../services/discovery-session.service.j
     StreamingClientService,
     PrismaService,
     CacheService,
-    DiscoverySessionService
+    DiscoverySessionService,
+    MeetRnWaitingMessageService
   ]
 })
 export class AppModule {}

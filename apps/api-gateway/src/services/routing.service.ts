@@ -113,6 +113,13 @@ export class RoutingService implements OnModuleInit {
       requiresAuth: true
     });
 
+    // Discovery admin (dashboard content management, no app auth)
+    this.routes.set("/discovery/admin", {
+      path: "/discovery/admin",
+      serviceUrl: discoveryServiceUrl,
+      requiresAuth: false
+    });
+
     this.routes.set("/squad", {
       path: "/squad",
       serviceUrl: discoveryServiceUrl,

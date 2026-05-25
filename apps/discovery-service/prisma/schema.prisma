@@ -229,3 +229,17 @@ model DiscoverySession {
   @@index([expiresAt])
   @@map("discovery_sessions")
 }
+
+// Subtext shown on the Meet RN "waiting for response" loading screen.
+model MeetRnWaitingMessage {
+  id        String   @id @default(cuid())
+  text      String
+  isActive  Boolean  @default(true)
+  order     Int?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy String?
+
+  @@map("meet_rn_waiting_messages")
+  @@index([isActive])
+}

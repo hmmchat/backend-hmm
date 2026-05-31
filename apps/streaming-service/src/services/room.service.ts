@@ -1071,6 +1071,23 @@ export class RoomService {
     this.logger.log(`Participant ${userId} removed from database for room ${roomId}, status updated to ${statusAfterLeave}`);
   }
 
+  /** Resolve call session id for a room (used when forwarding in-call reports to user-service). */
+  async getCallSessionIdForRoom(roomId: string): Promise<string | null> {
+    const session = await this.prisma.callSession.findUnique({
+      where: { roomId },
+      select: { id: true }
+    });
+    return session?.id ?? null;
+  }
+
+  private notifyParticipantCallEndedForReportStreak(userId: string, callSessionId: string): void {
+    this.discoveryClient.notifyParticipantCallEnded(userId, callSessionId).catch((err) => {
+      this.logger.warn(
+        `Failed to notify user-service of call ended for report streak (user=${userId}, session=${callSessionId}): ${err?.message || err}`
+      );
+    });
+  }
+
   /**
    * @returns true if this user was an active call participant and was marked left (DB row updated).
    */
@@ -1167,8 +1184,10 @@ export class RoomService {
     if (activeParticipants.length === 0) {
       this.logger.log(`No active participants left in room ${roomId}, ending room`);
       await this.endRoom(roomId);
-      return true; // endRoom will handle status updates
+      return true; // endRoom will handle status updates and report-streak notifications
     }
+
+    this.notifyParticipantCallEndedForReportStreak(userId, session.id);
 
     // Room continues (single user or multiple users) - only update leaving user's status
 
@@ -2795,6 +2814,10 @@ export class RoomService {
       } catch (err: any) {
         this.logger.error(`Failed to update user statuses to ${status}: ${err.message}`);
       }
+    }
+
+    for (const participantUserId of participantUserIds) {
+      this.notifyParticipantCallEndedForReportStreak(participantUserId, session.id);
     }
 
     // Squad lobby cleanup only — status already applied above.

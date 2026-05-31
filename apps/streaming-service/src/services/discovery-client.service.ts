@@ -246,12 +246,20 @@ export class DiscoveryClientService {
   async reportUser(
     token: string,
     reportedUserId: string,
-    reportType?: string
+    reportType?: string,
+    callSessionId?: string
   ): Promise<{ reportCount: number }> {
     try {
-      const body: { reportedUserId: string; reportType?: string } = { reportedUserId };
+      const body: {
+        reportedUserId: string;
+        reportType?: string;
+        callSessionId?: string;
+      } = { reportedUserId };
       if (reportType !== undefined && reportType !== "") {
         body.reportType = reportType;
+      }
+      if (callSessionId !== undefined && callSessionId !== "") {
+        body.callSessionId = callSessionId;
       }
       const response = await fetch(`${this.userServiceUrl}/users/report`, {
         method: "POST",
@@ -273,6 +281,44 @@ export class DiscoveryClientService {
     } catch (error: any) {
       this.logger.error(`Error reporting user: ${error.message}`);
       throw error;
+    }
+  }
+
+  /**
+   * Notify user-service that a participant finished a call (for consecutive in-call report streak).
+   */
+  async notifyParticipantCallEnded(userId: string, callSessionId: string): Promise<void> {
+    const serviceToken = process.env.INTERNAL_SERVICE_TOKEN;
+    const internalUrl = `${this.userServiceUrl}/users/internal/${userId}/call-ended`;
+
+    try {
+      const jsonHeaders: Record<string, string> = {
+        "Content-Type": "application/json"
+      };
+      if (serviceToken) {
+        jsonHeaders["x-service-token"] = serviceToken;
+      }
+
+      const response = await fetch(internalUrl, {
+        method: "POST",
+        headers: jsonHeaders,
+        body: JSON.stringify({ callSessionId }),
+        signal: AbortSignal.timeout(this.userServiceRequestTimeoutMs)
+      } as any);
+
+      if (!response.ok) {
+        const error = await response.text();
+        this.logger.warn(
+          `Failed to notify user-service of call ended for ${userId} (session ${callSessionId}): ${error}`
+        );
+        return;
+      }
+
+      this.logger.debug(`Notified user-service: participant ${userId} call ended (session ${callSessionId})`);
+    } catch (error: any) {
+      this.logger.warn(
+        `Error notifying user-service of call ended for ${userId}: ${error.message}`
+      );
     }
   }
 

@@ -76,6 +76,10 @@ model User {
   
   // Moderation & Flags
   reportCount   Int      @default(0) // Total report score (weighted sum); discovery compares to REPORT_THRESHOLD
+  /// When true, the next in-call report applies 2× base weight (previous call ended with a report).
+  previousCallEndedWithReport Boolean @default(false)
+  /// Call session id where this user was most recently reported (for streak reset on call end).
+  lastReportedCallSessionId   String?
   // After report auto-ban lockout (auth), user may log in but discovery is limited to moderator profiles until moderators lower report score or unban.
   reportModeratorCardsOnly Boolean @default(false)
   badgeMember   Boolean  @default(false) // 1 = yes, 0 = no

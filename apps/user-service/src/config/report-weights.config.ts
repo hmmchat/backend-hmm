@@ -15,6 +15,27 @@ const REPORT_TYPE_TO_ENV: Record<string, string> = {
   participant: "PARTICIPANT"
 };
 
+/** In-call report types eligible for consecutive-call multiplier (2× when previous call was also reported). */
+const IN_CALL_REPORT_TYPES = new Set(["host", "participant_host", "participant"]);
+
+function normalizeReportType(reportType?: string | null): string | null {
+  if (reportType === undefined || reportType === null || reportType === "") {
+    return null;
+  }
+  return reportType.toLowerCase().trim().replace(/-/g, "_");
+}
+
+/** Whether this reportType is from an active call (host/participant), not discovery cards. */
+export function isInCallReportType(reportType?: string | null): boolean {
+  const normalized = normalizeReportType(reportType);
+  return normalized !== null && IN_CALL_REPORT_TYPES.has(normalized);
+}
+
+/** Multiplier for back-to-back in-call reports: 2× when the user's previous call also ended with a report. */
+export function getConsecutiveCallReportMultiplier(previousCallEndedWithReport: boolean): number {
+  return previousCallEndedWithReport ? 2 : 1;
+}
+
 function intEnv(name: string, defaultVal: number): number {
   const v = process.env[name];
   if (v === undefined || v === "") return defaultVal;
@@ -48,10 +69,10 @@ const weightCache: Record<string, number> = {};
  * Resolve report weight for the given reportType. Unknown or missing reportType uses default weight.
  */
 export function getReportWeight(reportType?: string | null): number {
-  if (reportType === undefined || reportType === null || reportType === "") {
+  const normalized = normalizeReportType(reportType);
+  if (normalized === null) {
     return getWeightForType("DEFAULT");
   }
-  const normalized = reportType.toLowerCase().trim().replace(/-/g, "_");
   if (weightCache[normalized] !== undefined) {
     return weightCache[normalized];
   }

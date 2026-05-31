@@ -30,7 +30,7 @@ import {
   DISCOVERY_USERS_DEFAULT_LIMIT,
   SEARCH_DEFAULT_LIMIT
 } from "../config/limits.config.js";
-import { getReportWeight, getAdminDashboardReportWeight } from "../config/report-weights.config.js";
+import { getReportWeight, getAdminDashboardReportWeight, isInCallReportType, getConsecutiveCallReportMultiplier } from "../config/report-weights.config.js";
 import { getReportThreshold } from "../config/report-threshold.config.js";
 
 @Injectable()
@@ -1469,10 +1469,16 @@ export class UserService implements OnModuleInit {
    * @param accessToken - JWT token of the reporting user
    * @param reportedUserId - ID of the user being reported
    * @param reportType - Optional type (e.g. face_card, offline_card, host) for configurable weight; unknown/missing uses default weight
+   * @param callSessionId - Optional call session id for in-call reports; used for consecutive-call multiplier and streak reset
    * @returns Object with success status and updated reportCount (total score)
    * @throws HttpException if user tries to report themselves or reported user doesn't exist
    */
-  async reportUser(accessToken: string, reportedUserId: string, reportType?: string) {
+  async reportUser(
+    accessToken: string,
+    reportedUserId: string,
+    reportType?: string,
+    callSessionId?: string
+  ) {
     const reporterUserId = await this.verifyAccessToken(accessToken);
 
     if (reporterUserId === reportedUserId) {
@@ -1481,23 +1487,37 @@ export class UserService implements OnModuleInit {
 
     // Check if reported user exists
     const reportedUser = await this.prisma.user.findUnique({
-      where: { id: reportedUserId }
+      where: { id: reportedUserId },
+      select: {
+        id: true,
+        previousCallEndedWithReport: true
+      } as any
     });
 
     if (!reportedUser) {
       throw new HttpException("Reported user not found", HttpStatus.NOT_FOUND);
     }
 
-    const weight = getReportWeight(reportType);
+    const baseWeight = getReportWeight(reportType);
+    const inCallReport = isInCallReportType(reportType);
+    const consecutiveMultiplier = inCallReport
+      ? getConsecutiveCallReportMultiplier(Boolean(reportedUser.previousCallEndedWithReport))
+      : 1;
+    const weight = baseWeight * consecutiveMultiplier;
 
-    // Increment report score (weighted sum) on the user's profile
+    const updateData: Record<string, unknown> = {
+      reportCount: { increment: weight }
+    };
+    if (inCallReport) {
+      updateData.previousCallEndedWithReport = true;
+      if (callSessionId) {
+        updateData.lastReportedCallSessionId = callSessionId;
+      }
+    }
+
     const updatedUser = await this.prisma.user.update({
       where: { id: reportedUserId },
-      data: {
-        reportCount: {
-          increment: weight
-        }
-      }
+      data: updateData as any
     });
 
     await this.syncKycRiskAndRevocation(reportedUserId);
@@ -1505,8 +1525,40 @@ export class UserService implements OnModuleInit {
 
     return {
       success: true,
-      reportCount: updatedUser.reportCount
+      reportCount: updatedUser.reportCount,
+      weightApplied: weight,
+      consecutiveCallMultiplier: inCallReport ? consecutiveMultiplier : undefined
     };
+  }
+
+  /**
+   * Internal: participant finished a call. Resets consecutive report multiplier when the call
+   * ended without a report for this user (previous call had a report → next in-call report is 2×).
+   */
+  async handleParticipantCallEnded(userId: string, callSessionId: string): Promise<{ ok: true }> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        lastReportedCallSessionId: true
+      } as any
+    });
+
+    if (!user) {
+      return { ok: true };
+    }
+
+    if (user.lastReportedCallSessionId === callSessionId) {
+      return { ok: true };
+    }
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        previousCallEndedWithReport: false
+      } as any
+    });
+
+    return { ok: true };
   }
 
   /**

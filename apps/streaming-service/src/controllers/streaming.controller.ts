@@ -862,7 +862,7 @@ export class StreamingController {
    */
   @Post("users/report")
   async reportUser(
-    @Body() body: { reportedUserId: string; reportType?: string },
+    @Body() body: { reportedUserId: string; reportType?: string; callSessionId?: string; roomId?: string },
     @Headers("authorization") authz?: string
   ) {
     if (!authz) {
@@ -875,6 +875,12 @@ export class StreamingController {
     }
     if (body.reportType !== undefined && typeof body.reportType !== "string") {
       throw new BadRequestException("reportType must be a string if provided");
+    }
+    if (body.callSessionId !== undefined && typeof body.callSessionId !== "string") {
+      throw new BadRequestException("callSessionId must be a string if provided");
+    }
+    if (body.roomId !== undefined && typeof body.roomId !== "string") {
+      throw new BadRequestException("roomId must be a string if provided");
     }
 
     const { verifyToken } = await import("@hmm/common");
@@ -892,10 +898,17 @@ export class StreamingController {
       throw new BadRequestException("Cannot report yourself");
     }
 
+    let callSessionId = body.callSessionId?.trim() || undefined;
+    if (!callSessionId && body.roomId?.trim()) {
+      const session = await this.roomService.getCallSessionIdForRoom(body.roomId.trim());
+      callSessionId = session ?? undefined;
+    }
+
     const result = await this.discoveryClient.reportUser(
       token,
       body.reportedUserId,
-      body.reportType
+      body.reportType,
+      callSessionId
     );
 
     return {

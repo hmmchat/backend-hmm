@@ -464,15 +464,18 @@ export class UserController {
     const token = this.getTokenFromHeader(authz);
     if (!token) throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
 
-    const { reportedUserId, reportType } = body;
+    const { reportedUserId, reportType, callSessionId } = body;
     if (!reportedUserId || typeof reportedUserId !== "string") {
       throw new HttpException("reportedUserId is required", HttpStatus.BAD_REQUEST);
     }
     if (reportType !== undefined && typeof reportType !== "string") {
       throw new HttpException("reportType must be a string if provided", HttpStatus.BAD_REQUEST);
     }
+    if (callSessionId !== undefined && typeof callSessionId !== "string") {
+      throw new HttpException("callSessionId must be a string if provided", HttpStatus.BAD_REQUEST);
+    }
 
-    return this.userService.reportUser(token, reportedUserId, reportType);
+    return this.userService.reportUser(token, reportedUserId, reportType, callSessionId);
   }
 
   /* ---------- Batch Operations ---------- */
@@ -635,6 +638,39 @@ export class UserController {
 
     const dto = UpdateStatusSchema.parse(body);
     return this.userService.updateStatusForUser(userId, dto);
+  }
+
+  /**
+   * Internal: participant left or call ended — reset consecutive in-call report streak when
+   * this call did not include a report for the user. Requires x-service-token.
+   * POST /users/internal/:userId/call-ended
+   */
+  @Post("users/internal/:userId/call-ended")
+  async participantCallEndedInternal(
+    @Headers("x-service-token") serviceToken: string | undefined,
+    @Param("userId") userId: string,
+    @Body() body: unknown
+  ) {
+    const isTestMode = process.env.NODE_ENV === "test" || process.env.TEST_MODE === "true";
+    const expectedToken = process.env.INTERNAL_SERVICE_TOKEN;
+
+    if (!isTestMode) {
+      if (!expectedToken) {
+        throw new HttpException(
+          "Internal service token not configured",
+          HttpStatus.INTERNAL_SERVER_ERROR
+        );
+      }
+      if (serviceToken !== expectedToken) {
+        throw new HttpException("Invalid service token", HttpStatus.UNAUTHORIZED);
+      }
+    }
+
+    const { callSessionId } = z.object({
+      callSessionId: z.string().min(1)
+    }).parse(body ?? {});
+
+    return this.userService.handleParticipantCallEnded(userId, callSessionId);
   }
 
   /* ---------- Test Endpoints (No Auth Required) ---------- */

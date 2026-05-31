@@ -2,6 +2,10 @@ import { Injectable, HttpException, HttpStatus, OnModuleInit } from "@nestjs/com
 import fetch from "node-fetch";
 import { verifyToken, AccessPayload } from "@hmm/common";
 import { JWK } from "jose";
+import {
+  moderatorFaceCardPresentationFromEnv,
+  type ModeratorFaceCardPresentation
+} from "../config/moderator-face-card.config.js";
 
 interface ActiveMeetingsResponse {
   count: number;
@@ -26,6 +30,7 @@ interface UserProfileResponse {
   longitude?: number | null;
   reportCount?: number;
   isModerator?: boolean;
+  moderatorFaceCardActive?: boolean;
   kycStatus?: "UNVERIFIED" | "VERIFIED" | "PENDING_REVIEW" | "REVOKED" | "EXPIRED";
   kycRiskScore?: number;
   kycExpiresAt?: string | null;
@@ -49,6 +54,7 @@ export interface DiscoveryUser {
   videoEnabled: boolean;
   reportCount?: number;
   isModerator?: boolean;
+  moderatorFaceCardActive?: boolean;
   kycStatus?: "UNVERIFIED" | "VERIFIED" | "PENDING_REVIEW" | "REVOKED" | "EXPIRED";
   kycRiskScore?: number;
   kycExpiresAt?: string | null;
@@ -64,10 +70,16 @@ export class UserClientService implements OnModuleInit {
   private verifyAccess!: (token: string) => Promise<AccessPayload>;
   private publicJwk!: JWK;
   private readonly requestTimeoutMs: number;
+  private moderatorFaceCardCache: {
+    data: ModeratorFaceCardPresentation;
+    fetchedAt: number;
+  } | null = null;
+  private readonly moderatorFaceCardCacheMs: number;
 
   constructor() {
     this.userServiceUrl = process.env.USER_SERVICE_URL || "http://localhost:3002";
     this.requestTimeoutMs = parseInt(process.env.USER_SERVICE_TIMEOUT_MS || "5000", 10);
+    this.moderatorFaceCardCacheMs = parseInt(process.env.MODERATOR_FACE_CARD_CACHE_MS || "60000", 10);
   }
 
   async onModuleInit() {
@@ -161,7 +173,7 @@ export class UserClientService implements OnModuleInit {
     try {
       // Use /users/{id} endpoint without auth token (test mode)
       const response = await this.fetchWithTimeout(
-        `${this.userServiceUrl}/users/${userId}?fields=gender,isModerator,kycStatus,kycRiskScore,kycExpiresAt,reportCount,reportModeratorCardsOnly`,
+        `${this.userServiceUrl}/users/${userId}?fields=gender,isModerator,moderatorFaceCardActive,kycStatus,kycRiskScore,kycExpiresAt,reportCount,reportModeratorCardsOnly`,
         {
           method: "GET",
           headers: {
@@ -198,7 +210,7 @@ export class UserClientService implements OnModuleInit {
     
     try {
       const response = await this.fetchWithTimeout(
-        `${this.userServiceUrl}/users/${userId}?fields=username,dateOfBirth,gender,displayPictureUrl,preferredCity,intent,status,photos,musicPreference,brandPreferences,interests,values,videoEnabled,latitude,longitude,reportCount,isModerator,kycStatus,kycRiskScore,kycExpiresAt,reportModeratorCardsOnly`,
+        `${this.userServiceUrl}/users/${userId}?fields=username,dateOfBirth,gender,displayPictureUrl,preferredCity,intent,status,photos,musicPreference,brandPreferences,interests,values,videoEnabled,latitude,longitude,reportCount,isModerator,moderatorFaceCardActive,kycStatus,kycRiskScore,kycExpiresAt,reportModeratorCardsOnly`,
         {
           method: "GET",
           headers: {
@@ -471,5 +483,47 @@ export class UserClientService implements OnModuleInit {
     } catch {
       return [];
     }
+  }
+
+  /** Cached fetch of dashboard-managed moderator face card (falls back to env). */
+  async getModeratorFaceCardPresentation(): Promise<ModeratorFaceCardPresentation> {
+    const now = Date.now();
+    if (
+      this.moderatorFaceCardCache &&
+      now - this.moderatorFaceCardCache.fetchedAt < this.moderatorFaceCardCacheMs
+    ) {
+      return this.moderatorFaceCardCache.data;
+    }
+
+    try {
+      const response = await this.fetchWithTimeout(
+        `${this.userServiceUrl}/moderator-face-card/active`,
+        {
+          method: "GET",
+          headers: { "Content-Type": "application/json" }
+        }
+      );
+      if (response.ok) {
+        const body = (await response.json()) as {
+          settings?: ModeratorFaceCardPresentation;
+        };
+        if (body.settings) {
+          const data: ModeratorFaceCardPresentation = {
+            username: body.settings.username || "Moderator",
+            intent: body.settings.intent || "Moderation",
+            displayPictureUrl: body.settings.displayPictureUrl || "",
+            city: body.settings.city || "Beam"
+          };
+          this.moderatorFaceCardCache = { data, fetchedAt: now };
+          return data;
+        }
+      }
+    } catch {
+      // fall through to env defaults
+    }
+
+    const fallback = moderatorFaceCardPresentationFromEnv();
+    this.moderatorFaceCardCache = { data: fallback, fetchedAt: now };
+    return fallback;
   }
 }

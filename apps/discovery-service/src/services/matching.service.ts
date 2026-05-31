@@ -956,7 +956,8 @@ export class MatchingService {
       isModerator: Boolean(profile.isModerator),
       kycStatus: profile.kycStatus || "UNVERIFIED",
       kycRiskScore: profile.kycRiskScore || 0,
-      kycExpiresAt: profile.kycExpiresAt || null
+      kycExpiresAt: profile.kycExpiresAt || null,
+      moderatorFaceCardActive: Boolean(profile.moderatorFaceCardActive)
     };
   }
 

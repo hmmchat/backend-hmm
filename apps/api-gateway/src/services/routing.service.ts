@@ -224,6 +224,12 @@ export class RoutingService implements OnModuleInit {
       requiresAuth: false
     });
 
+    this.routes.set("/moderator-face-card", {
+      path: "/moderator-face-card",
+      serviceUrl: userServiceUrl,
+      requiresAuth: false
+    });
+
     this.routes.set("/metrics", {
       path: "/metrics",
       serviceUrl: userServiceUrl,
@@ -263,6 +269,11 @@ export class RoutingService implements OnModuleInit {
     });
     this.routes.set("/admin/discovery-city-options", {
       path: "/admin/discovery-city-options",
+      serviceUrl: userServiceUrl,
+      requiresAuth: false
+    });
+    this.routes.set("/admin/moderator-face-card", {
+      path: "/admin/moderator-face-card",
       serviceUrl: userServiceUrl,
       requiresAuth: false
     });

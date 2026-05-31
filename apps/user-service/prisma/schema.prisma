@@ -84,6 +84,8 @@ model User {
   reportModeratorCardsOnly Boolean @default(false)
   badgeMember   Boolean  @default(false) // 1 = yes, 0 = no
   isModerator   Boolean  @default(false)
+  /// When true with isModerator, discovery face cards show the shared moderator persona (not personal profile).
+  moderatorFaceCardActive Boolean @default(false)
   kycStatus     KycStatus @default(UNVERIFIED)
   kycRiskScore  Int      @default(0)
   kycExpiresAt  DateTime?
@@ -146,6 +148,19 @@ model DiscoveryCityOption {
   updatedAt         DateTime @updatedAt
 
   @@map("discovery_city_options")
+}
+
+/// Singleton (id = "default"): shared discovery face card for moderators when moderatorFaceCardActive is on.
+model ModeratorFaceCardSetting {
+  id                String   @id @default("default")
+  username          String   @default("Moderator")
+  intent            String   @default("Moderation")
+  displayPictureUrl String?
+  city              String   @default("Beam")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@map("moderator_face_card_settings")
 }
 
 // Catalog of suggested intent prompts shown during profile creation

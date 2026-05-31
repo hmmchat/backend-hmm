@@ -86,6 +86,7 @@ type ProfileWithAdminInclude = {
   reportModeratorCardsOnly?: boolean;
   badgeMember: boolean;
   isModerator?: boolean;
+  moderatorFaceCardActive?: boolean;
   kycStatus?: string;
   kycRiskScore?: number;
   kycExpiresAt?: Date | null;
@@ -176,6 +177,7 @@ function mergeAuthUserWithProfile(
     kycRiskScore: p?.kycRiskScore ?? null,
     kycExpiresAt: iso(p?.kycExpiresAt ?? null),
     isModerator: p?.isModerator ?? null,
+    moderatorFaceCardActive: p?.moderatorFaceCardActive ?? null,
     badgeMember: p?.badgeMember ?? null,
     preferredCity: p?.preferredCity ?? null,
     profileCompleted: p?.profileCompleted ?? null,
@@ -238,6 +240,7 @@ const patchUserSchema = z.object({
   isActive: z.boolean().optional(),
   reportCount: z.number().int().min(0).optional(),
   isModerator: z.boolean().optional(),
+  moderatorFaceCardActive: z.boolean().optional(),
   kycStatus: z.enum(["UNVERIFIED", "VERIFIED", "PENDING_REVIEW", "REVOKED", "EXPIRED"]).optional(),
   kycRiskScore: z.number().int().min(0).max(100).optional(),
   kycExpiresAt: z.string().datetime().nullable().optional(),
@@ -472,6 +475,7 @@ export class UsersAdminController {
 
     if (
       data.isModerator !== undefined ||
+      data.moderatorFaceCardActive !== undefined ||
       data.kycStatus !== undefined ||
       data.kycRiskScore !== undefined ||
       data.kycExpiresAt !== undefined
@@ -486,6 +490,7 @@ export class UsersAdminController {
       };
       await this.userService.adminSetKycState(id, {
         isModerator: data.isModerator,
+        moderatorFaceCardActive: data.moderatorFaceCardActive,
         kycStatus: data.kycStatus as any,
         kycRiskScore: data.kycRiskScore,
         kycExpiresAt: data.kycExpiresAt !== undefined ? (data.kycExpiresAt ? new Date(data.kycExpiresAt) : null) : undefined
@@ -573,6 +578,7 @@ export class UsersAdminController {
       kycRiskScore: z.number().int().min(0).max(100).optional(),
       kycExpiresAt: z.string().datetime().nullable().optional(),
       isModerator: z.boolean().optional(),
+      moderatorFaceCardActive: z.boolean().optional(),
       moderationMeta: z.object({
         updatedBy: z.string().min(1),
         reason: z.string().min(1),
@@ -584,7 +590,8 @@ export class UsersAdminController {
       kycStatus: parsed.kycStatus as any,
       kycRiskScore: parsed.kycRiskScore,
       kycExpiresAt: parsed.kycExpiresAt !== undefined ? (parsed.kycExpiresAt ? new Date(parsed.kycExpiresAt) : null) : undefined,
-      isModerator: parsed.isModerator
+      isModerator: parsed.isModerator,
+      moderatorFaceCardActive: parsed.moderatorFaceCardActive
     }, {
       updatedBy: parsed.moderationMeta.updatedBy,
       reason: parsed.moderationMeta.reason,

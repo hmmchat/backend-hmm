@@ -95,6 +95,7 @@ export class AuthMiddleware {
       "/values",
       "/intent-prompts",
       "/discovery-city-options",
+      "/moderator-face-card",
       "/music/search",
       "/files/upload" // Some file endpoints might be public
     ];

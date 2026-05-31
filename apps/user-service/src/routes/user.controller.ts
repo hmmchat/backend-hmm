@@ -380,6 +380,12 @@ export class UserController {
     return this.userService.listActiveDiscoveryCityOptions();
   }
 
+  /** GET /moderator-face-card/active — shared moderator discovery card (dashboard-managed). */
+  @Get("moderator-face-card/active")
+  async getModeratorFaceCardSettings() {
+    return this.userService.getModeratorFaceCardSettings();
+  }
+
   @Get("intent-prompts")
   async getIntentPrompts(@Query("limit") limit?: string) {
     const limitNum =
@@ -446,6 +452,18 @@ export class UserController {
     if (!token) throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
     const dto = UpdateZodiacSchema.parse(body) as { zodiacId: string };
     return this.userService.updateMyZodiac(token, dto);
+  }
+
+  /**
+   * Toggle moderator discovery face card (moderators only).
+   * PATCH /me/moderator-face-card
+   */
+  @Patch("me/moderator-face-card")
+  async setMyModeratorFaceCard(@Headers("authorization") authz: string, @Body() body: unknown) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    const { active } = z.object({ active: z.boolean() }).parse(body ?? {});
+    return this.userService.updateMyModeratorFaceCard(token, active);
   }
 
   /* ---------- Reporting ---------- */

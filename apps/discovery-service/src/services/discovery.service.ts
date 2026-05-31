@@ -35,6 +35,9 @@ import { resolveRaincheckPartnerStatus } from "../status/status-rules.js";
 // DiscoveryUser interface is imported from user-client.service.ts
 // Import it to avoid duplication
 import type { DiscoveryUser } from "./user-client.service.js";
+import {
+  shouldUseModeratorFaceCard
+} from "../config/moderator-face-card.config.js";
 import { isPreferredCityAnywhere, PREFERRED_CITY_ANYWHERE_IN_INDIA } from "@hmm/common";
 
 interface UserProfile {
@@ -87,6 +90,8 @@ interface Card {
   reportLayerThresholds?: { layer1: number; layer2: number; layer3: number; ban: number };
   /** @deprecated Prefer `reportLayer` — true when reportLayer >= 1 */
   reported?: boolean;
+  /** True when this card uses the shared moderator persona (not the user's personal profile). */
+  isModeratorFaceCard?: boolean;
   matchExplanation?: {
     reasons: string[];
     score: number;
@@ -755,13 +760,10 @@ export class DiscoveryService implements OnModuleInit {
       isModerator: Boolean(profile.isModerator),
       kycStatus: profile.kycStatus || "UNVERIFIED",
       kycRiskScore: profile.kycRiskScore || 0,
-      kycExpiresAt: profile.kycExpiresAt || null
+      kycExpiresAt: profile.kycExpiresAt || null,
+      moderatorFaceCardActive: Boolean(profile.moderatorFaceCardActive)
     };
   }
-
-  /**
-   * Calculate match score based on preferences
-   */
   private calculateMatchScore(user: UserProfile, targetUser: DiscoveryUser): number {
     let score = 0;
 
@@ -1165,7 +1167,7 @@ export class DiscoveryService implements OnModuleInit {
       matchExplanation = this.calculateMatchExplanation(currentUser, user);
     }
 
-    return {
+    let card: Card = {
       userId: user.id,
       username: user.username || "Unknown",
       age,
@@ -1204,6 +1206,32 @@ export class DiscoveryService implements OnModuleInit {
       reported: reportLayer >= 1,
       matchExplanation
     };
+
+    if (shouldUseModeratorFaceCard(user)) {
+      const mod = await this.userClient.getModeratorFaceCardPresentation();
+      const modPages: CardPage[] = mod.displayPictureUrl
+        ? [{ photoUrl: mod.displayPictureUrl, order: 0 }]
+        : [];
+      card = {
+        ...card,
+        username: mod.username,
+        intent: mod.intent,
+        displayPictureUrl: mod.displayPictureUrl,
+        city: mod.city,
+        country: "",
+        age: 0,
+        dateOfBirth: null,
+        brands: [],
+        interests: [],
+        values: [],
+        musicPreference: undefined,
+        pages: modPages,
+        matchExplanation: undefined,
+        isModeratorFaceCard: true
+      };
+    }
+
+    return card;
   }
 
   /**

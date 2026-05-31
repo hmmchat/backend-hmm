@@ -32,6 +32,10 @@ import {
 } from "../config/limits.config.js";
 import { getReportWeight, getAdminDashboardReportWeight, isInCallReportType, getConsecutiveCallReportMultiplier } from "../config/report-weights.config.js";
 import { getReportThreshold } from "../config/report-threshold.config.js";
+import {
+  MODERATOR_FACE_CARD_SETTING_ID,
+  mergeModeratorFaceCardPresentation
+} from "../config/moderator-face-card.config.js";
 
 @Injectable()
 export class UserService implements OnModuleInit {
@@ -42,6 +46,84 @@ export class UserService implements OnModuleInit {
       select: { id: true, value: true, label: true, order: true, faceCardImageUrl: true }
     });
     return { options };
+  }
+
+  async getModeratorFaceCardSettings() {
+    const row = await this.ensureModeratorFaceCardSettingRow();
+    return {
+      settings: mergeModeratorFaceCardPresentation({
+        username: row.username,
+        intent: row.intent,
+        displayPictureUrl: row.displayPictureUrl ?? "",
+        city: row.city
+      }),
+      updatedAt: row.updatedAt.toISOString()
+    };
+  }
+
+  async adminGetModeratorFaceCardSettings() {
+    const row = await this.ensureModeratorFaceCardSettingRow();
+    return {
+      ok: true,
+      settings: {
+        username: row.username,
+        intent: row.intent,
+        displayPictureUrl: row.displayPictureUrl,
+        city: row.city
+      },
+      updatedAt: row.updatedAt.toISOString()
+    };
+  }
+
+  async adminUpdateModeratorFaceCardSettings(data: {
+    username?: string;
+    intent?: string;
+    displayPictureUrl?: string | null;
+    city?: string;
+  }) {
+    const row = await this.prisma.moderatorFaceCardSetting.upsert({
+      where: { id: MODERATOR_FACE_CARD_SETTING_ID },
+      create: {
+        id: MODERATOR_FACE_CARD_SETTING_ID,
+        username: data.username?.trim() || "Moderator",
+        intent: data.intent?.trim() || "Moderation",
+        displayPictureUrl: data.displayPictureUrl ?? null,
+        city: data.city?.trim() || "Beam"
+      },
+      update: {
+        username: data.username !== undefined ? data.username.trim() : undefined,
+        intent: data.intent !== undefined ? data.intent.trim() : undefined,
+        displayPictureUrl: data.displayPictureUrl,
+        city: data.city !== undefined ? data.city.trim() : undefined
+      }
+    });
+    return {
+      ok: true,
+      settings: {
+        username: row.username,
+        intent: row.intent,
+        displayPictureUrl: row.displayPictureUrl,
+        city: row.city
+      },
+      updatedAt: row.updatedAt.toISOString()
+    };
+  }
+
+  private async ensureModeratorFaceCardSettingRow() {
+    const existing = await this.prisma.moderatorFaceCardSetting.findUnique({
+      where: { id: MODERATOR_FACE_CARD_SETTING_ID }
+    });
+    if (existing) {
+      return existing;
+    }
+    return this.prisma.moderatorFaceCardSetting.create({
+      data: {
+        id: MODERATOR_FACE_CARD_SETTING_ID,
+        username: "Moderator",
+        intent: "Moderation",
+        city: "Beam"
+      }
+    });
   }
 
   private async ensureActiveDiscoveryCityValue(value: string): Promise<void> {
@@ -682,6 +764,7 @@ export class UserService implements OnModuleInit {
       genderChanged: "genderChanged",
       reportCount: "reportCount",
       reportModeratorCardsOnly: "reportModeratorCardsOnly",
+      moderatorFaceCardActive: "moderatorFaceCardActive",
       badgeMember: "badgeMember",
       isModerator: "isModerator",
       kycStatus: "kycStatus",
@@ -1642,6 +1725,7 @@ export class UserService implements OnModuleInit {
       kycRiskScore?: number;
       kycExpiresAt?: Date | null;
       isModerator?: boolean;
+      moderatorFaceCardActive?: boolean;
     },
     meta?: { updatedBy: string; reason: string; notes?: string }
   ): Promise<{
@@ -1651,7 +1735,16 @@ export class UserService implements OnModuleInit {
     kycRiskScore: number;
     kycExpiresAt: Date | null;
     isModerator: boolean;
+    moderatorFaceCardActive: boolean;
   }> {
+    const existing = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { isModerator: true, moderatorFaceCardActive: true } as any
+    });
+    if (!existing) {
+      throw new HttpException("User not found", HttpStatus.NOT_FOUND);
+    }
+
     const updateData: any = {};
     if (payload.kycStatus !== undefined) {
       updateData.kycStatus = payload.kycStatus;
@@ -1670,6 +1763,20 @@ export class UserService implements OnModuleInit {
     }
     if (payload.isModerator !== undefined) {
       updateData.isModerator = payload.isModerator;
+      if (!payload.isModerator) {
+        updateData.moderatorFaceCardActive = false;
+      }
+    }
+    if (payload.moderatorFaceCardActive !== undefined) {
+      const willBeModerator =
+        payload.isModerator !== undefined ? payload.isModerator : Boolean(existing.isModerator);
+      if (payload.moderatorFaceCardActive && !willBeModerator) {
+        throw new HttpException(
+          "moderatorFaceCardActive requires isModerator",
+          HttpStatus.BAD_REQUEST
+        );
+      }
+      updateData.moderatorFaceCardActive = payload.moderatorFaceCardActive;
     }
 
     const user = await this.prisma.user.update({
@@ -1680,7 +1787,8 @@ export class UserService implements OnModuleInit {
         kycStatus: true,
         kycRiskScore: true,
         kycExpiresAt: true,
-        isModerator: true
+        isModerator: true,
+        moderatorFaceCardActive: true
       } as any
     });
 
@@ -1696,8 +1804,42 @@ export class UserService implements OnModuleInit {
       kycStatus: user.kycStatus as KycStatus,
       kycRiskScore: user.kycRiskScore ?? 0,
       kycExpiresAt: user.kycExpiresAt ?? null,
-      isModerator: Boolean((user as any).isModerator)
+      isModerator: Boolean((user as any).isModerator),
+      moderatorFaceCardActive: Boolean((user as any).moderatorFaceCardActive)
     };
+  }
+
+  async setModeratorFaceCardActive(
+    userId: string,
+    active: boolean
+  ): Promise<{ success: true; moderatorFaceCardActive: boolean }> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { isModerator: true } as any
+    });
+    if (!user) {
+      throw new HttpException("User not found", HttpStatus.NOT_FOUND);
+    }
+    if (!user.isModerator) {
+      throw new HttpException("Only moderators can use moderator face card mode", HttpStatus.FORBIDDEN);
+    }
+    const updated = await this.prisma.user.update({
+      where: { id: userId },
+      data: { moderatorFaceCardActive: active } as any,
+      select: { moderatorFaceCardActive: true } as any
+    });
+    return {
+      success: true,
+      moderatorFaceCardActive: Boolean(updated.moderatorFaceCardActive)
+    };
+  }
+
+  async updateMyModeratorFaceCard(
+    accessToken: string,
+    active: boolean
+  ): Promise<{ success: true; moderatorFaceCardActive: boolean }> {
+    const userId = await this.verifyAccessToken(accessToken);
+    return this.setModeratorFaceCardActive(userId, active);
   }
 
   async getKycSnapshot(userId: string): Promise<{

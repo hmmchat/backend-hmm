@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, HttpCode, HttpException, HttpStatus, Par
 import { z } from "zod";
 import { PREFERRED_CITY_ANYWHERE_IN_INDIA } from "@hmm/common";
 import { PrismaService } from "../prisma/prisma.service.js";
+import { UserService } from "../services/user.service.js";
 
 const createInterestSchema = z.object({
   name: z.string().min(1).max(100),
@@ -48,9 +49,19 @@ const updateDiscoveryCityOptionSchema = z.object({
   isActive: z.boolean().optional()
 });
 
+const updateModeratorFaceCardSchema = z.object({
+  username: z.string().min(1).max(80).optional(),
+  intent: z.string().min(1).max(255).optional(),
+  displayPictureUrl: z.string().url().max(2048).optional().nullable(),
+  city: z.string().min(1).max(120).optional()
+});
+
 @Controller("admin")
 export class CatalogAdminController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly userService: UserService
+  ) {}
 
   /**
    * Interests catalog management
@@ -249,6 +260,20 @@ export class CatalogAdminController {
     }
     await (this.prisma as any).discoveryCityOption.delete({ where: { id } });
     return { ok: true };
+  }
+
+  /**
+   * Shared moderator discovery face card (singleton). Edited from Beam dashboard.
+   */
+  @Get("moderator-face-card")
+  async getModeratorFaceCardSettings() {
+    return this.userService.adminGetModeratorFaceCardSettings();
+  }
+
+  @Patch("moderator-face-card")
+  async updateModeratorFaceCardSettings(@Body() body: unknown) {
+    const data = updateModeratorFaceCardSchema.parse(body ?? {});
+    return this.userService.adminUpdateModeratorFaceCardSettings(data);
   }
 }
 

@@ -30,12 +30,8 @@ import {
   DISCOVERY_USERS_DEFAULT_LIMIT,
   SEARCH_DEFAULT_LIMIT
 } from "../config/limits.config.js";
-import { getReportWeight, getAdminDashboardReportWeight, isInCallReportType, getConsecutiveCallReportMultiplier } from "../config/report-weights.config.js";
+import { getReportWeight, getAdminDashboardReportWeight } from "../config/report-weights.config.js";
 import { getReportThreshold } from "../config/report-threshold.config.js";
-import {
-  MODERATOR_FACE_CARD_SETTING_ID,
-  mergeModeratorFaceCardPresentation
-} from "../config/moderator-face-card.config.js";
 
 @Injectable()
 export class UserService implements OnModuleInit {
@@ -46,84 +42,6 @@ export class UserService implements OnModuleInit {
       select: { id: true, value: true, label: true, order: true, faceCardImageUrl: true }
     });
     return { options };
-  }
-
-  async getModeratorFaceCardSettings() {
-    const row = await this.ensureModeratorFaceCardSettingRow();
-    return {
-      settings: mergeModeratorFaceCardPresentation({
-        username: row.username,
-        intent: row.intent,
-        displayPictureUrl: row.displayPictureUrl ?? "",
-        city: row.city
-      }),
-      updatedAt: row.updatedAt.toISOString()
-    };
-  }
-
-  async adminGetModeratorFaceCardSettings() {
-    const row = await this.ensureModeratorFaceCardSettingRow();
-    return {
-      ok: true,
-      settings: {
-        username: row.username,
-        intent: row.intent,
-        displayPictureUrl: row.displayPictureUrl,
-        city: row.city
-      },
-      updatedAt: row.updatedAt.toISOString()
-    };
-  }
-
-  async adminUpdateModeratorFaceCardSettings(data: {
-    username?: string;
-    intent?: string;
-    displayPictureUrl?: string | null;
-    city?: string;
-  }) {
-    const row = await this.prisma.moderatorFaceCardSetting.upsert({
-      where: { id: MODERATOR_FACE_CARD_SETTING_ID },
-      create: {
-        id: MODERATOR_FACE_CARD_SETTING_ID,
-        username: data.username?.trim() || "Moderator",
-        intent: data.intent?.trim() || "Moderation",
-        displayPictureUrl: data.displayPictureUrl ?? null,
-        city: data.city?.trim() || "Beam"
-      },
-      update: {
-        username: data.username !== undefined ? data.username.trim() : undefined,
-        intent: data.intent !== undefined ? data.intent.trim() : undefined,
-        displayPictureUrl: data.displayPictureUrl,
-        city: data.city !== undefined ? data.city.trim() : undefined
-      }
-    });
-    return {
-      ok: true,
-      settings: {
-        username: row.username,
-        intent: row.intent,
-        displayPictureUrl: row.displayPictureUrl,
-        city: row.city
-      },
-      updatedAt: row.updatedAt.toISOString()
-    };
-  }
-
-  private async ensureModeratorFaceCardSettingRow() {
-    const existing = await this.prisma.moderatorFaceCardSetting.findUnique({
-      where: { id: MODERATOR_FACE_CARD_SETTING_ID }
-    });
-    if (existing) {
-      return existing;
-    }
-    return this.prisma.moderatorFaceCardSetting.create({
-      data: {
-        id: MODERATOR_FACE_CARD_SETTING_ID,
-        username: "Moderator",
-        intent: "Moderation",
-        city: "Beam"
-      }
-    });
   }
 
   private async ensureActiveDiscoveryCityValue(value: string): Promise<void> {
@@ -151,6 +69,32 @@ export class UserService implements OnModuleInit {
     private readonly authClient: AuthClientService,
     private readonly discoveryClient: DiscoveryClientService
   ) { }
+
+  private async resolveActiveBadgeForUser(userId: string, activeBadgeId: string | null) {
+    if (!activeBadgeId) return null;
+    const now = new Date();
+    try {
+      const badge = await this.prisma.userBadge.findFirst({
+        where: {
+          userId,
+          OR: [{ id: activeBadgeId }, { giftId: activeBadgeId }],
+          expiresAt: { gt: now }
+        },
+        orderBy: { receivedAt: "desc" }
+      });
+      if (!badge) return null;
+      return {
+        id: badge.id,
+        giftId: badge.giftId,
+        giftName: badge.giftName,
+        giftEmoji: badge.giftEmoji,
+        expiresAt: badge.expiresAt
+      };
+    } catch (error: any) {
+      console.warn(`[WARN] Failed to fetch badge for user ${userId}:`, error?.message || error);
+      return null;
+    }
+  }
 
   async onModuleInit() {
     // Validate database schema exists
@@ -656,34 +600,7 @@ export class UserService implements OnModuleInit {
       throw new HttpException("User profile not found", HttpStatus.NOT_FOUND);
     }
 
-    // Get active badge if user has one (optional - don't break if badge fetch fails)
-    let activeBadge = null;
-    if (user.activeBadgeId) {
-      try {
-        const badge = await this.prisma.userBadge.findUnique({
-          where: {
-            userId_giftId: {
-              userId: user.id,
-              giftId: user.activeBadgeId
-            }
-          }
-        });
-        if (badge) {
-          activeBadge = {
-            giftId: badge.giftId,
-            giftName: badge.giftName,
-            giftEmoji: badge.giftEmoji
-          };
-        }
-        // If badge not found (activeBadgeId set but badge doesn't exist), activeBadge stays null
-      } catch (error: any) {
-        // Badge fetch failed - log but don't break user profile fetch
-        // Badges are optional, so we continue without badge
-        console.warn(`[WARN] Failed to fetch badge for user ${user.id}:`, error?.message || error);
-        // activeBadge remains null - user will have no badge
-      }
-    }
-    // If user has no activeBadgeId, activeBadge is already null
+    const activeBadge = await this.resolveActiveBadgeForUser(user.id, user.activeBadgeId);
 
     // Add activeBadge to user object (null if no badge or fetch failed)
     (user as any).activeBadge = activeBadge;
@@ -764,7 +681,6 @@ export class UserService implements OnModuleInit {
       genderChanged: "genderChanged",
       reportCount: "reportCount",
       reportModeratorCardsOnly: "reportModeratorCardsOnly",
-      moderatorFaceCardActive: "moderatorFaceCardActive",
       badgeMember: "badgeMember",
       isModerator: "isModerator",
       kycStatus: "kycStatus",
@@ -861,34 +777,7 @@ export class UserService implements OnModuleInit {
       }
     });
 
-    // Get active badge if user has one (optional - don't break if badge fetch fails)
-    let activeBadge = null;
-    if (user.activeBadgeId) {
-      try {
-        const badge = await this.prisma.userBadge.findUnique({
-          where: {
-            userId_giftId: {
-              userId: user.id,
-              giftId: user.activeBadgeId
-            }
-          }
-        });
-        if (badge) {
-          activeBadge = {
-            giftId: badge.giftId,
-            giftName: badge.giftName,
-            giftEmoji: badge.giftEmoji
-          };
-        }
-        // If badge not found (activeBadgeId set but badge doesn't exist), activeBadge stays null
-      } catch (error: any) {
-        // Badge fetch failed - log but don't break user profile fetch
-        // Badges are optional, so we continue without badge
-        console.warn(`[WARN] Failed to fetch badge for user ${user.id}:`, error?.message || error);
-        // activeBadge remains null - user will have no badge
-      }
-    }
-    // If user has no activeBadgeId, activeBadge is already null
+    const activeBadge = await this.resolveActiveBadgeForUser(user.id, user.activeBadgeId);
 
     // Add activeBadge to user object (null if no badge or fetch failed)
     (user as any).activeBadge = activeBadge;
@@ -1552,16 +1441,10 @@ export class UserService implements OnModuleInit {
    * @param accessToken - JWT token of the reporting user
    * @param reportedUserId - ID of the user being reported
    * @param reportType - Optional type (e.g. face_card, offline_card, host) for configurable weight; unknown/missing uses default weight
-   * @param callSessionId - Optional call session id for in-call reports; used for consecutive-call multiplier and streak reset
    * @returns Object with success status and updated reportCount (total score)
    * @throws HttpException if user tries to report themselves or reported user doesn't exist
    */
-  async reportUser(
-    accessToken: string,
-    reportedUserId: string,
-    reportType?: string,
-    callSessionId?: string
-  ) {
+  async reportUser(accessToken: string, reportedUserId: string, reportType?: string) {
     const reporterUserId = await this.verifyAccessToken(accessToken);
 
     if (reporterUserId === reportedUserId) {
@@ -1570,37 +1453,23 @@ export class UserService implements OnModuleInit {
 
     // Check if reported user exists
     const reportedUser = await this.prisma.user.findUnique({
-      where: { id: reportedUserId },
-      select: {
-        id: true,
-        previousCallEndedWithReport: true
-      } as any
+      where: { id: reportedUserId }
     });
 
     if (!reportedUser) {
       throw new HttpException("Reported user not found", HttpStatus.NOT_FOUND);
     }
 
-    const baseWeight = getReportWeight(reportType);
-    const inCallReport = isInCallReportType(reportType);
-    const consecutiveMultiplier = inCallReport
-      ? getConsecutiveCallReportMultiplier(Boolean(reportedUser.previousCallEndedWithReport))
-      : 1;
-    const weight = baseWeight * consecutiveMultiplier;
+    const weight = getReportWeight(reportType);
 
-    const updateData: Record<string, unknown> = {
-      reportCount: { increment: weight }
-    };
-    if (inCallReport) {
-      updateData.previousCallEndedWithReport = true;
-      if (callSessionId) {
-        updateData.lastReportedCallSessionId = callSessionId;
-      }
-    }
-
+    // Increment report score (weighted sum) on the user's profile
     const updatedUser = await this.prisma.user.update({
       where: { id: reportedUserId },
-      data: updateData as any
+      data: {
+        reportCount: {
+          increment: weight
+        }
+      }
     });
 
     await this.syncKycRiskAndRevocation(reportedUserId);
@@ -1608,40 +1477,8 @@ export class UserService implements OnModuleInit {
 
     return {
       success: true,
-      reportCount: updatedUser.reportCount,
-      weightApplied: weight,
-      consecutiveCallMultiplier: inCallReport ? consecutiveMultiplier : undefined
+      reportCount: updatedUser.reportCount
     };
-  }
-
-  /**
-   * Internal: participant finished a call. Resets consecutive report multiplier when the call
-   * ended without a report for this user (previous call had a report → next in-call report is 2×).
-   */
-  async handleParticipantCallEnded(userId: string, callSessionId: string): Promise<{ ok: true }> {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: {
-        lastReportedCallSessionId: true
-      } as any
-    });
-
-    if (!user) {
-      return { ok: true };
-    }
-
-    if (user.lastReportedCallSessionId === callSessionId) {
-      return { ok: true };
-    }
-
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: {
-        previousCallEndedWithReport: false
-      } as any
-    });
-
-    return { ok: true };
   }
 
   /**
@@ -1725,7 +1562,6 @@ export class UserService implements OnModuleInit {
       kycRiskScore?: number;
       kycExpiresAt?: Date | null;
       isModerator?: boolean;
-      moderatorFaceCardActive?: boolean;
     },
     meta?: { updatedBy: string; reason: string; notes?: string }
   ): Promise<{
@@ -1735,16 +1571,7 @@ export class UserService implements OnModuleInit {
     kycRiskScore: number;
     kycExpiresAt: Date | null;
     isModerator: boolean;
-    moderatorFaceCardActive: boolean;
   }> {
-    const existing = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { isModerator: true, moderatorFaceCardActive: true } as any
-    });
-    if (!existing) {
-      throw new HttpException("User not found", HttpStatus.NOT_FOUND);
-    }
-
     const updateData: any = {};
     if (payload.kycStatus !== undefined) {
       updateData.kycStatus = payload.kycStatus;
@@ -1763,20 +1590,6 @@ export class UserService implements OnModuleInit {
     }
     if (payload.isModerator !== undefined) {
       updateData.isModerator = payload.isModerator;
-      if (!payload.isModerator) {
-        updateData.moderatorFaceCardActive = false;
-      }
-    }
-    if (payload.moderatorFaceCardActive !== undefined) {
-      const willBeModerator =
-        payload.isModerator !== undefined ? payload.isModerator : Boolean(existing.isModerator);
-      if (payload.moderatorFaceCardActive && !willBeModerator) {
-        throw new HttpException(
-          "moderatorFaceCardActive requires isModerator",
-          HttpStatus.BAD_REQUEST
-        );
-      }
-      updateData.moderatorFaceCardActive = payload.moderatorFaceCardActive;
     }
 
     const user = await this.prisma.user.update({
@@ -1787,8 +1600,7 @@ export class UserService implements OnModuleInit {
         kycStatus: true,
         kycRiskScore: true,
         kycExpiresAt: true,
-        isModerator: true,
-        moderatorFaceCardActive: true
+        isModerator: true
       } as any
     });
 
@@ -1804,42 +1616,8 @@ export class UserService implements OnModuleInit {
       kycStatus: user.kycStatus as KycStatus,
       kycRiskScore: user.kycRiskScore ?? 0,
       kycExpiresAt: user.kycExpiresAt ?? null,
-      isModerator: Boolean((user as any).isModerator),
-      moderatorFaceCardActive: Boolean((user as any).moderatorFaceCardActive)
+      isModerator: Boolean((user as any).isModerator)
     };
-  }
-
-  async setModeratorFaceCardActive(
-    userId: string,
-    active: boolean
-  ): Promise<{ success: true; moderatorFaceCardActive: boolean }> {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { isModerator: true } as any
-    });
-    if (!user) {
-      throw new HttpException("User not found", HttpStatus.NOT_FOUND);
-    }
-    if (!user.isModerator) {
-      throw new HttpException("Only moderators can use moderator face card mode", HttpStatus.FORBIDDEN);
-    }
-    const updated = await this.prisma.user.update({
-      where: { id: userId },
-      data: { moderatorFaceCardActive: active } as any,
-      select: { moderatorFaceCardActive: true } as any
-    });
-    return {
-      success: true,
-      moderatorFaceCardActive: Boolean(updated.moderatorFaceCardActive)
-    };
-  }
-
-  async updateMyModeratorFaceCard(
-    accessToken: string,
-    active: boolean
-  ): Promise<{ success: true; moderatorFaceCardActive: boolean }> {
-    const userId = await this.verifyAccessToken(accessToken);
-    return this.setModeratorFaceCardActive(userId, active);
   }
 
   async getKycSnapshot(userId: string): Promise<{
@@ -1892,33 +1670,7 @@ export class UserService implements OnModuleInit {
     // Get active badges for all users (optional - don't break if badge fetch fails)
     const usersWithBadges = await Promise.all(
       users.map(async (user) => {
-        let activeBadge = null;
-        if (user.activeBadgeId) {
-          try {
-            const badge = await this.prisma.userBadge.findUnique({
-              where: {
-                userId_giftId: {
-                  userId: user.id,
-                  giftId: user.activeBadgeId
-                }
-              }
-            });
-            if (badge) {
-              activeBadge = {
-                giftId: badge.giftId,
-                giftName: badge.giftName,
-                giftEmoji: badge.giftEmoji
-              };
-            }
-            // If badge not found (activeBadgeId set but badge doesn't exist), activeBadge stays null
-          } catch (error: any) {
-            // Badge fetch failed - log but don't break user profile fetch
-            // Badges are optional, so we continue without badge
-            console.warn(`[WARN] Failed to fetch badge for user ${user.id}:`, error?.message || error);
-            // activeBadge remains null - user will have no badge
-          }
-        }
-        // If user has no activeBadgeId, activeBadge is already null
+        const activeBadge = await this.resolveActiveBadgeForUser(user.id, user.activeBadgeId);
         return this.mapUserBrandLogos({ ...user, activeBadge });
       })
     );

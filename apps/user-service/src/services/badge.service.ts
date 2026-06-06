@@ -2,158 +2,220 @@ import { Injectable, BadRequestException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { WalletClientService } from "./wallet-client.service.js";
 
+export type UserStickerBadge = {
+  id: string;
+  giftId: string;
+  giftName: string;
+  giftEmoji: string;
+  receivedAt: Date;
+  expiresAt: Date;
+};
+
 @Injectable()
 export class BadgeService {
+  private readonly logger = new Logger(BadgeService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly walletClient: WalletClientService
   ) {}
 
-  /**
-   * Get all gifts received by user (from wallet transactions)
-   */
-  async getReceivedGifts(userId: string): Promise<Array<{
+  getStickerExpiryDays(): number {
+    const parsed = Number.parseInt(process.env.STICKER_EXPIRY_DAYS || "7", 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 7;
+  }
+
+  private computeExpiresAt(receivedAt: Date): Date {
+    const days = this.getStickerExpiryDays();
+    return new Date(receivedAt.getTime() + days * 24 * 60 * 60 * 1000);
+  }
+
+  private mapBadgeRow(badge: {
+    id: string;
     giftId: string;
     giftName: string;
-    giftEmoji: string;
+    giftEmoji: string | null;
     receivedAt: Date;
-  }>> {
-    // Get badges from UserBadge table
-    // @ts-ignore - Prisma client needs regeneration, UserBadge model exists in schema
-    const badges = await (this.prisma as any).userBadge.findMany({
-      where: { userId },
-      orderBy: { receivedAt: "desc" }
-    });
-
-    return badges.map(badge => ({
+    expiresAt: Date;
+  }): UserStickerBadge {
+    return {
+      id: badge.id,
       giftId: badge.giftId,
       giftName: badge.giftName,
       giftEmoji: badge.giftEmoji || "",
-      receivedAt: badge.receivedAt
-    }));
+      receivedAt: badge.receivedAt,
+      expiresAt: badge.expiresAt
+    };
   }
 
-  /**
-   * Sync badges from wallet transactions
-   * This should be called when user views their wallet or badges
-   */
-  async syncBadgesFromTransactions(userId: string): Promise<void> {
-    // Get gift transactions from wallet service
-    const giftTransactions = await this.walletClient.getGiftTransactions(userId);
+  private async clearActiveBadgeIfInvalid(userId: string): Promise<void> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { activeBadgeId: true }
+    });
+    if (!user?.activeBadgeId) return;
 
-    for (const transaction of giftTransactions) {
-      if (!transaction.giftId) continue;
-
-      const gift = {
-        id: transaction.giftId,
-        name: transaction.giftId,
-        emoji: "🎁"
-      };
-
-      // Check if badge already exists
-      // @ts-ignore - Prisma client needs regeneration, UserBadge model exists in schema
-      const existingBadge = await (this.prisma as any).userBadge.findUnique({
-        where: {
-          userId_giftId: {
-            userId,
-            giftId: transaction.giftId
-          }
-        }
-      });
-
-      if (!existingBadge) {
-        // Create new badge
-        // @ts-ignore - Prisma client needs regeneration, UserBadge model exists in schema
-        await (this.prisma as any).userBadge.create({
-          data: {
-            userId,
-            giftId: transaction.giftId,
-            giftName: gift.name,
-            giftEmoji: gift.emoji,
-            receivedAt: transaction.createdAt
-          }
-        });
+    const now = new Date();
+    const active = await (this.prisma as any).userBadge.findFirst({
+      where: {
+        userId,
+        OR: [{ id: user.activeBadgeId }, { giftId: user.activeBadgeId }],
+        expiresAt: { gt: now }
       }
-    }
-  }
+    });
 
-  /**
-   * Set active badge for user profile
-   */
-  async setActiveBadge(userId: string, giftId: string | null): Promise<void> {
-    if (giftId === null) {
-      // Remove active badge
-      // @ts-ignore - Prisma client needs regeneration, activeBadgeId field exists in schema
+    if (!active) {
       await this.prisma.user.update({
         where: { id: userId },
-        // @ts-ignore
         data: { activeBadgeId: null }
       });
       return;
     }
 
-    // Verify user has this badge
-    // @ts-ignore - Prisma client needs regeneration, UserBadge model exists in schema
-    const badge = await (this.prisma as any).userBadge.findUnique({
-      where: {
-        userId_giftId: {
-          userId,
-          giftId
-        }
-      }
-    });
-
-    if (!badge) {
-      throw new BadRequestException(`User does not have badge: ${giftId}`);
+    if (active.id !== user.activeBadgeId) {
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: { activeBadgeId: active.id }
+      });
     }
+  }
 
-    // @ts-ignore - Prisma client needs regeneration, activeBadgeId field exists in schema
-    await this.prisma.user.update({
-      where: { id: userId },
-      // @ts-ignore
-      data: { activeBadgeId: giftId }
+  async getStickersPayload(userId: string): Promise<{
+    stickerExpiryDays: number;
+    badges: UserStickerBadge[];
+  }> {
+    await this.clearActiveBadgeIfInvalid(userId);
+
+    const now = new Date();
+    const badges = await (this.prisma as any).userBadge.findMany({
+      where: {
+        userId,
+        expiresAt: { gt: now }
+      },
+      orderBy: { receivedAt: "desc" }
     });
+
+    return {
+      stickerExpiryDays: this.getStickerExpiryDays(),
+      badges: badges.map((badge: any) => this.mapBadgeRow(badge))
+    };
   }
 
   /**
-   * Get user's active badge
+   * Sync one UserBadge row per gift credit transaction (duplicates allowed per giftId).
    */
-  async getActiveBadge(userId: string): Promise<{
-    giftId: string;
-    giftName: string;
-    giftEmoji: string;
-  } | null> {
-    // @ts-ignore - Prisma client needs regeneration, activeBadgeId field exists in schema
+  async syncBadgesFromTransactions(userId: string): Promise<void> {
+    const giftTransactions = await this.walletClient.getGiftTransactions(userId);
+
+    for (const transaction of giftTransactions) {
+      if (!transaction.giftId) continue;
+
+      const receivedAt = transaction.createdAt;
+      const expiresAt = this.computeExpiresAt(receivedAt);
+
+      if (transaction.id) {
+        const existingByTx = await (this.prisma as any).userBadge.findUnique({
+          where: { walletTransactionId: transaction.id }
+        });
+        if (existingByTx) continue;
+      }
+
+      await (this.prisma as any).userBadge.create({
+        data: {
+          userId,
+          giftId: transaction.giftId,
+          giftName: transaction.giftId,
+          giftEmoji: "🎁",
+          walletTransactionId: transaction.id || null,
+          receivedAt,
+          expiresAt
+        }
+      });
+    }
+  }
+
+  /**
+   * Set active sticker instance on profile (UserBadge.id).
+   */
+  async setActiveBadge(userId: string, badgeId: string | null): Promise<void> {
+    if (badgeId === null) {
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: { activeBadgeId: null }
+      });
+      return;
+    }
+
+    const now = new Date();
+    const badge = await (this.prisma as any).userBadge.findFirst({
+      where: {
+        id: badgeId,
+        userId,
+        expiresAt: { gt: now }
+      }
+    });
+
+    if (!badge) {
+      throw new BadRequestException(`Sticker ${badgeId} not found or expired`);
+    }
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { activeBadgeId: badge.id }
+    });
+  }
+
+  async getActiveBadge(userId: string): Promise<UserStickerBadge | null> {
+    await this.clearActiveBadgeIfInvalid(userId);
+
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      // @ts-ignore
       select: { activeBadgeId: true }
     });
 
-    // @ts-ignore
-    if (!user || !user.activeBadgeId) {
+    if (!user?.activeBadgeId) {
       return null;
     }
 
-    // @ts-ignore - Prisma client needs regeneration, UserBadge model exists in schema
-    const badge = await (this.prisma as any).userBadge.findUnique({
+    const now = new Date();
+    const badge = await (this.prisma as any).userBadge.findFirst({
       where: {
-        userId_giftId: {
-          userId,
-          // @ts-ignore
-          giftId: user.activeBadgeId
-        }
-      }
+        userId,
+        OR: [{ id: user.activeBadgeId }, { giftId: user.activeBadgeId }],
+        expiresAt: { gt: now }
+      },
+      orderBy: { receivedAt: "desc" }
     });
 
     if (!badge) {
       return null;
     }
 
+    return this.mapBadgeRow(badge);
+  }
+
+  /** Resolve active badge row for profile embedding. */
+  async resolveActiveBadgeForUser(userId: string, activeBadgeId: string | null) {
+    if (!activeBadgeId) return null;
+
+    const now = new Date();
+    const badge = await (this.prisma as any).userBadge.findFirst({
+      where: {
+        userId,
+        OR: [{ id: activeBadgeId }, { giftId: activeBadgeId }],
+        expiresAt: { gt: now }
+      },
+      orderBy: { receivedAt: "desc" }
+    });
+
+    if (!badge) return null;
+
     return {
+      id: badge.id,
       giftId: badge.giftId,
       giftName: badge.giftName,
-      giftEmoji: badge.giftEmoji || ""
+      giftEmoji: badge.giftEmoji || "",
+      expiresAt: badge.expiresAt
     };
   }
 }

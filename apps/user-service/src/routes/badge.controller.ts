@@ -13,7 +13,7 @@ import { BadgeService } from "../services/badge.service.js";
 import { z } from "zod";
 
 const setBadgeSchema = z.object({
-  giftId: z.string().nullable()
+  badgeId: z.string().nullable()
 });
 
 @Controller("users/:userId/badges")
@@ -69,8 +69,7 @@ export class BadgeController {
       );
     }
 
-    // Return badges
-    return this.badgeService.getReceivedGifts(userId);
+    return this.badgeService.getStickersPayload(userId);
   }
 
   /**
@@ -94,7 +93,7 @@ export class BadgeController {
     }
 
     const dto = setBadgeSchema.parse(body);
-    await this.badgeService.setActiveBadge(userId, dto.giftId);
+    await this.badgeService.setActiveBadge(userId, dto.badgeId);
     return { success: true };
   }
 

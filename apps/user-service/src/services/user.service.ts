@@ -30,8 +30,17 @@ import {
   DISCOVERY_USERS_DEFAULT_LIMIT,
   SEARCH_DEFAULT_LIMIT
 } from "../config/limits.config.js";
-import { getReportWeight, getAdminDashboardReportWeight } from "../config/report-weights.config.js";
+import {
+  getReportWeight,
+  getAdminDashboardReportWeight,
+  getConsecutiveCallReportMultiplier,
+  isInCallReportType
+} from "../config/report-weights.config.js";
 import { getReportThreshold } from "../config/report-threshold.config.js";
+import {
+  MODERATOR_FACE_CARD_SETTING_ID,
+  mergeModeratorFaceCardPresentation
+} from "../config/moderator-face-card.config.js";
 
 @Injectable()
 export class UserService implements OnModuleInit {
@@ -94,6 +103,82 @@ export class UserService implements OnModuleInit {
       console.warn(`[WARN] Failed to fetch badge for user ${userId}:`, error?.message || error);
       return null;
     }
+  }
+
+  private async getModeratorFaceCardSettingRow() {
+    const row = await (this.prisma as any).moderatorFaceCardSetting.findUnique({
+      where: { id: MODERATOR_FACE_CARD_SETTING_ID }
+    });
+    return row ?? null;
+  }
+
+  async getModeratorFaceCardSettings() {
+    const row = await this.getModeratorFaceCardSettingRow();
+    return {
+      ok: true,
+      settings: mergeModeratorFaceCardPresentation(row)
+    };
+  }
+
+  async adminGetModeratorFaceCardSettings() {
+    return this.getModeratorFaceCardSettings();
+  }
+
+  async adminUpdateModeratorFaceCardSettings(data: {
+    username?: string;
+    intent?: string;
+    displayPictureUrl?: string | null;
+    city?: string;
+  }) {
+    const row = await (this.prisma as any).moderatorFaceCardSetting.upsert({
+      where: { id: MODERATOR_FACE_CARD_SETTING_ID },
+      update: {
+        ...(data.username !== undefined ? { username: data.username } : {}),
+        ...(data.intent !== undefined ? { intent: data.intent } : {}),
+        ...(data.displayPictureUrl !== undefined ? { displayPictureUrl: data.displayPictureUrl } : {}),
+        ...(data.city !== undefined ? { city: data.city } : {})
+      },
+      create: {
+        id: MODERATOR_FACE_CARD_SETTING_ID,
+        username: data.username ?? "Moderator",
+        intent: data.intent ?? "Moderation",
+        displayPictureUrl: data.displayPictureUrl ?? null,
+        city: data.city ?? "Beam"
+      }
+    });
+
+    return {
+      ok: true,
+      settings: mergeModeratorFaceCardPresentation(row)
+    };
+  }
+
+  async updateMyModeratorFaceCard(accessToken: string, active: boolean) {
+    const userId = await this.verifyAccessToken(accessToken);
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, isModerator: true } as any
+    });
+
+    if (!user) {
+      throw new HttpException("User not found", HttpStatus.NOT_FOUND);
+    }
+    if (!user.isModerator) {
+      throw new HttpException("Only moderators can use moderator face card mode", HttpStatus.FORBIDDEN);
+    }
+
+    const updated = await this.prisma.user.update({
+      where: { id: userId },
+      data: { moderatorFaceCardActive: active } as any,
+      select: { id: true, isModerator: true, moderatorFaceCardActive: true } as any
+    });
+
+    return {
+      ok: true,
+      userId: updated.id,
+      isModerator: Boolean((updated as any).isModerator),
+      moderatorFaceCardActive: Boolean((updated as any).moderatorFaceCardActive)
+    };
   }
 
   async onModuleInit() {
@@ -1444,7 +1529,12 @@ export class UserService implements OnModuleInit {
    * @returns Object with success status and updated reportCount (total score)
    * @throws HttpException if user tries to report themselves or reported user doesn't exist
    */
-  async reportUser(accessToken: string, reportedUserId: string, reportType?: string) {
+  async reportUser(
+    accessToken: string,
+    reportedUserId: string,
+    reportType?: string,
+    callSessionId?: string
+  ) {
     const reporterUserId = await this.verifyAccessToken(accessToken);
 
     if (reporterUserId === reportedUserId) {
@@ -1460,7 +1550,12 @@ export class UserService implements OnModuleInit {
       throw new HttpException("Reported user not found", HttpStatus.NOT_FOUND);
     }
 
-    const weight = getReportWeight(reportType);
+    const baseWeight = getReportWeight(reportType);
+    const isInCall = isInCallReportType(reportType);
+    const multiplier = isInCall
+      ? getConsecutiveCallReportMultiplier(Boolean((reportedUser as any).previousCallEndedWithReport))
+      : 1;
+    const weight = baseWeight * multiplier;
 
     // Increment report score (weighted sum) on the user's profile
     const updatedUser = await this.prisma.user.update({
@@ -1468,8 +1563,14 @@ export class UserService implements OnModuleInit {
       data: {
         reportCount: {
           increment: weight
-        }
-      }
+        },
+        ...(isInCall
+          ? {
+              previousCallEndedWithReport: true,
+              lastReportedCallSessionId: callSessionId ?? null
+            }
+          : {})
+      } as any
     });
 
     await this.syncKycRiskAndRevocation(reportedUserId);
@@ -1477,8 +1578,38 @@ export class UserService implements OnModuleInit {
 
     return {
       success: true,
-      reportCount: updatedUser.reportCount
+      reportCount: updatedUser.reportCount,
+      weightApplied: weight
     };
+  }
+
+  async handleParticipantCallEnded(userId: string, callSessionId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        previousCallEndedWithReport: true,
+        lastReportedCallSessionId: true
+      } as any
+    });
+
+    if (!user) {
+      return { ok: true, userId, reset: false, reason: "user_not_found" };
+    }
+
+    if ((user as any).lastReportedCallSessionId === callSessionId) {
+      return { ok: true, userId, reset: false, previousCallEndedWithReport: true };
+    }
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        previousCallEndedWithReport: false,
+        lastReportedCallSessionId: null
+      } as any
+    });
+
+    return { ok: true, userId, reset: true, previousCallEndedWithReport: false };
   }
 
   /**
@@ -1562,6 +1693,7 @@ export class UserService implements OnModuleInit {
       kycRiskScore?: number;
       kycExpiresAt?: Date | null;
       isModerator?: boolean;
+      moderatorFaceCardActive?: boolean;
     },
     meta?: { updatedBy: string; reason: string; notes?: string }
   ): Promise<{
@@ -1571,6 +1703,7 @@ export class UserService implements OnModuleInit {
     kycRiskScore: number;
     kycExpiresAt: Date | null;
     isModerator: boolean;
+    moderatorFaceCardActive: boolean;
   }> {
     const updateData: any = {};
     if (payload.kycStatus !== undefined) {
@@ -1591,6 +1724,9 @@ export class UserService implements OnModuleInit {
     if (payload.isModerator !== undefined) {
       updateData.isModerator = payload.isModerator;
     }
+    if (payload.moderatorFaceCardActive !== undefined) {
+      updateData.moderatorFaceCardActive = payload.moderatorFaceCardActive;
+    }
 
     const user = await this.prisma.user.update({
       where: { id: userId },
@@ -1600,7 +1736,8 @@ export class UserService implements OnModuleInit {
         kycStatus: true,
         kycRiskScore: true,
         kycExpiresAt: true,
-        isModerator: true
+        isModerator: true,
+        moderatorFaceCardActive: true
       } as any
     });
 
@@ -1616,7 +1753,8 @@ export class UserService implements OnModuleInit {
       kycStatus: user.kycStatus as KycStatus,
       kycRiskScore: user.kycRiskScore ?? 0,
       kycExpiresAt: user.kycExpiresAt ?? null,
-      isModerator: Boolean((user as any).isModerator)
+      isModerator: Boolean((user as any).isModerator),
+      moderatorFaceCardActive: Boolean((user as any).moderatorFaceCardActive)
     };
   }
 

@@ -13,8 +13,6 @@ export type UserStickerBadge = {
 
 @Injectable()
 export class BadgeService {
-  private readonly logger = new Logger(BadgeService.name);
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly walletClient: WalletClientService

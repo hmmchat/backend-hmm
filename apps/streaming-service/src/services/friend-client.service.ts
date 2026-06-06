@@ -105,4 +105,91 @@ export class FriendClientService {
       return {};
     }
   }
+
+  /**
+   * Active gifts from friend-service catalog (dashboard-managed UUID giftIds).
+   */
+  async getActiveGifts(): Promise<
+    Array<{
+      giftId: string;
+      name: string;
+      emoji: string;
+      diamonds: number;
+      imageUrl?: string;
+    }>
+  > {
+    try {
+      const serviceToken = process.env.INTERNAL_SERVICE_TOKEN;
+      if (!serviceToken) {
+        this.logger.warn("INTERNAL_SERVICE_TOKEN not configured, skipping gift catalog fetch");
+        return [];
+      }
+
+      const response = await fetch(`${this.friendServiceUrl}/internal/gifts`, {
+        method: "GET",
+        headers: { "x-service-token": serviceToken }
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        this.logger.warn(`Failed to fetch gift catalog: ${response.status} ${text}`);
+        return [];
+      }
+
+      const data = (await response.json()) as {
+        gifts?: Array<{
+          giftId: string;
+          name: string;
+          emoji: string;
+          diamonds: number;
+          imageUrl?: string;
+        }>;
+      };
+      return data.gifts ?? [];
+    } catch (error: any) {
+      this.logger.warn(`Error fetching gift catalog: ${error.message}`);
+      return [];
+    }
+  }
+
+  /**
+   * Resolve a gift by giftId from friend-service catalog.
+   */
+  async getGiftById(giftId: string): Promise<{
+    giftId: string;
+    name: string;
+    emoji: string;
+    diamonds: number;
+    imageUrl?: string;
+  } | null> {
+    try {
+      const serviceToken = process.env.INTERNAL_SERVICE_TOKEN;
+      if (!serviceToken) {
+        return null;
+      }
+
+      const response = await fetch(
+        `${this.friendServiceUrl}/internal/gifts/${encodeURIComponent(giftId)}`,
+        {
+          method: "GET",
+          headers: { "x-service-token": serviceToken }
+        }
+      );
+
+      if (!response.ok) {
+        return null;
+      }
+
+      return (await response.json()) as {
+        giftId: string;
+        name: string;
+        emoji: string;
+        diamonds: number;
+        imageUrl?: string;
+      };
+    } catch (error: any) {
+      this.logger.warn(`Error fetching gift ${giftId}: ${error.message}`);
+      return null;
+    }
+  }
 }

@@ -450,17 +450,8 @@
                     <h3 style="margin-bottom: 20px; color: #667eea;">🎁 Send Gift</h3>
                     
                     <div class="form-group">
-                        <label>Gift Type:</label>
-                        <select id="giftTypeSelect" style="width: 100%; padding: 10px; border: 2px solid #e0e0e0; border-radius: 8px;">
-                            <option value="monkey">🐵 Monkey</option>
-                            <option value="pikachu">⚡ Pikachu</option>
-                            <option value="rose">🌹 Rose</option>
-                            <option value="heart">❤️ Heart</option>
-                            <option value="star">⭐ Star</option>
-                            <option value="diamond">💎 Diamond</option>
-                            <option value="crown">👑 Crown</option>
-                            <option value="fire">🔥 Fire</option>
-                        </select>
+                        <label>Gift ID (from dashboard catalog):</label>
+                        <input type="text" id="giftTypeSelect" placeholder="catalog giftId" style="width: 100%; padding: 10px; border: 2px solid #e0e0e0; border-radius: 8px;">
                     </div>
                     
                     <div class="form-group">
@@ -1017,7 +1008,7 @@
                     </div>
                     <div class="form-group">
                         <label>Gift ID (optional):</label>
-                        <input type="text" id="addCoinsGiftId" placeholder="monkey, pikachu, etc.">
+                        <input type="text" id="addCoinsGiftId" placeholder="catalog giftId (optional)">
                     </div>
                 </div>
                 <button onclick="addCoins()">Add Coins</button>
@@ -3619,26 +3610,44 @@
             }
         }
         
-        // Gift list matching backend
-        const GIFT_LIST = [
-            { id: "monkey", name: "Monkey", emoji: "🐵", coins: 50 },
-            { id: "pikachu", name: "Pikachu", emoji: "⚡", coins: 250 },
-            { id: "superman", name: "Superman", emoji: "🦸", coins: 2000 },
-            { id: "ironman", name: "Iron Man", emoji: "🤖", coins: 25000 }
-        ];
-        
-        // Initialize gift selector on page load
-        function initializeGiftSelector() {
+        let catalogGifts = [];
+
+        function findCatalogGift(giftId) {
+            return catalogGifts.find(g => g.id === giftId) || { id: giftId, emoji: '🎁', name: giftId, coins: 0 };
+        }
+
+        // Load gifts from dashboard catalog
+        async function initializeGiftSelector() {
             const selector = document.getElementById('giftSelector');
             if (!selector) return;
-            
-            selector.innerHTML = GIFT_LIST.map(gift => `
+
+            selector.innerHTML = '<div style="color:#666;font-size:13px;">Loading gift catalog…</div>';
+
+            try {
+                const response = await fetch(getApiUrl('/admin/gifts/active'));
+                const data = await response.json();
+                catalogGifts = (data.gifts || []).map(g => ({
+                    id: g.giftId,
+                    name: g.name,
+                    emoji: g.emoji || '🎁',
+                    coins: g.diamonds ?? g.coins ?? 0
+                }));
+            } catch (error) {
+                catalogGifts = [];
+            }
+
+            if (catalogGifts.length === 0) {
+                selector.innerHTML = '<div style="color:#666;font-size:13px;">No gifts in catalog. Create gifts via the dashboard.</div>';
+                return;
+            }
+
+            selector.innerHTML = catalogGifts.map(gift => `
                 <div class="gift-card" data-gift-id="${gift.id}" data-gift-amount="${gift.coins}" 
                      style="padding: 15px; border: 2px solid #e0e0e0; border-radius: 8px; cursor: pointer; text-align: center; transition: all 0.2s; background: white;"
                      onclick="selectGift('${gift.id}', ${gift.coins})">
                     <div style="font-size: 32px; margin-bottom: 8px;">${gift.emoji}</div>
                     <div style="font-weight: 600; color: #333; margin-bottom: 5px; font-size: 14px;">${gift.name}</div>
-                    <div style="color: #28a745; font-size: 12px; font-weight: 500;">${gift.coins.toLocaleString()} coins</div>
+                    <div style="color: #28a745; font-size: 12px; font-weight: 500;">${gift.coins.toLocaleString()} diamonds</div>
                 </div>
             `).join('');
         }
@@ -3689,8 +3698,8 @@
                 const data = await response.json();
                 
                 if (response.ok) {
-                    const selectedGift = GIFT_LIST.find(g => g.id === giftId);
-                    addActionLog(`🎁 ${selectedGift.emoji} ${selectedGift.name} (${amount} coins) sent from ${fromUserId} to ${toUserId}`, fromUserId, 'success');
+                    const selectedGift = findCatalogGift(giftId);
+                    addActionLog(`🎁 ${selectedGift.emoji} ${selectedGift.name} (${amount} diamonds) sent from ${fromUserId} to ${toUserId}`, fromUserId, 'success');
                     // Refresh wallet overview if same user
                     if (document.getElementById('walletOverviewUserId').value === toUserId) {
                         setTimeout(() => loadWalletOverview(), 1000);
@@ -5000,7 +5009,7 @@
                         
                         // Display gifts as badges
                         giftsDiv.innerHTML = Object.entries(giftCounts).map(([giftId, data]) => {
-                            const gift = GIFT_LIST.find(g => g.id === giftId) || { emoji: '🎁', name: giftId, coins: 0 };
+                            const gift = findCatalogGift(giftId);
                             return `
                                 <div style="display: inline-block; margin: 8px; padding: 15px; background: #f8f9fa; border-radius: 12px; text-align: center; min-width: 120px; border: 2px solid #e0e0e0;">
                                     <div style="font-size: 36px; margin-bottom: 8px;">${gift.emoji}</div>

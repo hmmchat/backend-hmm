@@ -2,20 +2,6 @@ import { Injectable, BadRequestException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { WalletClientService } from "./wallet-client.service.js";
 
-// Gift list matching streaming service and friend-service catalog
-const GIFT_LIST = [
-  { id: "monkey", name: "Monkey", emoji: "🐵" },
-  { id: "pikachu", name: "Pikachu", emoji: "⚡" },
-  { id: "superman", name: "Superman", emoji: "🦸" },
-  { id: "ironman", name: "Iron Man", emoji: "🤖" },
-  { id: "rose", name: "Rose", emoji: "🌹" },
-  { id: "diamond", name: "Diamond", emoji: "💎" },
-  { id: "heart", name: "Heart", emoji: "❤️" },
-  { id: "star", name: "Star", emoji: "⭐" },
-  { id: "fire", name: "Fire", emoji: "🔥" },
-  { id: "crown", name: "Crown", emoji: "👑" }
-];
-
 @Injectable()
 export class BadgeService {
   constructor(
@@ -58,12 +44,11 @@ export class BadgeService {
     for (const transaction of giftTransactions) {
       if (!transaction.giftId) continue;
 
-      const gift =
-        GIFT_LIST.find((g) => g.id === transaction.giftId) ?? {
-          id: transaction.giftId,
-          name: transaction.giftId,
-          emoji: "🎁"
-        };
+      const gift = {
+        id: transaction.giftId,
+        name: transaction.giftId,
+        emoji: "🎁"
+      };
 
       // Check if badge already exists
       // @ts-ignore - Prisma client needs regeneration, UserBadge model exists in schema

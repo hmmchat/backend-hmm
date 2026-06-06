@@ -43,8 +43,9 @@ export class DareController {
    * GET /streaming/rooms/:roomId/dares/gifts
    */
   @Get("gifts")
-  getGiftList() {
-    return { gifts: this.dareService.getGiftList() };
+  async getGiftList() {
+    const gifts = await this.dareService.getGiftListAsync();
+    return { gifts };
   }
 
   /**

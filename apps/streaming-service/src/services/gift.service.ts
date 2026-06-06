@@ -13,7 +13,7 @@ export class GiftService {
 
   /**
    * Send a gift (transfer diamonds) in a room
-   * @param giftId Gift sticker ID (monkey, pikachu, etc.) - required
+   * @param giftId Gift catalog ID - required
    * @param amount Amount in diamonds (gifts give diamonds)
    */
   async sendGift(
@@ -125,7 +125,7 @@ export class GiftService {
   /**
    * Send a gift without room context (for OFFLINE cards)
    * Transfers diamonds and creates badge, but does NOT create CallGift record
-   * @param giftId Gift sticker ID (monkey, pikachu, etc.) - required
+   * @param giftId Gift catalog ID - required
    * @param amount Amount in diamonds
    */
   async sendGiftDirect(

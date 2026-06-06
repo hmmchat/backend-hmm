@@ -8,7 +8,6 @@ import { RedisService } from "../services/redis.service.js";
 import { MetricsService } from "../services/metrics.service.js";
 import { ConversationService } from "../services/conversation.service.js";
 import { GiftCatalogService } from "../services/gift-catalog.service.js";
-import { GiftSeedService } from "../services/gift-seed.service.js";
 import { UserClientService } from "../services/user-client.service.js";
 import { StreamingClientService } from "../services/streaming-client.service.js";
 import { FilesClientService } from "../services/files-client.service.js";
@@ -40,7 +39,6 @@ import { GiphyService } from "../services/giphy.service.js";
     MetricsService,
     ConversationService,
     GiftCatalogService,
-    GiftSeedService,
     UserClientService,
     StreamingClientService,
     FilesClientService,

@@ -898,6 +898,47 @@ export class FriendController {
     return Object.fromEntries(map);
   }
 
+  /**
+   * Active gift catalog for streaming-service (dares, in-call gifts).
+   * GET /internal/gifts
+   */
+  @Get("internal/gifts")
+  async getInternalGiftCatalog(
+    @Headers("x-service-token") serviceToken: string | undefined
+  ) {
+    this.verifyInternalServiceToken(serviceToken);
+    const rows = await this.giftCatalogService.getAllActiveGifts();
+    return {
+      gifts: rows.map((g: any) => ({
+        giftId: g.giftId,
+        name: g.name,
+        emoji: g.emoji,
+        diamonds: g.diamonds ?? g.coins ?? 0,
+        imageUrl: resolveGiftStickerUrl(g.imageUrl, g.giftId)
+      }))
+    };
+  }
+
+  /**
+   * Resolve a single gift by giftId (internal).
+   * GET /internal/gifts/:giftId
+   */
+  @Get("internal/gifts/:giftId")
+  async getInternalGift(
+    @Headers("x-service-token") serviceToken: string | undefined,
+    @Param("giftId") giftId: string
+  ) {
+    this.verifyInternalServiceToken(serviceToken);
+    const gift = await this.giftCatalogService.getGift(giftId);
+    return {
+      giftId: gift.giftId,
+      name: gift.name,
+      emoji: gift.emoji,
+      diamonds: (gift as any).diamonds ?? gift.coins ?? 0,
+      imageUrl: resolveGiftStickerUrl(gift.imageUrl, gift.giftId)
+    };
+  }
+
   /* ---------- Test Endpoints (No Auth Required) ---------- */
 
   /**

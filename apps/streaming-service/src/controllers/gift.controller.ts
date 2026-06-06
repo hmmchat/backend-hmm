@@ -5,7 +5,7 @@ import { z } from "zod";
 const sendGiftSchema = z.object({
   toUserId: z.string(),
   amount: z.number().positive(),
-  giftId: z.string(), // Gift sticker ID (monkey, pikachu, etc.) - required
+  giftId: z.string(),
   fromUserId: z.string().optional() // Optional in test mode
 });
 

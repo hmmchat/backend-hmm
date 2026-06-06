@@ -13,7 +13,6 @@
     "prisma:migrate": "npx prisma@6.0.0 migrate dev",
     "prisma:push": "echo '⚠️  WARNING: prisma:push can drop tables! Use prisma:migrate instead.' && npx prisma@6.0.0 db push --accept-data-loss",
     "prisma:deploy": "npx prisma@6.0.0 migrate deploy",
-    "seed:gifts": "tsx prisma/seed-gifts.ts",
     "migrate:conversations": "tsx prisma/migrate-conversations.ts",
     "postinstall": "node scripts/postinstall-prisma.js",
     "lint": "echo \"no lint configured yet\"",

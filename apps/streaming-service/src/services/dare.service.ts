@@ -1,6 +1,7 @@
 import { Injectable, Logger, NotFoundException, BadRequestException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { WalletClientService } from "./wallet-client.service.js";
+import { FriendClientService } from "./friend-client.service.js";
 
 // Default dare list (used for initial seeding / fallback when DB is empty)
 const DEFAULT_DARE_LIST = [
@@ -17,22 +18,36 @@ const DEFAULT_DARE_LIST = [
   { id: "dare-11", text: "Tell us about your first crush", category: "personal" }
 ];
 
-// Gift list with diamond costs (from screenshot: monkey 50, pikachu 250, superman 2000, ironman 25000)
-export const GIFT_LIST = [
-  { id: "monkey", name: "Monkey", emoji: "🐵", diamonds: 50 },
-  { id: "pikachu", name: "Pikachu", emoji: "⚡", diamonds: 250 },
-  { id: "superman", name: "Superman", emoji: "🦸", diamonds: 2000 },
-  { id: "ironman", name: "Iron Man", emoji: "🤖", diamonds: 25000 }
-];
-
 @Injectable()
 export class DareService {
   private readonly logger = new Logger(DareService.name);
 
   constructor(
     private readonly prisma: PrismaService,
-    private walletClient: WalletClientService
+    private walletClient: WalletClientService,
+    private friendClient: FriendClientService
   ) {}
+
+  private async resolveGift(giftId: string): Promise<{
+    id: string;
+    name: string;
+    emoji: string;
+    diamonds: number;
+    imageUrl?: string;
+  }> {
+    const catalogGift = await this.friendClient.getGiftById(giftId);
+    if (catalogGift) {
+      return {
+        id: catalogGift.giftId,
+        name: catalogGift.name,
+        emoji: catalogGift.emoji || "🎁",
+        diamonds: catalogGift.diamonds ?? 0,
+        imageUrl: catalogGift.imageUrl
+      };
+    }
+
+    throw new NotFoundException(`Gift ${giftId} not found`);
+  }
 
   /**
    * Helper: map DareCatalog records to simple dare objects
@@ -116,10 +131,24 @@ export class DareService {
   }
 
   /**
-   * Get list of available gifts with diamond costs
+   * Get list of available gifts with diamond costs from the dashboard catalog.
    */
-  getGiftList(): Array<{ id: string; name: string; emoji: string; diamonds: number }> {
-    return GIFT_LIST;
+  async getGiftListAsync(): Promise<
+    Array<{ id: string; name: string; emoji: string; diamonds: number; imageUrl?: string }>
+  > {
+    const catalogGifts = await this.friendClient.getActiveGifts();
+    if (catalogGifts.length === 0) {
+      this.logger.warn("Gift catalog empty or unavailable");
+      return [];
+    }
+
+    return catalogGifts.map((g) => ({
+      id: g.giftId,
+      name: g.name,
+      emoji: g.emoji || "🎁",
+      diamonds: g.diamonds ?? 0,
+      imageUrl: g.imageUrl
+    }));
   }
 
   /**
@@ -234,10 +263,7 @@ export class DareService {
     // Validate dare exists (in catalog or fallback list)
     await this.getDareById(dareId);
 
-    const gift = GIFT_LIST.find(g => g.id === giftId);
-    if (!gift) {
-      throw new NotFoundException(`Gift ${giftId} not found`);
-    }
+    const gift = await this.resolveGift(giftId);
 
     const session = await this.prisma.callSession.findUnique({
       where: { roomId },

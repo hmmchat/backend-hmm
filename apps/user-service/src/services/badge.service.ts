@@ -7,6 +7,7 @@ export type UserStickerBadge = {
   giftId: string;
   giftName: string;
   giftEmoji: string;
+  walletTransactionId?: string | null;
   receivedAt: Date;
   expiresAt: Date;
 };
@@ -41,8 +42,27 @@ export class BadgeService {
       giftId: badge.giftId,
       giftName: badge.giftName,
       giftEmoji: badge.giftEmoji || "",
+      walletTransactionId: (badge as any).walletTransactionId || null,
       receivedAt: badge.receivedAt,
       expiresAt: badge.expiresAt
+    };
+  }
+
+  private mapTransactionToBadge(transaction: {
+    id: string;
+    giftId: string | null;
+    createdAt: Date;
+  }, persisted?: any): UserStickerBadge | null {
+    if (!transaction.giftId) return null;
+    const receivedAt = transaction.createdAt;
+    return {
+      id: persisted?.id || transaction.id,
+      giftId: transaction.giftId,
+      giftName: persisted?.giftName || transaction.giftId,
+      giftEmoji: persisted?.giftEmoji || "🎁",
+      walletTransactionId: transaction.id,
+      receivedAt,
+      expiresAt: persisted?.expiresAt || this.computeExpiresAt(receivedAt)
     };
   }
 
@@ -57,7 +77,11 @@ export class BadgeService {
     const active = await (this.prisma as any).userBadge.findFirst({
       where: {
         userId,
-        OR: [{ id: user.activeBadgeId }, { giftId: user.activeBadgeId }],
+        OR: [
+          { id: user.activeBadgeId },
+          { walletTransactionId: user.activeBadgeId },
+          { giftId: user.activeBadgeId }
+        ],
         expiresAt: { gt: now }
       }
     });
@@ -85,17 +109,41 @@ export class BadgeService {
     await this.clearActiveBadgeIfInvalid(userId);
 
     const now = new Date();
-    const badges = await (this.prisma as any).userBadge.findMany({
-      where: {
-        userId,
-        expiresAt: { gt: now }
-      },
-      orderBy: { receivedAt: "desc" }
-    });
+    const [persistedBadges, giftTransactions] = await Promise.all([
+      (this.prisma as any).userBadge.findMany({
+        where: {
+          userId,
+          expiresAt: { gt: now }
+        },
+        orderBy: { receivedAt: "desc" }
+      }),
+      this.walletClient.getGiftTransactions(userId).catch(() => [])
+    ]);
+
+    const byTransactionId = new Map<string, any>();
+    for (const badge of persistedBadges) {
+      if (badge.walletTransactionId) {
+        byTransactionId.set(badge.walletTransactionId, badge);
+      }
+    }
+
+    const transactionBadges = giftTransactions
+      .map((transaction) => this.mapTransactionToBadge(transaction, byTransactionId.get(transaction.id)))
+      .filter((badge): badge is UserStickerBadge => Boolean(badge))
+      .filter((badge) => badge.expiresAt > now);
+
+    const transactionIds = new Set(transactionBadges.map((badge) => badge.walletTransactionId).filter(Boolean));
+    const legacyBadges = persistedBadges
+      .filter((badge: any) => !badge.walletTransactionId || !transactionIds.has(badge.walletTransactionId))
+      .map((badge: any) => this.mapBadgeRow(badge));
+
+    const badges = [...transactionBadges, ...legacyBadges].sort(
+      (a, b) => b.receivedAt.getTime() - a.receivedAt.getTime()
+    );
 
     return {
       stickerExpiryDays: this.getStickerExpiryDays(),
-      badges: badges.map((badge: any) => this.mapBadgeRow(badge))
+      badges
     };
   }
 
@@ -111,25 +159,53 @@ export class BadgeService {
       const receivedAt = transaction.createdAt;
       const expiresAt = this.computeExpiresAt(receivedAt);
 
-      if (transaction.id) {
-        const existingByTx = await (this.prisma as any).userBadge.findUnique({
-          where: { walletTransactionId: transaction.id }
-        });
-        if (existingByTx) continue;
-      }
-
-      await (this.prisma as any).userBadge.create({
-        data: {
-          userId,
-          giftId: transaction.giftId,
-          giftName: transaction.giftId,
-          giftEmoji: "🎁",
-          walletTransactionId: transaction.id || null,
-          receivedAt,
-          expiresAt
+      try {
+        if (transaction.id) {
+          const existingByTx = await (this.prisma as any).userBadge.findUnique({
+            where: { walletTransactionId: transaction.id }
+          });
+          if (existingByTx) continue;
         }
-      });
+
+        await (this.prisma as any).userBadge.create({
+          data: {
+            userId,
+            giftId: transaction.giftId,
+            giftName: transaction.giftId,
+            giftEmoji: "🎁",
+            walletTransactionId: transaction.id || null,
+            receivedAt,
+            expiresAt
+          }
+        });
+      } catch {
+        // Listing uses wallet transactions as source of truth; a single sync conflict
+        // should not hide the user's other stickers.
+      }
     }
+  }
+
+  private async ensureBadgeForTransactionId(userId: string, transactionId: string) {
+    const existing = await (this.prisma as any).userBadge.findUnique({
+      where: { walletTransactionId: transactionId }
+    });
+    if (existing) return existing;
+
+    const transactions = await this.walletClient.getGiftTransactions(userId);
+    const transaction = transactions.find((tx) => tx.id === transactionId);
+    if (!transaction?.giftId) return null;
+
+    return (this.prisma as any).userBadge.create({
+      data: {
+        userId,
+        giftId: transaction.giftId,
+        giftName: transaction.giftId,
+        giftEmoji: "🎁",
+        walletTransactionId: transaction.id,
+        receivedAt: transaction.createdAt,
+        expiresAt: this.computeExpiresAt(transaction.createdAt)
+      }
+    });
   }
 
   /**
@@ -145,13 +221,20 @@ export class BadgeService {
     }
 
     const now = new Date();
-    const badge = await (this.prisma as any).userBadge.findFirst({
+    let badge = await (this.prisma as any).userBadge.findFirst({
       where: {
         id: badgeId,
         userId,
         expiresAt: { gt: now }
       }
     });
+
+    if (!badge) {
+      const fromTransaction = await this.ensureBadgeForTransactionId(userId, badgeId);
+      if (fromTransaction?.expiresAt > now) {
+        badge = fromTransaction;
+      }
+    }
 
     if (!badge) {
       throw new BadRequestException(`Sticker ${badgeId} not found or expired`);
@@ -179,7 +262,11 @@ export class BadgeService {
     const badge = await (this.prisma as any).userBadge.findFirst({
       where: {
         userId,
-        OR: [{ id: user.activeBadgeId }, { giftId: user.activeBadgeId }],
+        OR: [
+          { id: user.activeBadgeId },
+          { walletTransactionId: user.activeBadgeId },
+          { giftId: user.activeBadgeId }
+        ],
         expiresAt: { gt: now }
       },
       orderBy: { receivedAt: "desc" }
@@ -200,7 +287,11 @@ export class BadgeService {
     const badge = await (this.prisma as any).userBadge.findFirst({
       where: {
         userId,
-        OR: [{ id: activeBadgeId }, { giftId: activeBadgeId }],
+        OR: [
+          { id: activeBadgeId },
+          { walletTransactionId: activeBadgeId },
+          { giftId: activeBadgeId }
+        ],
         expiresAt: { gt: now }
       },
       orderBy: { receivedAt: "desc" }

@@ -900,9 +900,10 @@ export class FriendController {
 
   /**
    * Active gift catalog for streaming-service (dares, in-call gifts).
-   * GET /internal/gifts
+   * Under /internal/friends/* so production nginx S2S proxy (api.beam.place) routes correctly.
+   * GET /internal/friends/gifts
    */
-  @Get("internal/gifts")
+  @Get("internal/friends/gifts")
   async getInternalGiftCatalog(
     @Headers("x-service-token") serviceToken: string | undefined
   ) {
@@ -921,9 +922,9 @@ export class FriendController {
 
   /**
    * Resolve a single gift by giftId (internal).
-   * GET /internal/gifts/:giftId
+   * GET /internal/friends/gifts/:giftId
    */
-  @Get("internal/gifts/:giftId")
+  @Get("internal/friends/gifts/:giftId")
   async getInternalGift(
     @Headers("x-service-token") serviceToken: string | undefined,
     @Param("giftId") giftId: string

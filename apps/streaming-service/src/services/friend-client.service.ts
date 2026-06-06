@@ -125,14 +125,16 @@ export class FriendClientService {
         return [];
       }
 
-      const response = await fetch(`${this.friendServiceUrl}/internal/gifts`, {
+      const response = await fetch(`${this.friendServiceUrl}/internal/friends/gifts`, {
         method: "GET",
         headers: { "x-service-token": serviceToken }
       });
 
       if (!response.ok) {
         const text = await response.text();
-        this.logger.warn(`Failed to fetch gift catalog: ${response.status} ${text}`);
+        this.logger.warn(
+          `Failed to fetch gift catalog from ${this.friendServiceUrl}/internal/friends/gifts: ${response.status} ${text}`
+        );
         return [];
       }
 
@@ -165,18 +167,19 @@ export class FriendClientService {
     try {
       const serviceToken = process.env.INTERNAL_SERVICE_TOKEN;
       if (!serviceToken) {
+        this.logger.warn("INTERNAL_SERVICE_TOKEN not configured, cannot resolve gift catalog entry");
         return null;
       }
 
-      const response = await fetch(
-        `${this.friendServiceUrl}/internal/gifts/${encodeURIComponent(giftId)}`,
-        {
-          method: "GET",
-          headers: { "x-service-token": serviceToken }
-        }
-      );
+      const url = `${this.friendServiceUrl}/internal/friends/gifts/${encodeURIComponent(giftId)}`;
+      const response = await fetch(url, {
+        method: "GET",
+        headers: { "x-service-token": serviceToken }
+      });
 
       if (!response.ok) {
+        const text = await response.text();
+        this.logger.warn(`Failed to resolve gift ${giftId} from ${url}: ${response.status} ${text}`);
         return null;
       }
 

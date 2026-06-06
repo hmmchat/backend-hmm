@@ -26,7 +26,7 @@
 |----------|---------|
 | `USER_SERVICE_URL` | Base URL of user-service **reachable from the streaming host** (must not be an unroutable IP). |
 | `DISCOVERY_SERVICE_URL` | Same idea; often `https://api.beam.place` when using nginx S2S (below). |
-| `FRIEND_SERVICE_URL` | Friend-service base URL; use `https://api.beam.place` with nginx paths `^~ /internal/friends/`. |
+| `FRIEND_SERVICE_URL` | Friend-service base URL; use `https://api.beam.place` with nginx paths `^~ /internal/friends/` (includes gift catalog at `/internal/friends/gifts`). |
 | `WALLET_SERVICE_URL` | Wallet-service base URL; use `https://api.beam.place` with nginx paths `^~ /test/...`. |
 | `REDIS_URL` | e.g. `redis://<backend-public-ip>:6380` when using the **nginx stream** Redis proxy (below). |
 | `USER_SERVICE_TIMEOUT_MS` | Optional; default 15000. |

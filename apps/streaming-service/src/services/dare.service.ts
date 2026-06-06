@@ -46,7 +46,9 @@ export class DareService {
       };
     }
 
-    throw new NotFoundException(`Gift ${giftId} not found`);
+    throw new NotFoundException(
+      `Gift ${giftId} not found. Ensure friend-service catalog is reachable from streaming-service (FRIEND_SERVICE_URL + INTERNAL_SERVICE_TOKEN).`
+    );
   }
 
   /**

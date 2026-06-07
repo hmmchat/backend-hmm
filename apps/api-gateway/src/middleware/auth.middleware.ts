@@ -97,6 +97,7 @@ export class AuthMiddleware {
       "/discovery-city-options",
       "/moderator-face-card",
       "/music/search",
+      "/payments/purchase/packages",
       "/files/upload" // Some file endpoints might be public
     ];
 

@@ -4,6 +4,7 @@ import {
   Get,
   Body,
   Headers,
+  Param,
   Query,
   HttpException,
   HttpStatus,
@@ -21,6 +22,7 @@ import {
   InitiateRedemptionSchema,
   HistoryQuerySchema
 } from "../dtos/payment.dto.js";
+import { getCoinPackage, getCoinPackages } from "../config/coin-packages.config.js";
 import { verifyToken } from "@hmm/common";
 
 @Controller("v1/payments")
@@ -50,6 +52,35 @@ export class PaymentController {
     const verifyAccess = await verifyToken(publicJwk);
     const payload = await verifyAccess(token);
     return payload.sub;
+  }
+
+  /**
+   * Get buy-coins package catalogue for the frontend modal.
+   * GET /v1/payments/purchase/packages
+   */
+  @Get("purchase/packages")
+  async getCoinPackages() {
+    return {
+      success: true,
+      packages: getCoinPackages()
+    };
+  }
+
+  /**
+   * Get one buy-coins package by id.
+   * GET /v1/payments/purchase/packages/:packageId
+   */
+  @Get("purchase/packages/:packageId")
+  async getCoinPackage(@Param("packageId") packageId: string) {
+    const coinPackage = getCoinPackage(packageId);
+    if (!coinPackage) {
+      throw new HttpException("Coin package not found", HttpStatus.NOT_FOUND);
+    }
+
+    return {
+      success: true,
+      package: coinPackage
+    };
   }
 
   /**

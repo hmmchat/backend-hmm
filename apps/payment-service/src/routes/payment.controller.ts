@@ -22,8 +22,7 @@ import {
   InitiateRedemptionSchema,
   HistoryQuerySchema
 } from "../dtos/payment.dto.js";
-import { getCoinPackage, getCoinPackages } from "../config/coin-packages.config.js";
-import { verifyToken } from "@hmm/common";
+import { getCoinPackage, getCoinPackages, verifyToken } from "@hmm/common";
 
 @Controller("v1/payments")
 export class PaymentController {

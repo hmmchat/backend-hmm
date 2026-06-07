@@ -1,6 +1,7 @@
 import {
   Controller,
   All,
+  Get,
   Req,
   Res,
   Headers,
@@ -14,6 +15,7 @@ import { AggregationService } from "../services/aggregation.service.js";
 import { HealthService } from "../services/health.service.js";
 import { RateLimitService } from "../services/rate-limit.service.js";
 import { AuthMiddleware } from "../middleware/auth.middleware.js";
+import { getCoinPackages } from "@hmm/common";
 import { v4 as uuidv4 } from "uuid";
 
 @Controller()
@@ -133,6 +135,19 @@ export class GatewayController {
       this.logger.error(`[${correlationId}] Homepage error: ${error.message}`);
       throw new HttpException("Failed to fetch homepage data", HttpStatus.INTERNAL_SERVER_ERROR);
     }
+  }
+
+  /**
+   * Read-only buy-coins package catalogue.
+   * Served from the gateway so the display data is available before payment integration is wired up.
+   * GET /v1/payments/purchase/packages
+   */
+  @Get("v1/payments/purchase/packages")
+  async getCoinPackages(@Res() res: FastifyReply) {
+    res.status(200).send({
+      success: true,
+      packages: getCoinPackages()
+    });
   }
 
   /**

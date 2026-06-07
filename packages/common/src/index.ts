@@ -16,6 +16,11 @@ export {
   type PresenceStatus,
   type RestorablePresenceStatus
 } from "./status-rules.js";
+export {
+  getCoinPackage,
+  getCoinPackages,
+  type CoinPackage
+} from "./coin-packages.js";
 
 /* ---------- Types ---------- */
 export type Provider = "google" | "apple" | "facebook" | "phone";

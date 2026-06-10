@@ -63,13 +63,6 @@ export class GenderFilterService {
     return Array.isArray(value) ? value as string[] : [];
   }
 
-  private sameGenderSelection(a: string[], b: string[]): boolean {
-    if (a.length !== b.length) return false;
-    const left = [...a].sort();
-    const right = [...b].sort();
-    return left.every((value, index) => value === right[index]);
-  }
-
   /**
    * Get available gender filters based on user's gender
    */
@@ -271,23 +264,20 @@ export class GenderFilterService {
     const gendersJson = JSON.stringify(gendersToStore);
 
     if (existingPreference) {
-      const existingGenders = this.parseGenders(existingPreference.genders);
+      // A gender pack is generic: while views remain, users can switch the
+      // active paid gender without buying again.
       if (existingPreference.screensRemaining > 0) {
-        if (this.sameGenderSelection(existingGenders, gendersToStore)) {
-          const resumed = await (this.prisma as any).genderFilterPreference.update({
-            where: { userId: userProfile.id },
-            data: { isActive: true }
-          });
-          return {
-            success: true,
-            screensRemaining: resumed.screensRemaining
-          };
-        }
-
-        throw new HttpException(
-          "Finish or exhaust your current gender pack before buying another gender filter.",
-          HttpStatus.CONFLICT
-        );
+        const resumed = await (this.prisma as any).genderFilterPreference.update({
+          where: { userId: userProfile.id },
+          data: {
+            genders: gendersJson,
+            isActive: true
+          }
+        });
+        return {
+          success: true,
+          screensRemaining: resumed.screensRemaining
+        };
       }
 
       // Existing pack exhausted: allow a fresh purchase for any valid gender.
@@ -588,23 +578,20 @@ export class GenderFilterService {
     const gendersJson = JSON.stringify(gendersToStore);
 
     if (existingPreference) {
-      const existingGenders = this.parseGenders(existingPreference.genders);
+      // A gender pack is generic: while views remain, users can switch the
+      // active paid gender without buying again.
       if (existingPreference.screensRemaining > 0) {
-        if (this.sameGenderSelection(existingGenders, gendersToStore)) {
-          const resumed = await (this.prisma as any).genderFilterPreference.update({
-            where: { userId: userProfile.id },
-            data: { isActive: true }
-          });
-          return {
-            success: true,
-            screensRemaining: resumed.screensRemaining
-          };
-        }
-
-        throw new HttpException(
-          "Finish or exhaust your current gender pack before buying another gender filter.",
-          HttpStatus.CONFLICT
-        );
+        const resumed = await (this.prisma as any).genderFilterPreference.update({
+          where: { userId: userProfile.id },
+          data: {
+            genders: gendersJson,
+            isActive: true
+          }
+        });
+        return {
+          success: true,
+          screensRemaining: resumed.screensRemaining
+        };
       }
 
       const updated = await (this.prisma as any).genderFilterPreference.update({

@@ -100,6 +100,10 @@ export const UpdateStatusSchema = z.object({
   status: UserStatusEnum
 });
 
+export const ReportAppPresenceSchema = z.object({
+  active: z.boolean()
+});
+
 // Intent DTO
 export const UpdateIntentSchema = z.object({
   intent: z.string().max(255).nullable() // Increased limit to allow longer bios
@@ -122,6 +126,7 @@ export type UpdateValuesDto = z.infer<typeof UpdateValuesSchema>;
 export type UpdateLocationDto = z.infer<typeof UpdateLocationSchema>;
 export type UpdatePreferredCityDto = z.infer<typeof UpdatePreferredCitySchema>;
 export type UpdateStatusDto = z.infer<typeof UpdateStatusSchema>;
+export type ReportAppPresenceDto = z.infer<typeof ReportAppPresenceSchema>;
 export type UpdateIntentDto = z.infer<typeof UpdateIntentSchema>;
 export type CreateMusicPreferenceDto = z.infer<typeof CreateMusicPreferenceSchema>;
 

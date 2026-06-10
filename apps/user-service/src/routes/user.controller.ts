@@ -24,6 +24,7 @@ import {
   UpdateLocationSchema,
   UpdatePreferredCitySchema,
   UpdateStatusSchema,
+  ReportAppPresenceSchema,
   UpdateIntentSchema,
   CreateMusicPreferenceSchema
 } from "../dtos/profile.dto.js";
@@ -344,6 +345,29 @@ export class UserController {
     return this.userService.updateStatus(token, dto);
   }
 
+  /**
+   * Report app foreground (active: true → ONLINE) or background (active: false → OFFLINE).
+   * POST /me/presence
+   */
+  @Post("me/presence")
+  async reportAppPresence(@Headers("authorization") authz: string, @Body() body: unknown) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    const dto = ReportAppPresenceSchema.parse(body);
+    return this.userService.reportAppPresence(token, dto);
+  }
+
+  /**
+   * Keep presence alive while the user is on the website. Call every ~30–60s.
+   * POST /me/presence/heartbeat
+   */
+  @Post("me/presence/heartbeat")
+  async heartbeatPresence(@Headers("authorization") authz: string) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    return this.userService.heartbeatPresence(token);
+  }
+
   /* ---------- Intent ---------- */
 
   /**
@@ -627,6 +651,35 @@ export class UserController {
       kycExpiresAt: parsed.kycExpiresAt !== undefined ? (parsed.kycExpiresAt ? new Date(parsed.kycExpiresAt) : null) : undefined,
       isModerator: parsed.isModerator
     });
+  }
+
+  /**
+   * Internal: batch effective presence statuses for messaging and other services.
+   * POST /users/internal/status/batch
+   */
+  @Post("users/internal/status/batch")
+  async getEffectiveStatusesBatch(
+    @Headers("x-service-token") serviceToken: string | undefined,
+    @Body() body: unknown
+  ) {
+    const isTestMode = process.env.NODE_ENV === "test" || process.env.TEST_MODE === "true";
+    const expectedToken = process.env.INTERNAL_SERVICE_TOKEN;
+
+    if (!isTestMode) {
+      if (!expectedToken) {
+        throw new HttpException(
+          "Internal service token not configured",
+          HttpStatus.INTERNAL_SERVER_ERROR
+        );
+      }
+      if (serviceToken !== expectedToken) {
+        throw new HttpException("Invalid service token", HttpStatus.UNAUTHORIZED);
+      }
+    }
+
+    const { userIds } = z.object({ userIds: z.array(z.string()).min(1).max(200) }).parse(body ?? {});
+    const statuses = await this.userService.getEffectiveStatusesForUsers(userIds);
+    return { statuses };
   }
 
   /**

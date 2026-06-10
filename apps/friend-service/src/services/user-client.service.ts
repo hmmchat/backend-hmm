@@ -155,4 +155,53 @@ export class UserClientService {
       return { username: null, displayPictureUrl: null };
     }
   }
+
+  /**
+   * Batch effective presence statuses from user-service (respects heartbeat staleness).
+   */
+  async getEffectiveStatuses(userIds: string[]): Promise<Map<string, string>> {
+    const result = new Map<string, string>();
+    if (userIds.length === 0) {
+      return result;
+    }
+
+    const uniqueIds = [...new Set(userIds)];
+
+    try {
+      const response = await fetch(`${this.userServiceUrl}/users/internal/status/batch`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-service-token": process.env.INTERNAL_SERVICE_TOKEN || ""
+        },
+        body: JSON.stringify({ userIds: uniqueIds }),
+        signal: AbortSignal.timeout(5000)
+      });
+
+      if (!response.ok) {
+        this.logger.warn(`Failed to fetch user statuses from user-service: ${response.status}`);
+        for (const userId of uniqueIds) {
+          result.set(userId, "OFFLINE");
+        }
+        return result;
+      }
+
+      const data = (await response.json()) as {
+        statuses?: Record<string, { status?: string }>;
+      };
+
+      for (const userId of uniqueIds) {
+        const status = data.statuses?.[userId]?.status;
+        result.set(userId, status || "OFFLINE");
+      }
+
+      return result;
+    } catch (error: any) {
+      this.logger.warn(`Error fetching user statuses: ${error.message}`);
+      for (const userId of uniqueIds) {
+        result.set(userId, "OFFLINE");
+      }
+      return result;
+    }
+  }
 }

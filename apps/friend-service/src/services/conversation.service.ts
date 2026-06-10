@@ -562,27 +562,12 @@ export class ConversationService {
       unreadCounts.map(uc => [uc.conversationId, uc.count])
     );
 
-    // Get user statuses in parallel
-    const userStatusPromises = uniqueOtherUserIds.map(otherUserId =>
-      this.streamingClient.getUserStatus(otherUserId)
-    );
-
-    // Get full user profile (including username)
-
-    // Get full user profile (including username)
-    // For performance, we'll fetch usernames in a separate batch if needed,
-    // but the getUsersDisplayPictures already partially does this.
-    // Let's use a more comprehensive profile fetch.
-    const fullProfiles = await Promise.all(
-      uniqueOtherUserIds.map(id => this.userClient.getUserProfile(id))
-    );
+    const [userStatusMap, fullProfiles] = await Promise.all([
+      this.streamingClient.getUserStatuses(uniqueOtherUserIds),
+      Promise.all(uniqueOtherUserIds.map((id) => this.userClient.getUserProfile(id)))
+    ]);
     const profileMap = new Map(
       uniqueOtherUserIds.map((id, i) => [id, fullProfiles[i]])
-    );
-
-    const userStatuses = await Promise.all(userStatusPromises);
-    const userStatusMap = new Map(
-      uniqueOtherUserIds.map((id, i) => [id, userStatuses[i]])
     );
 
     // Build response
@@ -794,19 +779,9 @@ export class ConversationService {
       ])
     );
 
-    // Batch fetch user statuses
-    const userStatusPromises = uniqueOtherUserIds.map(otherUserId =>
-      this.streamingClient.getUserStatus(otherUserId).catch(() => ({
-        status: "offline" as const,
-        isBroadcasting: false,
-        roomId: null,
-        broadcastUrl: null
-      }))
-    );
-    const userStatuses = await Promise.all(userStatusPromises);
-    const userStatusMap = new Map(
-      uniqueOtherUserIds.map((id, i) => [id, userStatuses[i]])
-    );
+    const userStatusMap = await this.streamingClient
+      .getUserStatuses(uniqueOtherUserIds)
+      .catch(() => new Map());
 
     // Build conversation-like objects with consistent structure
     const conversations = requestsWithoutMessages.map(({ request, otherUserId, id1, id2 }) => {

@@ -72,7 +72,9 @@ model User {
   values        UserValue[]
   
   // User Status
-  status        UserStatus @default(ONLINE)
+  status        UserStatus @default(OFFLINE)
+  /// Updated by app heartbeat while the user is active on the website/app.
+  lastActiveAt  DateTime?
   
   // Moderation & Flags
   reportCount   Int      @default(0) // Total report score (weighted sum); discovery compares to REPORT_THRESHOLD

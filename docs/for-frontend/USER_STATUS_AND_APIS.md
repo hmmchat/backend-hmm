@@ -13,8 +13,8 @@ Stored on the user profile and returned on **`GET /me`** (field `status`). Valid
 | Value | Typical meaning |
 |-------|-----------------|
 | `AVAILABLE` | In the solo discovery pool (among other “available” states). |
-| `ONLINE` | App / presence signal (also used in squad/offline flows). |
-| `OFFLINE` | Not available for certain flows; used in offline-card pools. |
+| `ONLINE` | User is on the website/app (idle browsing). Shows **green** in messaging when `lastActiveAt` is fresh. |
+| `OFFLINE` | User is **not** on the website/app. Same meaning in OFFLINE cards and messaging (no green dot). |
 | `MATCHED` | Paired with another user for the match flow. |
 | `IN_SQUAD` | In an active call/session as a participant (squad context). |
 | `IN_SQUAD_AVAILABLE` | In/around squad while still eligible for secondary matching (product-specific). |
@@ -52,7 +52,9 @@ Use **`PATCH /me/status` sparingly** for **presence / pool / product toggles**, 
 | Situation | Typical body | Notes |
 |-----------|----------------|--------|
 | User should enter or re-enter the **solo discovery pool** | `{ "status": "AVAILABLE" }` | Pool logic also includes `IN_SQUAD_AVAILABLE` / `IN_BROADCAST_AVAILABLE` in matching—follow product spec. |
-| Product maps **foreground/background** or offline cards to presence | `{ "status": "ONLINE" }` or `{ "status": "OFFLINE" }` | Only if your UX spec ties these enums to client-reported presence. |
+| App opens / user returns to the site | `POST /me/presence` `{ "active": true }` or `PATCH /me/status` `{ "status": "ONLINE" }` | Sets `ONLINE` + updates `lastActiveAt`. |
+| App backgrounds / user leaves the site | `POST /me/presence` `{ "active": false }` or `PATCH /me/status` `{ "status": "OFFLINE" }` | Sets `OFFLINE` when not in a protected flow (`IN_SQUAD`, `MATCHED`, etc.). |
+| While the app is open | `POST /me/presence/heartbeat` every **30–60s** | Keeps `lastActiveAt` fresh; without heartbeat, idle `ONLINE` users become `OFFLINE` after ~2 minutes. |
 | After **`POST /squad/toggle-solo`** | `{ "status": "AVAILABLE" }` (typical) | Squad controller notes that returning to solo may require the client (or discovery) to set status so solo matchmaking works. |
 
 **Anti-patterns:** Using `PATCH` as the primary way to advance match → room → broadcast. That belongs to **discovery + streaming** flows.
@@ -75,6 +77,8 @@ Use **`PATCH /me/status` sparingly** for **presence / pool / product toggles**, 
 |---------------|------|
 | **`GET /me`** | Load or refresh `status` (and profile). |
 | **`PATCH /me/status`** | Only for the **manual** cases in §3. |
+| **`POST /me/presence`** | Foreground/background: `{ "active": true \| false }`. |
+| **`POST /me/presence/heartbeat`** | Keep presence alive while the user is on the site. |
 
 *(Gateway may expose these under `/v1/...`—match your deployment.)*
 

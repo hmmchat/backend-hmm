@@ -17,6 +17,14 @@ export {
   type RestorablePresenceStatus
 } from "./status-rules.js";
 export {
+  PRESENCE_PROTECTED_STATUSES,
+  canTransitionToOnline,
+  canTransitionToOffline,
+  isPresenceStale,
+  resolveEffectivePresenceStatus,
+  mapUserStatusToMessagingPresence
+} from "./presence.js";
+export {
   getCoinPackage,
   getCoinPackages,
   type CoinPackage

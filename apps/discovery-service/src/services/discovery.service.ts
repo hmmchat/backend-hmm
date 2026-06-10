@@ -387,7 +387,8 @@ export class DiscoveryService implements OnModuleInit {
 
       // Decrement gender filter if active
       const genderFilter = await this.genderFilterService.getCurrentPreference(userId);
-      const hasActiveGenderFilter = genderFilter && genderFilter.screensRemaining > 0;
+      const hasActiveGenderFilter =
+        genderFilter && genderFilter.screensRemaining > 0 && (genderFilter.isActive ?? true);
       if (hasActiveGenderFilter) {
         await this.genderFilterService.decrementScreen(userId);
       }
@@ -402,7 +403,8 @@ export class DiscoveryService implements OnModuleInit {
     // User is not matched, find a match using mutual matching
     // Get gender filter preference
     const genderFilter = await this.genderFilterService.getCurrentPreference(userId);
-    const hasActiveGenderFilter = genderFilter && genderFilter.screensRemaining > 0;
+    const hasActiveGenderFilter =
+      genderFilter && genderFilter.screensRemaining > 0 && (genderFilter.isActive ?? true);
 
     // Determine gender filter - ONLY apply when screensRemaining > 0
     let genders: ("MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY")[] | undefined;
@@ -2070,7 +2072,8 @@ export class DiscoveryService implements OnModuleInit {
 
       // Decrement gender filter if active
       const genderFilter = await this.genderFilterService.getCurrentPreference(userId);
-      const hasActiveGenderFilter = genderFilter && genderFilter.screensRemaining > 0;
+      const hasActiveGenderFilter =
+        genderFilter && genderFilter.screensRemaining > 0 && (genderFilter.isActive ?? true);
       if (hasActiveGenderFilter) {
         await this.genderFilterService.decrementScreen(userId);
       }
@@ -2085,7 +2088,8 @@ export class DiscoveryService implements OnModuleInit {
     // User is not matched, find a match using mutual matching
     // Get gender filter preference
     const genderFilter = await this.genderFilterService.getCurrentPreference(userId);
-    const hasActiveGenderFilter = genderFilter && genderFilter.screensRemaining > 0;
+    const hasActiveGenderFilter =
+      genderFilter && genderFilter.screensRemaining > 0 && (genderFilter.isActive ?? true);
 
     // Determine gender filter - ONLY apply when screensRemaining > 0
     let genders: ("MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY")[] | undefined;
@@ -2713,7 +2717,8 @@ export class DiscoveryService implements OnModuleInit {
 
     // Get gender filter preference
     const genderFilter = await this.genderFilterService.getCurrentPreference(userId);
-    const hasActiveGenderFilter = genderFilter && genderFilter.screensRemaining > 0;
+    const hasActiveGenderFilter =
+      genderFilter && genderFilter.screensRemaining > 0 && (genderFilter.isActive ?? true);
 
     // Determine gender filter - ONLY apply when screensRemaining > 0
     let genders: ("MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY")[] | undefined;
@@ -2948,7 +2953,8 @@ export class DiscoveryService implements OnModuleInit {
 
     // Get gender filter preference
     const genderFilter = await this.genderFilterService.getCurrentPreference(userId);
-    const hasActiveGenderFilter = genderFilter && genderFilter.screensRemaining > 0;
+    const hasActiveGenderFilter =
+      genderFilter && genderFilter.screensRemaining > 0 && (genderFilter.isActive ?? true);
 
     // Determine gender filter
     let genders: ("MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY")[] | undefined;

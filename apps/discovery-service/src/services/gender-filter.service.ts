@@ -18,6 +18,7 @@ interface GenderFilterResponse {
   currentPreference?: {
     genders: string[];
     screensRemaining: number;
+    isActive: boolean;
   };
   config?: {
     coinsPerScreen: number;
@@ -48,6 +49,25 @@ export class GenderFilterService {
       coinsPerScreen: typeof coinsPerScreen === "number" ? coinsPerScreen : parseInt(String(coinsPerScreen), 10) || this.defaultCoinsPerScreen,
       screensPerPurchase: typeof screensPerPurchase === "number" ? screensPerPurchase : parseInt(String(screensPerPurchase), 10) || this.defaultScreensPerPurchase
     };
+  }
+
+  private parseGenders(value: unknown): string[] {
+    if (typeof value === "string") {
+      try {
+        const parsed = JSON.parse(value);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    }
+    return Array.isArray(value) ? value as string[] : [];
+  }
+
+  private sameGenderSelection(a: string[], b: string[]): boolean {
+    if (a.length !== b.length) return false;
+    const left = [...a].sort();
+    const right = [...b].sort();
+    return left.every((value, index) => value === right[index]);
   }
 
   /**
@@ -163,19 +183,10 @@ export class GenderFilterService {
 
     // Add current preference if exists
     if (currentPreference) {
-      // genders is stored as JSON, parse it if it's a string
-      let gendersArray: string[];
-      if (typeof currentPreference.genders === 'string') {
-        gendersArray = JSON.parse(currentPreference.genders);
-      } else if (Array.isArray(currentPreference.genders)) {
-        gendersArray = currentPreference.genders as string[];
-      } else {
-        gendersArray = [];
-      }
-      
       response.currentPreference = {
-        genders: gendersArray,
-        screensRemaining: currentPreference.screensRemaining
+        genders: this.parseGenders(currentPreference.genders),
+        screensRemaining: currentPreference.screensRemaining,
+        isActive: currentPreference.isActive ?? true
       };
     }
 
@@ -198,25 +209,31 @@ export class GenderFilterService {
     const userProfile = await this.userClient.getUserProfile(token);
     const userGender = userProfile.gender;
 
-    // Handle "ALL" option (free, default, clears filter)
-    // This is allowed even for PREFER_NOT_TO_SAY users since it's the default state
-    if (selectedGenders.length === 1 && selectedGenders[0] === "ALL") {
-      // Delete existing preference if it exists (clear filter, back to default)
-      const existingPreference = await (this.prisma as any).genderFilterPreference.findUnique({
-        where: { userId: userProfile.id }
-      });
+    const existingPreference = await (this.prisma as any).genderFilterPreference.findUnique({
+      where: { userId: userProfile.id }
+    });
 
+    // Handle "ALL" option (free, default). If a paid pack still has screens,
+    // pause it so the user can resume without paying again.
+    if (selectedGenders.length === 1 && selectedGenders[0] === "ALL") {
       if (existingPreference) {
-        await (this.prisma as any).genderFilterPreference.delete({
-          where: { userId: userProfile.id }
-        });
+        if (existingPreference.screensRemaining > 0) {
+          const paused = await (this.prisma as any).genderFilterPreference.update({
+            where: { userId: userProfile.id },
+            data: { isActive: false }
+          });
+          return {
+            success: true,
+            screensRemaining: paused.screensRemaining
+          };
+        } else {
+          await (this.prisma as any).genderFilterPreference.delete({
+            where: { userId: userProfile.id }
+          });
+        }
       }
 
-      // No wallet deduction, no storage needed - just clear the filter
-      return {
-        success: true
-        // No screensRemaining or newBalance for "ALL" option
-      };
+      return { success: true };
     }
 
     // Rule: PREFER_NOT_TO_SAY users can only use "ALL" option
@@ -249,38 +266,52 @@ export class GenderFilterService {
     const totalCost = config.coinsPerScreen;
     const screens = config.screensPerPurchase;
 
-    // Check balance
-    const balance = await this.walletClient.getBalance(token);
-    if (balance < totalCost) {
-      throw new HttpException(
-        `Insufficient balance. Required: ${totalCost} coins, Available: ${balance} coins`,
-        HttpStatus.BAD_REQUEST
-      );
-    }
-
-    // Deduct coins from wallet
-    const paymentResult = await this.walletClient.deductCoinsForGenderFilter(
-      token,
-      totalCost,
-      screens
-    );
-
-    // Get or create preference
-    const existingPreference = await (this.prisma as any).genderFilterPreference.findUnique({
-      where: { userId: userProfile.id }
-    });
-
     // Store genders as JSON string (exclude "ALL" from storage as it's not a real filter)
     const gendersToStore = selectedGenders.filter(g => g !== "ALL");
     const gendersJson = JSON.stringify(gendersToStore);
 
     if (existingPreference) {
+      const existingGenders = this.parseGenders(existingPreference.genders);
+      if (existingPreference.screensRemaining > 0) {
+        if (this.sameGenderSelection(existingGenders, gendersToStore)) {
+          const resumed = await (this.prisma as any).genderFilterPreference.update({
+            where: { userId: userProfile.id },
+            data: { isActive: true }
+          });
+          return {
+            success: true,
+            screensRemaining: resumed.screensRemaining
+          };
+        }
+
+        throw new HttpException(
+          "Finish or exhaust your current gender pack before buying another gender filter.",
+          HttpStatus.CONFLICT
+        );
+      }
+
+      // Existing pack exhausted: allow a fresh purchase for any valid gender.
+      const balance = await this.walletClient.getBalance(token);
+      if (balance < totalCost) {
+        throw new HttpException(
+          `Insufficient balance. Required: ${totalCost} coins, Available: ${balance} coins`,
+          HttpStatus.BAD_REQUEST
+        );
+      }
+
+      const paymentResult = await this.walletClient.deductCoinsForGenderFilter(
+        token,
+        totalCost,
+        screens
+      );
+
       // Update existing preference
       const updated = await (this.prisma as any).genderFilterPreference.update({
         where: { userId: userProfile.id },
         data: {
           genders: gendersJson,
-          screensRemaining: existingPreference.screensRemaining + screens
+          screensRemaining: screens,
+          isActive: true
         }
       });
 
@@ -290,12 +321,29 @@ export class GenderFilterService {
         newBalance: paymentResult.newBalance
       };
     } else {
+      // Check balance
+      const balance = await this.walletClient.getBalance(token);
+      if (balance < totalCost) {
+        throw new HttpException(
+          `Insufficient balance. Required: ${totalCost} coins, Available: ${balance} coins`,
+          HttpStatus.BAD_REQUEST
+        );
+      }
+
+      // Deduct coins from wallet
+      const paymentResult = await this.walletClient.deductCoinsForGenderFilter(
+        token,
+        totalCost,
+        screens
+      );
+
       // Create new preference
       const created = await (this.prisma as any).genderFilterPreference.create({
         data: {
           userId: userProfile.id,
           genders: gendersJson,
-          screensRemaining: screens
+          screensRemaining: screens,
+          isActive: true
         }
       });
 
@@ -316,11 +364,13 @@ export class GenderFilterService {
         where: { userId }
       });
 
-      if (preference && preference.screensRemaining > 0) {
+      if (preference && preference.screensRemaining > 0 && (preference.isActive ?? true)) {
+        const nextScreensRemaining = Math.max(0, preference.screensRemaining - 1);
         await (this.prisma as any).genderFilterPreference.update({
           where: { userId },
           data: {
-            screensRemaining: preference.screensRemaining - 1
+            screensRemaining: nextScreensRemaining,
+            ...(nextScreensRemaining === 0 ? { isActive: false } : {})
           }
         });
       }
@@ -461,18 +511,10 @@ export class GenderFilterService {
 
     // Add current preference if exists
     if (currentPreference) {
-      let gendersArray: string[];
-      if (typeof currentPreference.genders === 'string') {
-        gendersArray = JSON.parse(currentPreference.genders);
-      } else if (Array.isArray(currentPreference.genders)) {
-        gendersArray = currentPreference.genders as string[];
-      } else {
-        gendersArray = [];
-      }
-      
       response.currentPreference = {
-        genders: gendersArray,
-        screensRemaining: currentPreference.screensRemaining
+        genders: this.parseGenders(currentPreference.genders),
+        screensRemaining: currentPreference.screensRemaining,
+        isActive: currentPreference.isActive ?? true
       };
     }
 
@@ -495,16 +537,24 @@ export class GenderFilterService {
     const userProfile = await this.userClient.getUserProfileById(userId);
     const userGender = userProfile.gender;
 
-    // Handle "ALL" option (free, default, clears filter)
-    if (selectedGenders.length === 1 && selectedGenders[0] === "ALL") {
-      const existingPreference = await (this.prisma as any).genderFilterPreference.findUnique({
-        where: { userId: userProfile.id }
-      });
+    const existingPreference = await (this.prisma as any).genderFilterPreference.findUnique({
+      where: { userId: userProfile.id }
+    });
 
+    // Handle "ALL" option (free, default). Pause any unexhausted pack.
+    if (selectedGenders.length === 1 && selectedGenders[0] === "ALL") {
       if (existingPreference) {
-        await (this.prisma as any).genderFilterPreference.delete({
-          where: { userId: userProfile.id }
-        });
+        if (existingPreference.screensRemaining > 0) {
+          const paused = await (this.prisma as any).genderFilterPreference.update({
+            where: { userId: userProfile.id },
+            data: { isActive: false }
+          });
+          return { success: true, screensRemaining: paused.screensRemaining };
+        } else {
+          await (this.prisma as any).genderFilterPreference.delete({
+            where: { userId: userProfile.id }
+          });
+        }
       }
 
       return { success: true };
@@ -534,20 +584,35 @@ export class GenderFilterService {
     const config = await this.getConfig();
     const screens = config.screensPerPurchase;
 
-    // Get or create preference (TEST MODE: No wallet deduction)
-    const existingPreference = await (this.prisma as any).genderFilterPreference.findUnique({
-      where: { userId: userProfile.id }
-    });
-
     const gendersToStore = selectedGenders.filter(g => g !== "ALL");
     const gendersJson = JSON.stringify(gendersToStore);
 
     if (existingPreference) {
+      const existingGenders = this.parseGenders(existingPreference.genders);
+      if (existingPreference.screensRemaining > 0) {
+        if (this.sameGenderSelection(existingGenders, gendersToStore)) {
+          const resumed = await (this.prisma as any).genderFilterPreference.update({
+            where: { userId: userProfile.id },
+            data: { isActive: true }
+          });
+          return {
+            success: true,
+            screensRemaining: resumed.screensRemaining
+          };
+        }
+
+        throw new HttpException(
+          "Finish or exhaust your current gender pack before buying another gender filter.",
+          HttpStatus.CONFLICT
+        );
+      }
+
       const updated = await (this.prisma as any).genderFilterPreference.update({
         where: { userId: userProfile.id },
         data: {
           genders: gendersJson,
-          screensRemaining: existingPreference.screensRemaining + screens
+          screensRemaining: screens,
+          isActive: true
         }
       });
 
@@ -560,7 +625,8 @@ export class GenderFilterService {
         data: {
           userId: userProfile.id,
           genders: gendersJson,
-          screensRemaining: screens
+          screensRemaining: screens,
+          isActive: true
         }
       });
 

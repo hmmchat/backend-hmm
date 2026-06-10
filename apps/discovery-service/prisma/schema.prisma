@@ -22,6 +22,7 @@ model GenderFilterPreference {
   userId           String    @unique
   genders          Json // Array of Gender enum values: ["MALE", "FEMALE", "NON_BINARY"] (stored as JSON)
   screensRemaining Int       @default(0) // Number of screens remaining for this filter
+  isActive         Boolean   @default(true) // False when user selects ALL to pause an unexhausted pack
   expiresAt        DateTime? // When the filter expires (if applicable)
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt

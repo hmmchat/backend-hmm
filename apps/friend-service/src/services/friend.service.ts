@@ -96,18 +96,36 @@ export class FriendService {
       }
     }
 
-    // Create request with 30-day expiry
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + this.REQUEST_EXPIRY_DAYS);
 
-    const request = await this.prisma.friendRequest.create({
-      data: {
-        fromUserId,
-        toUserId,
-        message: message || null,
-        expiresAt
+    // Reuse a cancelled/rejected request in the same direction (e.g. after unfriend)
+    const staleRequest = await this.prisma.friendRequest.findUnique({
+      where: {
+        fromUserId_toUserId: { fromUserId, toUserId }
       }
     });
+
+    const request =
+      staleRequest && ["CANCELLED", "REJECTED"].includes(staleRequest.status)
+        ? await this.prisma.friendRequest.update({
+            where: { id: staleRequest.id },
+            data: {
+              status: "PENDING",
+              message: message || null,
+              expiresAt,
+              acceptedAt: null,
+              rejectedAt: null
+            }
+          })
+        : await this.prisma.friendRequest.create({
+            data: {
+              fromUserId,
+              toUserId,
+              message: message || null,
+              expiresAt
+            }
+          });
 
     this.logger.log(`Friend request sent from ${fromUserId} to ${toUserId}`);
     this.metrics.incrementFriendRequestSent(false);
@@ -1383,12 +1401,12 @@ export class FriendService {
       throw new BadRequestException("Cannot block yourself");
     }
 
-    // Update any pending requests to BLOCKED
+    // Update any pending or accepted requests to BLOCKED
     await this.prisma.friendRequest.updateMany({
       where: {
         OR: [
-          { fromUserId, toUserId, status: "PENDING" },
-          { fromUserId: toUserId, toUserId: fromUserId, status: "PENDING" }
+          { fromUserId, toUserId, status: { in: ["PENDING", "ACCEPTED"] } },
+          { fromUserId: toUserId, toUserId: fromUserId, status: { in: ["PENDING", "ACCEPTED"] } }
         ]
       },
       data: {
@@ -1521,6 +1539,22 @@ export class FriendService {
     await this.invalidateFriendshipCache(userId1, userId2);
   }
 
+  private async cancelAcceptedFriendRequests(userId1: string, userId2: string): Promise<void> {
+    await this.prisma.friendRequest.updateMany({
+      where: {
+        OR: [
+          { fromUserId: userId1, toUserId: userId2 },
+          { fromUserId: userId2, toUserId: userId1 }
+        ],
+        status: "ACCEPTED"
+      },
+      data: {
+        status: "CANCELLED",
+        acceptedAt: null
+      }
+    });
+  }
+
   /**
    * Auto-create friendship (internal - for external users accepting squad invites)
    */
@@ -1575,8 +1609,9 @@ export class FriendService {
       throw new BadRequestException("Users are not friends");
     }
 
-    // Remove friendship
+    // Remove friendship and clear accepted request history so users can re-request
     await this.removeFriendship(userId, friendId);
+    await this.cancelAcceptedFriendRequests(userId, friendId);
 
     this.metrics.incrementFriendshipRemoved();
     this.logger.log(`User ${userId} unfriended ${friendId}`);

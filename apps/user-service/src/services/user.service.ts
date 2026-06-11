@@ -7,14 +7,7 @@ import { BrandService } from "./brand.service.js";
 import { WalletClientService } from "./wallet-client.service.js";
 import { AuthClientService } from "./auth-client.service.js";
 import { DiscoveryClientService } from "./discovery-client.service.js";
-import {
-  verifyToken,
-  AccessPayload,
-  PREFERRED_CITY_ANYWHERE_IN_INDIA,
-  canTransitionToOnline,
-  canTransitionToOffline,
-  resolveEffectivePresenceStatus
-} from "@hmm/common";
+import { verifyToken, AccessPayload, PREFERRED_CITY_ANYWHERE_IN_INDIA } from "@hmm/common";
 import { JWK } from "jose";
 import {
   CreateProfileDto,
@@ -26,7 +19,6 @@ import {
   UpdateLocationDto,
   UpdatePreferredCityDto,
   UpdateStatusDto,
-  ReportAppPresenceDto,
   UpdateIntentDto,
   CreateMusicPreferenceDto
 } from "../dtos/profile.dto.js";
@@ -1417,14 +1409,6 @@ export class UserService implements OnModuleInit {
 
   /* ---------- Status ---------- */
 
-  private getPresenceStaleMs(): number {
-    const seconds = parseInt(process.env.PRESENCE_STALE_SECONDS || "120", 10);
-    if (Number.isNaN(seconds) || seconds < 30) {
-      return 120_000;
-    }
-    return seconds * 1000;
-  }
-
   async updateStatus(accessToken: string, data: UpdateStatusDto) {
     const userId = await this.verifyAccessToken(accessToken);
 
@@ -1438,47 +1422,8 @@ export class UserService implements OnModuleInit {
       }
     }
 
-    const existing = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { status: true }
-    });
-    if (!existing) {
-      throw new HttpException("User not found", HttpStatus.NOT_FOUND);
-    }
-
-    const currentStatus = String(existing.status || "OFFLINE");
-
-    if (data.status === "ONLINE") {
-      if (!canTransitionToOnline(currentStatus)) {
-        throw new HttpException(
-          `Cannot set ONLINE while status is ${currentStatus}`,
-          HttpStatus.CONFLICT
-        );
-      }
-      const user = await this.prisma.user.update({
-        where: { id: userId },
-        data: {
-          status: "ONLINE" as UserStatus,
-          lastActiveAt: new Date()
-        }
-      });
-      return { user };
-    }
-
-    if (data.status === "OFFLINE") {
-      if (!canTransitionToOffline(currentStatus)) {
-        throw new HttpException(
-          `Cannot set OFFLINE while status is ${currentStatus}`,
-          HttpStatus.CONFLICT
-        );
-      }
-      const user = await this.prisma.user.update({
-        where: { id: userId },
-        data: {
-          status: "OFFLINE" as UserStatus
-        }
-      });
-      return { user };
+    if (data.status === "ONLINE" || data.status === "OFFLINE") {
+      // Best-effort: discovery session/end is invoked by the client; no hard dependency here.
     }
 
     const user = await this.prisma.user.update({
@@ -1490,141 +1435,6 @@ export class UserService implements OnModuleInit {
     });
 
     return { user };
-  }
-
-  /**
-   * App foreground/background signal. Sets ONLINE when active, OFFLINE when inactive.
-   */
-  async reportAppPresence(accessToken: string, data: ReportAppPresenceDto) {
-    const userId = await this.verifyAccessToken(accessToken);
-    const existing = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { status: true }
-    });
-    if (!existing) {
-      throw new HttpException("User not found", HttpStatus.NOT_FOUND);
-    }
-
-    const currentStatus = String(existing.status || "OFFLINE");
-    const now = new Date();
-
-    if (data.active) {
-      if (!canTransitionToOnline(currentStatus)) {
-        const user = await this.prisma.user.update({
-          where: { id: userId },
-          data: { lastActiveAt: now }
-        });
-        return { user, applied: false };
-      }
-
-      const user = await this.prisma.user.update({
-        where: { id: userId },
-        data: {
-          status: "ONLINE" as UserStatus,
-          lastActiveAt: now
-        }
-      });
-      return { user, applied: true };
-    }
-
-    if (!canTransitionToOffline(currentStatus)) {
-      return { user: existing, applied: false };
-    }
-
-    const user = await this.prisma.user.update({
-      where: { id: userId },
-      data: {
-        status: "OFFLINE" as UserStatus
-      }
-    });
-    return { user, applied: true };
-  }
-
-  /**
-   * Keep the user ONLINE while the app is open. Call every ~30–60s from the client.
-   */
-  async heartbeatPresence(accessToken: string) {
-    const userId = await this.verifyAccessToken(accessToken);
-    const existing = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { status: true }
-    });
-    if (!existing) {
-      throw new HttpException("User not found", HttpStatus.NOT_FOUND);
-    }
-
-    const currentStatus = String(existing.status || "OFFLINE");
-    const now = new Date();
-    const data: { lastActiveAt: Date; status?: UserStatus } = { lastActiveAt: now };
-
-    if (canTransitionToOnline(currentStatus) && currentStatus === "OFFLINE") {
-      data.status = "ONLINE";
-    }
-
-    const user = await this.prisma.user.update({
-      where: { id: userId },
-      data
-    });
-
-    return {
-      status: user.status,
-      lastActiveAt: user.lastActiveAt
-    };
-  }
-
-  async getEffectiveStatusesForUsers(
-    userIds: string[]
-  ): Promise<Record<string, { status: string; lastActiveAt: string | null }>> {
-    if (userIds.length === 0) {
-      return {};
-    }
-
-    const uniqueIds = [...new Set(userIds)];
-    const staleMs = this.getPresenceStaleMs();
-    const users = await this.prisma.user.findMany({
-      where: { id: { in: uniqueIds } },
-      select: { id: true, status: true, lastActiveAt: true }
-    });
-
-    const result: Record<string, { status: string; lastActiveAt: string | null }> = {};
-    const staleUserIds: string[] = [];
-
-    for (const user of users) {
-      const storedStatus = String(user.status || "OFFLINE");
-      const effectiveStatus = resolveEffectivePresenceStatus(
-        storedStatus,
-        user.lastActiveAt,
-        staleMs
-      );
-      result[user.id] = {
-        status: effectiveStatus,
-        lastActiveAt: user.lastActiveAt ? user.lastActiveAt.toISOString() : null
-      };
-
-      if (
-        effectiveStatus === "OFFLINE" &&
-        storedStatus !== "OFFLINE" &&
-        canTransitionToOffline(storedStatus)
-      ) {
-        staleUserIds.push(user.id);
-      }
-    }
-
-    if (staleUserIds.length > 0) {
-      void this.prisma.user
-        .updateMany({
-          where: {
-            id: { in: staleUserIds },
-            status: { in: ["ONLINE", "VIEWER"] as UserStatus[] }
-          },
-          data: { status: "OFFLINE" as UserStatus }
-        })
-        .catch((error) => {
-          console.error("[UserService] Failed to mark stale users OFFLINE:", error?.message || error);
-        });
-    }
-
-    return result;
   }
 
   /* ---------- Intent ---------- */

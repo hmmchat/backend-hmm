@@ -2064,13 +2064,13 @@ export class UserService implements OnModuleInit {
   /**
    * Get cities with maximum available users
    * Returns cities sorted by available user count (descending)
-   * Counts users with any available status: AVAILABLE, IN_SQUAD_AVAILABLE, IN_BROADCAST_AVAILABLE
+   * Counts users who are active in discovery, squads, broadcast, or Beam TV.
    */
   async getCitiesWithMaxUsers(
     limit?: number
   ): Promise<Array<{ city: string; availableCount: number }>> {
     const l = limit ?? CITIES_MAX_USERS_DEFAULT_LIMIT;
-    // Query to get cities with available user counts (all available statuses)
+    // Query to get cities with active/chatting user counts.
     const cities = await this.prisma.$queryRaw<Array<{ city: string; count: bigint }>>`
       SELECT 
         "preferredCity" as city,
@@ -2080,7 +2080,7 @@ export class UserService implements OnModuleInit {
         AND "preferredCity" != ''
         AND "preferredCity" <> ${PREFERRED_CITY_ANYWHERE_IN_INDIA}
         AND "profileCompleted" = true
-        AND status IN ('AVAILABLE', 'IN_SQUAD_AVAILABLE', 'IN_BROADCAST_AVAILABLE')
+        AND status IN ('AVAILABLE', 'IN_SQUAD', 'IN_SQUAD_AVAILABLE', 'IN_BROADCAST', 'IN_BROADCAST_AVAILABLE', 'VIEWER')
       GROUP BY "preferredCity"
       ORDER BY count DESC
       LIMIT ${l}
@@ -2103,7 +2103,7 @@ export class UserService implements OnModuleInit {
       FROM users
       WHERE ("preferredCity" IS NULL OR "preferredCity" = ${PREFERRED_CITY_ANYWHERE_IN_INDIA})
         AND "profileCompleted" = true
-        AND status IN ('AVAILABLE', 'IN_SQUAD_AVAILABLE', 'IN_BROADCAST_AVAILABLE')
+        AND status IN ('AVAILABLE', 'IN_SQUAD', 'IN_SQUAD_AVAILABLE', 'IN_BROADCAST', 'IN_BROADCAST_AVAILABLE', 'VIEWER')
     `;
     return Number(result[0]?.count || 0);
   }

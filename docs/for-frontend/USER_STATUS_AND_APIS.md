@@ -75,12 +75,12 @@ Use **`PATCH /me/status` sparingly** for **presence / pool / product toggles**, 
 
 | Method & path | When |
 |---------------|------|
-| **`GET /me`** | Load or refresh `status` (and profile). |
+| **`GET /me`** | Load or refresh `status`, `lastActiveAt`, and profile. Optional `?fields=status,lastActiveAt,...`. |
 | **`PATCH /me/status`** | Only for the **manual** cases in §3. |
-| **`POST /me/presence`** | Foreground/background: `{ "active": true \| false }`. |
-| **`POST /me/presence/heartbeat`** | Keep presence alive while the user is on the site. |
+| **`POST /me/presence`** | Foreground/background: `{ "active": true \| false }`. Updates `lastActiveAt` when active. |
+| **`POST /me/presence/heartbeat`** | Keep presence alive while the user is on the site (every 30–60s). |
 
-*(Gateway may expose these under `/v1/...`—match your deployment.)*
+Gateway paths: `/v1/me`, `/v1/me/status`, `/v1/me/presence`, `/v1/me/presence/heartbeat`. Full user-service route list: **[API_REFERENCE.md](./API_REFERENCE.md)**.
 
 ### 5.2 Discovery-service (`/discovery/...`)
 
@@ -150,4 +150,4 @@ Use for **in-call** behavior: **`join-room`**, **`leave-room`**, **`start-broadc
 
 ## 8. Doc maintenance
 
-**Profile `status`** (`GET /me`) must match **`UserStatusEnum`** in user-service. **`FRONTEND_INTEGRATION.md`** is kept aligned with this file. **`history`** participant `userStatus` (`SQUAD` / `BROADCAST` / `DROP_IN`) is a **separate** history-API label—do not mix it with `UserStatus`.
+**Profile `status`** (`GET /me`) must match **`UserStatusEnum`** in user-service. **`FRONTEND_INTEGRATION.md`** and **`API_REFERENCE.md`** are kept aligned with this file. **`history`** participant `userStatus` (`SQUAD` / `BROADCAST` / `DROP_IN`) is a **separate** history-API label—do not mix it with `UserStatus`.

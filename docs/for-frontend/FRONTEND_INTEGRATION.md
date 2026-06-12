@@ -2,7 +2,11 @@
 
 Complete API integration guide for all backend services. This document covers every use case and endpoint you'll need to build the frontend.
 
-> **Supplementary:** For **`UserStatus`**, which transitions the **backend** sets vs **`PATCH /me/status`**, and a **checklist of discovery / squad / streaming APIs**, see **[USER_STATUS_AND_APIS.md](./USER_STATUS_AND_APIS.md)**.
+> **Complete endpoint index:** Every frontend-facing route (audited against controllers) is listed in **[API_REFERENCE.md](./API_REFERENCE.md)**. Use this guide for flows, examples, and behavior; use the reference when you need to confirm a path exists.
+>
+> **Supplementary:** For **`UserStatus`**, presence (`lastActiveAt`), which transitions the **backend** sets vs **`PATCH /me/status`**, see **[USER_STATUS_AND_APIS.md](./USER_STATUS_AND_APIS.md)**.
+>
+> **Focused guides:** [DISCOVERY_LOCATION_CARDS.md](./DISCOVERY_LOCATION_CARDS.md) (LOCATION promos), [OFFLINE_CARDS.md](./OFFLINE_CARDS.md), [PULL_STRANGER.md](./PULL_STRANGER.md).
 
 ## 📚 Table of Contents
 
@@ -10,14 +14,18 @@ Complete API integration guide for all backend services. This document covers ev
 2. [Authentication & User Onboarding](#authentication--user-onboarding)
 3. [User Profile Management](#user-profile-management)
 4. [Discovery & Matching](#discovery--matching)
-5. [Streaming & Video Calls](#streaming--video-calls) — incl. [History](#7-history-call-history-section), [Favourites](#10-favourites-mark-participants--favourite-section)
-6. [Friends & Messaging](#friends--messaging)
-7. [Wallet & Payments](#wallet--payments)
-8. [File Uploads](#file-uploads)
-9. [Ads & Rewards](#ads--rewards)
-10. [Error Handling](#error-handling)
+5. [Squad](#squad)
+6. [HMM TV / Broadcast Feed](#hmm-tv--broadcast-feed)
+7. [Streaming & Video Calls](#streaming--video-calls) — incl. [History](#7-history-call-history-section), [Favourites](#10-favourites-mark-participants--favourite-section), [Dares](#11-in-call-dares), [Waitlist](#12-broadcast-waitlist)
+8. [Friends & Messaging](#friends--messaging)
+9. [Wallet & Payments](#wallet--payments)
+10. [File Uploads](#file-uploads)
+11. [Ads & Rewards](#ads--rewards)
+12. [Homepage & Badges](#homepage--badges)
+13. [Error Handling](#error-handling)
+14. [Complete API Index](#complete-api-index)
 
-**Also:** [User status & APIs](./USER_STATUS_AND_APIS.md) — `UserStatus` enum, backend vs manual status updates, API checklist.
+**Also:** [API_REFERENCE.md](./API_REFERENCE.md) — exhaustive route table · [USER_STATUS_AND_APIS.md](./USER_STATUS_AND_APIS.md) — status & presence
 
 ---
 
@@ -234,50 +242,25 @@ const handleGoogleSignIn = async (credentialResponse) => {
 }
 ```
 
-### 7. Get User Info (Auth Service)
+### 7. Account Status (Auth Service)
 
-**Endpoint:** `GET /auth/me`
+**Endpoint:** `GET /v1/auth/me/status`
 
 **Headers:** `Authorization: Bearer {accessToken}`
 
-**Response:**
-```json
-{
-  "user": {
-    "id": "string",
-    "email": "string | null",
-    "name": "string | null",
-    "phone": "string | null",
-    "photoUrl": "string | null",
-    "acceptedTerms": true,
-    "acceptedTermsVer": "string",
-    "preferences": {
-      "videoEnabled": "boolean",
-      "meetMode": "string (location | video | both)",
-      "location": {
-        "lat": "number",
-        "lng": "number"
-      } | null
-    }
-  }
-}
-```
+**Response:** Auth **account** state (e.g. `ACTIVE`, `SUSPENDED`, `BANNED`, `DEACTIVATED`) — **not** the same as profile `UserStatus` on `GET /v1/me`.
 
-### 8. Update Preferences (Auth Service)
+### 8. Account Management (Auth Service)
 
-**Endpoint:** `PATCH /auth/me/preferences`
+| Action | Method & path | Notes |
+|--------|---------------|-------|
+| Deactivate account | `POST /v1/auth/me/deactivate` | User-initiated; blocks login until reactivated |
+| Reactivate account | `POST /v1/auth/me/reactivate` | Restores a deactivated account |
+| Delete account | `DELETE /v1/auth/me` | Soft delete; data purged per retention policy |
 
-**Request:**
-```json
-{
-  "videoEnabled": "boolean (optional)",
-  "meetMode": "string (optional: location | video | both)",
-  "location": {
-    "lat": "number",
-    "lng": "number"
-  } | null (optional)
-}
-```
+All require `Authorization: Bearer {accessToken}`. After delete/deactivate, clear local tokens.
+
+**Profile & preferences** (username, `videoEnabled`, location, etc.) live on **user-service** — use `GET /v1/me`, `PATCH /v1/me/profile`, `PATCH /v1/me/location` (see [User Profile Management](#user-profile-management)).
 
 ### 9. Referral Overview (Referral Screen)
 
@@ -426,6 +409,7 @@ GET /users/{userId}?fields=username,photos,brandPreferences
     "interests": [...],
     "values": [...],
     "status": "ONLINE",
+    "lastActiveAt": "2026-06-10T12:00:00.000Z",
     "intent": "string",
     "latitude": 0,
     "longitude": 0,
@@ -440,7 +424,7 @@ GET /users/{userId}?fields=username,photos,brandPreferences
 }
 ```
 
-`user.status` is the **`UserStatus`** enum from user-service (`AVAILABLE`, `ONLINE`, `OFFLINE`, `MATCHED`, `IN_SQUAD`, `IN_SQUAD_AVAILABLE`, `IN_BROADCAST`, `IN_BROADCAST_AVAILABLE`, `VIEWER`). See **[USER_STATUS_AND_APIS.md](./USER_STATUS_AND_APIS.md)**. New profiles often default to **`ONLINE`** until flows change it.
+`user.status` is the **`UserStatus`** enum from user-service (`AVAILABLE`, `ONLINE`, `OFFLINE`, `MATCHED`, `IN_SQUAD`, `IN_SQUAD_AVAILABLE`, `IN_BROADCAST`, `IN_BROADCAST_AVAILABLE`, `VIEWER`). `user.lastActiveAt` is updated by presence APIs; idle `ONLINE` users are treated as `OFFLINE` after ~2 minutes without heartbeat. See **[USER_STATUS_AND_APIS.md](./USER_STATUS_AND_APIS.md)**. New profiles often default to **`ONLINE`** until flows change it.
 
 ### 3. Get Profile Completion
 
@@ -727,11 +711,51 @@ Search uses **Brandfetch** first. If Brandfetch is unavailable or returns nothin
 }
 ```
 
-### 10. Location & Status
+### 10. Preferred City & Discovery City Catalog
+
+#### List Active Discovery City Options
+
+**Endpoint:** `GET /v1/discovery-city-options/active`
+
+Public catalog for onboarding / profile city picker (same `value` strings as `PATCH /v1/me/preferred-city`). See also **[DISCOVERY_LOCATION_CARDS.md](./DISCOVERY_LOCATION_CARDS.md)**.
+
+#### Update Preferred City (Profile)
+
+**Endpoint:** `PATCH /v1/me/preferred-city`
+
+**Request:**
+```json
+{
+  "preferredCity": "Mumbai"
+}
+```
+
+Use catalog `value` from `discovery-city-options`, or `ANYWHERE_IN_INDIA` for the global pool.
+
+**Alternative (discovery location service):** `GET /v1/location/preference`, `PATCH /v1/location/preference` with `{ "city": "Mumbai" }`.
+
+### 11. Horoscope & Zodiac
+
+| Method & path | Purpose |
+|---------------|---------|
+| `GET /v1/zodiacs` | List zodiac options for profile picker |
+| `PATCH /v1/me/zodiac` | Set authenticated user's zodiac (`{ "zodiacId": "..." }`) |
+| `GET /v1/me/horoscope` | Own horoscope |
+| `GET /v1/users/:userId/horoscope` | Public horoscope for a user |
+
+### 12. Presence & Status
+
+See **[USER_STATUS_AND_APIS.md](./USER_STATUS_AND_APIS.md)** for when to use each call.
+
+| Method & path | Body | Purpose |
+|---------------|------|---------|
+| `POST /v1/me/presence` | `{ "active": true \| false }` | App foreground → `ONLINE`; background → `OFFLINE` (when allowed) |
+| `POST /v1/me/presence/heartbeat` | (none) | Keep `lastActiveAt` fresh every **30–60s** while app is open |
+| `PATCH /v1/me/status` | `{ "status": "<UserStatus>" }` | Coarse pool/presence toggles only — not match/room lifecycle |
 
 #### Update Location
 
-**Endpoint:** `PATCH /me/location`
+**Endpoint:** `PATCH /v1/me/location`
 
 **Request:**
 ```json
@@ -743,7 +767,7 @@ Search uses **Brandfetch** first. If Brandfetch is unavailable or returns nothin
 
 #### Update Status
 
-**Endpoint:** `PATCH /me/status`
+**Endpoint:** `PATCH /v1/me/status`
 
 **Request:** body must use the **user-service `UserStatus` enum** (single string):
 
@@ -1021,56 +1045,36 @@ Search uses **Brandfetch** first. If Brandfetch is unavailable or returns nothin
 
 **Use Case:** When user has exhausted all matches in current city, show suggested cities.
 
-### 7. Location Services
+### 7. Discovery Session Lifecycle
 
-#### Get Cities
+Call while the user is actively in the solo discovery pool:
 
-**Endpoint:** `GET /discovery/cities`
+| Method & path | Body | Purpose |
+|---------------|------|---------|
+| `POST /v1/discovery/session/enter` | `{ "sessionId": "..." }` | Enter pool atomically (session + `AVAILABLE`) |
+| `POST /v1/discovery/session/heartbeat` | `{ "sessionId": "..." }` | Keep session alive while searching |
+| `POST /v1/discovery/session/end` | (none) | Leave pool / cancel search |
 
-**Response:**
-```json
-{
-  "cities": [
-    {
-      "name": "Mumbai",
-      "state": "Maharashtra",
-      "country": "India"
-    }
-  ]
-}
-```
+### 8. Meet RN Waiting Messages
 
-#### Search Cities
+| Method & path | Purpose |
+|---------------|---------|
+| `GET /v1/discovery/meet-rn/waiting-message` | Single random subtext for “waiting for response” UI |
+| `GET /v1/discovery/meet-rn/waiting-messages` | All active subtexts for client-side rotation |
 
-**Endpoint:** `GET /discovery/cities/search?q={query}`
+### 9. Location Services
 
-#### Get Location Preference
+Paths are under **`/v1/location/*`** (discovery-service), not `/discovery/cities`.
 
-**Endpoint:** `GET /discovery/location-preference`
+| Method & path | Purpose |
+|---------------|---------|
+| `GET /v1/location/cities?limit=20` | Cities with most users |
+| `GET /v1/location/search?q={query}&limit=20` | Search cities by name |
+| `POST /v1/location/locate-me` | `{ "latitude", "longitude" }` → resolved city name |
+| `GET /v1/location/preference` | Authenticated user's preferred city |
+| `PATCH /v1/location/preference` | `{ "city": "Mumbai" }` — update preferred city |
 
-**Response:**
-```json
-{
-  "city": "Mumbai",
-  "latitude": 19.0760,
-  "longitude": 72.8777
-}
-```
-
-#### Update Location Preference
-
-**Endpoint:** `POST /discovery/location-preference`
-
-**Request:**
-```json
-{
-  "city": "Mumbai",
-  "latitude": 19.0760,
-  "longitude": 72.8777
-}
-```
-
-### 8. Gender Filters
+### 10. Gender Filters
 
 #### Get Gender Filter Status
 
@@ -1097,6 +1101,73 @@ Search uses **Brandfetch** first. If Brandfetch is unavailable or returns nothin
 ```
 
 **Use Case:** User purchases and activates gender filter to see specific genders.
+
+**Wallet:** Coin deduction for gender filter uses `POST /v1/wallet/me/transactions/gender-filter` with `{ "amount", "screens" }`.
+
+### 11. Offline Cards
+
+See **[OFFLINE_CARDS.md](./OFFLINE_CARDS.md)** for full behavior.
+
+| Method & path | Purpose |
+|---------------|---------|
+| `GET /v1/discovery/offline-cards/card` | Next OFFLINE card |
+| `POST /v1/discovery/offline-cards/raincheck` | Pass on offline card |
+| `POST /v1/friends/me/friends/offline-cards/request` | Send friend request from offline card |
+| `POST /v1/streaming/offline-cards/gifts` | Send gift on offline card |
+
+---
+
+## Squad
+
+Gateway prefix: `/v1/squad`. See **[USER_STATUS_AND_APIS.md](./USER_STATUS_AND_APIS.md)** for status side effects.
+
+| Method & path | Purpose |
+|---------------|---------|
+| `POST /v1/squad/invite` | Invite friend to squad |
+| `POST /v1/squad/invite-external` | Invite via external link |
+| `POST /v1/squad/invitations/:inviteId/accept` | Accept invite |
+| `POST /v1/squad/invitations/:inviteId/reject` | Reject invite |
+| `POST /v1/squad/invitations/cancel` | Cancel outgoing invite |
+| `GET /v1/squad/invitations/pending` | Outgoing pending invites |
+| `GET /v1/squad/invitations/pending/lobby` | Pending invites for current lobby |
+| `GET /v1/squad/invitations/received` | Incoming invites |
+| `GET /v1/squad/join/:token` | Resolve external invite token |
+| `GET /v1/squad/lobby` | Current lobby (host view) |
+| `GET /v1/squad/lobby/membership` | Lobby as host **or** member (joiner polling) |
+| `POST /v1/squad/lobby/enter-call` | 2+ members → create streaming room |
+| `POST /v1/squad/lobby/remove-member` | Remove member from lobby |
+| `POST /v1/squad/toggle-solo` | Leave squad for solo discovery |
+| `GET /v1/squad/me/quick-invite-suggestions` | MRU squad co-participants for quick invite |
+| `POST /v1/squad/me/quick-invite/record-call-peers` | `{ "peerUserIds": [...] }` — persist co-participants after squad call |
+
+---
+
+## HMM TV / Broadcast Feed
+
+Discovery-service endpoints for the vertical broadcast feed (TikTok/Reels-style) and engagement.
+
+### Feed
+
+| Method & path | Query / body | Auth |
+|---------------|--------------|------|
+| `GET /v1/discovery/broadcasts/feed` | `sessionId` (required), `deviceId` (anonymous) | Optional |
+| `POST /v1/discovery/broadcasts/viewed` | `{ sessionId, roomId, deviceId?, duration? }` | Optional |
+
+### Broadcast Detail & Engagement
+
+| Method & path | Purpose |
+|---------------|---------|
+| `GET /v1/discovery/broadcasts/:roomId` | Broadcast details (public; deep links) |
+| `POST /v1/discovery/broadcasts/:roomId/comment` | `{ "comment": "..." }` (max 500 chars) |
+| `GET /v1/discovery/broadcasts/:roomId/comments` | `?limit=50&offset=0` |
+| `POST /v1/discovery/broadcasts/:roomId/share` | `{ shareType?, deviceId? }` |
+| `POST /v1/discovery/broadcasts/:roomId/gift` | `{ toUserId, amount, giftId }` |
+| `POST /v1/discovery/broadcasts/:roomId/follow/:userId` | Follow participant |
+| `POST /v1/discovery/broadcasts/:roomId/unfollow/:userId` | Unfollow participant |
+| `GET /v1/discovery/broadcasts/:roomId/follow/:userId/status` | Follow state |
+| `GET /v1/discovery/broadcasts/follows` | All followed broadcast participants |
+
+**Streaming list (alternate):** `GET /v1/streaming/broadcasts` — active broadcasts with sort/filter (`sort=recent|viewers|popular|trending`, `limit`, `cursor`, `tags[]`, etc.).
 
 ---
 
@@ -1248,9 +1319,15 @@ See `apps/streaming-service/README.md` in the backend repo for the full WebSocke
 
 **Use case:** Host in an active call opens a timed window; only the host appears in discovery as `IN_SQUAD_AVAILABLE`. Strangers accept via **`join-via-pull-stranger`**, not `POST /discovery/proceed`. Cancel in-call via WebSocket `disable-pull-stranger`.
 
-### 5. End Call
+### 5. Leave Room
 
-**Endpoint:** `POST /streaming/rooms/:roomId/end`
+**Endpoint:** `POST /v1/streaming/rooms/:roomId/leave`
+
+Uses `x-user-id` from gateway auth. Prefer this over raw end-call when a single participant leaves.
+
+### 5a. End Call
+
+**Endpoint:** `POST /v1/streaming/rooms/:roomId/end`
 
 **Request:**
 ```json
@@ -1433,6 +1510,63 @@ A viewer watching a broadcast can mark individual participants as favourites. A 
 
 **Use Case:** When the user opens the "Favourite section" (e.g. from a heart/favourites entry point during a broadcast), call this to show only favourited users who are currently live. Use `roomId` to deep link into the broadcast (same shareable link format: e.g. `/broadcast/:roomId` or `hmm_TV?roomId=...`).
 
+#### List All Favourites
+
+**Endpoint:** `GET /v1/streaming/favourites`
+
+Returns all favourited `targetUserId`s for the current user (not only those broadcasting).
+
+### 11. In-Call Dares
+
+Base path: `/v1/streaming/rooms/:roomId/dares`
+
+| Method & path | Purpose |
+|---------------|---------|
+| `GET …/dares` | Dare catalog |
+| `GET …/dares/gifts` | Gifts with diamond costs for dares |
+| `GET …/dares/history` | Dares in this room |
+| `GET …/dares/random?userId=…&count=7` | Random dares (+ user's custom dares) |
+| `POST …/dares/view` | `{ dareId, userId }` — browse/sync |
+| `POST …/dares/assign` | `{ assignedToUserId, dareId, userId }` |
+| `POST …/dares/send` | `{ dareId, giftId, userId }` — pay & send dare |
+| `POST …/dares/custom/save` | `{ userId, dareText, category? }` |
+| `GET …/dares/custom?userId=…` | User's saved custom dares |
+| `DELETE …/dares/custom/:dareId?userId=…` | Delete custom dare |
+
+### 12. Broadcast Waitlist
+
+When viewers request to join a live broadcast:
+
+| Method & path | Body | Role |
+|---------------|------|------|
+| `POST /v1/streaming/rooms/:roomId/request-to-join` | `{ userId }` | Viewer |
+| `POST /v1/streaming/rooms/:roomId/cancel-join-request` | `{ userId }` | Viewer |
+| `GET /v1/streaming/rooms/:roomId/waitlist` | — | Host |
+| `POST /v1/streaming/rooms/:roomId/accept-from-waitlist` | `{ hostUserId, targetUserId }` | Host |
+
+**Pull-stranger eligibility:** `GET /v1/streaming/pull-stranger/room/:userId/eligibility/:joiningUserId`
+
+### 13. In-Call Gifts
+
+| Method & path | Purpose |
+|---------------|---------|
+| `GET /v1/streaming/rooms/:roomId/gifts` | Gifts sent in this room |
+| `POST /v1/streaming/rooms/:roomId/gifts` | `{ toUserId, amount, giftId, fromUserId? }` — send gift in call |
+
+### 14. Loading Memes & GIF Search
+
+| Method & path | Purpose |
+|---------------|---------|
+| `GET /v1/streaming/loading-memes` | All active loading-screen memes |
+| `GET /v1/streaming/loading-memes/random` | One random meme |
+| `GET /v1/streaming/gifs/search?q=…&limit=25` | In-call GIF search (GIPHY) |
+
+### 15. Call History Timeline
+
+**Endpoint:** `GET /v1/streaming/history/:sessionId/timeline`
+
+Extended timeline for a call session (info icon / detail drill-down).
+
 ---
 
 ## Friends & Messaging
@@ -1603,9 +1737,16 @@ const handleNotificationClick = () => {
 
 ---
 
+### 0. Gifts Catalog & Friendship Check
+
+| Method & path | Purpose |
+|---------------|---------|
+| `GET /v1/friends/me/gifts/catalog` | Active gifts (`giftId`, `name`, `emoji`, `diamonds`, `imageUrl`) + `firstMessageCostCoins` |
+| `GET /v1/friends/me/friends/:friendId/check` | `{ areFriends: true \| false }` — e.g. in-call UI |
+
 ### 1. Send Friend Request
 
-**Endpoint:** `POST /me/friends/offline-cards/request`
+**Endpoint:** `POST /v1/friends/me/friends/offline-cards/request`
 
 **Note:** Friend requests can be sent from:
 - Offline cards section (this endpoint)
@@ -2464,40 +2605,46 @@ switch (message.messageType) {
 
 ### 1. Get Wallet Balance
 
-**Endpoint:** `GET /me/balance`
+**Endpoint:** `GET /v1/wallet/me/balance`
 
 **Response:**
 ```json
 {
-  "balance": 1000,  // Coins
+  "coins": 1000,
+  "diamonds": 50,
   "userId": "string"
 }
 ```
 
-### 2. Get Transaction History
+### 2. Purchase Diamonds (Coins → Diamonds)
 
-**Endpoint:** `GET /me/transactions`
+**Endpoint:** `POST /v1/wallet/me/diamonds/purchase`
 
-**Query Parameters:**
-- `limit` (optional): Number of transactions
-- `type` (optional): Filter by type
+**Request:** `{ "diamondAmount": 100 }`
 
-**Response:**
-```json
-{
-  "transactions": [
-    {
-      "id": "string",
-      "type": "EARNED" | "SPENT" | "PURCHASED",
-      "amount": 100,
-      "description": "string",
-      "createdAt": "string"
-    }
-  ]
-}
-```
+### 3. Gift Transaction History
 
-### 3. Purchase Coins
+**Endpoint:** `GET /v1/wallet/me/transactions/gifts`
+
+Gift send/receive history for the current user.
+
+### 4. Gender Filter Purchase
+
+**Endpoint:** `POST /v1/wallet/me/transactions/gender-filter`
+
+**Request:** `{ "amount": 100, "screens": 10 }` — deduct coins when applying gender filter.
+
+### 5. Purchase Coins
+
+#### List Coin Packages
+
+**Endpoint:** `GET /v1/payments/purchase/packages` (also served directly by gateway)
+
+**Endpoint:** `GET /v1/payments/purchase/packages/:packageId` — single package detail.
+
+#### Purchase History
+
+**Endpoint:** `GET /v1/payments/purchase/orders` — past coin purchase orders.
 
 #### Initiate Purchase
 
@@ -2506,19 +2653,19 @@ switch (message.messageType) {
 **Request:**
 ```json
 {
-  "amountInr": 100,
-  "productId": "coins_100"  // Optional
+  "coinsAmount": 100
 }
 ```
 
 **Response:**
 ```json
 {
+  "success": true,
   "orderId": "string",
-  "amount": 100,
-  "currency": "INR",
   "razorpayOrderId": "string",
-  "razorpayKey": "string"  // Use this for Razorpay checkout
+  "amountInr": 99,
+  "amountInPaise": 9900,
+  "razorpayOrder": { }
 }
 ```
 
@@ -2536,8 +2683,8 @@ switch (message.messageType) {
 ```json
 {
   "orderId": "string",
-  "razorpayPaymentId": "string",
-  "razorpaySignature": "string"
+  "paymentId": "string",
+  "signature": "string"
 }
 ```
 
@@ -2545,12 +2692,12 @@ switch (message.messageType) {
 ```json
 {
   "success": true,
-  "coinsAdded": 100,
-  "newBalance": 1100
+  "orderId": "string",
+  "coinsCredited": 100
 }
 ```
 
-### 4. Redemption (Diamonds to INR)
+### 6. Redemption (Diamonds to INR)
 
 #### Preview Redemption
 
@@ -2819,6 +2966,55 @@ const uploadFile = async (file, useGateway = true) => {
 
 ---
 
+## Homepage & Badges
+
+### Homepage (Aggregated)
+
+**Endpoint:** `GET /v1/homepage`
+
+**Headers:** `Authorization: Bearer {accessToken}`
+
+**Response:**
+```json
+{
+  "coins": 1000,
+  "diamonds": 50,
+  "meetingCount": 3,
+  "profileCompletion": { "percentage": 75.5, "completed": 15, "total": 24 }
+}
+```
+
+Aggregates wallet balance, meeting count, and profile completion in one call (gateway aggregation service).
+
+### User Badges (Stickers)
+
+| Method & path | Purpose |
+|---------------|---------|
+| `GET /v1/users/:userId/badges` | All badges received (own user only) |
+| `GET /v1/users/:userId/badges/active` | Currently equipped badge |
+| `POST /v1/users/:userId/badges/active` | `{ "badgeId": "..." \| null }` — set active badge |
+
+### Data Export (GDPR)
+
+**Endpoint:** `GET /v1/me/export` — export authenticated user's data.
+
+### Moderator Face Card
+
+| Method & path | Purpose |
+|---------------|---------|
+| `GET /v1/moderator-face-card/active` | Shared moderator discovery card settings |
+| `PATCH /v1/me/moderator-face-card` | `{ "active": true \| false }` — moderators only |
+
+### KYC User Feedback
+
+**Endpoint:** `POST /v1/kyc/feedback`
+
+**Request:** `{ "userId", "sessionId?", "questionOne", "questionTwo" }` — post-verification survey.
+
+*(Moderator KYC session APIs: `POST /v1/kyc/session/start`, `POST /v1/kyc/session/decision` — dashboard/moderator use.)*
+
+---
+
 ## Error Handling
 
 ### HTTP Status Codes
@@ -3076,13 +3272,35 @@ All paths below use the **API Gateway** prefix `/v1/`. Friend-related endpoints 
 
 ---
 
+## Complete API Index
+
+Every frontend-facing route is listed in **[API_REFERENCE.md](./API_REFERENCE.md)** (209 endpoints, audited against `apps/*/src/**/*.controller.ts`). Excluded from that table: `/test/*`, `/internal/*`, admin dashboards, health checks, metrics, and payment webhooks.
+
+**Quick service map (gateway prefix `/v1`):**
+
+| Prefix | Service | Notes |
+|--------|---------|-------|
+| `/auth`, `/referrals`, `/r/:code` | auth-service | Login, tokens, referrals, short links |
+| `/me`, `/users`, `/brands`, `/interests`, `/values`, `/music`, `/intent-prompts`, `/discovery-city-options`, `/moderator-face-card`, `/zodiacs` | user-service | Profile, catalog, presence, reports |
+| `/discovery`, `/squad`, `/location`, `/gender-filters` | discovery-service | Cards, sessions, squads, location, broadcasts feed |
+| `/streaming` | streaming-service | Rooms, WebSocket, history, dares, favourites |
+| `/wallet` | wallet-service | Balances, diamonds, gift transactions |
+| `/friends` | friend-service | Messaging, friends, gifts catalog (paths are `/v1/friends/me/...`) |
+| `/files` | files-service | Uploads, presigned URLs |
+| `/payments` | payment-service | Razorpay purchases, redemption |
+| `/ads` | ads-service | Rewarded ads |
+| `/moderation`, `/kyc` | moderation-service | Image check, KYC |
+| `/homepage` | api-gateway | Aggregated home data |
+
+---
+
 ## Support
 
 For questions or issues:
 
-1. Check this documentation
-2. Review API responses and error messages
-3. Check service logs
+1. Check **[API_REFERENCE.md](./API_REFERENCE.md)** for the route you need
+2. Read the relevant section in this guide for flows and examples
+3. Review API responses and error messages
 4. Contact backend team
 
 ---

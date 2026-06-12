@@ -10,6 +10,7 @@ docs/
 ├── COINS_AND_DIAMONDS.md  # Coins vs diamonds, wallet API, migrations
 └── for-frontend/          # Documentation for frontend team
     ├── README.md
+    ├── API_REFERENCE.md   # Complete audited endpoint index
     ├── FRONTEND_SETUP.md
     └── FRONTEND_INTEGRATION.md
 ```

@@ -15,7 +15,11 @@ Complete setup guide for all backend services:
 - Service startup instructions
 - Troubleshooting guide
 
-### 2. **`FRONTEND_INTEGRATION.md`** — Complete API guide
+### 2. **`API_REFERENCE.md`** — Complete endpoint index
+
+Audited table of **all frontend-facing routes** (method + gateway path + service path). Use this to confirm an endpoint exists; use `FRONTEND_INTEGRATION.md` for flows and examples.
+
+### 3. **`FRONTEND_INTEGRATION.md`** — Complete API guide
 
 Comprehensive API integration guide covering:
 - Authentication (Google, Apple, Facebook, Phone OTP)
@@ -32,11 +36,11 @@ Comprehensive API integration guide covering:
 - Error handling
 - Complete user flows
 
-### 3. **`DISCOVERY_LOCATION_CARDS.md`** — LOCATION promos and `select-location`
+### 4. **`DISCOVERY_LOCATION_CARDS.md`** — LOCATION promos and `select-location`
 
 Step-by-step frontend notes for **LOCATION** cards (cities + **Anywhere in India**), **`GET /v1/discovery/card`**, **`raincheck`**, **`select-location`** (`persistPreference`), **`proceed`**, and related **`/v1/discovery-city-options`**, **`/v1/me/preferred-city`**, and **`/v1/location/*`** APIs.
 
-### 4. **`OFFLINE_CARDS.md`** — OFFLINE cards behavior and APIs
+### 5. **`OFFLINE_CARDS.md`** — OFFLINE cards behavior and APIs
 
 Dedicated integration guide for OFFLINE cards:
 - `GET /v1/discovery/offline-cards/card`
@@ -45,22 +49,23 @@ Dedicated integration guide for OFFLINE cards:
 - Optional related actions (`/v1/streaming/offline-cards/gifts`, `/v1/users/report`)
 - Behavior notes (no match creation, session isolation, edge cases)
 
-### 5. **`PULL_STRANGER.md`** — Pull stranger (summon stranger into call)
+### 6. **`PULL_STRANGER.md`** — Pull stranger (summon stranger into call)
 
 Integration guide for the in-call “pull stranger” feature:
 - Host enable/cancel, timed discovery window, replacement loop after kick
 - Stranger discovery card flow (`IN_SQUAD_AVAILABLE`) — join via streaming, not `proceed`
 - HTTP + WebSocket APIs with curl examples
 
-### 6. **`USER_STATUS_AND_APIS.md`**
+### 7. **`USER_STATUS_AND_APIS.md`**
 
-User status and related APIs (see file for scope).
+User status, presence (`lastActiveAt`), and related APIs (see file for scope).
 
 ## 🚀 Quick Start
 
 1. **Read `FRONTEND_SETUP.md`** - Set up all backend services locally
-2. **Read `FRONTEND_INTEGRATION.md`** - Complete API reference with examples
-3. Start building! 🎉
+2. **Skim `API_REFERENCE.md`** - Confirm endpoint paths
+3. **Read `FRONTEND_INTEGRATION.md`** - Flows, examples, and behavior
+4. Start building! 🎉
 
 ## 📁 File Structure
 
@@ -68,7 +73,8 @@ User status and related APIs (see file for scope).
 docs/for-frontend/
 ├── README.md (this file)
 ├── FRONTEND_SETUP.md ⭐ — Setup guide (START HERE)
-├── FRONTEND_INTEGRATION.md — Complete API documentation
+├── API_REFERENCE.md — Complete endpoint index (audited)
+├── FRONTEND_INTEGRATION.md — Complete API documentation (flows + examples)
 ├── DISCOVERY_LOCATION_CARDS.md — LOCATION promos & discovery session APIs
 ├── OFFLINE_CARDS.md — OFFLINE cards integration guide
 ├── PULL_STRANGER.md — Pull stranger integration guide

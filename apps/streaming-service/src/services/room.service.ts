@@ -62,6 +62,8 @@ export class RoomService {
   private lastParticipantReconcileAt = new Map<string, number>();
   private lastViewerReconcileAt = new Map<string, number>();
   private roomDetailsCache = new Map<string, { expiresAt: number; data: any | null }>();
+  /** Registered by the WS gateway so endRoom can notify connected participants/viewers (room-ended / broadcast-stopped). */
+  private roomEndedNotifier: ((roomId: string, wasBroadcasting: boolean) => void) | null = null;
   private activeParticipantRoomCache = new Map<string, { expiresAt: number; data: { roomId: string } | null }>();
   private activeViewerRoomCache = new Map<string, { expiresAt: number; data: { roomId: string } | null }>();
   private activeBroadcastsCache = new Map<string, { expiresAt: number; data: any }>();
@@ -2592,6 +2594,10 @@ export class RoomService {
    * End a call/room
    * Handles ending room gracefully even if not in memory
    */
+  setRoomEndedNotifier(notifier: (roomId: string, wasBroadcasting: boolean) => void): void {
+    this.roomEndedNotifier = notifier;
+  }
+
   async endRoom(roomId: string): Promise<void> {
     this.clearPullStrangerExpiryTimer(roomId);
 
@@ -2649,6 +2655,14 @@ export class RoomService {
         endedAt: new Date()
       }
     });
+
+    // Push room-ended (and broadcast-stopped) over WS so connected viewers/participants
+    // don't keep watching a dead room (e.g. broadcaster's phone died).
+    try {
+      this.roomEndedNotifier?.(roomId, Boolean(session.isBroadcasting));
+    } catch (error: any) {
+      this.logger.warn(`Room-ended notifier failed for ${roomId}: ${error?.message || error}`);
+    }
 
     // Log broadcast stop if it was active
     if (session.isBroadcasting) {
@@ -3320,10 +3334,11 @@ export class RoomService {
       }
     }
 
-    // Apply participant count filter if specified
-    let filteredSessions = sessionsToReturn;
+    // Never list ghost broadcasts: a session flagged isBroadcasting with zero active
+    // participants has a dead/cleaned-up host and must not be served to viewers.
+    let filteredSessions = sessionsToReturn.filter(session => session.participants.length > 0);
     if (filter.participantCount) {
-      filteredSessions = sessionsToReturn.filter(session => {
+      filteredSessions = filteredSessions.filter(session => {
         const count = session.participants.length;
         if (filter.participantCount!.min !== undefined && count < filter.participantCount!.min) {
           return false;
@@ -3370,7 +3385,9 @@ export class RoomService {
 
     const result = {
       broadcasts,
-      nextCursor: hasMore ? filteredSessions[filteredSessions.length - 1].id : undefined,
+      nextCursor: hasMore && filteredSessions.length > 0
+        ? filteredSessions[filteredSessions.length - 1].id
+        : (hasMore ? sessionsToReturn[sessionsToReturn.length - 1]?.id : undefined),
       hasMore
     };
     this.setCached(this.activeBroadcastsCache, cacheKey, this.activeBroadcastsCacheTtlMs, result);

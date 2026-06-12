@@ -37,9 +37,16 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     /** join-as-viewer sockets must not remove participant rows on disconnect (waitlist → call redirect). */
     connectionKind?: "participant" | "viewer";
     membershipVerified?: boolean;
+    /** Heartbeat: set true on pong; cleared before each ping sweep. */
+    isAlive?: boolean;
   }>();
   private roomConnections = new Map<string, Set<string>>();
   private userConnections = new Map<string, Set<string>>();
+  private heartbeatTimer: NodeJS.Timeout | null = null;
+  /** Delayed reap timers for preserve-participant-on-close sockets that never reconnect. Key: `${userId}|${roomId}` */
+  private preserveReapTimers = new Map<string, NodeJS.Timeout>();
+  private static readonly HEARTBEAT_INTERVAL_MS = 30_000;
+  private static readonly PRESERVE_REAP_DELAY_MS = 60_000;
   private readonly testMode: boolean;
 
   constructor(
@@ -83,6 +90,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
    * Initialize WebSocket server with ws package
    */
   initialize(wss: WebSocketServer) {
+    this.wss = wss;
     wss.on("connection", (ws: any, req: any) => {
       // Check if this is the correct path
       const url = req.url || '';
@@ -97,7 +105,46 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       this.handleConnection(ws, req);
     });
 
+    // Heartbeat: detect silently dead sockets (phone off, network drop — no TCP FIN).
+    // Terminating triggers the normal "close" handler, which runs participant/viewer cleanup.
+    this.startHeartbeat();
+
+    // Let RoomService push room-ended / broadcast-stopped to connected clients when a room
+    // ends for any reason (abnormal disconnect of last participant, HTTP end-room, reap).
+    this.roomService.setRoomEndedNotifier((roomId: string, wasBroadcasting: boolean) => {
+      void this.notifyRoomEnded(roomId, wasBroadcasting);
+    });
+
     this.logger.log("WebSocket gateway initialized at /streaming/ws");
+  }
+
+  private startHeartbeat() {
+    if (this.heartbeatTimer) return;
+    this.heartbeatTimer = setInterval(() => {
+      for (const [connectionId, conn] of this.connections) {
+        if (conn.isAlive === false) {
+          this.logger.warn(
+            `[Heartbeat] Terminating unresponsive socket ${connectionId} (user: ${conn.userId}, room: ${conn.roomId || "none"})`
+          );
+          try { conn.ws.terminate?.(); } catch { try { conn.ws.close?.(); } catch { } }
+          continue;
+        }
+        conn.isAlive = false;
+        try { conn.ws.ping?.(); } catch { }
+      }
+    }, StreamingGateway.HEARTBEAT_INTERVAL_MS);
+  }
+
+  /** Tell every connection still attached to the room (participants AND Beam TV viewers) that it ended. */
+  private async notifyRoomEnded(roomId: string, wasBroadcasting: boolean) {
+    try {
+      if (wasBroadcasting) {
+        await this.broadcastToRoom(roomId, { type: "broadcast-stopped", data: { roomId, reason: "room_ended" } });
+      }
+      await this.broadcastToRoom(roomId, { type: "room-ended", data: { roomId } });
+    } catch (error: any) {
+      this.logger.warn(`[RoomEnded] Failed to notify room ${roomId}: ${error?.message || error}`);
+    }
   }
 
   /**
@@ -165,8 +212,12 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
         }
       }
 
-      this.connections.set(connectionId, { ws: ws, userId, isAnonymous });
+      this.connections.set(connectionId, { ws: ws, userId, isAnonymous, isAlive: true });
       this.addUserConnection(userId, connectionId);
+      ws.on("pong", () => {
+        const conn = this.connections.get(connectionId);
+        if (conn) conn.isAlive = true;
+      });
     } catch (error) {
       this.logger.error("WebSocket authentication failed:", error);
       this.sendError(ws, "Invalid or expired token");
@@ -1640,10 +1691,23 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
+    // Multi-tab / reconnect guard: if the user still has another live socket of the same kind
+    // bound to this room, this close is not a departure — skip removal.
+    if (this.hasOtherLiveConnection(userId, resolvedRoomId, connectionKind)) {
+      this.logger.log(
+        `[Disconnect] User ${userId} still has another live connection for room ${resolvedRoomId}; skipping removal`
+      );
+      return;
+    }
+
     if (preserveParticipantOnClose) {
       this.logger.log(
         `WebSocket connection closed: ${connectionId} (user: ${userId}, room: ${resolvedRoomId}, preserving participant)`
       );
+      // The flag covers the Beam TV → /video-chat redirect window. If the user never opens a
+      // participant socket (browser closed mid-redirect), reap them so they don't become a
+      // zombie participant holding the room/broadcast open.
+      this.schedulePreserveReap(userId, resolvedRoomId);
       return;
     }
 
@@ -1701,6 +1765,73 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     if (removedAsParticipant) {
       await this.broadcastParticipantLeft(resolvedRoomId, userId);
     }
+  }
+
+  /**
+   * True when the user has another OPEN socket of the same kind (viewer vs participant)
+   * attached to the same room. The closed socket is already removed from the maps.
+   */
+  private hasOtherLiveConnection(
+    userId: string,
+    roomId: string,
+    closedKind?: "participant" | "viewer"
+  ): boolean {
+    const connIds = this.userConnections.get(userId);
+    if (!connIds || connIds.size === 0) return false;
+    const closedIsViewer = closedKind === "viewer";
+    for (const connId of connIds) {
+      const conn = this.connections.get(connId);
+      if (!conn || conn.roomId !== roomId) continue;
+      const connIsViewer = conn.connectionKind === "viewer";
+      if (connIsViewer !== closedIsViewer) continue;
+      if (conn.ws?.readyState === 1) return true;
+    }
+    return false;
+  }
+
+  /**
+   * preserve-participant-on-close gives the client a grace window to reconnect as a participant
+   * (Beam TV waitlist → /video-chat). If no participant socket appears within the window,
+   * run the normal removal so the user doesn't linger as a zombie participant.
+   */
+  private schedulePreserveReap(userId: string, roomId: string) {
+    const key = `${userId}|${roomId}`;
+    if (this.preserveReapTimers.has(key)) return;
+    const timer = setTimeout(() => {
+      this.preserveReapTimers.delete(key);
+      void (async () => {
+        try {
+          // Reconnected (any socket kind) for this room? Then the client is alive — leave them be.
+          const connIds = this.userConnections.get(userId);
+          if (connIds) {
+            for (const connId of connIds) {
+              const conn = this.connections.get(connId);
+              if (conn && conn.roomId === roomId && conn.ws?.readyState === 1) return;
+            }
+          }
+          const roomExists = await this.roomService.roomExists(roomId);
+          if (!roomExists) return;
+          this.logger.warn(`[PreserveReap] User ${userId} never reconnected to room ${roomId}; cleaning up`);
+          let removedAsParticipant = false;
+          try {
+            removedAsParticipant = await this.roomService.removeParticipant(roomId, userId);
+          } catch (error: any) {
+            this.logger.debug(`[PreserveReap] removeParticipant failed for ${userId} in ${roomId}: ${error.message}`);
+          }
+          try {
+            await this.roomService.removeViewer(roomId, userId);
+          } catch (error: any) {
+            this.logger.debug(`[PreserveReap] removeViewer failed for ${userId} in ${roomId}: ${error.message}`);
+          }
+          if (removedAsParticipant) {
+            await this.broadcastParticipantLeft(roomId, userId);
+          }
+        } catch (error: any) {
+          this.logger.warn(`[PreserveReap] Cleanup failed for ${userId} in ${roomId}: ${error?.message || error}`);
+        }
+      })();
+    }, StreamingGateway.PRESERVE_REAP_DELAY_MS);
+    this.preserveReapTimers.set(key, timer);
   }
 
   /**
@@ -1959,6 +2090,14 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleDestroy() {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+    for (const timer of this.preserveReapTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.preserveReapTimers.clear();
     if (this.wss) {
       this.wss.close();
     }

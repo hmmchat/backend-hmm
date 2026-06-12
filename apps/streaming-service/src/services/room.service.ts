@@ -2354,6 +2354,7 @@ export class RoomService {
 
     // Await status sync so GET /users/:id/room reconcile does not strip the new participant row.
     await this.syncParticipantStatusAfterWaitlistAccept(targetUserId, statusToSet);
+    this.clearHotReadCaches(roomId, [targetUserId, hostUserId]);
 
     // Notify discovery-service of participant join
     this.discoveryClient.notifyParticipantJoined(roomId, targetUserId).catch((err) => {

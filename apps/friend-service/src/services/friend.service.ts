@@ -814,6 +814,14 @@ export class FriendService {
 
       // Step 5: Update conversation within transaction
       const [convId1, convId2] = [fromUserId, toUserId].sort();
+      const existingConv = await tx.conversation.findUnique({
+        where: {
+          userId1_userId2: {
+            userId1: convId1,
+            userId2: convId2
+          }
+        }
+      });
       await tx.conversation.upsert({
         where: {
           userId1_userId2: {
@@ -836,15 +844,6 @@ export class FriendService {
       });
 
       // Step 6: Check if conversation was promoted to inbox
-      // Get existing conversation section before update
-      const existingConv = await tx.conversation.findUnique({
-        where: {
-          userId1_userId2: {
-            userId1: convId1,
-            userId2: convId2
-          }
-        }
-      });
       const wasPromoted = existingConv && 
                          existingConv.section !== ConversationSection.INBOX && 
                          newSection === ConversationSection.INBOX;
@@ -1027,6 +1026,143 @@ export class FriendService {
       };
     });
     // Realtime emit (best-effort)
+    this.emitRealtimeMessageUpdate(fromUserId, toUserId, result.messageId).catch(() => undefined);
+    return result;
+  }
+
+  private async sendMessageToInboxPeer(
+    fromUserId: string,
+    toUserId: string,
+    message: string | null,
+    giftId?: string,
+    giftAmount?: number,
+    gif?: {
+      provider: "giphy";
+      id: string;
+      url: string;
+      previewUrl?: string;
+      width?: number;
+      height?: number;
+    },
+    promotedToInbox: boolean = false
+  ): Promise<{ messageId: string; newBalance?: number; promotedToInbox?: boolean }> {
+    if (fromUserId === toUserId) {
+      throw new BadRequestException("Cannot send message to yourself");
+    }
+
+    const [senderActive, recipientActive] = await Promise.all([
+      this.userClient.isAccountActive(fromUserId),
+      this.userClient.isAccountActive(toUserId)
+    ]);
+
+    if (!senderActive) {
+      throw new BadRequestException("Your account is not active. Please contact support.");
+    }
+
+    if (!recipientActive) {
+      throw new BadRequestException("Recipient account is not active");
+    }
+
+    const isUserBlocked = await this.isBlocked(fromUserId, toUserId);
+    if (isUserBlocked) {
+      throw new BadRequestException("You cannot message this user");
+    }
+
+    if (message && message.length > this.MAX_MESSAGE_LENGTH) {
+      throw new BadRequestException(`Message exceeds maximum length of ${this.MAX_MESSAGE_LENGTH} characters`);
+    }
+
+    if (giftId) {
+      if (!giftAmount) {
+        throw new BadRequestException("Gift amount is required when sending a gift");
+      }
+      await this.giftCatalog.validateGift(giftId, giftAmount);
+    }
+
+    const hasGif = !!gif;
+    const hasText = !!(message && message.trim().length > 0);
+
+    let messageType: MessageType = MessageType.TEXT;
+    if (hasGif && hasText) {
+      messageType = "GIF_WITH_MESSAGE" as any;
+    } else if (hasGif) {
+      messageType = "GIF" as any;
+    } else if (giftId && !hasText) {
+      messageType = MessageType.GIFT;
+    } else if (giftId && hasText) {
+      messageType = MessageType.GIFT_WITH_MESSAGE;
+    }
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      let transactionId: string | undefined;
+      let newBalance: number | undefined;
+
+      if (giftId && giftAmount) {
+        const result = await this.walletClient.transferDiamonds(
+          fromUserId,
+          toUserId,
+          giftAmount,
+          `Gift to inbox peer ${toUserId}`,
+          giftId
+        );
+        transactionId = result.transactionId;
+        newBalance = result.newBalance;
+      }
+
+      const friendMessage = await tx.friendMessage.create({
+        data: {
+          fromUserId,
+          toUserId,
+          message: message || null,
+          gifProvider: gif?.provider || null,
+          gifId: gif?.id || null,
+          gifUrl: gif?.url || null,
+          gifPreviewUrl: gif?.previewUrl || null,
+          gifWidth: gif?.width ?? null,
+          gifHeight: gif?.height ?? null,
+          transactionId,
+          giftId: giftId || null,
+          giftAmount: giftAmount || null,
+          messageType
+        } as any
+      });
+
+      const [convId1, convId2] = [fromUserId, toUserId].sort();
+      await tx.conversation.upsert({
+        where: {
+          userId1_userId2: {
+            userId1: convId1,
+            userId2: convId2
+          }
+        },
+        create: {
+          userId1: convId1,
+          userId2: convId2,
+          section: ConversationSection.INBOX,
+          lastMessageId: friendMessage.id,
+          lastMessageAt: new Date()
+        },
+        update: {
+          section: ConversationSection.INBOX,
+          lastMessageId: friendMessage.id,
+          lastMessageAt: new Date()
+        }
+      });
+
+      this.metrics.incrementMessageSentToNonFriend();
+      this.logger.log(
+        `Message sent from ${fromUserId} to inbox peer ${toUserId} ` +
+        `(type: ${messageType}${giftAmount ? `, gift: ${giftAmount} diamonds` : ""})`
+      );
+
+      await this.invalidateNotificationCache(toUserId);
+
+      return {
+        messageId: friendMessage.id,
+        newBalance,
+        promotedToInbox: promotedToInbox || undefined
+      };
+    });
     this.emitRealtimeMessageUpdate(fromUserId, toUserId, result.messageId).catch(() => undefined);
     return result;
   }
@@ -1739,6 +1875,23 @@ export class FriendService {
     if (areFriends) {
       return await this.sendMessageToFriend(userId, otherUserId, message, giftId, giftAmount, gif);
     } else {
+      if (conversation.section === ConversationSection.INBOX) {
+        const [sentByUser, sentByOther] = await Promise.all([
+          this.prisma.friendMessage.findFirst({
+            where: { fromUserId: userId, toUserId: otherUserId },
+            select: { id: true }
+          }),
+          this.prisma.friendMessage.findFirst({
+            where: { fromUserId: otherUserId, toUserId: userId },
+            select: { id: true }
+          })
+        ]);
+
+        if (sentByUser && sentByOther) {
+          return await this.sendMessageToInboxPeer(userId, otherUserId, message, giftId, giftAmount, gif);
+        }
+      }
+
       // Find friend request
       const request = await this.prisma.friendRequest.findFirst({
         where: {
@@ -1765,43 +1918,14 @@ export class FriendService {
           gif
         );
       } else {
-        // Reverse the request direction for the API
-        const reverseRequest = await this.prisma.friendRequest.findFirst({
-          where: {
-            fromUserId: userId,
-            toUserId: otherUserId,
-            status: "PENDING"
-          }
-        });
-
-        if (!reverseRequest) {
-          // Create a pending request if it doesn't exist
-          const newRequest = await this.prisma.friendRequest.create({
-            data: {
-              fromUserId: userId,
-              toUserId: otherUserId,
-              status: "PENDING"
-            }
-          });
-          return await this.sendMessageToNonFriend(
-            userId,
-            otherUserId,
-            message,
-            newRequest.id,
-            giftId,
-            giftAmount,
-            gif
-          );
-        }
-
-        return await this.sendMessageToNonFriend(
+        return await this.sendMessageToInboxPeer(
           userId,
           otherUserId,
           message,
-          reverseRequest.id,
           giftId,
           giftAmount,
-          gif
+          gif,
+          true
         );
       }
     }

@@ -649,6 +649,8 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
         conn.connectionKind = "participant";
         conn.preserveParticipantOnClose = Boolean(preserveParticipantOnClose);
         conn.membershipVerified = true;
+        // Successful rejoin cancels a pending preserve-reap from a prior tab redirect / reconnect.
+        this.clearPreserveReapTimer(userId, roomId);
       }
 
       // Check if user is already a participant (from room creation or previous join)
@@ -1806,6 +1808,15 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
    * (Beam TV waitlist → /video-chat). If no participant socket appears within the window,
    * run the normal removal so the user doesn't linger as a zombie participant.
    */
+  private clearPreserveReapTimer(userId: string, roomId: string): void {
+    const key = `${userId}|${roomId}`;
+    const existing = this.preserveReapTimers.get(key);
+    if (existing) {
+      clearTimeout(existing);
+      this.preserveReapTimers.delete(key);
+    }
+  }
+
   private schedulePreserveReap(userId: string, roomId: string) {
     const key = `${userId}|${roomId}`;
     if (this.preserveReapTimers.has(key)) return;

@@ -1198,6 +1198,17 @@ export class MatchingService {
         const hasActiveAcceptance = acceptance.acceptedBy.size > 0;
 
         const shouldResetUser = async (uid: string, status: string): Promise<boolean> => {
+          // Never reset users who are actively in a call — orphaned active_matches rows
+          // must not demote IN_SQUAD participants and trigger streaming reconcile removal.
+          if (
+            status === "IN_SQUAD" ||
+            status === "IN_BROADCAST" ||
+            status === "IN_SQUAD_AVAILABLE" ||
+            status === "IN_BROADCAST_AVAILABLE" ||
+            status === "VIEWER"
+          ) {
+            return false;
+          }
           if (status !== "MATCHED") {
             return true;
           }

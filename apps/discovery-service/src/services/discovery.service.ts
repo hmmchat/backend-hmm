@@ -2584,6 +2584,28 @@ export class DiscoveryService implements OnModuleInit {
         const expiredUserIds = await this.discoverySessionService.reconcileExpiredSessions();
         for (const userId of expiredUserIds) {
           try {
+            // Never demote users who are already in a match or call — stale session rows
+            // can linger after Meet RN → video-chat if SESSION_END raced navigation.
+            let currentStatus = "ONLINE";
+            try {
+              const profile = await this.userClient.getUserFullProfileById(userId);
+              currentStatus = String((profile as any).status || "ONLINE");
+            } catch {
+              // If profile read fails, skip demotion rather than kicking an in-call user.
+              continue;
+            }
+            const preserveStatuses = new Set([
+              "MATCHED",
+              "IN_SQUAD",
+              "IN_BROADCAST",
+              "IN_SQUAD_AVAILABLE",
+              "IN_BROADCAST_AVAILABLE",
+              "VIEWER"
+            ]);
+            if (preserveStatuses.has(currentStatus)) {
+              await this.discoverySessionService.clearSession(userId);
+              continue;
+            }
             await this.matchingService.updateUserStatus(userId, "ONLINE");
           } catch (error) {
             console.error(`[ERROR] Failed to demote ${userId} after session expiry:`, error);

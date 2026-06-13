@@ -626,17 +626,36 @@ export class FriendService {
   }
 
   /**
-   * Get message count in conversation (for determining first message)
+   * Non-friend messaging rules:
+   * - free_reply: other user messaged first and sender has not replied yet
+   * - first_outbound_paid: sender's first outbound (10 coins or gift)
+   * - gift_required: sender already messaged this peer while not friends
    */
-  private async getMessageCountInConversation(fromUserId: string, toUserId: string): Promise<number> {
-    return await this.prisma.friendMessage.count({
-      where: {
-        OR: [
-          { fromUserId, toUserId },
-          { fromUserId: toUserId, toUserId: fromUserId }
-        ]
-      }
-    });
+  private async getNonFriendMessagePolicy(
+    fromUserId: string,
+    toUserId: string
+  ): Promise<
+    | { kind: "free_reply" }
+    | { kind: "first_outbound_paid"; cost: number }
+    | { kind: "gift_required" }
+  > {
+    const [outboundCount, inboundFromOther] = await Promise.all([
+      this.prisma.friendMessage.count({
+        where: { fromUserId, toUserId }
+      }),
+      this.prisma.friendMessage.findFirst({
+        where: { fromUserId: toUserId, toUserId: fromUserId },
+        select: { id: true }
+      })
+    ]);
+
+    if (outboundCount > 0) {
+      return { kind: "gift_required" };
+    }
+    if (inboundFromOther) {
+      return { kind: "free_reply" };
+    }
+    return { kind: "first_outbound_paid", cost: this.FIRST_MESSAGE_COST_COINS };
   }
 
   /**
@@ -713,9 +732,8 @@ export class FriendService {
       throw new BadRequestException("Can only send messages to pending requests");
     }
 
-    // Get message count to determine if first message (before transaction)
-    const messageCount = await this.getMessageCountInConversation(fromUserId, toUserId);
-    const isFirstMessage = messageCount === 0;
+    // Determine monetization policy for this non-friend peer
+    const policy = await this.getNonFriendMessagePolicy(fromUserId, toUserId);
 
     const hasGif = !!gif;
     const hasText = !!(message && message.trim().length > 0);
@@ -740,16 +758,28 @@ export class FriendService {
       await this.giftCatalog.validateGift(giftId, giftAmount);
     }
 
-    // Determine if we need to charge for message (text or gif counts)
-    const needsPayment = !giftId && (hasText || hasGif) && isFirstMessage;
-    const cost = needsPayment ? this.FIRST_MESSAGE_COST_COINS : 0;
+    if (policy.kind === "free_reply") {
+      return await this.sendMessageToInboxPeer(
+        fromUserId,
+        toUserId,
+        message,
+        giftId,
+        giftAmount,
+        gif,
+        true
+      );
+    }
 
-    // Check if subsequent message without gift (not allowed)
-    if (!isFirstMessage && !giftId && (hasText || hasGif)) {
+    if (policy.kind === "gift_required" && !giftId && (hasText || hasGif)) {
       throw new BadRequestException(
         "Subsequent messages require a gift. Please send a gift with your message."
       );
     }
+
+    // First outbound to this peer costs coins unless a gift is attached
+    const needsPayment =
+      policy.kind === "first_outbound_paid" && !giftId && (hasText || hasGif);
+    const cost = needsPayment ? policy.cost : 0;
 
     // CRITICAL: Use transaction to ensure atomicity
     const result = await this.prisma.$transaction(async (tx) => {
@@ -1107,6 +1137,25 @@ export class FriendService {
         throw new BadRequestException("Gift amount is required when sending a gift");
       }
       await this.giftCatalog.validateGift(giftId, giftAmount);
+    }
+
+    const areFriends = await this.areFriends(fromUserId, toUserId);
+    if (!areFriends) {
+      const policy = await this.getNonFriendMessagePolicy(fromUserId, toUserId);
+      const hasGifCheck = !!gif;
+      const hasTextCheck = !!(message && message.trim().length > 0);
+
+      if (policy.kind === "gift_required" && !giftId && (hasTextCheck || hasGifCheck)) {
+        throw new BadRequestException(
+          "Subsequent messages require a gift. Please send a gift with your message."
+        );
+      }
+
+      if (policy.kind === "first_outbound_paid" && !giftId && (hasTextCheck || hasGifCheck)) {
+        throw new BadRequestException(
+          `First messages to non-friends cost ${policy.cost} coins or require a gift.`
+        );
+      }
     }
 
     const hasGif = !!gif;
@@ -1928,61 +1977,49 @@ export class FriendService {
 
     if (areFriends) {
       return await this.sendMessageToFriend(userId, otherUserId, message, giftId, giftAmount, gif);
-    } else {
-      if (conversation.section === ConversationSection.INBOX) {
-        const [sentByUser, sentByOther] = await Promise.all([
-          this.prisma.friendMessage.findFirst({
-            where: { fromUserId: userId, toUserId: otherUserId },
-            select: { id: true }
-          }),
-          this.prisma.friendMessage.findFirst({
-            where: { fromUserId: otherUserId, toUserId: userId },
-            select: { id: true }
-          })
-        ]);
-
-        if (sentByUser && sentByOther) {
-          return await this.sendMessageToInboxPeer(userId, otherUserId, message, giftId, giftAmount, gif);
-        }
-      }
-
-      // Find friend request
-      const request = await this.prisma.friendRequest.findFirst({
-        where: {
-          OR: [
-            { fromUserId: userId, toUserId: otherUserId, status: "PENDING" },
-            { fromUserId: otherUserId, toUserId: userId, status: "PENDING" }
-          ]
-        }
-      });
-
-      if (!request) {
-        throw new NotFoundException("Friend request not found for this conversation");
-      }
-
-      // Determine which user is sender
-      if (request.fromUserId === userId) {
-        return await this.sendMessageToNonFriend(
-          userId,
-          otherUserId,
-          message,
-          request.id,
-          giftId,
-          giftAmount,
-          gif
-        );
-      } else {
-        return await this.sendMessageToInboxPeer(
-          userId,
-          otherUserId,
-          message,
-          giftId,
-          giftAmount,
-          gif,
-          true
-        );
-      }
     }
+
+    const policy = await this.getNonFriendMessagePolicy(userId, otherUserId);
+
+    if (policy.kind === "free_reply") {
+      return await this.sendMessageToInboxPeer(userId, otherUserId, message, giftId, giftAmount, gif);
+    }
+
+    // Paid first outbound or subsequent messages require the pending-request flow
+    const request = await this.prisma.friendRequest.findFirst({
+      where: {
+        OR: [
+          { fromUserId: userId, toUserId: otherUserId, status: "PENDING" },
+          { fromUserId: otherUserId, toUserId: userId, status: "PENDING" }
+        ]
+      }
+    });
+
+    if (!request) {
+      throw new NotFoundException("Friend request not found for this conversation");
+    }
+
+    if (request.fromUserId === userId) {
+      return await this.sendMessageToNonFriend(
+        userId,
+        otherUserId,
+        message,
+        request.id,
+        giftId,
+        giftAmount,
+        gif
+      );
+    }
+
+    return await this.sendMessageToInboxPeer(
+      userId,
+      otherUserId,
+      message,
+      giftId,
+      giftAmount,
+      gif,
+      true
+    );
   }
 
   /**

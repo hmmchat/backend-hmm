@@ -39,13 +39,16 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     membershipVerified?: boolean;
     /** Heartbeat: set true on pong; cleared before each ping sweep. */
     isAlive?: boolean;
+    /** Consecutive heartbeat intervals without a pong before the socket is terminated. */
+    missedHeartbeats?: number;
   }>();
   private roomConnections = new Map<string, Set<string>>();
   private userConnections = new Map<string, Set<string>>();
   private heartbeatTimer: NodeJS.Timeout | null = null;
   /** Delayed reap timers for preserve-participant-on-close sockets that never reconnect. Key: `${userId}|${roomId}` */
   private preserveReapTimers = new Map<string, NodeJS.Timeout>();
-  private static readonly HEARTBEAT_INTERVAL_MS = 30_000;
+  private static readonly HEARTBEAT_INTERVAL_MS = 45_000;
+  private static readonly HEARTBEAT_MISSES_BEFORE_TERMINATE = 2;
   private static readonly PRESERVE_REAP_DELAY_MS = 60_000;
   private readonly testMode: boolean;
 
@@ -122,7 +125,13 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     if (this.heartbeatTimer) return;
     this.heartbeatTimer = setInterval(() => {
       for (const [connectionId, conn] of this.connections) {
+        const missed = conn.missedHeartbeats || 0;
         if (conn.isAlive === false) {
+          conn.missedHeartbeats = missed + 1;
+        } else {
+          conn.missedHeartbeats = 0;
+        }
+        if ((conn.missedHeartbeats || 0) >= StreamingGateway.HEARTBEAT_MISSES_BEFORE_TERMINATE) {
           this.logger.warn(
             `[Heartbeat] Terminating unresponsive socket ${connectionId} (user: ${conn.userId}, room: ${conn.roomId || "none"})`
           );
@@ -216,7 +225,10 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       this.addUserConnection(userId, connectionId);
       ws.on("pong", () => {
         const conn = this.connections.get(connectionId);
-        if (conn) conn.isAlive = true;
+        if (conn) {
+          conn.isAlive = true;
+          conn.missedHeartbeats = 0;
+        }
       });
     } catch (error) {
       this.logger.error("WebSocket authentication failed:", error);

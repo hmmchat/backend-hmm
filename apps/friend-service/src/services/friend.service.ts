@@ -84,13 +84,19 @@ export class FriendService {
 
     if (existingRequest) {
       if (existingRequest.status === "ACCEPTED") {
-        throw new BadRequestException("Users are already friends");
-      }
-      if (existingRequest.fromUserId === fromUserId && existingRequest.toUserId === toUserId) {
+        // Stale accepted rows can linger after unfriend; only block if still friends.
+        if (await this.areFriends(fromUserId, toUserId)) {
+          throw new BadRequestException("Users are already friends");
+        }
+        // Fall through — same-direction row is reopened as PENDING below.
+      } else if (existingRequest.fromUserId === fromUserId && existingRequest.toUserId === toUserId) {
         throw new BadRequestException("Friend request already sent");
-      }
-      // If reverse request exists (mutual request), auto-accept both
-      if (existingRequest.fromUserId === toUserId && existingRequest.toUserId === fromUserId) {
+      } else if (
+        existingRequest.status === "PENDING" &&
+        existingRequest.fromUserId === toUserId &&
+        existingRequest.toUserId === fromUserId
+      ) {
+        // If reverse request exists (mutual request), auto-accept both
         const result = await this.acceptMutualRequest(existingRequest.id, fromUserId, toUserId, message);
         return { ...result, autoAccepted: true };
       }
@@ -99,15 +105,22 @@ export class FriendService {
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + this.REQUEST_EXPIRY_DAYS);
 
-    // Reuse a cancelled/rejected request in the same direction (e.g. after unfriend)
+    // Reopen a prior request row as a fresh pending request (non-friend flow after unfriend).
     const staleRequest = await this.prisma.friendRequest.findUnique({
       where: {
         fromUserId_toUserId: { fromUserId, toUserId }
       }
     });
 
+    if (staleRequest?.status === "PENDING") {
+      throw new BadRequestException("Friend request already sent");
+    }
+    if (staleRequest?.status === "BLOCKED") {
+      throw new BadRequestException("Cannot send friend request to this user");
+    }
+
     const request =
-      staleRequest && ["CANCELLED", "REJECTED"].includes(staleRequest.status)
+      staleRequest && ["CANCELLED", "REJECTED", "ACCEPTED"].includes(staleRequest.status)
         ? await this.prisma.friendRequest.update({
             where: { id: staleRequest.id },
             data: {
@@ -158,20 +171,37 @@ export class FriendService {
         }
       });
 
-      // Create the new request and immediately accept it
+      // Reuse or create the reciprocal request and immediately accept it.
       const expiresAt = new Date();
       expiresAt.setDate(expiresAt.getDate() + this.REQUEST_EXPIRY_DAYS);
 
-      const newRequest = await tx.friendRequest.create({
-        data: {
-          fromUserId: newFromUserId,
-          toUserId: newToUserId,
-          message: message || null,
-          status: "ACCEPTED",
-          acceptedAt: new Date(),
-          expiresAt
+      const existingOutgoing = await tx.friendRequest.findUnique({
+        where: {
+          fromUserId_toUserId: { fromUserId: newFromUserId, toUserId: newToUserId }
         }
       });
+
+      const newRequest = existingOutgoing
+        ? await tx.friendRequest.update({
+            where: { id: existingOutgoing.id },
+            data: {
+              status: "ACCEPTED",
+              message: message || null,
+              acceptedAt: new Date(),
+              rejectedAt: null,
+              expiresAt
+            }
+          })
+        : await tx.friendRequest.create({
+            data: {
+              fromUserId: newFromUserId,
+              toUserId: newToUserId,
+              message: message || null,
+              status: "ACCEPTED",
+              acceptedAt: new Date(),
+              expiresAt
+            }
+          });
 
       // Create friendship record (both directions) - check if already exists to prevent duplicates
       const [id1, id2] = [newFromUserId, newToUserId].sort();
@@ -1675,20 +1705,43 @@ export class FriendService {
     await this.invalidateFriendshipCache(userId1, userId2);
   }
 
-  private async cancelAcceptedFriendRequests(userId1: string, userId2: string): Promise<void> {
+  private async resetFriendRequestHistoryOnUnfriend(userId1: string, userId2: string): Promise<void> {
+    // Clear any prior friendship/request state so the pair restarts as non-friends.
     await this.prisma.friendRequest.updateMany({
       where: {
         OR: [
           { fromUserId: userId1, toUserId: userId2 },
           { fromUserId: userId2, toUserId: userId1 }
         ],
-        status: "ACCEPTED"
+        status: { in: ["PENDING", "ACCEPTED"] }
       },
       data: {
         status: "CANCELLED",
-        acceptedAt: null
+        acceptedAt: null,
+        rejectedAt: null
       }
     });
+  }
+
+  private async resetConversationSectionOnUnfriend(userId1: string, userId2: string): Promise<void> {
+    const [id1, id2] = [userId1, userId2].sort();
+    const conversation = await this.prisma.conversation.findUnique({
+      where: {
+        userId1_userId2: {
+          userId1: id1,
+          userId2: id2
+        }
+      }
+    });
+    if (!conversation) return;
+
+    const section = await this.conversationService.determineSection(id1, id2, false);
+    if (conversation.section !== section) {
+      await this.prisma.conversation.update({
+        where: { id: conversation.id },
+        data: { section }
+      });
+    }
   }
 
   /**
@@ -1745,9 +1798,10 @@ export class FriendService {
       throw new BadRequestException("Users are not friends");
     }
 
-    // Remove friendship and clear accepted request history so users can re-request
+    // Remove friendship and reset request/conversation state to non-friend flow.
     await this.removeFriendship(userId, friendId);
-    await this.cancelAcceptedFriendRequests(userId, friendId);
+    await this.resetFriendRequestHistoryOnUnfriend(userId, friendId);
+    await this.resetConversationSectionOnUnfriend(userId, friendId);
 
     this.metrics.incrementFriendshipRemoved();
     this.logger.log(`User ${userId} unfriended ${friendId}`);

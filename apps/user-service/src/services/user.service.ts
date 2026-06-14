@@ -7,7 +7,13 @@ import { BrandService } from "./brand.service.js";
 import { WalletClientService } from "./wallet-client.service.js";
 import { AuthClientService } from "./auth-client.service.js";
 import { DiscoveryClientService } from "./discovery-client.service.js";
-import { verifyToken, AccessPayload, PREFERRED_CITY_ANYWHERE_IN_INDIA } from "@hmm/common";
+import {
+  verifyToken,
+  AccessPayload,
+  PREFERRED_CITY_ANYWHERE_IN_INDIA,
+  canTransitionToOffline,
+  canTransitionToOnline
+} from "@hmm/common";
 import { JWK } from "jose";
 import {
   CreateProfileDto,
@@ -1444,12 +1450,38 @@ export class UserService implements OnModuleInit {
   async reportAppPresence(accessToken: string, data: { active?: boolean }) {
     const userId = await this.verifyAccessToken(accessToken);
     const active = Boolean(data.active);
+
+    const existing = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, status: true, lastActiveAt: true } as any
+    });
+    const currentStatus = String(existing?.status || "OFFLINE");
+
+    if (active) {
+      if (!canTransitionToOnline(currentStatus)) {
+        const user = await this.prisma.user.update({
+          where: { id: userId },
+          data: { lastActiveAt: new Date() } as any
+        });
+        return { user, applied: false };
+      }
+      const user = await this.prisma.user.update({
+        where: { id: userId },
+        data: {
+          status: "ONLINE" as UserStatus,
+          lastActiveAt: new Date()
+        } as any
+      });
+      return { user, applied: true };
+    }
+
+    if (!canTransitionToOffline(currentStatus)) {
+      return { user: existing, applied: false };
+    }
+
     const user = await this.prisma.user.update({
       where: { id: userId },
-      data: {
-        status: (active ? "ONLINE" : "OFFLINE") as UserStatus,
-        ...(active ? { lastActiveAt: new Date() } : {})
-      } as any
+      data: { status: "OFFLINE" as UserStatus } as any
     });
 
     return { user, applied: true };

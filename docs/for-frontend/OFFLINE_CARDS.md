@@ -83,6 +83,7 @@ Response shape:
     "reportLayer": 0,
     "reportLayerThresholds": { "layer1": 1, "layer2": 3, "layer3": 5, "ban": 7 },
     "reported": false,
+    "kycStatus": "VERIFIED",
     "matchExplanation": {
       "reasons": ["Shared 2 interests: Travel, Music"],
       "score": 78,

@@ -922,6 +922,7 @@ See **[USER_STATUS_AND_APIS.md](./USER_STATUS_AND_APIS.md)** for when to use eac
     ],
     "status": "AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE",
     "reported": false,
+    "kycStatus": "UNVERIFIED" | "VERIFIED" | "PENDING_REVIEW" | "REVOKED" | "EXPIRED",
     "matchExplanation": {
       "reasons": ["string"],
       "score": 85,
@@ -946,6 +947,8 @@ See **[USER_STATUS_AND_APIS.md](./USER_STATUS_AND_APIS.md)** for when to use eac
 ```
 
 **Note:** The `intent` field is directly on the `card` object, not nested under a `user` object. This makes it easy to display on the face card.
+
+**KYC verified badge:** Show a blue tick when `card.kycStatus === "VERIFIED"`. The field is omitted on moderator face cards (`isModeratorFaceCard: true`). For the logged-in user's own profile, use `GET /v1/me?fields=kycStatus`.
 
 **Use Case:** Swipe through potential matches. Call this repeatedly to get next cards.
 

@@ -92,6 +92,8 @@ interface Card {
   reported?: boolean;
   /** True when this card uses the shared moderator persona (not the user's personal profile). */
   isModeratorFaceCard?: boolean;
+  /** KYC state from user-service. Omitted on moderator face cards. Show verified badge when `VERIFIED`. */
+  kycStatus?: "UNVERIFIED" | "VERIFIED" | "PENDING_REVIEW" | "REVOKED" | "EXPIRED";
   matchExplanation?: {
     reasons: string[];
     score: number;
@@ -1206,6 +1208,7 @@ export class DiscoveryService implements OnModuleInit {
         ban: layerCfg.ban
       },
       reported: reportLayer >= 1,
+      kycStatus: user.kycStatus || "UNVERIFIED",
       matchExplanation
     };
 
@@ -1229,7 +1232,8 @@ export class DiscoveryService implements OnModuleInit {
         musicPreference: undefined,
         pages: modPages,
         matchExplanation: undefined,
-        isModeratorFaceCard: true
+        isModeratorFaceCard: true,
+        kycStatus: undefined
       };
     }
 

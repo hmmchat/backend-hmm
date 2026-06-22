@@ -27,9 +27,7 @@ import { FavouriteService } from "../services/favourite.service.js";
 import { GiphyService } from "../services/giphy.service.js";
 import { StreamingNodeRegistryService } from "../services/streaming-node-registry.service.js";
 import { MemeReactConfig } from "../config/meme-react.config.js";
-import { MemeReactBrowserConfig } from "../config/meme-react-browser.config.js";
 import { MemeReactService } from "../services/meme-react.service.js";
-import { MemeReactBrowserService } from "../services/meme-react-browser.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 
 @Module({
@@ -64,8 +62,6 @@ import { PrismaService } from "../prisma/prisma.service.js";
     GiphyService,
     StreamingNodeRegistryService,
     MemeReactConfig,
-    MemeReactBrowserConfig,
-    MemeReactBrowserService,
     MemeReactService,
     StreamingGateway
   ]

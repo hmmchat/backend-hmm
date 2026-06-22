@@ -1093,6 +1093,18 @@ export class RoomService {
   /**
    * @returns true if this user was an active call participant and was marked left (DB row updated).
    */
+  hasActiveScreenShareInRoom(roomId: string): boolean {
+    try {
+      const room = this.getRoom(roomId);
+      for (const participant of room.participants.values()) {
+        if (participant.producer.screen) return true;
+      }
+    } catch {
+      /* room not in memory */
+    }
+    return false;
+  }
+
   async removeParticipant(roomId: string, userId: string): Promise<boolean> {
     // Try to get room from memory, but continue even if not found (will update DB)
     let room: RoomState | null = null;

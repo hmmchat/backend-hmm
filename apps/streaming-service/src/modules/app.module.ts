@@ -7,6 +7,7 @@ import { IcebreakerAdminController } from "../controllers/icebreaker-admin.contr
 import { DareAdminController } from "../controllers/dare-admin.controller.js";
 import { LoadingMemeController } from "../controllers/loading-meme.controller.js";
 import { LoadingMemeAdminController } from "../controllers/loading-meme-admin.controller.js";
+import { MemeReactController } from "../controllers/meme-react.controller.js";
 import { HealthController } from "../controllers/health.controller.js";
 import { StreamingGateway } from "../gateways/streaming.gateway.js";
 import { MediasoupService } from "../services/mediasoup.service.js";
@@ -25,6 +26,10 @@ import { HistoryService } from "../services/history.service.js";
 import { FavouriteService } from "../services/favourite.service.js";
 import { GiphyService } from "../services/giphy.service.js";
 import { StreamingNodeRegistryService } from "../services/streaming-node-registry.service.js";
+import { MemeReactConfig } from "../config/meme-react.config.js";
+import { MemeReactBrowserConfig } from "../config/meme-react-browser.config.js";
+import { MemeReactService } from "../services/meme-react.service.js";
+import { MemeReactBrowserService } from "../services/meme-react-browser.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 
 @Module({
@@ -37,6 +42,7 @@ import { PrismaService } from "../prisma/prisma.service.js";
     DareAdminController,
     LoadingMemeController,
     LoadingMemeAdminController,
+    MemeReactController,
     HealthController
   ],
   providers: [
@@ -57,6 +63,10 @@ import { PrismaService } from "../prisma/prisma.service.js";
     FavouriteService,
     GiphyService,
     StreamingNodeRegistryService,
+    MemeReactConfig,
+    MemeReactBrowserConfig,
+    MemeReactBrowserService,
+    MemeReactService,
     StreamingGateway
   ]
 })

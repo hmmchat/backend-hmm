@@ -61,13 +61,6 @@ COPY --from=builder /app/apps/streaming-service/node_modules/.prisma ./node_modu
 # Generate Prisma Client (schema present; DATABASE_URL from runtime env)
 RUN npx prisma generate --schema=prisma/schema.prisma
 
-# Meme React: headless Chromium for in-call browser (Playwright + stealth).
-# install-deps pulls in OS libraries; install chromium downloads the browser binary.
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-RUN mkdir -p /ms-playwright /tmp/meme-react-profiles \
-    && npx playwright install-deps chromium \
-    && npx playwright install chromium
-
 # Expose port
 EXPOSE 3006
 

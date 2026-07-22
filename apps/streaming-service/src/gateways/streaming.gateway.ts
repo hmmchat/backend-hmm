@@ -124,6 +124,10 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       void this.broadcastToRoom(roomId, message);
     });
 
+    this.memeReactService.setFrameBroadcaster((roomId, driverUserId, frame, phase) => {
+      void this.sendMemeReactFrame(roomId, driverUserId, frame, phase);
+    });
+
     this.logger.log("WebSocket gateway initialized at /streaming/ws");
   }
 
@@ -153,7 +157,8 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
   /** Tell every connection still attached to the room (participants AND Beam TV viewers) that it ended. */
   private async notifyRoomEnded(roomId: string, wasBroadcasting: boolean) {
     try {
-      await this.memeReactService.onCallEnded(roomId);
+      const sessionId = await this.roomService.getCallSessionIdForRoom(roomId);
+      await this.memeReactService.onCallEnded(roomId, sessionId ?? undefined);
       if (wasBroadcasting) {
         await this.broadcastToRoom(roomId, { type: "broadcast-stopped", data: { roomId, reason: "room_ended" } });
       }
@@ -582,6 +587,38 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
           await this.handleMemeReactGoLive(connectionId, userId, data, ws);
           break;
 
+        case "meme-react-navigate":
+          if (this.isAnonymousUser(userId)) {
+            this.sendError(ws, "Authentication required.");
+            return;
+          }
+          await this.handleMemeReactNavigate(connectionId, userId, data, ws);
+          break;
+
+        case "meme-react-input":
+          if (this.isAnonymousUser(userId)) {
+            this.sendError(ws, "Authentication required.");
+            return;
+          }
+          await this.handleMemeReactInput(connectionId, userId, data, ws);
+          break;
+
+        case "meme-react-toggle-audio":
+          if (this.isAnonymousUser(userId)) {
+            this.sendError(ws, "Authentication required.");
+            return;
+          }
+          await this.handleMemeReactToggleAudio(connectionId, userId, data, ws);
+          break;
+
+        case "meme-react-reopen-picker":
+          if (this.isAnonymousUser(userId)) {
+            this.sendError(ws, "Authentication required.");
+            return;
+          }
+          await this.handleMemeReactReopenPicker(connectionId, userId, data, ws);
+          break;
+
         // Friend requests (during call)
         case "send-friend-request":
           if (this.isAnonymousUser(userId)) {
@@ -628,6 +665,10 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       "meme-react-start",
       "meme-react-end",
       "meme-react-go-live",
+      "meme-react-navigate",
+      "meme-react-input",
+      "meme-react-toggle-audio",
+      "meme-react-reopen-picker",
       "send-friend-request"
     ]);
     if (!roomBoundTypes.has(type)) return null;
@@ -1022,10 +1063,14 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     }
 
     const memeReact = this.memeReactService.getState(roomId);
-    if (source === "screen" && memeReact?.active) {
-      if (memeReact.driverUserId !== userId) {
-        throw new Error("Only the Meme React driver can share during Meme React");
+    if (source === "screen") {
+      if (memeReact?.active) {
+        if (memeReact.driverUserId !== userId || memeReact.phase !== "live") {
+          throw new Error("Screen share is disabled during Meme React");
+        }
       }
+    } else if (memeReact?.active && memeReact.phase === "live") {
+      // Allow camera/audio during meme react live
     }
 
     const producer = await this.callService.produce(
@@ -1534,6 +1579,25 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  private async sendMemeReactFrame(
+    roomId: string,
+    driverUserId: string,
+    frame: string,
+    phase: string
+  ): Promise<void> {
+    const connectionIds = this.roomConnections.get(roomId);
+    if (!connectionIds) return;
+    for (const connId of connectionIds) {
+      const conn = this.connections.get(connId);
+      if (!conn) continue;
+      if (String(conn.userId) !== String(driverUserId)) continue;
+      this.send(conn.ws, {
+        type: "meme-react-frame",
+        data: { roomId, frame, phase }
+      });
+    }
+  }
+
   private async handleMemeReactStart(
     _connectionId: string,
     userId: string,
@@ -1551,38 +1615,18 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
         this.sendError(ws, "Only call participants can start Meme React");
         return;
       }
+      const callSessionId = await this.roomService.getCallSessionIdForRoom(roomId);
+      if (!callSessionId) {
+        this.sendError(ws, "Call session not found");
+        return;
+      }
       const hasScreen = this.roomService.hasActiveScreenShareInRoom(roomId);
-      const state = this.memeReactService.start(roomId, userId, {
+      const state = await this.memeReactService.start(roomId, userId, callSessionId, {
         hasActiveScreenShare: hasScreen
       });
       this.send(ws, { type: "meme-react-start-success", data: state });
     } catch (error: any) {
       this.sendError(ws, error.message || "Failed to start Meme React");
-    }
-  }
-
-  private async closeUserScreenShareIfActive(roomId: string, userId: string): Promise<void> {
-    try {
-      const participant = this.roomService.getParticipant(roomId, userId);
-      const screenId = participant?.producer?.screen?.id;
-      if (!screenId) return;
-      await this.callService.closeProducer(roomId, userId, String(screenId));
-      await this.broadcastToRoom(
-        roomId,
-        {
-          type: "producer-closed",
-          data: {
-            roomId,
-            producerId: String(screenId),
-            closedBy: userId
-          }
-        },
-        userId
-      );
-    } catch (error: any) {
-      this.logger.warn(
-        `[MemeReact] Failed to close screen share for ${userId} in room ${roomId}: ${error?.message || error}`
-      );
     }
   }
 
@@ -1593,8 +1637,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       return;
     }
     try {
-      const state = this.memeReactService.end(roomId, userId);
-      await this.closeUserScreenShareIfActive(roomId, userId);
+      const state = await this.memeReactService.end(roomId, userId);
       this.send(ws, { type: "meme-react-end-success", data: state });
     } catch (error: any) {
       this.sendError(ws, error.message || "Failed to end Meme React");
@@ -1608,10 +1651,65 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       return;
     }
     try {
-      const state = this.memeReactService.goLive(roomId, userId);
+      const state = await this.memeReactService.goLive(roomId, userId);
       this.send(ws, { type: "meme-react-go-live-success", data: state });
     } catch (error: any) {
       this.sendError(ws, error.message || "Failed to go live");
+    }
+  }
+
+  private async handleMemeReactNavigate(_connectionId: string, userId: string, data: any, ws: any) {
+    const { roomId, url } = data ?? {};
+    if (!roomId || !url) {
+      this.sendError(ws, "roomId and url are required");
+      return;
+    }
+    try {
+      const state = await this.memeReactService.navigate(roomId, userId, String(url));
+      this.send(ws, { type: "meme-react-navigate-success", data: state });
+    } catch (error: any) {
+      this.sendError(ws, error.message || "Navigation failed");
+    }
+  }
+
+  private async handleMemeReactInput(_connectionId: string, userId: string, data: any, ws: any) {
+    const { roomId, input } = data ?? {};
+    if (!roomId || !input) {
+      this.sendError(ws, "roomId and input are required");
+      return;
+    }
+    try {
+      await this.memeReactService.handleInput(roomId, userId, input);
+    } catch (error: any) {
+      this.sendError(ws, error.message || "Input failed");
+    }
+  }
+
+  private async handleMemeReactToggleAudio(_connectionId: string, userId: string, data: any, ws: any) {
+    const { roomId, enabled } = data ?? {};
+    if (!roomId || enabled === undefined) {
+      this.sendError(ws, "roomId and enabled are required");
+      return;
+    }
+    try {
+      const state = this.memeReactService.toggleBrowserAudio(roomId, userId, Boolean(enabled));
+      this.send(ws, { type: "meme-react-toggle-audio-success", data: state });
+    } catch (error: any) {
+      this.sendError(ws, error.message || "Failed to toggle browser audio");
+    }
+  }
+
+  private async handleMemeReactReopenPicker(_connectionId: string, userId: string, data: any, ws: any) {
+    const { roomId } = data ?? {};
+    if (!roomId) {
+      this.sendError(ws, "roomId is required");
+      return;
+    }
+    try {
+      const state = this.memeReactService.reopenPicker(roomId, userId);
+      this.send(ws, { type: "meme-react-reopen-picker-success", data: state });
+    } catch (error: any) {
+      this.sendError(ws, error.message || "Failed to reopen site picker");
     }
   }
 

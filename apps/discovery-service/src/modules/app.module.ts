@@ -24,6 +24,13 @@ import { CacheService } from "../services/cache.service.js";
 import { DiscoverySessionService } from "../services/discovery-session.service.js";
 import { MeetRnWaitingMessageAdminController } from "../routes/meet-rn-waiting-message-admin.controller.js";
 import { MeetRnWaitingMessageService } from "../services/meet-rn-waiting-message.service.js";
+import { BatchAllocatorService } from "../services/batch-allocator.service.js";
+import { SemanticScorerService } from "../services/semantic-scorer.service.js";
+import { FallbackScorerService } from "../services/fallback-scorer.service.js";
+import { CostTrackerService } from "../services/cost-tracker.service.js";
+import { HostedEmbeddingAdapter } from "../services/embedding-adapters/hosted.adapter.js";
+import { MatchingAdminController } from "../routes/matching-admin.controller.js";
+import { AdminAuthGuard } from "../guards/admin-auth.guard.js";
 
 @Module({
   imports: [ConfigModule.forRoot()],
@@ -35,7 +42,8 @@ import { MeetRnWaitingMessageService } from "../services/meet-rn-waiting-message
     DiscoveryController,
     SquadController,
     HealthController,
-    MeetRnWaitingMessageAdminController
+    MeetRnWaitingMessageAdminController,
+    MatchingAdminController
   ],
   providers: [
     MetricService,
@@ -53,8 +61,13 @@ import { MeetRnWaitingMessageService } from "../services/meet-rn-waiting-message
     PrismaService,
     CacheService,
     DiscoverySessionService,
-    MeetRnWaitingMessageService
+    MeetRnWaitingMessageService,
+    BatchAllocatorService,
+    SemanticScorerService,
+    FallbackScorerService,
+    CostTrackerService,
+    HostedEmbeddingAdapter,
+    AdminAuthGuard
   ]
 })
 export class AppModule {}
-

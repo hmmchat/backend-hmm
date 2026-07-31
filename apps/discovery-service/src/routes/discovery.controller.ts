@@ -7,7 +7,8 @@ import {
   Headers,
   Param,
   HttpException,
-  HttpStatus
+  HttpStatus,
+  Logger
 } from "@nestjs/common";
 import { DiscoveryService } from "../services/discovery.service.js";
 import { LocationService } from "../services/location.service.js";
@@ -31,6 +32,7 @@ import {
 
 @Controller("discovery")
 export class DiscoveryController {
+  private readonly logger = new Logger(DiscoveryController.name);
   constructor(
     private readonly discoveryService: DiscoveryService,
     private readonly locationService: LocationService,
@@ -535,6 +537,23 @@ export class DiscoveryController {
   async internalSessionActive(@Param("userId") userId: string) {
     const active = await this.discoveryService.hasActiveDiscoverySessionForUser(userId);
     return { active };
+  }
+
+  /**
+   * Internal: trigger feature generation for a user.
+   * POST /discovery/internal/generate-features/:userId
+   * Called by user-service after profile updates that affect matchmaking.
+   */
+  @Post("internal/generate-features/:userId")
+  async internalGenerateFeatures(@Param("userId") userId: string) {
+    // Validate internal service token
+    const internalToken = process.env.INTERNAL_SERVICE_TOKEN;
+    if (!internalToken) {
+      this.logger.error("INTERNAL_SERVICE_TOKEN not configured");
+      throw new HttpException("Service not configured", HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+    // The auth middleware validates this, but we can add an explicit check
+    return this.discoveryService.enqueueFeatureGeneration(userId);
   }
 
   /* ---------- OFFLINE Cards Endpoints ---------- */

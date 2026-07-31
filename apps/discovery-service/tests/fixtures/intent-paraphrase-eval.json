@@ -1,0 +1,134 @@
+{
+  "description": "Offline eval set for semantic intent matching. Labels: should_match | borderline | should_not. Use with hosted embeddings; lexical baseline is expected to underperform on should_match paraphrases.",
+  "pairs": [
+    {
+      "a": "looking for a gym buddy",
+      "b": "want a workout partner",
+      "label": "should_match"
+    },
+    {
+      "a": "anyone free for chai and chat",
+      "b": "down for coffee and conversation",
+      "label": "should_match"
+    },
+    {
+      "a": "need help practicing English",
+      "b": "looking for someone to speak English with",
+      "label": "should_match"
+    },
+    {
+      "a": "bored, let's vibe to music",
+      "b": "wanna listen to songs together",
+      "label": "should_match"
+    },
+    {
+      "a": "looking for co-founder for a startup",
+      "b": "want to meet founders building something",
+      "label": "should_match"
+    },
+    {
+      "a": "late night deep talk",
+      "b": "serious conversation about life",
+      "label": "should_match"
+    },
+    {
+      "a": "play chess online with me",
+      "b": "anyone for a quick chess game",
+      "label": "should_match"
+    },
+    {
+      "a": "teach me guitar basics",
+      "b": "looking for a beginner guitar buddy",
+      "label": "should_match"
+    },
+    {
+      "a": "study with me for exams",
+      "b": "need an accountability partner for studying",
+      "label": "should_match"
+    },
+    {
+      "a": "explore the city tonight",
+      "b": "want to wander around town",
+      "label": "should_match"
+    },
+    {
+      "a": "looking for gym buddy",
+      "b": "hiring a personal trainer for money",
+      "label": "borderline"
+    },
+    {
+      "a": "chai and chat",
+      "b": "business networking meetup",
+      "label": "borderline"
+    },
+    {
+      "a": "practice English casually",
+      "b": "need a professional IELTS tutor",
+      "label": "borderline"
+    },
+    {
+      "a": "music vibes",
+      "b": "looking for a band to join permanently",
+      "label": "borderline"
+    },
+    {
+      "a": "startup chat",
+      "b": "want free legal advice for my company",
+      "label": "borderline"
+    },
+    {
+      "a": "looking for gym buddy",
+      "b": "selling crypto courses",
+      "label": "should_not"
+    },
+    {
+      "a": "chai and chat",
+      "b": "adult dating only",
+      "label": "should_not"
+    },
+    {
+      "a": "practice English",
+      "b": "spam follow my instagram",
+      "label": "should_not"
+    },
+    {
+      "a": "study together",
+      "b": "looking for investors with capital",
+      "label": "should_not"
+    },
+    {
+      "a": "play chess",
+      "b": "need a roommate for 2BHK",
+      "label": "should_not"
+    },
+    {
+      "a": "deep talk about life",
+      "b": "buy followers cheap",
+      "label": "should_not"
+    },
+    {
+      "a": "explore the city",
+      "b": "looking for a driver job",
+      "label": "should_not"
+    },
+    {
+      "a": "guitar practice buddy",
+      "b": "hiring for call center night shift",
+      "label": "should_not"
+    },
+    {
+      "a": "music listening session",
+      "b": "promote my OnlyFans",
+      "label": "should_not"
+    },
+    {
+      "a": "co-founder search",
+      "b": "want to play casual chess",
+      "label": "should_not"
+    }
+  ],
+  "gates": {
+    "minShouldMatchLexicalMissRate": 0.5,
+    "note": "Before canary: hosted embeddings should score should_match pairs higher than lexical baseline on average; should_not pairs should stay low."
+  }
+}

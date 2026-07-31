@@ -43,4 +43,33 @@ export class DiscoveryClientService {
       return false;
     }
   }
+
+  /**
+   * Trigger feature generation for a user in discovery-service.
+   * Fire-and-forget: logs errors but doesn't throw.
+   */
+  async triggerFeatureGeneration(userId: string): Promise<void> {
+    try {
+      const response = await fetch(
+        `${this.discoveryServiceUrl}/discovery/internal/generate-features/${encodeURIComponent(userId)}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-service-token": process.env.INTERNAL_SERVICE_TOKEN || ""
+          },
+          signal: AbortSignal.timeout(this.requestTimeoutMs)
+        } as any
+      );
+
+      if (!response.ok) {
+        this.logger.warn(`Feature generation trigger failed for ${userId}: HTTP ${response.status}`);
+        return;
+      }
+
+      this.logger.debug(`Feature generation enqueued for user ${userId}`);
+    } catch (error: any) {
+      this.logger.warn(`Feature generation trigger error for ${userId}: ${error?.message || error}`);
+    }
+  }
 }

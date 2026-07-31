@@ -244,3 +244,37 @@ model MeetRnWaitingMessage {
   @@map("meet_rn_waiting_messages")
   @@index([isActive])
 }
+
+// Precomputed semantic feature vector for matchmaking.
+// Updated when user changes intent (intent-only embedding for the intent weight).
+// provider: "hosted" = real embedding API; "fallback" = non-semantic hash (do not cosine-match).
+model UserFeature {
+  userId    String   @id
+  vector    Json
+  intent    String?
+  checksum  String
+  version   Int      @default(1)
+  provider  String   @default("hosted")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([provider])
+  @@map("user_features")
+}
+
+// Background job to (re)generate user features.
+// Enqueued by user-service after profile changes; processed by discovery-service.
+model FeatureGenerationJob {
+  id         String    @id @default(cuid())
+  userId     String    @unique
+  status     String    @default("pending") // pending | processing | failed
+  retryCount Int       @default(0)
+  leasedAt   DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([status])
+  @@index([userId])
+  @@index([status, leasedAt])
+  @@map("feature_generation_jobs")
+}

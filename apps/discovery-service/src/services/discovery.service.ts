@@ -1,4 +1,4 @@
-import { Injectable, HttpException, HttpStatus, OnModuleInit, Logger } from "@nestjs/common";
+import { Injectable, HttpException, HttpStatus, OnModuleInit, Logger, Optional, Inject, forwardRef } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { UserClientService } from "./user-client.service.js";
 import { GenderFilterService } from "./gender-filter.service.js";
@@ -8,6 +8,7 @@ import { StreamingClientService } from "./streaming-client.service.js";
 import { CacheService } from "./cache.service.js";
 import { SquadService } from "./squad.service.js";
 import { DiscoverySessionService } from "./discovery-session.service.js";
+import { BatchAllocatorService } from "./batch-allocator.service.js";
 import {
   MATCH_SCORE_BRAND,
   MATCH_SCORE_INTEREST_EXACT,
@@ -31,6 +32,7 @@ import {
   getDiscoveryReportLayerConfig
 } from "../config/report-layers.config.js";
 import { resolveRaincheckPartnerStatus } from "../status/status-rules.js";
+import { createHash } from "crypto";
 
 // DiscoveryUser interface is imported from user-client.service.ts
 // Import it to avoid duplication
@@ -39,6 +41,13 @@ import {
   shouldUseModeratorFaceCard
 } from "../config/moderator-face-card.config.js";
 import { isPreferredCityAnywhere, PREFERRED_CITY_ANYWHERE_IN_INDIA } from "@hmm/common";
+import { HostedEmbeddingAdapter } from "./embedding-adapters/hosted.adapter.js";
+import {
+  FEATURE_GENERATION_JOB_LEASE_MS,
+  MATCHING_CARD_WAIT_MS,
+  MATCHING_MODE,
+  isBatchPrimaryForCity
+} from "../config/matching-admin.config.js";
 
 interface UserProfile {
   id: string;
@@ -140,8 +149,25 @@ export class DiscoveryService implements OnModuleInit {
     private readonly streamingClient: StreamingClientService,
     private readonly cache: CacheService,
     private readonly squadService: SquadService,
-    private readonly discoverySessionService: DiscoverySessionService
+    private readonly discoverySessionService: DiscoverySessionService,
+    private readonly embeddingAdapter: HostedEmbeddingAdapter,
+    @Optional() @Inject(forwardRef(() => BatchAllocatorService))
+    private readonly batchAllocator?: BatchAllocatorService
   ) { }
+
+  /** In shadow mode, log whether the live match agrees with the latest batch top pairs. */
+  private logShadowAgreement(userId: string, partnerId: string): void {
+    if (MATCHING_MODE !== "shadow" || !this.batchAllocator) return;
+    const shadow = this.batchAllocator.getLastShadowPairs();
+    const agreed = shadow.some(
+      (p) =>
+        (p.user1 === userId && p.user2 === partnerId) ||
+        (p.user1 === partnerId && p.user2 === userId)
+    );
+    this.logger.log(
+      `Shadow agreement user=${userId} partner=${partnerId} agreed=${agreed} shadowPairs=${shadow.length}`
+    );
+  }
 
   private debugLog(message: string): void {
     if (process.env.DISCOVERY_DEBUG_LOGS === "true") {
@@ -359,47 +385,30 @@ export class DiscoveryService implements OnModuleInit {
     // Session-scope raincheck exclusions must apply before honoring existing matches.
     const raincheckedUserIds = await this.getRaincheckedUserIds(userId, sessionId, storedPreferred);
 
-    // Check if user is already matched
-    const existingMatch = await this.matchingService.getMatchForUser(userId);
-    if (existingMatch) {
-      const matchedUserId = existingMatch.user1Id === userId ? existingMatch.user2Id : existingMatch.user1Id;
-      if (raincheckedUserIds.includes(matchedUserId)) {
-        await this.matchingService.removeMatchAcceptances(existingMatch.user1Id, existingMatch.user2Id);
-        await this.matchingService.removeMatch(existingMatch.user1Id, existingMatch.user2Id);
-      } else {
-      const matchedUser = await this.userClient.getUserFullProfileById(matchedUserId);
-      const currentUserStatus = String((userProfileResponse as any).status || "");
-      const matchedUserStatus = String((matchedUser as any).status || "");
+    // Check if user is already matched (batch allocator may have created one)
+    const servedExisting = await this.tryServeExistingMatch(
+      userId,
+      sessionId,
+      storedPreferred,
+      poolCity,
+      currentUser,
+      userProfileResponse,
+      raincheckedUserIds
+    );
+    if (servedExisting) return servedExisting;
 
-      // Heal status drift: never delete active_matches while both users should see each other.
-      if (currentUserStatus !== "MATCHED" || matchedUserStatus !== "MATCHED") {
-        await this.matchingService.ensureMatchedStatuses(userId, matchedUserId);
-      }
-
-      // User is actively matched, return their match's card
-      const card = await this.buildCard(this.convertToDiscoveryUser(matchedUser), poolCity, currentUser);
-
-      // Surface acceptance hint: if the other user already accepted but current user hasn't,
-      // frontend can show "X has accepted your match".
-      const acceptanceState = await this.matchingService.getAcceptanceState(existingMatch.user1Id, existingMatch.user2Id);
-      const currentUserAccepted = acceptanceState.acceptedBy.has(userId);
-      const matchedUserAccepted = acceptanceState.acceptedBy.has(matchedUserId);
-      (card as any).otherUserAccepted = matchedUserAccepted && !currentUserAccepted;
-      (card as any).currentUserAccepted = currentUserAccepted;
-
-      // Decrement gender filter if active
-      const genderFilter = await this.genderFilterService.getCurrentPreference(userId);
-      const hasActiveGenderFilter =
-        genderFilter && genderFilter.screensRemaining > 0 && (genderFilter.isActive ?? true);
-      if (hasActiveGenderFilter) {
-        await this.genderFilterService.decrementScreen(userId);
-      }
-
-      return {
-        card,
-        exhausted: false
-      };
-      }
+    // batch_primary: wait briefly for allocator before racing with legacy matcher
+    if (isBatchPrimaryForCity(storedPreferred)) {
+      const waited = await this.waitForBatchMatch(
+        userId,
+        sessionId,
+        storedPreferred,
+        poolCity,
+        currentUser,
+        userProfileResponse,
+        raincheckedUserIds
+      );
+      if (waited) return waited;
     }
 
     // User is not matched, find a match using mutual matching
@@ -429,6 +438,7 @@ export class DiscoveryService implements OnModuleInit {
     );
 
     if (matchedUser) {
+      this.logShadowAgreement(userId, matchedUser.id);
       const card = await this.buildCard(matchedUser, poolCity, currentUser);
 
       if (hasActiveGenderFilter) {
@@ -2054,39 +2064,28 @@ export class DiscoveryService implements OnModuleInit {
     // Session-scope raincheck exclusions must apply before honoring existing matches.
     const raincheckedUserIds = await this.getRaincheckedUserIds(userId, sessionId, storedPreferred);
 
-    // Check if user is already matched
-    const existingMatch = await this.matchingService.getMatchForUser(userId);
-    if (existingMatch) {
-      const matchedUserId = existingMatch.user1Id === userId ? existingMatch.user2Id : existingMatch.user1Id;
-      if (raincheckedUserIds.includes(matchedUserId)) {
-        await this.matchingService.removeMatchAcceptances(existingMatch.user1Id, existingMatch.user2Id);
-        await this.matchingService.removeMatch(existingMatch.user1Id, existingMatch.user2Id);
-      } else {
-      const matchedUser = await this.userClient.getUserFullProfileById(matchedUserId);
-      const currentUserStatus = String((userProfileResponse as any).status || "");
-      const matchedUserStatus = String((matchedUser as any).status || "");
+    const servedExisting = await this.tryServeExistingMatch(
+      userId,
+      sessionId,
+      storedPreferred,
+      poolCity,
+      currentUser,
+      userProfileResponse,
+      raincheckedUserIds
+    );
+    if (servedExisting) return servedExisting;
 
-      // Heal status drift: never delete active_matches while both users should see each other.
-      if (currentUserStatus !== "MATCHED" || matchedUserStatus !== "MATCHED") {
-        await this.matchingService.ensureMatchedStatuses(userId, matchedUserId);
-      }
-
-      // User is actively matched, return their match's card
-      const card = await this.buildCard(this.convertToDiscoveryUser(matchedUser), poolCity, currentUser);
-
-      // Decrement gender filter if active
-      const genderFilter = await this.genderFilterService.getCurrentPreference(userId);
-      const hasActiveGenderFilter =
-        genderFilter && genderFilter.screensRemaining > 0 && (genderFilter.isActive ?? true);
-      if (hasActiveGenderFilter) {
-        await this.genderFilterService.decrementScreen(userId);
-      }
-
-      return {
-        card,
-        exhausted: false
-      };
-      }
+    if (isBatchPrimaryForCity(storedPreferred)) {
+      const waited = await this.waitForBatchMatch(
+        userId,
+        sessionId,
+        storedPreferred,
+        poolCity,
+        currentUser,
+        userProfileResponse,
+        raincheckedUserIds
+      );
+      if (waited) return waited;
     }
 
     // User is not matched, find a match using mutual matching
@@ -2118,6 +2117,7 @@ export class DiscoveryService implements OnModuleInit {
     );
 
     if (matchedUser) {
+      this.logShadowAgreement(userId, matchedUser.id);
       // findMatchForUser already creates the match, but let's verify it exists
       // This ensures the match is definitely in the database before returning the card
       try {
@@ -4031,6 +4031,279 @@ export class DiscoveryService implements OnModuleInit {
       console.error("Error checking follow status:", error);
       return false;
     }
+  }
+
+  /**
+   * Enqueue a feature generation job for a user.
+   * Called by user-service when profile fields that affect matchmaking change.
+   * Creates a FeatureGenerationJob record that the background worker will process.
+   */
+  /**
+   * Serve an existing active_matches card if present and not rainchecked.
+   */
+  private async tryServeExistingMatch(
+    userId: string,
+    _sessionId: string,
+    _storedPreferred: string | null,
+    poolCity: string | null,
+    currentUser: UserProfile,
+    userProfileResponse: any,
+    raincheckedUserIds: string[]
+  ): Promise<CardResponse | null> {
+    const existingMatch = await this.matchingService.getMatchForUser(userId);
+    if (!existingMatch) return null;
+
+    const matchedUserId =
+      existingMatch.user1Id === userId ? existingMatch.user2Id : existingMatch.user1Id;
+    if (raincheckedUserIds.includes(matchedUserId)) {
+      await this.matchingService.removeMatchAcceptances(existingMatch.user1Id, existingMatch.user2Id);
+      await this.matchingService.removeMatch(existingMatch.user1Id, existingMatch.user2Id);
+      return null;
+    }
+
+    const matchedUser = await this.userClient.getUserFullProfileById(matchedUserId);
+    const currentUserStatus = String((userProfileResponse as any).status || "");
+    const matchedUserStatus = String((matchedUser as any).status || "");
+
+    if (currentUserStatus !== "MATCHED" || matchedUserStatus !== "MATCHED") {
+      await this.matchingService.ensureMatchedStatuses(userId, matchedUserId);
+    }
+
+    const card = await this.buildCard(this.convertToDiscoveryUser(matchedUser), poolCity, currentUser);
+
+    const acceptanceState = await this.matchingService.getAcceptanceState(
+      existingMatch.user1Id,
+      existingMatch.user2Id
+    );
+    const currentUserAccepted = acceptanceState.acceptedBy.has(userId);
+    const matchedUserAccepted = acceptanceState.acceptedBy.has(matchedUserId);
+    (card as any).otherUserAccepted = matchedUserAccepted && !currentUserAccepted;
+    (card as any).currentUserAccepted = currentUserAccepted;
+    (card as any).matchingMode = MATCHING_MODE;
+
+    const genderFilter = await this.genderFilterService.getCurrentPreference(userId);
+    const hasActiveGenderFilter =
+      genderFilter && genderFilter.screensRemaining > 0 && (genderFilter.isActive ?? true);
+    if (hasActiveGenderFilter) {
+      await this.genderFilterService.decrementScreen(userId);
+    }
+
+    return { card, exhausted: false };
+  }
+
+  /**
+   * In batch_primary mode, poll briefly for an allocator-created match before legacy matching.
+   */
+  private async waitForBatchMatch(
+    userId: string,
+    sessionId: string,
+    storedPreferred: string | null,
+    poolCity: string | null,
+    currentUser: UserProfile,
+    userProfileResponse: any,
+    raincheckedUserIds: string[]
+  ): Promise<CardResponse | null> {
+    const deadline = Date.now() + MATCHING_CARD_WAIT_MS;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 250));
+      const served = await this.tryServeExistingMatch(
+        userId,
+        sessionId,
+        storedPreferred,
+        poolCity,
+        currentUser,
+        userProfileResponse,
+        raincheckedUserIds
+      );
+      if (served) return served;
+    }
+    return null;
+  }
+
+  async enqueueFeatureGeneration(userId: string): Promise<{ enqueued: boolean }> {
+    try {
+      await (this.prisma as any).featureGenerationJob.upsert({
+        where: { userId },
+        create: {
+          userId,
+          status: "pending",
+          retryCount: 0,
+          leasedAt: null
+        },
+        update: {
+          status: "pending",
+          retryCount: 0,
+          leasedAt: null,
+          updatedAt: new Date()
+        }
+      });
+      return { enqueued: true };
+    } catch (error: any) {
+      this.logger.error(`Failed to enqueue feature generation for ${userId}:`, error);
+      return { enqueued: false };
+    }
+  }
+
+  /**
+   * Enqueue feature generation for all users with active discovery sessions (admin backfill).
+   */
+  async enqueueFeatureGenerationForActiveSessions(): Promise<{ enqueued: number }> {
+    const sessions = await (this.prisma as any).discoverySession.findMany({
+      where: { expiresAt: { gt: new Date() } },
+      select: { userId: true },
+      distinct: ["userId"]
+    });
+    let enqueued = 0;
+    for (const s of sessions) {
+      const result = await this.enqueueFeatureGeneration(s.userId);
+      if (result.enqueued) enqueued++;
+    }
+    return { enqueued };
+  }
+
+  /**
+   * Process pending feature generation jobs (called by background worker).
+   * Reclaims stuck processing leases older than FEATURE_GENERATION_JOB_LEASE_MS.
+   */
+  async processFeatureGenerationJobs(batchSize: number = 10): Promise<{ processed: number; failed: number }> {
+    try {
+      const leaseCutoff = new Date(Date.now() - FEATURE_GENERATION_JOB_LEASE_MS);
+      await (this.prisma as any).featureGenerationJob.updateMany({
+        where: {
+          status: "processing",
+          leasedAt: { lt: leaseCutoff }
+        },
+        data: { status: "pending", leasedAt: null }
+      });
+
+      const jobs = await (this.prisma as any).featureGenerationJob.findMany({
+        where: { status: "pending" },
+        take: batchSize,
+        orderBy: { createdAt: "asc" }
+      });
+
+      if (jobs.length === 0) return { processed: 0, failed: 0 };
+
+      let processed = 0;
+      let failed = 0;
+
+      for (const job of jobs) {
+        await (this.prisma as any).featureGenerationJob.update({
+          where: { id: job.id },
+          data: { status: "processing", leasedAt: new Date() }
+        });
+
+        try {
+          await this.processFeatureGeneration(job.userId);
+          await (this.prisma as any).featureGenerationJob.delete({ where: { id: job.id } });
+          processed++;
+        } catch (err) {
+          const retryCount = (job.retryCount || 0) + 1;
+          if (retryCount >= 3) {
+            await (this.prisma as any).featureGenerationJob.update({
+              where: { id: job.id },
+              data: { status: "failed", retryCount, leasedAt: null }
+            });
+          } else {
+            await (this.prisma as any).featureGenerationJob.update({
+              where: { id: job.id },
+              data: { status: "pending", retryCount, leasedAt: null }
+            });
+          }
+          failed++;
+        }
+      }
+
+      return { processed, failed };
+    } catch (error: any) {
+      this.logger.error("Feature generation worker error:", error);
+      return { processed: 0, failed: 0 };
+    }
+  }
+
+  async getFeatureJobStats(): Promise<{ pending: number; processing: number; failed: number }> {
+    const [pending, processing, failed] = await Promise.all([
+      (this.prisma as any).featureGenerationJob.count({ where: { status: "pending" } }),
+      (this.prisma as any).featureGenerationJob.count({ where: { status: "processing" } }),
+      (this.prisma as any).featureGenerationJob.count({ where: { status: "failed" } })
+    ]);
+    return { pending, processing, failed };
+  }
+
+  /**
+   * Process a single user's feature generation via user-service profile (not discovery DB users table).
+   * Embeds intent text only; categorical fields stay exact-overlap in the scorer.
+   * Cost is recorded once inside HostedEmbeddingAdapter.callProvider.
+   */
+  private async processFeatureGeneration(userId: string): Promise<void> {
+    let user: any;
+    try {
+      user = await this.userClient.getUserFullProfileById(userId);
+    } catch (err) {
+      this.logger.warn(`User ${userId} not found during feature generation: ${err}`);
+      return;
+    }
+
+    if (!user) {
+      this.logger.warn(`User ${userId} not found during feature generation`);
+      return;
+    }
+
+    const intent = user.intent || null;
+    const text = HostedEmbeddingAdapter.buildIntentText(intent);
+    // Empty intent still gets a checksummed empty vector path — skip paid call
+    const hash = createHash("sha256").update(`intent-v1:${text}`).digest("hex");
+
+    const existing = await (this.prisma as any).userFeature.findUnique({ where: { userId } });
+    if (existing && existing.checksum === hash && existing.provider === "hosted") {
+      this.logger.debug(`Feature for ${userId} up to date (checksum match)`);
+      return;
+    }
+
+    if (!text) {
+      await (this.prisma as any).userFeature.upsert({
+        where: { userId },
+        create: {
+          userId,
+          vector: [],
+          intent: null,
+          checksum: hash,
+          version: (existing?.version || 0) + 1,
+          provider: "fallback"
+        },
+        update: {
+          vector: [],
+          intent: null,
+          checksum: hash,
+          provider: "fallback",
+          version: { increment: 1 }
+        }
+      });
+      return;
+    }
+
+    const { vector, provider } = await this.embeddingAdapter.generateWithMeta(text);
+
+    await (this.prisma as any).userFeature.upsert({
+      where: { userId },
+      create: {
+        userId,
+        vector,
+        intent,
+        checksum: hash,
+        version: (existing?.version || 0) + 1,
+        provider
+      },
+      update: {
+        vector,
+        intent,
+        checksum: hash,
+        provider,
+        version: { increment: 1 }
+      }
+    });
+
+    this.logger.debug(`Generated feature for ${userId} provider=${provider}`);
   }
 }
 

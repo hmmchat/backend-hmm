@@ -875,6 +875,11 @@ export class UserService implements OnModuleInit {
 
     const userWithLogos = this.mapUserBrandLogos(user);
 
+    // Trigger feature regeneration for matchmaking (intent changed)
+    this.discoveryClient.triggerFeatureGeneration(userId).catch((err) =>
+      this.logger.error(`Feature generation trigger failed for ${userId}: ${err.message}`)
+    );
+
     // Calculate profile completion percentage
     const completion = await this.profileCompletion.calculateCompletion(userId);
 
@@ -998,6 +1003,11 @@ export class UserService implements OnModuleInit {
       include: { musicPreference: true }
     });
 
+    // Trigger feature regeneration for matchmaking (music preference changed)
+    this.discoveryClient.triggerFeatureGeneration(userId).catch((err) =>
+      this.logger.error(`Feature generation trigger failed for ${userId}: ${err.message}`)
+    );
+
     return { user };
   }
 
@@ -1038,6 +1048,11 @@ export class UserService implements OnModuleInit {
       include: { brand: true },
       orderBy: { order: "asc" }
     });
+
+    // Trigger feature regeneration for matchmaking (brands changed)
+    this.discoveryClient.triggerFeatureGeneration(userId).catch((err) =>
+      this.logger.error(`Feature generation trigger failed for ${userId}: ${err.message}`)
+    );
 
     return { preferences: this.mapBrandPreferencesLogos(preferences) };
   }
@@ -1080,6 +1095,11 @@ export class UserService implements OnModuleInit {
       orderBy: { order: "asc" }
     });
 
+    // Trigger feature regeneration for matchmaking (interests changed)
+    this.discoveryClient.triggerFeatureGeneration(userId).catch((err) =>
+      this.logger.error(`Feature generation trigger failed for ${userId}: ${err.message}`)
+    );
+
     return { interests: userInterests };
   }
 
@@ -1120,6 +1140,11 @@ export class UserService implements OnModuleInit {
       include: { value: true },
       orderBy: { order: "asc" }
     });
+
+    // Trigger feature regeneration for matchmaking (values changed)
+    this.discoveryClient.triggerFeatureGeneration(userId).catch((err) =>
+      this.logger.error(`Feature generation trigger failed for ${userId}: ${err.message}`)
+    );
 
     return { values: userValues };
   }
@@ -1386,6 +1411,11 @@ export class UserService implements OnModuleInit {
       }
     });
 
+    // Trigger feature regeneration for matchmaking (location changed)
+    this.discoveryClient.triggerFeatureGeneration(userId).catch((err) =>
+      this.logger.error(`Feature generation trigger failed for ${userId}: ${err.message}`)
+    );
+
     return { user };
   }
 
@@ -1409,6 +1439,11 @@ export class UserService implements OnModuleInit {
         preferredCity: data.city
       } as any // Type assertion needed due to workspace Prisma client resolution
     });
+
+    // Trigger feature regeneration for matchmaking (preferred city changed)
+    this.discoveryClient.triggerFeatureGeneration(userId).catch((err) =>
+      this.logger.error(`Feature generation trigger failed for ${userId}: ${err.message}`)
+    );
 
     return { city: (user as any).preferredCity || null };
   }
@@ -1563,6 +1598,11 @@ export class UserService implements OnModuleInit {
         intent: data.intent
       }
     });
+
+    // Trigger feature regeneration for matchmaking (intent changed)
+    this.discoveryClient.triggerFeatureGeneration(userId).catch((err) =>
+      this.logger.error(`Feature generation trigger failed for ${userId}: ${err.message}`)
+    );
 
     return { intent: user.intent || null };
   }

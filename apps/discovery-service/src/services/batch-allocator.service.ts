@@ -1,10 +1,11 @@
 /**
  * Pool-wide batch allocator.
  *
- * Runs every ~2 seconds. Modes (MATCHING_MODE):
- * - live_legacy: cycle skipped for allocation work
+ * Runs every ~2 seconds. Default MATCHING_MODE=batch_primary (full rollout).
+ * Modes:
+ * - batch_primary: persists matches for all cities (or optional MATCHING_CANARY_CITIES restrict)
  * - shadow: scores + logs, does not persist
- * - batch_primary: persists matches (optionally canary cities only)
+ * - live_legacy: cycle skipped for allocation work
  */
 import { Injectable, Logger, OnModuleInit, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service.js";

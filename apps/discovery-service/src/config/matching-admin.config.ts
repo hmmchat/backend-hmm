@@ -2,10 +2,10 @@
  * Admin-configurable toggles for the matchmaking pipeline.
  * All read via env vars with sensible defaults.
  *
- * MATCHING_MODE:
- * - live_legacy: card path uses MatchingService immediately; allocator does not persist
+ * MATCHING_MODE (default batch_primary — app is not live yet; full rollout):
+ * - batch_primary: allocator persists matches; card path waits briefly then falls back to legacy
  * - shadow: allocator scores + logs only; card path stays live_legacy
- * - batch_primary: allocator persists matches; card path waits briefly then falls back
+ * - live_legacy: card path uses MatchingService immediately; allocator does not persist
  */
 
 function boolEnv(name: string, defaultVal: boolean): boolean {
@@ -17,9 +17,9 @@ function boolEnv(name: string, defaultVal: boolean): boolean {
 export type MatchingMode = "live_legacy" | "shadow" | "batch_primary";
 
 function matchingModeEnv(): MatchingMode {
-  const v = (process.env.MATCHING_MODE || "live_legacy").toLowerCase().trim();
+  const v = (process.env.MATCHING_MODE || "batch_primary").toLowerCase().trim();
   if (v === "shadow" || v === "batch_primary" || v === "live_legacy") return v;
-  return "live_legacy";
+  return "batch_primary";
 }
 
 export const MATCHING_PAUSED = boolEnv("MATCHING_PAUSED", false);
@@ -32,9 +32,10 @@ export const MATCHING_FAIRNESS_WAIT_BOOST = parseFloat(process.env.MATCHING_FAIR
 /** How long getNextCard waits for a batch match before legacy fallback (batch_primary only). */
 export const MATCHING_CARD_WAIT_MS = parseInt(process.env.MATCHING_CARD_WAIT_MS || "2500", 10);
 /**
- * When MATCHING_MODE=batch_primary and this list is non-empty, only these preferred
- * cities use batch allocation; everyone else stays on live_legacy.
- * Comma-separated, case-insensitive. Empty = all cities.
+ * Optional city restrict list. Leave empty for full rollout (all cities).
+ * When non-empty with MATCHING_MODE=batch_primary, only these preferred cities
+ * use batch allocation; everyone else stays on live_legacy wait/fallback skip.
+ * Comma-separated, case-insensitive.
  */
 export const MATCHING_CANARY_CITIES: string[] = (process.env.MATCHING_CANARY_CITIES || "")
   .split(",")
@@ -49,6 +50,7 @@ export const ADMIN_API_TOKEN = process.env.ADMIN_API_TOKEN || "";
 /** True when this preferred city should use batch_primary persistence/wait behavior. */
 export function isBatchPrimaryForCity(preferredCity: string | null | undefined): boolean {
   if (MATCHING_MODE !== "batch_primary") return false;
+  // Full rollout: empty restrict list → all users (including anywhere / null city).
   if (MATCHING_CANARY_CITIES.length === 0) return true;
   const city = (preferredCity || "").trim().toLowerCase();
   if (!city) return false;

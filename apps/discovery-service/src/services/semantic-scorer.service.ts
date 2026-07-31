@@ -2,12 +2,16 @@
  * Semantic scorer using precomputed intent embedding vectors.
  *
  * Reads UserFeature vectors from the DB and computes cosine similarity
- * for the intent field (weight 30) only when provider=hosted.
+ * for the intent field (default weight 50) only when provider=hosted.
  * Structured fields (song, brands, interests, values, location) use exact/lexical overlap.
+ * Weights come from MATCHING_SCORE_WEIGHTS (env-configurable).
  */
 import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service.js";
-import { MATCHING_SEMANTIC_ENABLED } from "../config/matching-admin.config.js";
+import {
+  MATCHING_SEMANTIC_ENABLED,
+  MATCHING_SCORE_WEIGHTS
+} from "../config/matching-admin.config.js";
 import { FallbackScorerService } from "./fallback-scorer.service.js";
 
 export interface SemanticProfile {
@@ -37,14 +41,7 @@ export class SemanticScorerService {
     private readonly fallbackScorer: FallbackScorerService
   ) {}
 
-  private readonly WEIGHTS = {
-    intent: 30,
-    song: 25,
-    brands: 18,
-    interests: 15,
-    values: 8,
-    location: 4
-  } as const;
+  private readonly WEIGHTS = MATCHING_SCORE_WEIGHTS;
 
   /**
    * Compute compatibility score 0–100 between two profiles.
@@ -65,31 +62,32 @@ export class SemanticScorerService {
       featA.vector.length === featB.vector.length;
 
     let score = 0;
+    const w = this.WEIGHTS;
 
     if (useSemantic && a.intent && b.intent) {
-      score += this.cosineSimilarity(featA!.vector, featB!.vector) * this.WEIGHTS.intent;
+      score += this.cosineSimilarity(featA!.vector, featB!.vector) * w.intent;
     } else {
-      score += this.fallbackIntentScore(a.intent, b.intent) * this.WEIGHTS.intent;
+      score += this.fallbackIntentScore(a.intent, b.intent) * w.intent;
     }
 
     if (a.musicPreferenceId && a.musicPreferenceId === b.musicPreferenceId) {
-      score += this.WEIGHTS.song;
+      score += w.song;
     }
 
     if (a.brandIds.length && b.brandIds.length) {
-      score += this.exactOverlapRatio(a.brandIds, b.brandIds) * this.WEIGHTS.brands;
+      score += this.exactOverlapRatio(a.brandIds, b.brandIds) * w.brands;
     }
 
     if (a.interestIds.length && b.interestIds.length) {
-      score += this.exactOverlapRatio(a.interestIds, b.interestIds) * this.WEIGHTS.interests;
+      score += this.exactOverlapRatio(a.interestIds, b.interestIds) * w.interests;
     }
 
     if (a.valueIds.length && b.valueIds.length) {
-      score += this.exactOverlapRatio(a.valueIds, b.valueIds) * this.WEIGHTS.values;
+      score += this.exactOverlapRatio(a.valueIds, b.valueIds) * w.values;
     }
 
     if (a.city && a.city === b.city) {
-      score += this.WEIGHTS.location;
+      score += w.location;
     }
 
     return Math.min(Math.round(score), 100);

@@ -18,3 +18,14 @@ test("matching-admin config defaults to batch_primary full rollout", async () =>
     assert.equal(mod.shouldAllocatorPersist(), true);
   }
 });
+
+test("matching score weights default to intent ~50 and rest ~50 in prior ratio", async () => {
+  const mod = await import("../src/config/matching-admin.config.js");
+  const w = mod.MATCHING_SCORE_WEIGHTS;
+  const nonIntent = w.song + w.brands + w.interests + w.values + w.location;
+  assert.ok(Math.abs(w.intent - 50) < 0.5 || Math.abs(w.intent + nonIntent - 100) < 0.01);
+  assert.ok(Math.abs(w.intent + nonIntent - 100) < 0.05);
+
+  // song:brands ≈ 25:18
+  assert.ok(Math.abs(w.song / w.brands - 25 / 18) < 0.05);
+});

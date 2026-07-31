@@ -22,6 +22,7 @@ import {
   MATCHING_MODE,
   MATCHING_PAUSED,
   MATCHING_CANARY_CITIES,
+  MATCHING_SCORE_WEIGHTS,
   shouldAllocatorPersist,
   shouldAllocatorShadowLog,
   isBatchPrimaryForCity
@@ -341,7 +342,8 @@ export class BatchAllocatorService implements OnModuleInit {
           score = await this.semanticScorer.score(u1.semantic, u2.semantic);
         } else {
           score =
-            this.semanticScorer.fallbackIntentScore(u1.semantic?.intent || null, u2.semantic?.intent || null) * 0.3;
+            this.semanticScorer.fallbackIntentScore(u1.semantic?.intent || null, u2.semantic?.intent || null) *
+            MATCHING_SCORE_WEIGHTS.intent;
         }
 
         const fairnessBoost =

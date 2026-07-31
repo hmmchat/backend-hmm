@@ -5,9 +5,10 @@
  * - Embedding generation failed and we're past retries
  *
  * Uses only exact/lexical overlap of the structured profile fields.
- * No external API calls, no randomness, fully reproducible.
+ * Weights come from MATCHING_SCORE_WEIGHTS (env-configurable).
  */
 import { Injectable } from "@nestjs/common";
+import { MATCHING_SCORE_WEIGHTS } from "../config/matching-admin.config.js";
 
 export interface FallbackProfile {
   userId: string;
@@ -21,39 +22,25 @@ export interface FallbackProfile {
 
 @Injectable()
 export class FallbackScorerService {
-  private readonly WEIGHTS = {
-    intent: 30,
-    song: 25,
-    brands: 18,
-    interests: 15,
-    values: 8,
-    location: 4,
-  } as const;
+  private readonly WEIGHTS = MATCHING_SCORE_WEIGHTS;
 
   /** Compute 0–100 compatibility score using only exact/lexical overlap */
   score(a: FallbackProfile, b: FallbackProfile): number {
     let score = 0;
+    const w = this.WEIGHTS;
 
-    // Intent (lexical token overlap)
-    score += this.intentOverlap(a.intent, b.intent) * this.WEIGHTS.intent;
+    score += this.intentOverlap(a.intent, b.intent) * w.intent;
 
-    // Song (exact match)
     if (a.musicPreferenceId && a.musicPreferenceId === b.musicPreferenceId) {
-      score += this.WEIGHTS.song;
+      score += w.song;
     }
 
-    // Brands (exact ID overlap)
-    score += this.exactOverlapRatio(a.brandIds, b.brandIds) * this.WEIGHTS.brands;
+    score += this.exactOverlapRatio(a.brandIds, b.brandIds) * w.brands;
+    score += this.exactOverlapRatio(a.interestIds, b.interestIds) * w.interests;
+    score += this.exactOverlapRatio(a.valueIds, b.valueIds) * w.values;
 
-    // Interests (exact ID overlap)
-    score += this.exactOverlapRatio(a.interestIds, b.interestIds) * this.WEIGHTS.interests;
-
-    // Values (exact ID overlap)
-    score += this.exactOverlapRatio(a.valueIds, b.valueIds) * this.WEIGHTS.values;
-
-    // Location (exact city match)
     if (a.city && a.city === b.city) {
-      score += this.WEIGHTS.location;
+      score += w.location;
     }
 
     return Math.min(Math.round(score), 100);
@@ -70,7 +57,6 @@ export class FallbackScorerService {
     return pairs;
   }
 
-  /** Jaccard-style overlap for exact ID matches */
   private exactOverlapRatio(arrA: string[], arrB: string[]): number {
     if (arrA.length === 0 || arrB.length === 0) return 0;
     const setA = new Set(arrA);

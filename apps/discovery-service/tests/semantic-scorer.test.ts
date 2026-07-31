@@ -58,8 +58,9 @@ test("SemanticScorerService - hosted vectors use cosine for intent weight", asyn
     }
   );
 
-  // Identical unit vectors → cosine 1 → intent weight 30
-  assert.equal(score, 30);
+  // Identical unit vectors → cosine 1 → full intent weight (default 50)
+  const { MATCHING_SCORE_WEIGHTS } = await import("../src/config/matching-admin.config.js");
+  assert.equal(score, Math.round(MATCHING_SCORE_WEIGHTS.intent));
 });
 
 test("SemanticScorerService - fallback provider does not use cosine", async () => {

@@ -47,6 +47,83 @@ export const MATCHMAKING_DAILY_BUDGET_INR = parseFloat(process.env.MATCHMAKING_D
 export const FEATURE_GENERATION_JOB_LEASE_MS = parseInt(process.env.FEATURE_GENERATION_JOB_LEASE_MS || "120000", 10);
 export const ADMIN_API_TOKEN = process.env.ADMIN_API_TOKEN || "";
 
+/**
+ * Score dimension weights (should sum to ~100). Defaults: intent 50%, remaining 50%
+ * keeps the previous song:brands:interests:values:location ratio (25:18:15:8:4).
+ *
+ * Env overrides (floats OK):
+ * MATCHING_SCORE_WEIGHT_INTENT, _SONG, _BRANDS, _INTERESTS, _VALUES, _LOCATION
+ */
+export interface MatchingScoreWeights {
+  intent: number;
+  song: number;
+  brands: number;
+  interests: number;
+  values: number;
+  location: number;
+}
+
+function floatEnv(name: string, defaultVal: number): number {
+  const v = process.env[name];
+  if (v === undefined || v === "") return defaultVal;
+  const n = parseFloat(v);
+  return Number.isFinite(n) && n >= 0 ? n : defaultVal;
+}
+
+/** Previous non-intent ratio 25:18:15:8:4 scaled into 50 points. */
+const DEFAULT_NON_INTENT_TOTAL = 50;
+const LEGACY_NON_INTENT = { song: 25, brands: 18, interests: 15, values: 8, location: 4 } as const;
+const LEGACY_NON_INTENT_SUM =
+  LEGACY_NON_INTENT.song +
+  LEGACY_NON_INTENT.brands +
+  LEGACY_NON_INTENT.interests +
+  LEGACY_NON_INTENT.values +
+  LEGACY_NON_INTENT.location;
+
+function scaleLegacy(part: number): number {
+  return (part / LEGACY_NON_INTENT_SUM) * DEFAULT_NON_INTENT_TOTAL;
+}
+
+function buildScoreWeights(): MatchingScoreWeights {
+  const raw: MatchingScoreWeights = {
+    intent: floatEnv("MATCHING_SCORE_WEIGHT_INTENT", 50),
+    song: floatEnv("MATCHING_SCORE_WEIGHT_SONG", scaleLegacy(LEGACY_NON_INTENT.song)),
+    brands: floatEnv("MATCHING_SCORE_WEIGHT_BRANDS", scaleLegacy(LEGACY_NON_INTENT.brands)),
+    interests: floatEnv("MATCHING_SCORE_WEIGHT_INTERESTS", scaleLegacy(LEGACY_NON_INTENT.interests)),
+    values: floatEnv("MATCHING_SCORE_WEIGHT_VALUES", scaleLegacy(LEGACY_NON_INTENT.values)),
+    location: floatEnv("MATCHING_SCORE_WEIGHT_LOCATION", scaleLegacy(LEGACY_NON_INTENT.location))
+  };
+
+  const sum =
+    raw.intent + raw.song + raw.brands + raw.interests + raw.values + raw.location;
+  if (sum <= 0) {
+    return {
+      intent: 50,
+      song: scaleLegacy(25),
+      brands: scaleLegacy(18),
+      interests: scaleLegacy(15),
+      values: scaleLegacy(8),
+      location: scaleLegacy(4)
+    };
+  }
+
+  // Normalize to 100 so misconfigured envs still produce a 0–100 score.
+  if (Math.abs(sum - 100) > 0.01) {
+    const k = 100 / sum;
+    return {
+      intent: raw.intent * k,
+      song: raw.song * k,
+      brands: raw.brands * k,
+      interests: raw.interests * k,
+      values: raw.values * k,
+      location: raw.location * k
+    };
+  }
+  return raw;
+}
+
+export const MATCHING_SCORE_WEIGHTS: MatchingScoreWeights = buildScoreWeights();
+
 /** True when this preferred city should use batch_primary persistence/wait behavior. */
 export function isBatchPrimaryForCity(preferredCity: string | null | undefined): boolean {
   if (MATCHING_MODE !== "batch_primary") return false;

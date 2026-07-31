@@ -19,7 +19,8 @@ import { AdminAuthGuard } from "../guards/admin-auth.guard.js";
 import {
   MATCHING_MODE,
   MATCHING_SEMANTIC_ENABLED,
-  MATCHING_CANARY_CITIES
+  MATCHING_CANARY_CITIES,
+  MATCHING_SCORE_WEIGHTS
 } from "../config/matching-admin.config.js";
 
 @Controller("discovery/admin/matching")
@@ -53,6 +54,7 @@ export class MatchingAdminController {
       mode: MATCHING_MODE,
       semanticEnabled: MATCHING_SEMANTIC_ENABLED,
       canaryCities: MATCHING_CANARY_CITIES,
+      scoreWeights: MATCHING_SCORE_WEIGHTS,
       embeddingsPaused: this.embeddingAdapter.isPaused(),
       totalCostInr: totalCost,
       dailyBreakdown,

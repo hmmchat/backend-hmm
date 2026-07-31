@@ -37,10 +37,12 @@ export class CostTrackerService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
-    this.budget =
-      this.config.get<number>("MATCHMAKING_MONTHLY_BUDGET_INR") || MATCHMAKING_MONTHLY_BUDGET_INR;
-    this.dailyBudget =
-      this.config.get<number>("MATCHMAKING_DAILY_BUDGET_INR") || MATCHMAKING_DAILY_BUDGET_INR;
+    const monthlyRaw = this.config.get<string | number>("MATCHMAKING_MONTHLY_BUDGET_INR");
+    const dailyRaw = this.config.get<string | number>("MATCHMAKING_DAILY_BUDGET_INR");
+    const monthly = typeof monthlyRaw === "number" ? monthlyRaw : parseFloat(String(monthlyRaw ?? ""));
+    const daily = typeof dailyRaw === "number" ? dailyRaw : parseFloat(String(dailyRaw ?? ""));
+    this.budget = Number.isFinite(monthly) ? monthly : MATCHMAKING_MONTHLY_BUDGET_INR;
+    this.dailyBudget = Number.isFinite(daily) ? daily : MATCHMAKING_DAILY_BUDGET_INR;
     const existing = await this.cache.get<number>(this.BUDGET_KEY);
     if (!existing) {
       await this.cache.set(this.BUDGET_KEY, this.budget, 86400 * 365);

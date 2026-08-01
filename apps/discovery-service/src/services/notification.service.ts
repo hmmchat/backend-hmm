@@ -113,4 +113,32 @@ export class NotificationService {
       // Don't throw - notification failure shouldn't break squad flow
     }
   }
+
+  /** Immediate client logout after ban (temp or perma). */
+  async notifyAccountBanned(
+    userId: string,
+    data: {
+      message: string;
+      supportEmail?: string;
+      kind?: string;
+      code?: string;
+      reason?: string;
+    }
+  ): Promise<void> {
+    try {
+      await this.notificationGateway.sendNotification(userId, {
+        type: "account-banned",
+        data: {
+          code: data.code || "ACCOUNT_BANNED",
+          message: data.message,
+          supportEmail: data.supportEmail || "mods@antiscroll.in",
+          kind: data.kind,
+          reason: data.reason
+        }
+      });
+      this.logger.log(`account-banned notification sent to ${userId}`);
+    } catch (error: any) {
+      this.logger.error(`Failed to send account-banned to ${userId}:`, error.message);
+    }
+  }
 }

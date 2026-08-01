@@ -31,6 +31,7 @@ type AuthAdminUser = {
   banReason: string | null;
   reportAutoBanActive?: boolean | null;
   reportBanNoLoginUntil?: string | null;
+  permanentBan?: boolean | null;
   suspendedAt: string | null;
   suspensionReason: string | null;
   deactivatedAt: string | null;
@@ -84,6 +85,10 @@ type ProfileWithAdminInclude = {
   gender: string | null;
   reportCount: number;
   reportModeratorCardsOnly?: boolean;
+  criticalReviewActive?: boolean;
+  criticalReviewReason?: string | null;
+  criticalReviewAt?: Date | null;
+  lastAppliedReportPoints?: number;
   badgeMember: boolean;
   isModerator?: boolean;
   moderatorFaceCardActive?: boolean;
@@ -166,6 +171,7 @@ function mergeAuthUserWithProfile(
     banReason: a.banReason ?? null,
     reportAutoBanActive: a.reportAutoBanActive ?? null,
     reportBanNoLoginUntil: a.reportBanNoLoginUntil ?? null,
+    permanentBan: a.permanentBan ?? null,
     status: a.accountStatus,
     role: null as string | null,
     discoveryStatus: p?.status ?? null,
@@ -173,6 +179,11 @@ function mergeAuthUserWithProfile(
     gender: p?.gender ?? null,
     reportCount: p?.reportCount ?? null,
     reportModeratorCardsOnly: p?.reportModeratorCardsOnly ?? null,
+    criticalReviewActive: p?.criticalReviewActive ?? null,
+    criticalReviewReason: p?.criticalReviewReason ?? null,
+    criticalReviewAt: iso(p?.criticalReviewAt ?? null),
+    lastAppliedReportPoints: p?.lastAppliedReportPoints ?? null,
+    reportThreshold: undefined as number | undefined,
     kycStatus: p?.kycStatus ?? null,
     kycRiskScore: p?.kycRiskScore ?? null,
     kycExpiresAt: iso(p?.kycExpiresAt ?? null),
@@ -385,13 +396,15 @@ export class UsersAdminController {
     const profiles = await this.findManyAdminProfiles(ids);
     const profileById = new Map(profiles.map((p) => [p.id, p]));
 
-    const users = authUsers.map((a) =>
-      mergeAuthUserWithProfile(a, profileById.get(a.id), (d, u) =>
+    const reportThreshold = this.userService.getReportThresholdForAdmin();
+    const users = authUsers.map((a) => {
+      const merged = mergeAuthUserWithProfile(a, profileById.get(a.id), (d, u) =>
         this.brandService.resolvePublicLogoUrl(d, u)
-      )
-    );
+      );
+      return { ...merged, reportThreshold };
+    });
 
-    return { ok: true, users };
+    return { ok: true, users, reportThreshold };
   }
 
   /**
@@ -409,9 +422,14 @@ export class UsersAdminController {
       throw new HttpException("User not found", HttpStatus.NOT_FOUND);
     }
     const p = await this.findUniqueAdminProfile(id);
+    const reportThreshold = this.userService.getReportThresholdForAdmin();
     return {
       ok: true,
-      user: mergeAuthUserWithProfile(a, p ?? undefined, (d, u) => this.brandService.resolvePublicLogoUrl(d, u))
+      user: {
+        ...mergeAuthUserWithProfile(a, p ?? undefined, (d, u) => this.brandService.resolvePublicLogoUrl(d, u)),
+        reportThreshold
+      },
+      reportThreshold
     };
   }
 
@@ -503,28 +521,91 @@ export class UsersAdminController {
   @Post(":id/ban")
   @HttpCode(HttpStatus.OK)
   async ban(@Param("id") id: string, @Body() body: unknown) {
-    const { reason } = z.object({ reason: z.string().optional() }).parse(body ?? {});
+    const { reason, kind } = z
+      .object({
+        reason: z.string().optional(),
+        kind: z.enum(["temp", "perma"]).optional()
+      })
+      .parse(body ?? {});
+    const banKind = kind ?? "perma";
     const res = await authFetch(`/auth/admin/users/${id}/ban`, {
       method: "POST",
-      body: JSON.stringify({ reason: reason ?? undefined })
+      body: JSON.stringify({ reason: reason ?? undefined, kind: banKind })
     });
     if (!res.ok) {
       const t = await res.text();
       throw new HttpException(`Ban failed: ${res.status} ${t}`, HttpStatus.BAD_GATEWAY);
+    }
+    // Temp ban: after lockout, user stays in show-as-moderator discovery until dashboard unban.
+    if (banKind === "temp") {
+      try {
+        await this.prisma.user.update({
+          where: { id },
+          data: { reportModeratorCardsOnly: true } as any
+        });
+      } catch (error: any) {
+        this.logger.warn(`Failed to set reportModeratorCardsOnly on temp ban user=${id}: ${error?.message || error}`);
+      }
     }
     return res.json();
   }
 
   @Post(":id/unban")
   @HttpCode(HttpStatus.OK)
-  async unban(@Param("id") id: string) {
+  async unban(@Param("id") id: string, @Body() body: unknown) {
+    const parsed = z
+      .object({
+        reportCount: z.number().int().min(0).optional(),
+        moderationMeta: z
+          .object({
+            updatedBy: z.string().min(1),
+            reason: z.string().min(1),
+            notes: z.string().optional()
+          })
+          .optional()
+      })
+      .parse(body ?? {});
+
     const res = await authFetchOrThrow(
       `/auth/admin/users/${encodeURIComponent(id)}/unban`,
       { method: "POST" },
       "Unban"
     );
     await this.userService.clearReportDiscoveryRestriction(id);
-    return parseAuthJsonResponse<{ ok: boolean; message?: string }>(res, "Unban");
+
+    let scoreResult: { reportCount: number; kycRiskScore: number } | undefined;
+    if (parsed.reportCount !== undefined) {
+      if (!parsed.moderationMeta) {
+        throw new HttpException(
+          "moderationMeta is required when setting reportCount on unban",
+          HttpStatus.BAD_REQUEST
+        );
+      }
+      scoreResult = await this.userService.adminSetReportScore(id, parsed.reportCount, {
+        updatedBy: parsed.moderationMeta.updatedBy,
+        reason: parsed.moderationMeta.reason,
+        notes: parsed.moderationMeta.notes
+      });
+    }
+
+    const authJson = await parseAuthJsonResponse<{ ok: boolean; message?: string }>(res, "Unban");
+    return {
+      ...authJson,
+      reportCount: scoreResult?.reportCount,
+      kycRiskScore: scoreResult?.kycRiskScore,
+      reportThreshold: this.userService.getReportThresholdForAdmin()
+    };
+  }
+
+  @Post(":id/critical-review/release")
+  @HttpCode(HttpStatus.OK)
+  async releaseCriticalReview(@Param("id") id: string) {
+    const result = await this.userService.releaseCriticalReview(id);
+    return {
+      ok: true,
+      ...result,
+      reportThreshold: this.userService.getReportThresholdForAdmin()
+    };
   }
 
   @Post(":id/report")

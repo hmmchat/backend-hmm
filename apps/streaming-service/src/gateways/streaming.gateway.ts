@@ -1914,6 +1914,54 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Ban force-logout: notify all sockets for the user, remove from active room, close connections.
+   */
+  async forceLogoutUser(
+    userId: string,
+    payload: { message: string; supportEmail?: string; kind?: string; code?: string; reason?: string }
+  ): Promise<{ notified: number; leftRoomId?: string | null }> {
+    let leftRoomId: string | null = null;
+    try {
+      const active = await this.roomService.getUserActiveRoom(userId);
+      if (active?.roomId) {
+        leftRoomId = active.roomId;
+        await this.roomService.removeParticipant(active.roomId, userId);
+        await this.broadcastParticipantLeft(active.roomId, userId);
+      }
+    } catch (error: any) {
+      this.logger.warn(`[forceLogoutUser] leave room failed for ${userId}: ${error?.message || error}`);
+    }
+
+    const connIds = Array.from(this.userConnections.get(userId) || []);
+    let notified = 0;
+    for (const connectionId of connIds) {
+      const conn = this.connections.get(connectionId);
+      if (!conn) continue;
+      try {
+        this.send(conn.ws, {
+          type: "account-banned",
+          data: {
+            code: payload.code || "ACCOUNT_BANNED",
+            message: payload.message,
+            supportEmail: payload.supportEmail || "mods@antiscroll.in",
+            kind: payload.kind,
+            reason: payload.reason
+          }
+        });
+        notified += 1;
+        try {
+          conn.ws.close(4001, "account-banned");
+        } catch {
+          // ignore
+        }
+      } catch (error: any) {
+        this.logger.warn(`[forceLogoutUser] notify failed ${connectionId}: ${error?.message || error}`);
+      }
+    }
+    return { notified, leftRoomId };
+  }
+
+  /**
    * Send message to WebSocket connection
    */
   private send(connection: any, message: any) {

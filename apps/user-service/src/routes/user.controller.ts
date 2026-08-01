@@ -506,7 +506,7 @@ export class UserController {
     const token = this.getTokenFromHeader(authz);
     if (!token) throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
 
-    const { reportedUserId, reportType, callSessionId } = body;
+    const { reportedUserId, reportType, callSessionId, reason } = body;
     if (!reportedUserId || typeof reportedUserId !== "string") {
       throw new HttpException("reportedUserId is required", HttpStatus.BAD_REQUEST);
     }
@@ -516,8 +516,11 @@ export class UserController {
     if (callSessionId !== undefined && typeof callSessionId !== "string") {
       throw new HttpException("callSessionId must be a string if provided", HttpStatus.BAD_REQUEST);
     }
+    if (reason !== undefined && typeof reason !== "string") {
+      throw new HttpException("reason must be a string if provided", HttpStatus.BAD_REQUEST);
+    }
 
-    return this.userService.reportUser(token, reportedUserId, reportType, callSessionId);
+    return this.userService.reportUser(token, reportedUserId, reportType, callSessionId, reason);
   }
 
   /* ---------- Batch Operations ---------- */
@@ -587,6 +590,8 @@ export class UserController {
       includeModerators,
       excludeModerators,
       onlyModerators,
+      moderatorVisibility,
+      onlyCriticalReview,
       excludeKycStatuses
     } = body;
 
@@ -616,6 +621,18 @@ export class UserController {
       throw new HttpException("Limit must be between 1 and 500", HttpStatus.BAD_REQUEST);
     }
 
+    const visibilityOk =
+      moderatorVisibility === undefined ||
+      moderatorVisibility === "show_as_mod" ||
+      moderatorVisibility === "show_as_user" ||
+      moderatorVisibility === "exclude_disguised";
+    if (!visibilityOk) {
+      throw new HttpException(
+        "moderatorVisibility must be show_as_mod, show_as_user, or exclude_disguised",
+        HttpStatus.BAD_REQUEST
+      );
+    }
+
     return this.userService.getUsersForDiscovery({
       city: city !== undefined ? city : null,
       statuses: statuses as UserStatus[],
@@ -624,6 +641,8 @@ export class UserController {
       includeModerators: includeModerators === undefined ? undefined : Boolean(includeModerators),
       excludeModerators: excludeModerators === undefined ? undefined : Boolean(excludeModerators),
       onlyModerators: onlyModerators === undefined ? undefined : Boolean(onlyModerators),
+      moderatorVisibility,
+      onlyCriticalReview: onlyCriticalReview === undefined ? undefined : Boolean(onlyCriticalReview),
       excludeKycStatuses: Array.isArray(excludeKycStatuses)
         ? excludeKycStatuses.filter((v: string) => ["UNVERIFIED", "VERIFIED", "PENDING_REVIEW", "REVOKED", "EXPIRED"].includes(v)) as any[]
         : undefined,

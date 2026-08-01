@@ -58,6 +58,11 @@ services:
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/auth-service?schema=public
       - REDIS_URL=redis://redis:6379
       - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN}
+      # Ban force-logout notify targets + temp ban lockout / support copy
+      - DISCOVERY_SERVICE_URL=http://discovery-service:3004
+      - STREAMING_SERVICE_URL=http://streaming-service:3006
+      - BAN_SUPPORT_EMAIL=${BAN_SUPPORT_EMAIL:-mods@antiscroll.in}
+      - REPORT_BAN_LOGIN_BLOCK_DAYS=${REPORT_BAN_LOGIN_BLOCK_DAYS:-7}
     ports:
       - "3001:3001"
     depends_on:
@@ -85,6 +90,8 @@ services:
       - WALLET_SERVICE_URL=http://wallet-service:3005
       - AUTH_SERVICE_URL=http://auth-service:3001
       - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN}
+      # Report score ban line (must match discovery-service REPORT_THRESHOLD)
+      - REPORT_THRESHOLD=${REPORT_THRESHOLD:-5}
     ports:
       - "3002:3002"
     depends_on:
@@ -137,6 +144,14 @@ services:
       - STREAMING_SERVICE_URL=http://streaming-service:3006
       - WALLET_SERVICE_URL=http://wallet-service:3005
       - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN}
+      # Report layers + ban line (must match user-service) and mod mix ratios (T1/T2/T3)
+      - REPORT_THRESHOLD=${REPORT_THRESHOLD:-5}
+      - DISCOVERY_REPORT_LAYER_1=${DISCOVERY_REPORT_LAYER_1:-20}
+      - DISCOVERY_REPORT_LAYER_2=${DISCOVERY_REPORT_LAYER_2:-30}
+      - DISCOVERY_REPORT_LAYER_3=${DISCOVERY_REPORT_LAYER_3:-40}
+      - DISCOVERY_REPORT_MIX_L1=${DISCOVERY_REPORT_MIX_L1:-0.3}
+      - DISCOVERY_REPORT_MIX_L2=${DISCOVERY_REPORT_MIX_L2:-0.6}
+      - DISCOVERY_REPORT_MIX_L3=${DISCOVERY_REPORT_MIX_L3:-0.95}
     ports:
       - "3004:3004"
     depends_on:

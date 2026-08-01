@@ -379,7 +379,10 @@ export class DiscoveryService implements OnModuleInit {
       kycStatus: (userProfileResponse as any).kycStatus || "UNVERIFIED",
       kycRiskScore: (userProfileResponse as any).kycRiskScore || 0,
       actualCity: actualCity,
-      reportModeratorCardsOnly: Boolean((userProfileResponse as any).reportModeratorCardsOnly)
+      reportModeratorCardsOnly: Boolean((userProfileResponse as any).reportModeratorCardsOnly),
+      criticalReviewActive: Boolean((userProfileResponse as any).criticalReviewActive),
+      reportCount: Number((userProfileResponse as any).reportCount || 0),
+      moderatorFaceCardActive: Boolean((userProfileResponse as any).moderatorFaceCardActive)
     };
 
     // Session-scope raincheck exclusions must apply before honoring existing matches.
@@ -675,41 +678,22 @@ export class DiscoveryService implements OnModuleInit {
     // Add current user to exclude list
     const excludeIds = [...excludeUserIds, userId];
     const requesterProfile = await this.userClient.getUserFullProfileById(userId);
-    const requesterIsModerator = Boolean((requesterProfile as any).isModerator);
-    const requesterKycStatus = String((requesterProfile as any).kycStatus || "UNVERIFIED");
-    const requesterModeratorCardsOnly = Boolean((requesterProfile as any).reportModeratorCardsOnly);
     const priorityEnabled = this.isKycPriorityEnabled();
-
-    const users = await this.userClient.getUsersForDiscovery(token, {
+    const { buildReportAwareDiscoveryFilters, applyReportPoolBucket } = await import(
+      "../config/discovery-pool-filters.js"
+    );
+    const { filters, poolMode } = buildReportAwareDiscoveryFilters({
       city,
       statuses,
       genders,
       excludeUserIds: excludeIds,
-      ...(requesterModeratorCardsOnly
-        ? { onlyModerators: true as const }
-        : {
-            excludeModerators: requesterIsModerator || (priorityEnabled && requesterKycStatus === "VERIFIED"),
-            excludeKycStatuses: requesterIsModerator ? (["VERIFIED"] as const) : []
-          }),
-      limit: DISCOVERY_POOL_LIMIT
+      limit: DISCOVERY_POOL_LIMIT,
+      requester: requesterProfile as any,
+      prioritizeKyc: priorityEnabled
     });
 
-    const locallyEligibleUsers = users.filter((candidate) => {
-      if (requesterModeratorCardsOnly) {
-        return Boolean(candidate.isModerator);
-      }
-      if (requesterIsModerator) {
-        if (candidate.isModerator) {
-          return false;
-        }
-        if (candidate.kycStatus === "VERIFIED") {
-          return false;
-        }
-      } else if (priorityEnabled && requesterKycStatus === "VERIFIED" && candidate.isModerator) {
-        return false;
-      }
-      return true;
-    });
+    const users = await this.userClient.getUsersForDiscovery(token, filters as any);
+    const locallyEligibleUsers = applyReportPoolBucket(users, poolMode);
 
     const sessionEligibleUsers = await this.discoverySessionService.filterSoloPoolCandidates(locallyEligibleUsers);
 
@@ -2058,7 +2042,10 @@ export class DiscoveryService implements OnModuleInit {
       kycStatus: (userProfileResponse as any).kycStatus || "UNVERIFIED",
       kycRiskScore: (userProfileResponse as any).kycRiskScore || 0,
       actualCity: actualCity,
-      reportModeratorCardsOnly: Boolean((userProfileResponse as any).reportModeratorCardsOnly)
+      reportModeratorCardsOnly: Boolean((userProfileResponse as any).reportModeratorCardsOnly),
+      criticalReviewActive: Boolean((userProfileResponse as any).criticalReviewActive),
+      reportCount: Number((userProfileResponse as any).reportCount || 0),
+      moderatorFaceCardActive: Boolean((userProfileResponse as any).moderatorFaceCardActive)
     };
 
     // Session-scope raincheck exclusions must apply before honoring existing matches.
@@ -2409,28 +2396,25 @@ export class DiscoveryService implements OnModuleInit {
     // Add current user to exclude list
     const excludeIds = [...excludeUserIds, userId];
     const requesterProfile = await this.userClient.getUserFullProfileById(userId);
-    const requesterIsModerator = Boolean((requesterProfile as any).isModerator);
-    const requesterKycStatus = String((requesterProfile as any).kycStatus || "UNVERIFIED");
-    const requesterModeratorCardsOnly = Boolean((requesterProfile as any).reportModeratorCardsOnly);
     const priorityEnabled = this.isKycPriorityEnabled();
+    const { buildReportAwareDiscoveryFilters, applyReportPoolBucket } = await import(
+      "../config/discovery-pool-filters.js"
+    );
+    const { filters, poolMode } = buildReportAwareDiscoveryFilters({
+      city,
+      statuses,
+      genders,
+      excludeUserIds: excludeIds,
+      limit: DISCOVERY_POOL_LIMIT,
+      requester: requesterProfile as any,
+      prioritizeKyc: priorityEnabled
+    });
 
     // Call user service discovery endpoint directly (will need to modify to accept userId)
     // For now, we'll use the existing method but with a workaround
-    const users = await this.userClient.getUsersForDiscoveryById(
-      userId,
-      {
-        city,
-        statuses,
-        genders,
-        excludeUserIds: excludeIds,
-        ...(requesterModeratorCardsOnly
-          ? { onlyModerators: true as const }
-          : {
-              excludeModerators: requesterIsModerator || (priorityEnabled && requesterKycStatus === "VERIFIED"),
-              excludeKycStatuses: requesterIsModerator ? ["VERIFIED"] : []
-            }),
-        limit: DISCOVERY_POOL_LIMIT
-      }
+    const users = applyReportPoolBucket(
+      await this.userClient.getUsersForDiscoveryById(userId, filters as any),
+      poolMode
     );
 
     // Apply the same filtering logic as getPoolUsers
@@ -2438,19 +2422,6 @@ export class DiscoveryService implements OnModuleInit {
     // Users with AVAILABLE status should be available even if they have old match records
     const matchedUserIds = await this.matchingService.getMatchedUserIdsCached();
     const filteredUsers = users.filter(user => {
-      if (requesterModeratorCardsOnly) {
-        return Boolean(user.isModerator);
-      }
-      if (requesterIsModerator) {
-        if (user.isModerator) {
-          return false;
-        }
-        if (user.kycStatus === "VERIFIED") {
-          return false;
-        }
-      } else if (priorityEnabled && requesterKycStatus === "VERIFIED" && user.isModerator) {
-        return false;
-      }
 
       // Only exclude if user is in matchedUserIds AND is still MATCHED.
       // AVAILABLE users must remain discoverable even if they have stale match ids.
@@ -2738,7 +2709,10 @@ export class DiscoveryService implements OnModuleInit {
       kycStatus: (userProfileResponse as any).kycStatus || "UNVERIFIED",
       kycRiskScore: (userProfileResponse as any).kycRiskScore || 0,
       actualCity: actualCity,
-      reportModeratorCardsOnly: Boolean((userProfileResponse as any).reportModeratorCardsOnly)
+      reportModeratorCardsOnly: Boolean((userProfileResponse as any).reportModeratorCardsOnly),
+      criticalReviewActive: Boolean((userProfileResponse as any).criticalReviewActive),
+      reportCount: Number((userProfileResponse as any).reportCount || 0),
+      moderatorFaceCardActive: Boolean((userProfileResponse as any).moderatorFaceCardActive)
     };
 
     // Get gender filter preference
@@ -2812,21 +2786,21 @@ export class DiscoveryService implements OnModuleInit {
     const excludeIds = [...excludeUserIds, userId];
 
     const requesterProfile = await this.userClient.getUserFullProfile(token);
-    const requesterModeratorCardsOnly = Boolean((requesterProfile as any).reportModeratorCardsOnly);
-
-    const users = await this.userClient.getUsersForDiscovery(token, {
+    const { buildReportAwareDiscoveryFilters, applyReportPoolBucket } = await import(
+      "../config/discovery-pool-filters.js"
+    );
+    const { filters, poolMode } = buildReportAwareDiscoveryFilters({
       city,
-      statuses: statuses as ("AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE" | "ONLINE" | "OFFLINE" | "VIEWER" | "MATCHED")[],
+      statuses: statuses as any,
       genders,
       excludeUserIds: excludeIds,
-      ...(requesterModeratorCardsOnly ? { onlyModerators: true as const } : {}),
-      limit: DISCOVERY_POOL_LIMIT
+      limit: DISCOVERY_POOL_LIMIT,
+      requester: requesterProfile as any,
+      prioritizeKyc: this.isKycPriorityEnabled()
     });
 
-    if (requesterModeratorCardsOnly) {
-      return users.filter((u) => Boolean(u.isModerator));
-    }
-    return users;
+    const users = await this.userClient.getUsersForDiscovery(token, filters as any);
+    return applyReportPoolBucket(users, poolMode);
   }
 
   /**
@@ -2974,7 +2948,10 @@ export class DiscoveryService implements OnModuleInit {
       kycStatus: (userProfileResponse as any).kycStatus || "UNVERIFIED",
       kycRiskScore: (userProfileResponse as any).kycRiskScore || 0,
       actualCity: actualCity,
-      reportModeratorCardsOnly: Boolean((userProfileResponse as any).reportModeratorCardsOnly)
+      reportModeratorCardsOnly: Boolean((userProfileResponse as any).reportModeratorCardsOnly),
+      criticalReviewActive: Boolean((userProfileResponse as any).criticalReviewActive),
+      reportCount: Number((userProfileResponse as any).reportCount || 0),
+      moderatorFaceCardActive: Boolean((userProfileResponse as any).moderatorFaceCardActive)
     };
 
     // Get gender filter preference
@@ -3046,26 +3023,27 @@ export class DiscoveryService implements OnModuleInit {
     const excludeIds = [...excludeUserIds, userId];
 
     const requesterProfile = await this.userClient.getUserFullProfileById(userId);
-    const requesterModeratorCardsOnly = Boolean((requesterProfile as any).reportModeratorCardsOnly);
+    const { buildReportAwareDiscoveryFilters, applyReportPoolBucket } = await import(
+      "../config/discovery-pool-filters.js"
+    );
+    const { filters, poolMode } = buildReportAwareDiscoveryFilters({
+      city,
+      statuses: statuses as any,
+      genders,
+      excludeUserIds: excludeIds,
+      limit: 500,
+      requester: requesterProfile as any,
+      prioritizeKyc: this.isKycPriorityEnabled()
+    });
 
-    const users = await this.userClient.getUsersForDiscoveryById(
-      userId,
-      {
-        city,
-        statuses: statuses as ("AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE" | "ONLINE" | "OFFLINE" | "VIEWER" | "MATCHED")[],
-        genders,
-        excludeUserIds: excludeIds,
-        ...(requesterModeratorCardsOnly ? { onlyModerators: true as const } : {}),
-        limit: 500
-      }
+    const users = applyReportPoolBucket(
+      await this.userClient.getUsersForDiscoveryById(userId, filters as any),
+      poolMode
     );
 
     // Filter out users who are matched (they shouldn't appear in OFFLINE cards)
     const matchedUserIds = await this.matchingService.getMatchedUserIdsCached();
     const filteredUsers = users.filter(user => {
-      if (requesterModeratorCardsOnly && !user.isModerator) {
-        return false;
-      }
       // Exclude if user is in matchedUserIds AND is still MATCHED.
       if (matchedUserIds.has(user.id)) {
         return user.status !== 'MATCHED';

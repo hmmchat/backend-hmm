@@ -247,19 +247,29 @@ export class DiscoveryClientService {
     token: string,
     reportedUserId: string,
     reportType?: string,
-    callSessionId?: string
-  ): Promise<{ reportCount: number }> {
+    callSessionId?: string,
+    reason?: string
+  ): Promise<{
+    reportCount: number;
+    reason?: string;
+    criticalReviewActive?: boolean;
+    weightApplied?: number;
+  }> {
     try {
       const body: {
         reportedUserId: string;
         reportType?: string;
         callSessionId?: string;
+        reason?: string;
       } = { reportedUserId };
       if (reportType !== undefined && reportType !== "") {
         body.reportType = reportType;
       }
       if (callSessionId !== undefined && callSessionId !== "") {
         body.callSessionId = callSessionId;
+      }
+      if (reason !== undefined && reason !== "") {
+        body.reason = reason;
       }
       const response = await fetch(`${this.userServiceUrl}/users/report`, {
         method: "POST",
@@ -276,8 +286,19 @@ export class DiscoveryClientService {
         throw new Error(`Failed to report user ${reportedUserId}`);
       }
 
-      const result = await response.json() as { success: boolean; reportCount: number };
-      return { reportCount: result.reportCount };
+      const result = await response.json() as {
+        success: boolean;
+        reportCount: number;
+        reason?: string;
+        criticalReviewActive?: boolean;
+        weightApplied?: number;
+      };
+      return {
+        reportCount: result.reportCount,
+        reason: result.reason,
+        criticalReviewActive: result.criticalReviewActive,
+        weightApplied: result.weightApplied
+      };
     } catch (error: any) {
       this.logger.error(`Error reporting user: ${error.message}`);
       throw error;

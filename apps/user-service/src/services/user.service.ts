@@ -39,8 +39,11 @@ import {
 import {
   getReportWeight,
   getAdminDashboardReportWeight,
-  getConsecutiveCallReportMultiplier,
-  isInCallReportType
+  getAppliedReportPoints,
+  isInCallReportType,
+  isCriticalReportReason,
+  normalizeReportReason,
+  type ReportReason
 } from "../config/report-weights.config.js";
 import { getReportThreshold } from "../config/report-threshold.config.js";
 import {
@@ -772,8 +775,12 @@ export class UserService implements OnModuleInit {
       genderChanged: "genderChanged",
       reportCount: "reportCount",
       reportModeratorCardsOnly: "reportModeratorCardsOnly",
+      criticalReviewActive: "criticalReviewActive",
+      criticalReviewReason: "criticalReviewReason",
+      criticalReviewAt: "criticalReviewAt",
       badgeMember: "badgeMember",
       isModerator: "isModerator",
+      moderatorFaceCardActive: "moderatorFaceCardActive",
       kycStatus: "kycStatus",
       kycRiskScore: "kycRiskScore",
       kycExpiresAt: "kycExpiresAt",
@@ -1642,25 +1649,16 @@ export class UserService implements OnModuleInit {
   /* ---------- Reporting ---------- */
 
   /**
-   * Report a user
-   *
-   * This method allows any authenticated user to report another user.
-   * It increments the reportCount (report score) on the reported user's profile by a configurable weight.
-   *
-   * Note: This reports the user themselves, not any stream, broadcast, or room they may be in.
-   * reportCount stores the weighted sum; discovery compares it to REPORT_THRESHOLD.
-   *
-   * @param accessToken - JWT token of the reporting user
-   * @param reportedUserId - ID of the user being reported
-   * @param reportType - Optional type (e.g. face_card, offline_card, host) for configurable weight; unknown/missing uses default weight
-   * @returns Object with success status and updated reportCount (total score)
-   * @throws HttpException if user tries to report themselves or reported user doesn't exist
+   * Report a user. reason=basic adds weighted score (exponential consecutive stacking).
+   * reason=violence_self_harm|child_abuse enters critical disguised-mod pool (no score change).
+   * Any reason counts as "reported this call" for the streak when in-call / callSessionId present.
    */
   async reportUser(
     accessToken: string,
     reportedUserId: string,
     reportType?: string,
-    callSessionId?: string
+    callSessionId?: string,
+    reason?: string
   ) {
     const reporterUserId = await this.verifyAccessToken(accessToken);
 
@@ -1668,7 +1666,6 @@ export class UserService implements OnModuleInit {
       throw new HttpException("Cannot report yourself", HttpStatus.BAD_REQUEST);
     }
 
-    // Check if reported user exists
     const reportedUser = await this.prisma.user.findUnique({
       where: { id: reportedUserId }
     });
@@ -1677,26 +1674,49 @@ export class UserService implements OnModuleInit {
       throw new HttpException("Reported user not found", HttpStatus.NOT_FOUND);
     }
 
-    const baseWeight = getReportWeight(reportType);
-    const isInCall = isInCallReportType(reportType);
-    const multiplier = isInCall
-      ? getConsecutiveCallReportMultiplier(Boolean((reportedUser as any).previousCallEndedWithReport))
-      : 1;
-    const weight = baseWeight * multiplier;
+    const reportReason: ReportReason = normalizeReportReason(reason);
+    const critical = isCriticalReportReason(reportReason);
+    const marksStreak = isInCallReportType(reportType) || Boolean(callSessionId?.trim());
+    const streakData = marksStreak
+      ? {
+          previousCallEndedWithReport: true,
+          lastReportedCallSessionId: callSessionId?.trim() || null
+        }
+      : {};
 
-    // Increment report score (weighted sum) on the user's profile
+    if (critical) {
+      const updatedUser = await this.prisma.user.update({
+        where: { id: reportedUserId },
+        data: {
+          criticalReviewActive: true,
+          criticalReviewReason: reportReason,
+          criticalReviewAt: new Date(),
+          ...streakData
+        } as any
+      });
+
+      return {
+        success: true,
+        reportCount: updatedUser.reportCount,
+        weightApplied: 0,
+        reason: reportReason,
+        criticalReviewActive: true
+      };
+    }
+
+    const baseWeight = getReportWeight(reportType);
+    const weight = getAppliedReportPoints(
+      baseWeight,
+      Boolean((reportedUser as any).previousCallEndedWithReport),
+      Number((reportedUser as any).lastAppliedReportPoints ?? 0)
+    );
+
     const updatedUser = await this.prisma.user.update({
       where: { id: reportedUserId },
       data: {
-        reportCount: {
-          increment: weight
-        },
-        ...(isInCall
-          ? {
-              previousCallEndedWithReport: true,
-              lastReportedCallSessionId: callSessionId ?? null
-            }
-          : {})
+        reportCount: { increment: weight },
+        lastAppliedReportPoints: weight,
+        ...streakData
       } as any
     });
 
@@ -1706,7 +1726,9 @@ export class UserService implements OnModuleInit {
     return {
       success: true,
       reportCount: updatedUser.reportCount,
-      weightApplied: weight
+      weightApplied: weight,
+      reason: reportReason,
+      criticalReviewActive: Boolean((updatedUser as any).criticalReviewActive)
     };
   }
 
@@ -1732,11 +1754,40 @@ export class UserService implements OnModuleInit {
       where: { id: userId },
       data: {
         previousCallEndedWithReport: false,
-        lastReportedCallSessionId: null
+        lastReportedCallSessionId: null,
+        lastAppliedReportPoints: 0
       } as any
     });
 
     return { ok: true, userId, reset: true, previousCallEndedWithReport: false };
+  }
+
+  async releaseCriticalReview(userId: string): Promise<{
+    success: true;
+    userId: string;
+    criticalReviewActive: false;
+    reportCount: number;
+  }> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw new HttpException("User not found", HttpStatus.NOT_FOUND);
+    }
+
+    const updated = await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        criticalReviewActive: false,
+        criticalReviewReason: null,
+        criticalReviewAt: null
+      } as any
+    });
+
+    return {
+      success: true,
+      userId,
+      criticalReviewActive: false,
+      reportCount: updated.reportCount ?? 0
+    };
   }
 
   /**
@@ -2067,6 +2118,14 @@ export class UserService implements OnModuleInit {
     excludeModerators?: boolean;
     /** When true, pool is restricted to moderator profiles only (report-moderation discovery mode). */
     onlyModerators?: boolean;
+    /**
+     * show_as_mod: isModerator && moderatorFaceCardActive
+     * show_as_user: isModerator && !moderatorFaceCardActive (critical/disguised pool)
+     * exclude_disguised: never return show-as-user mods (normal + score-mix user buckets)
+     */
+    moderatorVisibility?: "show_as_mod" | "show_as_user" | "exclude_disguised";
+    /** When true, only users currently in critical review (for disguised mods matching out). */
+    onlyCriticalReview?: boolean;
     excludeKycStatuses?: KycStatus[];
     limit?: number;
   }) {
@@ -2104,8 +2163,17 @@ export class UserService implements OnModuleInit {
       };
     }
 
+    if (filters.onlyCriticalReview === true) {
+      where.criticalReviewActive = true;
+    }
+
     if (filters.onlyModerators === true) {
       where.isModerator = true;
+      if (filters.moderatorVisibility === "show_as_mod") {
+        where.moderatorFaceCardActive = true;
+      } else if (filters.moderatorVisibility === "show_as_user") {
+        where.moderatorFaceCardActive = false;
+      }
     } else {
       if (filters.includeModerators === false) {
         where.isModerator = false;
@@ -2113,6 +2181,23 @@ export class UserService implements OnModuleInit {
 
       if (filters.excludeModerators === true) {
         where.isModerator = false;
+      }
+
+      // Normal / score-mix user buckets must not include disguised ("show as user") mods.
+      if (filters.moderatorVisibility === "exclude_disguised" && filters.excludeModerators !== true) {
+        where.AND = [
+          ...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []),
+          {
+            OR: [
+              { isModerator: false },
+              { AND: [{ isModerator: true }, { moderatorFaceCardActive: true }] }
+            ]
+          }
+        ];
+      }
+      if (filters.moderatorVisibility === "show_as_mod") {
+        where.isModerator = true;
+        where.moderatorFaceCardActive = true;
       }
     }
 
@@ -2124,7 +2209,11 @@ export class UserService implements OnModuleInit {
 
     // At/above user-service ban tripwire (REPORT_THRESHOLD): hide from discovery pool so face cards are not shown.
     // Set DISCOVERY_POOL_EXCLUDE_AT_REPORT_THRESHOLD=false to include them (e.g. staging).
-    if (process.env.DISCOVERY_POOL_EXCLUDE_AT_REPORT_THRESHOLD !== "false") {
+    // Critical-review targets may still be at/above threshold and need to be matchable by disguised mods.
+    if (
+      process.env.DISCOVERY_POOL_EXCLUDE_AT_REPORT_THRESHOLD !== "false" &&
+      filters.onlyCriticalReview !== true
+    ) {
       where.reportCount = { lt: getReportThreshold() };
     }
 

@@ -19,6 +19,7 @@ import { GiftService } from "../services/gift.service.js";
 import { HistoryService } from "../services/history.service.js";
 import { FavouriteService } from "../services/favourite.service.js";
 import { GiphyService } from "../services/giphy.service.js";
+import { StreamingGateway } from "../gateways/streaming.gateway.js";
 import { z } from "zod";
 
 // Simple auth guard (you can enhance this later)
@@ -36,7 +37,8 @@ export class StreamingController {
     private giftService: GiftService,
     private historyService: HistoryService,
     private favouriteService: FavouriteService,
-    private giphy: GiphyService
+    private giphy: GiphyService,
+    private streamingGateway: StreamingGateway
   ) {}
 
   /**
@@ -65,6 +67,43 @@ export class StreamingController {
     // existing squad participants are already IN_SQUAD while room is active.
     await this.roomService.addParticipant(roomId, userId, { skipStatusValidation: true });
     return { success: true, message: `User ${userId} added to room ${roomId}` };
+  }
+
+  /**
+   * Internal: force-logout / kick a banned user from streaming sockets and active rooms.
+   * POST /streaming/internal/force-logout
+   * Accepts x-internal-token or x-service-token (auth-service uses x-internal-token).
+   */
+  @Post("internal/force-logout")
+  async internalForceLogout(
+    @Headers("x-internal-token") internalToken: string | undefined,
+    @Headers("x-service-token") serviceToken: string | undefined,
+    @Body() body: {
+      userId?: string;
+      message?: string;
+      supportEmail?: string;
+      kind?: string;
+      code?: string;
+      reason?: string;
+    }
+  ) {
+    const expected = process.env.INTERNAL_SERVICE_TOKEN;
+    const token = internalToken || serviceToken;
+    if (expected && token !== expected) {
+      throw new UnauthorizedException("Invalid service token");
+    }
+    const userId = body?.userId?.trim();
+    if (!userId) {
+      throw new BadRequestException("userId is required");
+    }
+    const result = await this.streamingGateway.forceLogoutUser(userId, {
+      message: body?.message || "You are banned currently. Contact mods@antiscroll.in for support.",
+      supportEmail: body?.supportEmail,
+      kind: body?.kind,
+      code: body?.code || "ACCOUNT_BANNED",
+      reason: body?.reason
+    });
+    return { ok: true, ...result };
   }
 
   @Post("rooms")
@@ -862,7 +901,13 @@ export class StreamingController {
    */
   @Post("users/report")
   async reportUser(
-    @Body() body: { reportedUserId: string; reportType?: string; callSessionId?: string; roomId?: string },
+    @Body() body: {
+      reportedUserId: string;
+      reportType?: string;
+      callSessionId?: string;
+      roomId?: string;
+      reason?: string;
+    },
     @Headers("authorization") authz?: string
   ) {
     if (!authz) {
@@ -881,6 +926,9 @@ export class StreamingController {
     }
     if (body.roomId !== undefined && typeof body.roomId !== "string") {
       throw new BadRequestException("roomId must be a string if provided");
+    }
+    if (body.reason !== undefined && typeof body.reason !== "string") {
+      throw new BadRequestException("reason must be a string if provided");
     }
 
     const { verifyToken } = await import("@hmm/common");
@@ -908,12 +956,16 @@ export class StreamingController {
       token,
       body.reportedUserId,
       body.reportType,
-      callSessionId
+      callSessionId,
+      body.reason
     );
 
     return {
       success: true,
-      reportCount: result.reportCount
+      reportCount: result.reportCount,
+      reason: result.reason,
+      criticalReviewActive: result.criticalReviewActive,
+      weightApplied: result.weightApplied
     };
   }
 

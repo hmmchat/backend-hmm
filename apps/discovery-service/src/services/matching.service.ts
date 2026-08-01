@@ -264,6 +264,11 @@ export class MatchingService {
     matchedUserIds?: Set<string>, // Accept as parameter to avoid N+1 query
     requestingUser?: UserProfile
   ): Promise<DiscoveryUser[]> {
+    const { isShowAsUserModerator, isShowAsModerator } = await import("../config/report-pool.config.js");
+    const { buildReportAwareDiscoveryFilters, applyReportPoolBucket } = await import(
+      "../config/discovery-pool-filters.js"
+    );
+
     const statuses: ("AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE")[] = [
       "AVAILABLE",
       "IN_SQUAD_AVAILABLE",
@@ -272,24 +277,21 @@ export class MatchingService {
 
     const requesterIsModerator = Boolean(requestingUser?.isModerator);
     const requesterKycStatus = requestingUser?.kycStatus || "UNVERIFIED";
-    const requesterModeratorCardsOnly = Boolean((requestingUser as any)?.reportModeratorCardsOnly);
     const priorityEnabled = this.isKycPriorityEnabled();
-
-    const allUsers = await this.userClient.getUsersForDiscoveryById("", {
+    const requesterIsDisguisedMod = isShowAsUserModerator(requestingUser as any);
+    const { filters: discoveryFilters, poolMode } = buildReportAwareDiscoveryFilters({
       city,
       statuses,
       genders,
       excludeUserIds,
-      ...(requesterModeratorCardsOnly
-        ? { onlyModerators: true as const }
-        : {
-            excludeModerators: requesterIsModerator || (priorityEnabled && requesterKycStatus === "VERIFIED"),
-            excludeKycStatuses: requesterIsModerator ? ["VERIFIED"] : []
-          }),
-      limit: DISCOVERY_POOL_LIMIT
+      limit: DISCOVERY_POOL_LIMIT,
+      requester: requestingUser as any,
+      prioritizeKyc: priorityEnabled
     });
 
-    console.log(`[DEBUG] getPoolUsers - allUsers from user-service: ${allUsers.length}`);
+    const allUsers = await this.userClient.getUsersForDiscoveryById("", discoveryFilters as any);
+
+    console.log(`[DEBUG] getPoolUsers - allUsers from user-service: ${allUsers.length} mode=${poolMode.mode}`);
     if (allUsers.length > 0) {
       console.log(`[DEBUG] getPoolUsers - Sample user statuses:`, allUsers.slice(0, 5).map(u => `${u.id}:${u.status}`).join(', '));
     }
@@ -306,18 +308,31 @@ export class MatchingService {
         return false;
       }
 
-      if (requesterModeratorCardsOnly) {
-        return Boolean(user.isModerator);
+      // Disguised mods: DB already constrained to criticalReviewActive users.
+      if (requesterIsDisguisedMod) {
+        // fall through to matched-status checks
+      } else if (poolMode.mode === "critical_disguise") {
+        if (!isShowAsUserModerator(user)) return false;
+      } else if (poolMode.mode === "post_ban_show_as_mod") {
+        if (!isShowAsModerator(user)) return false;
+      } else if (isShowAsUserModerator(user)) {
+        // Never surface disguised mods outside the critical pool.
+        return false;
       }
 
-      if (requesterIsModerator) {
+      if (requesterIsModerator && poolMode.mode === "normal") {
         if (user.isModerator) {
           return false;
         }
         if (user.kycStatus === "VERIFIED") {
           return false;
         }
-      } else if (priorityEnabled && requesterKycStatus === "VERIFIED" && user.isModerator) {
+      } else if (
+        poolMode.mode === "normal" &&
+        priorityEnabled &&
+        requesterKycStatus === "VERIFIED" &&
+        user.isModerator
+      ) {
         return false;
       }
       
@@ -332,7 +347,7 @@ export class MatchingService {
         } else {
           console.log(`[DEBUG] getPoolUsers - Including ${user.id} (status: ${user.status}, in matched set but not MATCHED - old match record)`);
         }
-        return shouldExclude;
+        return !shouldExclude;
       }
       
       // User is not in matched list, so they're available
@@ -347,7 +362,17 @@ export class MatchingService {
         return this.streamingClient.canViewPullStrangerCard(user.id, requestingUser.id);
       })
     );
-    const eligibleUsers = filteredUsers.filter((_, index) => eligibility[index]);
+    let eligibleUsers = filteredUsers.filter((_, index) => eligibility[index]);
+
+    if (!requesterIsDisguisedMod) {
+      eligibleUsers = applyReportPoolBucket(eligibleUsers, poolMode);
+    }
+
+    // Critical / post-ban / empty mix bucket: no backfill with the other population.
+    if (eligibleUsers.length === 0) {
+      return [];
+    }
+
     const sessionEligibleUsers = await this.discoverySessionService.filterSoloPoolCandidates(eligibleUsers);
 
     console.log(`[DEBUG] getPoolUsers - filteredUsers count: ${sessionEligibleUsers.length}`);

@@ -14,6 +14,7 @@ import { DiscoveryService } from "../services/discovery.service.js";
 import { LocationService } from "../services/location.service.js";
 import { CacheService } from "../services/cache.service.js";
 import { MeetRnWaitingMessageService } from "../services/meet-rn-waiting-message.service.js";
+import { NotificationService } from "../services/notification.service.js";
 import {
   GetCardQuerySchema,
   RaincheckRequestSchema,
@@ -37,7 +38,8 @@ export class DiscoveryController {
     private readonly discoveryService: DiscoveryService,
     private readonly locationService: LocationService,
     private readonly cache: CacheService,
-    private readonly meetRnWaitingMessageService: MeetRnWaitingMessageService
+    private readonly meetRnWaitingMessageService: MeetRnWaitingMessageService,
+    private readonly notificationService: NotificationService
   ) { }
 
   private getTokenFromHeader(h?: string) {
@@ -537,6 +539,33 @@ export class DiscoveryController {
   async internalSessionActive(@Param("userId") userId: string) {
     const active = await this.discoveryService.hasActiveDiscoverySessionForUser(userId);
     return { active };
+  }
+
+  /**
+   * Internal: force-logout a banned user over the notifications WebSocket.
+   * POST /discovery/internal/force-logout
+   */
+  @Post("internal/force-logout")
+  async internalForceLogout(
+    @Headers("x-internal-token") internalToken: string | undefined,
+    @Body() body: any
+  ) {
+    const expected = process.env.INTERNAL_SERVICE_TOKEN;
+    if (expected && internalToken !== expected) {
+      throw new HttpException("Invalid service token", HttpStatus.UNAUTHORIZED);
+    }
+    const userId = typeof body?.userId === "string" ? body.userId.trim() : "";
+    if (!userId) {
+      throw new HttpException("userId is required", HttpStatus.BAD_REQUEST);
+    }
+    await this.notificationService.notifyAccountBanned(userId, {
+      message: body?.message || "You are banned currently. Contact mods@antiscroll.in for support.",
+      supportEmail: body?.supportEmail,
+      kind: body?.kind,
+      code: body?.code || "ACCOUNT_BANNED",
+      reason: body?.reason
+    });
+    return { ok: true };
   }
 
   /**

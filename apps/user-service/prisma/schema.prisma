@@ -78,15 +78,21 @@ model User {
   
   // Moderation & Flags
   reportCount   Int      @default(0) // Total report score (weighted sum); discovery compares to REPORT_THRESHOLD
-  /// When true, the next in-call report applies 2× base weight (previous call ended with a report).
+  /// When true, the next scored report may apply 2× lastAppliedReportPoints (previous match ended with a report).
   previousCallEndedWithReport Boolean @default(false)
+  /// Points applied by the most recent basic (scored) report; used for exponential consecutive stacking.
+  lastAppliedReportPoints     Int      @default(0)
   /// Call session id where this user was most recently reported (for streak reset on call end).
   lastReportedCallSessionId   String?
   // After report auto-ban lockout (auth), user may log in but discovery is limited to moderator profiles until moderators lower report score or unban.
   reportModeratorCardsOnly Boolean @default(false)
+  /// Critical report (violence/self-harm or child abuse): match only disguised ("show as user") moderators until released.
+  criticalReviewActive Boolean @default(false)
+  criticalReviewReason String?
+  criticalReviewAt     DateTime?
   badgeMember   Boolean  @default(false) // 1 = yes, 0 = no
   isModerator   Boolean  @default(false)
-  /// When true with isModerator, discovery face cards show the shared moderator persona (not personal profile).
+  /// When true with isModerator: show as moderator (face card). When false with isModerator: show as user (disguised; critical pool only).
   moderatorFaceCardActive Boolean @default(false)
   kycStatus     KycStatus @default(UNVERIFIED)
   kycRiskScore  Int      @default(0)
@@ -119,6 +125,7 @@ model User {
   @@index([isModerator])
   @@index([kycStatus])
   @@index([kycExpiresAt])
+  @@index([criticalReviewActive])
   @@index([latitude, longitude]) // For location-based queries
   @@map("users")
 }

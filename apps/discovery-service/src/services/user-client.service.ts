@@ -35,6 +35,8 @@ interface UserProfileResponse {
   kycRiskScore?: number;
   kycExpiresAt?: string | null;
   reportModeratorCardsOnly?: boolean;
+  criticalReviewActive?: boolean;
+  criticalReviewReason?: string | null;
 }
 
 export interface DiscoveryUser {
@@ -173,7 +175,7 @@ export class UserClientService implements OnModuleInit {
     try {
       // Use /users/{id} endpoint without auth token (test mode)
       const response = await this.fetchWithTimeout(
-        `${this.userServiceUrl}/users/${userId}?fields=gender,isModerator,moderatorFaceCardActive,kycStatus,kycRiskScore,kycExpiresAt,reportCount,reportModeratorCardsOnly`,
+        `${this.userServiceUrl}/users/${userId}?fields=gender,isModerator,moderatorFaceCardActive,kycStatus,kycRiskScore,kycExpiresAt,reportCount,reportModeratorCardsOnly,criticalReviewActive`,
         {
           method: "GET",
           headers: {
@@ -210,7 +212,7 @@ export class UserClientService implements OnModuleInit {
     
     try {
       const response = await this.fetchWithTimeout(
-        `${this.userServiceUrl}/users/${userId}?fields=username,dateOfBirth,gender,displayPictureUrl,preferredCity,intent,status,photos,musicPreference,brandPreferences,interests,values,videoEnabled,latitude,longitude,reportCount,isModerator,moderatorFaceCardActive,kycStatus,kycRiskScore,kycExpiresAt,reportModeratorCardsOnly`,
+        `${this.userServiceUrl}/users/${userId}?fields=username,dateOfBirth,gender,displayPictureUrl,preferredCity,intent,status,photos,musicPreference,brandPreferences,interests,values,videoEnabled,latitude,longitude,reportCount,isModerator,moderatorFaceCardActive,kycStatus,kycRiskScore,kycExpiresAt,reportModeratorCardsOnly,criticalReviewActive,criticalReviewReason`,
         {
           method: "GET",
           headers: {
@@ -349,6 +351,8 @@ export class UserClientService implements OnModuleInit {
       includeModerators?: boolean;
       excludeModerators?: boolean;
       onlyModerators?: boolean;
+      moderatorVisibility?: "show_as_mod" | "show_as_user" | "exclude_disguised";
+      onlyCriticalReview?: boolean;
       excludeKycStatuses?: ("UNVERIFIED" | "VERIFIED" | "PENDING_REVIEW" | "REVOKED" | "EXPIRED")[];
       limit?: number;
     }
@@ -397,6 +401,8 @@ export class UserClientService implements OnModuleInit {
       includeModerators?: boolean;
       excludeModerators?: boolean;
       onlyModerators?: boolean;
+      moderatorVisibility?: "show_as_mod" | "show_as_user" | "exclude_disguised";
+      onlyCriticalReview?: boolean;
       excludeKycStatuses?: ("UNVERIFIED" | "VERIFIED" | "PENDING_REVIEW" | "REVOKED" | "EXPIRED")[];
       limit?: number;
     }

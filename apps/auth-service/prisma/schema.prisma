@@ -44,9 +44,11 @@ model User {
   suspensionReason String? // Reason for suspension/ban
   banReason        String? // Reason for ban
 
-  // Report-threshold auto-ban: hard login block until reportBanNoLoginUntil, then user-service limits discovery to moderators until cleared.
+  // Report-threshold / temp ban: hard login block until reportBanNoLoginUntil, then user-service limits discovery to moderators until cleared.
   reportAutoBanActive   Boolean   @default(false)
   reportBanNoLoginUntil DateTime?
+  /// Permanent ban: never auto-restore login; only dashboard unban.
+  permanentBan          Boolean   @default(false)
 
   // Referral System
   referralCode      String?  @unique

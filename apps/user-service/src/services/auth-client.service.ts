@@ -111,7 +111,11 @@ export class AuthClientService {
   /** Auth admin merged row — only fields needed for report auto-ban decisions. */
   async getAdminAuthUser(
     userId: string
-  ): Promise<{ accountStatus?: string; reportAutoBanActive?: boolean } | null> {
+  ): Promise<{
+    accountStatus?: string;
+    reportAutoBanActive?: boolean;
+    permanentBan?: boolean;
+  } | null> {
     try {
       const response = await fetch(`${this.authServiceUrl}/auth/admin/users/${encodeURIComponent(userId)}`, {
         method: "GET",
@@ -120,7 +124,9 @@ export class AuthClientService {
       if (!response.ok) {
         return null;
       }
-      const body = (await response.json()) as { user?: { accountStatus?: string } };
+      const body = (await response.json()) as {
+        user?: { accountStatus?: string; reportAutoBanActive?: boolean; permanentBan?: boolean };
+      };
       return body.user ?? null;
     } catch (error: any) {
       this.logger.warn(`getAdminAuthUser failed for ${userId}: ${error.message}`);

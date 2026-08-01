@@ -258,15 +258,19 @@ export class AuthController {
     @Headers("authorization") _authz?: string
   ) {
     // TODO: Add admin role verification
-    const { reason, reportAutoBan } = z
+    const { reason, reportAutoBan, kind } = z
       .object({
         reason: z.string().optional(),
-        reportAutoBan: z.boolean().optional()
+        reportAutoBan: z.boolean().optional(),
+        kind: z.enum(["temp", "perma"]).optional()
       })
       .parse(body ?? {});
     const finalReason = (reason && String(reason).trim()) || "Moderation action";
-    await this.auth.banAccount(userId, finalReason, { reportAutoBan: reportAutoBan === true });
-    return { ok: true, message: `Account ${userId} banned: ${finalReason}` };
+    await this.auth.banAccount(userId, finalReason, {
+      reportAutoBan: reportAutoBan === true,
+      kind
+    });
+    return { ok: true, message: `Account ${userId} banned: ${finalReason}`, kind: kind ?? (reportAutoBan ? "temp" : "perma") };
   }
 
   /**

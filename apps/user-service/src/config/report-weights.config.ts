@@ -15,8 +15,14 @@ const REPORT_TYPE_TO_ENV: Record<string, string> = {
   participant: "PARTICIPANT"
 };
 
-/** In-call report types eligible for consecutive-call multiplier (2× when previous call was also reported). */
+/** In-call report types — streak is marked for these (and any report with callSessionId). */
 const IN_CALL_REPORT_TYPES = new Set(["host", "participant_host", "participant"]);
+
+/** Product report reasons (exactly one per submit). */
+export const REPORT_REASONS = ["basic", "violence_self_harm", "child_abuse"] as const;
+export type ReportReason = (typeof REPORT_REASONS)[number];
+
+const CRITICAL_REPORT_REASONS = new Set<ReportReason>(["violence_self_harm", "child_abuse"]);
 
 function normalizeReportType(reportType?: string | null): string | null {
   if (reportType === undefined || reportType === null || reportType === "") {
@@ -31,7 +37,43 @@ export function isInCallReportType(reportType?: string | null): boolean {
   return normalized !== null && IN_CALL_REPORT_TYPES.has(normalized);
 }
 
-/** Multiplier for back-to-back in-call reports: 2× when the user's previous call also ended with a report. */
+export function normalizeReportReason(reason?: string | null): ReportReason {
+  if (reason === undefined || reason === null || reason === "") {
+    return "basic";
+  }
+  const normalized = reason.toLowerCase().trim().replace(/-/g, "_");
+  if ((REPORT_REASONS as readonly string[]).includes(normalized)) {
+    return normalized as ReportReason;
+  }
+  return "basic";
+}
+
+export function isCriticalReportReason(reason?: string | null): boolean {
+  return CRITICAL_REPORT_REASONS.has(normalizeReportReason(reason));
+}
+
+/**
+ * Exponential consecutive scoring: no streak → baseWeight;
+ * streak with prior applied points → 2 × lastAppliedReportPoints;
+ * streak but no prior scored points (e.g. only critical so far) → baseWeight.
+ */
+export function getAppliedReportPoints(
+  baseWeight: number,
+  previousCallEndedWithReport: boolean,
+  lastAppliedReportPoints: number
+): number {
+  const base = Math.max(0, baseWeight);
+  if (!previousCallEndedWithReport) {
+    return base;
+  }
+  const last = Math.max(0, lastAppliedReportPoints || 0);
+  if (last <= 0) {
+    return base;
+  }
+  return last * 2;
+}
+
+/** @deprecated Use getAppliedReportPoints for exponential stacking. */
 export function getConsecutiveCallReportMultiplier(previousCallEndedWithReport: boolean): number {
   return previousCallEndedWithReport ? 2 : 1;
 }

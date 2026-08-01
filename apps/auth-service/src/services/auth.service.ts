@@ -156,6 +156,14 @@ export class AuthService implements OnModuleInit {
 
   /* ---------- Internal ---------- */
 
+  private getBanSupportEmail(): string {
+    return (process.env.BAN_SUPPORT_EMAIL || "mods@antiscroll.in").trim() || "mods@antiscroll.in";
+  }
+
+  private bannedLoginMessage(): string {
+    return `You are banned currently. Contact ${this.getBanSupportEmail()} for support.`;
+  }
+
   /**
    * Blocked sign-in messages — keep in sync with product copy (dashboard ban / user deactivate / closed account).
    */
@@ -166,6 +174,7 @@ export class AuthService implements OnModuleInit {
     suspensionReason: string | null;
     reportAutoBanActive?: boolean | null;
     reportBanNoLoginUntil?: Date | null;
+    permanentBan?: boolean | null;
   }): void {
     if (user.deletedAt) {
       throw new HttpException(
@@ -174,18 +183,16 @@ export class AuthService implements OnModuleInit {
       );
     }
     if (user.accountStatus === "BANNED") {
-      const auto = Boolean(user.reportAutoBanActive);
-      const noLoginUntil = user.reportBanNoLoginUntil ? new Date(user.reportBanNoLoginUntil) : null;
-      if (auto && noLoginUntil && Date.now() < noLoginUntil.getTime()) {
-        throw new HttpException(
-          `Your account has been restricted due to repeated reports. You cannot sign in until ${noLoginUntil.toISOString()}. After that you may sign in with limited access until a moderator reviews your account.`,
-          HttpStatus.FORBIDDEN
-        );
-      }
-      const base =
-        "Your account has been deactivated by an administrator. You cannot sign in until an administrator restores your account (unban).";
+      const message = this.bannedLoginMessage();
       throw new HttpException(
-        user.banReason ? `${base} Details: ${user.banReason}` : base,
+        {
+          statusCode: HttpStatus.FORBIDDEN,
+          message,
+          code: "ACCOUNT_BANNED",
+          supportEmail: this.getBanSupportEmail(),
+          permanentBan: Boolean(user.permanentBan),
+          banReason: user.banReason
+        },
         HttpStatus.FORBIDDEN
       );
     }
@@ -313,10 +320,13 @@ export class AuthService implements OnModuleInit {
       user = existingUser;
     }
 
-    // Report auto-ban: after login lockout ends, restore ACTIVE so the user can sign in; discovery stays limited via user-service (reportModeratorCardsOnly).
+    // Temp / report auto-ban: after login lockout ends, restore ACTIVE so the user can sign in;
+    // discovery stays limited via user-service (reportModeratorCardsOnly) until dashboard unban.
+    // Permanent bans never auto-restore.
     if (
       user &&
       user.accountStatus === "BANNED" &&
+      !user.permanentBan &&
       user.reportAutoBanActive &&
       user.reportBanNoLoginUntil &&
       new Date() >= new Date(user.reportBanNoLoginUntil)
@@ -328,7 +338,8 @@ export class AuthService implements OnModuleInit {
           bannedAt: null,
           banReason: null,
           reportAutoBanActive: false,
-          reportBanNoLoginUntil: null
+          reportBanNoLoginUntil: null,
+          permanentBan: false
         }
       });
     }
@@ -744,13 +755,20 @@ export class AuthService implements OnModuleInit {
   }
 
   /**
-   * Ban user account (admin / dashboard only). Reversible via unbanAccount.
-   * User cannot sign in until an administrator unbans.
+   * Ban user account (admin / dashboard / report auto-flow). Reversible via unbanAccount.
+   * kind=temp (default for report auto-ban): login blocked for REPORT_BAN_LOGIN_BLOCK_DAYS, then limited discovery until dashboard unban.
+   * kind=perma: login blocked until dashboard unban; no timed unlock.
    */
-  async banAccount(userId: string, reason: string, opts?: { reportAutoBan?: boolean }): Promise<void> {
-    const reportAutoBan = Boolean(opts?.reportAutoBan);
+  async banAccount(
+    userId: string,
+    reason: string,
+    opts?: { reportAutoBan?: boolean; kind?: "temp" | "perma" }
+  ): Promise<void> {
+    const kind: "temp" | "perma" =
+      opts?.kind === "perma" ? "perma" : opts?.kind === "temp" ? "temp" : opts?.reportAutoBan ? "temp" : "perma";
+    const isTemp = kind === "temp";
     let reportBanNoLoginUntil: Date | null = null;
-    if (reportAutoBan) {
+    if (isTemp) {
       const days = parseInt(process.env.REPORT_BAN_LOGIN_BLOCK_DAYS || "7", 10);
       const effectiveDays = Number.isNaN(days) || days < 1 ? 7 : Math.min(days, 365);
       reportBanNoLoginUntil = new Date(Date.now() + effectiveDays * 24 * 60 * 60 * 1000);
@@ -762,15 +780,54 @@ export class AuthService implements OnModuleInit {
         accountStatus: "BANNED",
         bannedAt: new Date(),
         banReason: reason,
-        reportAutoBanActive: reportAutoBan,
-        reportBanNoLoginUntil: reportAutoBan ? reportBanNoLoginUntil : null
+        reportAutoBanActive: isTemp,
+        reportBanNoLoginUntil: isTemp ? reportBanNoLoginUntil : null,
+        permanentBan: !isTemp
       }
     });
 
-    // Delete all active sessions
+    // Delete all active sessions (refresh tokens)
     await this.prisma.session.deleteMany({
       where: { userId }
     });
+
+    // Best-effort realtime force-logout so the client drops immediately.
+    void this.notifyForceLogout(userId, reason, kind);
+  }
+
+  private async notifyForceLogout(userId: string, reason: string, kind: "temp" | "perma"): Promise<void> {
+    const discoveryUrl = (process.env.DISCOVERY_SERVICE_URL || "http://localhost:3004").replace(/\/$/, "");
+    const streamingUrl = (process.env.STREAMING_SERVICE_URL || "http://localhost:3006").replace(/\/$/, "");
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (process.env.INTERNAL_SERVICE_TOKEN) {
+      headers["x-internal-token"] = process.env.INTERNAL_SERVICE_TOKEN;
+    }
+    const body = JSON.stringify({
+      userId,
+      reason,
+      kind,
+      message: this.bannedLoginMessage(),
+      supportEmail: this.getBanSupportEmail(),
+      code: "ACCOUNT_BANNED"
+    });
+    try {
+      await fetch(`${discoveryUrl}/discovery/internal/force-logout`, {
+        method: "POST",
+        headers,
+        body
+      });
+    } catch (error: any) {
+      console.warn(`[AuthService] force-logout notify discovery failed user=${userId}`, error?.message || error);
+    }
+    try {
+      await fetch(`${streamingUrl}/streaming/internal/force-logout`, {
+        method: "POST",
+        headers,
+        body
+      });
+    } catch (error: any) {
+      console.warn(`[AuthService] force-logout notify streaming failed user=${userId}`, error?.message || error);
+    }
   }
 
   /**
@@ -791,7 +848,8 @@ export class AuthService implements OnModuleInit {
         bannedAt: null,
         banReason: null,
         reportAutoBanActive: false,
-        reportBanNoLoginUntil: null
+        reportBanNoLoginUntil: null,
+        permanentBan: false
       }
     });
     return { lifted: true };
@@ -819,7 +877,8 @@ export class AuthService implements OnModuleInit {
     const restoreWithReportFields = {
       ...restoreActive,
       reportAutoBanActive: false,
-      reportBanNoLoginUntil: null
+      reportBanNoLoginUntil: null,
+      permanentBan: false
     };
 
     try {
@@ -911,6 +970,7 @@ export class AuthService implements OnModuleInit {
         banReason: true,
         reportAutoBanActive: true,
         reportBanNoLoginUntil: true,
+        permanentBan: true,
         suspendedAt: true,
         suspensionReason: true,
         deactivatedAt: true,
@@ -938,6 +998,7 @@ export class AuthService implements OnModuleInit {
         banReason: true,
         reportAutoBanActive: true,
         reportBanNoLoginUntil: true,
+        permanentBan: true,
         suspendedAt: true,
         suspensionReason: true,
         deactivatedAt: true,

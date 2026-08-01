@@ -846,27 +846,35 @@ See **[USER_STATUS_AND_APIS.md](./USER_STATUS_AND_APIS.md)** for when to use eac
 
 **Alternative:** `POST /v1/streaming/users/report` (same request/response; use when already talking to streaming service).
 
-**Description:** Report a user. Use this from any screen (discovery, streaming, face cards, offline cards, etc.). Optional `reportType` maps to a configurable weight on the backend; when a user's total report score exceeds the threshold, they are filtered from discovery.
+**Description:** Report a user. Choose exactly one `reason`. `basic` adds weighted score (exponential consecutive stacking on back-to-back reported matches). `violence_self_harm` / `child_abuse` enter critical disguised-mod pool with **no** score change (but still count for the consecutive streak). Optional `reportType` sets the base weight for basic reports.
 
 **Request:**
 ```json
 {
   "reportedUserId": "uuid",
-  "reportType": "face_card"   // optional; omit for default weight
+  "reason": "basic",
+  "reportType": "face_card",
+  "callSessionId": "optional-for-in-call",
+  "roomId": "optional-streaming-proxy"
 }
 ```
 
-**Report types (optional):** `default`, `face_card`, `offline_card`, `host`, `participant_host`, `participant`. Weights are configurable on the backend; unknown or missing `reportType` uses the default weight.
+**Reasons (required product choice; default `basic` if omitted):** `basic`, `violence_self_harm`, `child_abuse`.
+
+**Report types (optional, scoring context):** `default`, `face_card`, `offline_card`, `host`, `participant_host`, `participant`.
 
 **Response:**
 ```json
 {
   "success": true,
-  "reportCount": 12
+  "reportCount": 12,
+  "weightApplied": 5,
+  "reason": "basic",
+  "criticalReviewActive": false
 }
 ```
 
-`reportCount` is the reported user's total report score (weighted sum) after this report.
+`reportCount` is the reported user's total report score after this report (unchanged for critical reasons). Ban login errors may return `code: "ACCOUNT_BANNED"` with support email; clients should force-logout on realtime `account-banned`.
 
 **Admin dashboard (sales/moderation):** `POST /v1/admin/users/:id/report` with `{ "reason": "…", "notes": "…" }` increments the same `reportCount` using the **maximum** configured in-app role weight (or `REPORT_WEIGHT_ADMIN_DASHBOARD` if set on user-service). In-app reports use smaller weights per `reportType`; dashboard reports always apply the highest tier.
 

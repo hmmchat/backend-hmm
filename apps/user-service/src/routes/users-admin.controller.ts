@@ -408,6 +408,47 @@ export class UsersAdminController {
   }
 
   /**
+   * GET /admin/users/moderation-analytics — live moderation counts for beam-dashboard.
+   * Registered before :id so "moderation-analytics" is not treated as a user id.
+   */
+  @Get("moderation-analytics")
+  async moderationAnalytics() {
+    const profile = await this.userService.getModerationAnalyticsProfileCounts();
+    let tempBanned = 0;
+    let permaBanned = 0;
+    let bannedTotal = 0;
+    try {
+      const authRes = await authFetchOrThrow(
+        "/auth/admin/users/moderation-counts",
+        { method: "GET" },
+        "Moderation ban counts"
+      );
+      const banPayload = await parseAuthJsonResponse<{
+        ok?: boolean;
+        tempBanned?: number;
+        permaBanned?: number;
+        bannedTotal?: number;
+      }>(authRes, "moderation ban counts");
+      tempBanned = Number(banPayload.tempBanned) || 0;
+      permaBanned = Number(banPayload.permaBanned) || 0;
+      bannedTotal = Number(banPayload.bannedTotal) || tempBanned + permaBanned;
+    } catch (e) {
+      this.logger.warn(
+        `moderation-analytics: auth ban counts unavailable: ${(e as Error)?.message || e}`
+      );
+    }
+
+    return {
+      ok: true,
+      generatedAt: new Date().toISOString(),
+      ...profile,
+      tempBanned,
+      permaBanned,
+      bannedTotal
+    };
+  }
+
+  /**
    * GET /admin/users/:id — merged auth + profile (richest row for dashboard detail)
    */
   @Get(":id")

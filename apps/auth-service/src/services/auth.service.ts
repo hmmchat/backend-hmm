@@ -952,6 +952,31 @@ export class AuthService implements OnModuleInit {
   }
 
   /**
+   * Ban counts for moderation analytics (beam-dashboard).
+   */
+  async getModerationBanCounts(): Promise<{
+    ok: true;
+    tempBanned: number;
+    permaBanned: number;
+    bannedTotal: number;
+  }> {
+    const [permaBanned, tempBanned] = await Promise.all([
+      this.prisma.user.count({
+        where: { accountStatus: "BANNED", permanentBan: true }
+      }),
+      this.prisma.user.count({
+        where: { accountStatus: "BANNED", permanentBan: false }
+      })
+    ]);
+    return {
+      ok: true,
+      tempBanned,
+      permaBanned,
+      bannedTotal: tempBanned + permaBanned
+    };
+  }
+
+  /**
    * List auth users for admin dashboards (pagination kept simple)
    */
   async listUsersForAdminDashboard() {

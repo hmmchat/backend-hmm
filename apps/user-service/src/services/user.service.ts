@@ -47,6 +47,10 @@ import {
 } from "../config/report-weights.config.js";
 import { getReportThreshold } from "../config/report-threshold.config.js";
 import {
+  getReportLayerConfig,
+  NEEDS_KYC_STATUSES
+} from "../config/report-layers.config.js";
+import {
   MODERATOR_FACE_CARD_SETTING_ID,
   mergeModeratorFaceCardPresentation
 } from "../config/moderator-face-card.config.js";
@@ -300,6 +304,107 @@ export class UserService implements OnModuleInit {
   /** Public for admin API responses (dashboard copy). */
   getReportThresholdForAdmin(): number {
     return getReportThreshold();
+  }
+
+  /**
+   * Live moderation analytics counts for beam-dashboard.
+   * Profile-side aggregates only; ban totals come from auth-service.
+   */
+  async getModerationAnalyticsProfileCounts(): Promise<{
+    openCritical: number;
+    t1: number;
+    t2: number;
+    t3: number;
+    needsKyc: number;
+    kycVerified: number;
+    kycByStatus: Record<string, number>;
+    showAsModWorkQueue: number;
+    disguisedWorkQueue: number;
+    postBanShowAsModPool: number;
+    moderatorsShowAsMod: number;
+    moderatorsDisguised: number;
+    reportLayerThresholds: ReturnType<typeof getReportLayerConfig>;
+  }> {
+    const layers = getReportLayerConfig();
+    const needsKycList = [...NEEDS_KYC_STATUSES];
+
+    const [
+      openCritical,
+      t1,
+      t2,
+      t3,
+      needsKyc,
+      kycVerified,
+      kycGroups,
+      showAsModWorkQueue,
+      postBanShowAsModPool,
+      moderatorsShowAsMod,
+      moderatorsDisguised
+    ] = await Promise.all([
+      this.prisma.user.count({ where: { criticalReviewActive: true } }),
+      this.prisma.user.count({
+        where: {
+          reportCount: { gte: layers.layer1, lt: layers.layer2 },
+          criticalReviewActive: false
+        }
+      }),
+      this.prisma.user.count({
+        where: {
+          reportCount: { gte: layers.layer2, lt: layers.layer3 },
+          criticalReviewActive: false
+        }
+      }),
+      this.prisma.user.count({
+        where: {
+          reportCount: { gte: layers.layer3, lt: layers.ban },
+          criticalReviewActive: false
+        }
+      }),
+      this.prisma.user.count({ where: { kycStatus: { in: needsKycList as any } } }),
+      this.prisma.user.count({ where: { kycStatus: "VERIFIED" } }),
+      this.prisma.user.groupBy({
+        by: ["kycStatus"],
+        _count: { _all: true }
+      }),
+      this.prisma.user.count({
+        where: {
+          criticalReviewActive: false,
+          reportCount: { lt: layers.ban },
+          OR: [
+            { kycStatus: { in: needsKycList as any } },
+            { reportCount: { gte: layers.layer1 } }
+          ]
+        }
+      }),
+      this.prisma.user.count({ where: { reportModeratorCardsOnly: true } }),
+      this.prisma.user.count({
+        where: { isModerator: true, moderatorFaceCardActive: true }
+      }),
+      this.prisma.user.count({
+        where: { isModerator: true, moderatorFaceCardActive: false }
+      })
+    ]);
+
+    const kycByStatus: Record<string, number> = {};
+    for (const row of kycGroups) {
+      kycByStatus[String(row.kycStatus)] = row._count._all;
+    }
+
+    return {
+      openCritical,
+      t1,
+      t2,
+      t3,
+      needsKyc,
+      kycVerified,
+      kycByStatus,
+      showAsModWorkQueue,
+      disguisedWorkQueue: openCritical,
+      postBanShowAsModPool,
+      moderatorsShowAsMod,
+      moderatorsDisguised,
+      reportLayerThresholds: layers
+    };
   }
 
   /**
@@ -2127,6 +2232,11 @@ export class UserService implements OnModuleInit {
     /** When true, only users currently in critical review (for disguised mods matching out). */
     onlyCriticalReview?: boolean;
     excludeKycStatuses?: KycStatus[];
+    /**
+     * Show-as-moderator work queue: needs-KYC ∪ T1–T3 report score, excluding critical-review
+     * targets (those are for disguised mods only).
+     */
+    moderatorWorkQueue?: boolean;
     limit?: number;
   }) {
     const where: any = {
@@ -2201,7 +2311,19 @@ export class UserService implements OnModuleInit {
       }
     }
 
-    if (filters.excludeKycStatuses && filters.excludeKycStatuses.length > 0) {
+    if (filters.moderatorWorkQueue === true) {
+      const layers = getReportLayerConfig();
+      where.AND = [
+        ...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []),
+        { criticalReviewActive: false },
+        {
+          OR: [
+            { kycStatus: { in: [...NEEDS_KYC_STATUSES] } },
+            { reportCount: { gte: layers.layer1 } }
+          ]
+        }
+      ];
+    } else if (filters.excludeKycStatuses && filters.excludeKycStatuses.length > 0) {
       where.kycStatus = {
         notIn: filters.excludeKycStatuses
       };

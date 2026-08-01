@@ -3016,6 +3016,14 @@ Aggregates wallet balance, meeting count, and profile completion in one call (ga
 | `GET /v1/moderator-face-card/active` | Shared moderator discovery card settings |
 | `PATCH /v1/me/moderator-face-card` | `{ "active": true \| false }` — moderators only |
 
+**Modes:** `active: true` = show as moderator (KYC + non-critical report work queue). `active: false` = disguised (critical review pool only). Toggle is available in the product Settings for moderator accounts.
+
+### Moderation analytics (beam-dashboard)
+
+| Method & path | Purpose |
+|---------------|---------|
+| `GET /v1/admin/users/moderation-analytics` | Live counts: open critical, T1/T2/T3, needs-KYC / verified, bans, work-queue depths |
+
 ### KYC User Feedback
 
 **Endpoint:** `POST /v1/kyc/feedback`

@@ -50,6 +50,18 @@ export function buildReportAwareDiscoveryFilters(args: {
       filters: { ...base, onlyCriticalReview: true }
     };
   }
+  // Show-as-moderator: FCFS work queue — needs-KYC ∪ T1–T3 only (no general verified users).
+  if (requesterIsModerator) {
+    return {
+      poolMode: { mode: "normal" },
+      filters: {
+        ...base,
+        moderatorVisibility: "exclude_disguised",
+        excludeModerators: true,
+        moderatorWorkQueue: true
+      }
+    };
+  }
   if (poolMode.mode === "critical_disguise") {
     return {
       poolMode,
@@ -76,8 +88,7 @@ export function buildReportAwareDiscoveryFilters(args: {
       filters: {
         ...base,
         moderatorVisibility: "exclude_disguised",
-        excludeModerators: false,
-        excludeKycStatuses: requesterIsModerator ? ["VERIFIED"] : []
+        excludeModerators: false
       }
     };
   }
@@ -87,9 +98,7 @@ export function buildReportAwareDiscoveryFilters(args: {
     filters: {
       ...base,
       moderatorVisibility: "exclude_disguised",
-      excludeModerators:
-        requesterIsModerator || (priorityEnabled && requesterKycStatus === "VERIFIED"),
-      excludeKycStatuses: requesterIsModerator ? ["VERIFIED"] : []
+      excludeModerators: priorityEnabled && requesterKycStatus === "VERIFIED",
     }
   };
 }

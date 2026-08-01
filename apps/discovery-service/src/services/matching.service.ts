@@ -320,11 +320,12 @@ export class MatchingService {
         return false;
       }
 
-      if (requesterIsModerator && poolMode.mode === "normal") {
+      if (requesterIsModerator) {
         if (user.isModerator) {
           return false;
         }
-        if (user.kycStatus === "VERIFIED") {
+        // Work queue is enforced in user-service (moderatorWorkQueue); keep a cheap local guard.
+        if (Boolean((user as any).criticalReviewActive)) {
           return false;
         }
       } else if (

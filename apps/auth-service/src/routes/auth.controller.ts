@@ -208,6 +208,16 @@ export class AuthController {
   }
 
   /**
+   * Ban counts for moderation analytics.
+   * GET /auth/admin/users/moderation-counts
+   * Must be registered before admin/users/:userId.
+   */
+  @Get("admin/users/moderation-counts")
+  async getModerationBanCounts() {
+    return this.auth.getModerationBanCounts();
+  }
+
+  /**
    * Single auth user for admin dashboards (merged with profile in user-service).
    * GET /auth/admin/users/:userId
    */

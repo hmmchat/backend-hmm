@@ -592,7 +592,8 @@ export class UserController {
       onlyModerators,
       moderatorVisibility,
       onlyCriticalReview,
-      excludeKycStatuses
+      excludeKycStatuses,
+      moderatorWorkQueue
     } = body;
 
     if (!Array.isArray(statuses) || statuses.length === 0) {
@@ -646,6 +647,7 @@ export class UserController {
       excludeKycStatuses: Array.isArray(excludeKycStatuses)
         ? excludeKycStatuses.filter((v: string) => ["UNVERIFIED", "VERIFIED", "PENDING_REVIEW", "REVOKED", "EXPIRED"].includes(v)) as any[]
         : undefined,
+      moderatorWorkQueue: moderatorWorkQueue === undefined ? undefined : Boolean(moderatorWorkQueue),
       limit: limitNum
     });
   }

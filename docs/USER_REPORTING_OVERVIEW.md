@@ -79,10 +79,10 @@ Ban immediately deletes sessions and emits realtime `account-banned` (discovery 
 
 | Toggle | Meaning |
 |--------|---------|
-| **Show as moderator** (`moderatorFaceCardActive` on) | Shared mod persona; used in score-tier mix + post-ban pool |
-| **Show as user** (off) | Normal appearance; critical/disguised pool only |
+| **Show as moderator** (`moderatorFaceCardActive` on) | Shared mod persona in score-tier mix + post-ban pool **for reported users**. When the mod themselves searches: **work queue only** — needs-KYC (`UNVERIFIED` / `PENDING_REVIEW` / `REVOKED` / `EXPIRED`) **or** T1–T3 report score; never clean verified users; never critical-review targets. FCFS via normal match lock (no score-mix algorithm for the mod). |
+| **Show as user** (off) | Disguised; **critical review pool only** (`violence_self_harm` / `child_abuse`) |
 
-Both keep full mod powers via **beam-dashboard** (ban, unban, score, critical release).
+Both keep full mod powers via **beam-dashboard** (ban, unban, score, critical release, KYC).
 
 ---
 
@@ -94,6 +94,7 @@ Both keep full mod powers via **beam-dashboard** (ban, unban, score, critical re
 - Release from critical review
 - Toggle isModerator + show-as-moderator vs show-as-user
 - Status fields: critical flag, post-ban pool, lockout until, permanent ban
+- **Moderation analytics** — `GET /v1/admin/users/moderation-analytics` (open critical, T1/T2/T3, KYC, bans, work-queue depths)
 
 ---
 

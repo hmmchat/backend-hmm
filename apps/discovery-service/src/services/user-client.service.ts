@@ -354,6 +354,7 @@ export class UserClientService implements OnModuleInit {
       moderatorVisibility?: "show_as_mod" | "show_as_user" | "exclude_disguised";
       onlyCriticalReview?: boolean;
       excludeKycStatuses?: ("UNVERIFIED" | "VERIFIED" | "PENDING_REVIEW" | "REVOKED" | "EXPIRED")[];
+      moderatorWorkQueue?: boolean;
       limit?: number;
     }
   ): Promise<DiscoveryUser[]> {
@@ -404,6 +405,7 @@ export class UserClientService implements OnModuleInit {
       moderatorVisibility?: "show_as_mod" | "show_as_user" | "exclude_disguised";
       onlyCriticalReview?: boolean;
       excludeKycStatuses?: ("UNVERIFIED" | "VERIFIED" | "PENDING_REVIEW" | "REVOKED" | "EXPIRED")[];
+      moderatorWorkQueue?: boolean;
       limit?: number;
     }
   ): Promise<DiscoveryUser[]> {

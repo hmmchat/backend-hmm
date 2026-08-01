@@ -95,6 +95,7 @@ Both keep full mod powers via **beam-dashboard** (ban, unban, score, critical re
 - Toggle isModerator + show-as-moderator vs show-as-user
 - Status fields: critical flag, post-ban pool, lockout until, permanent ban
 - **Moderation analytics** — `GET /v1/admin/users/moderation-analytics` (open critical, T1/T2/T3, KYC, bans, work-queue depths)
+- **Beam TV panel** — look up active broadcast by participant user id; force-end room for everyone with a custom message (`GET/POST /v1/streaming/admin/broadcasts/...`). In-product mods send `moderator-overlay` WebSocket notices while watching.
 
 ---
 

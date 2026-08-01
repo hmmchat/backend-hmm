@@ -7,6 +7,7 @@ import { IcebreakerAdminController } from "../controllers/icebreaker-admin.contr
 import { DareAdminController } from "../controllers/dare-admin.controller.js";
 import { LoadingMemeController } from "../controllers/loading-meme.controller.js";
 import { LoadingMemeAdminController } from "../controllers/loading-meme-admin.controller.js";
+import { BroadcastModerationAdminController } from "../controllers/broadcast-moderation-admin.controller.js";
 import { HealthController } from "../controllers/health.controller.js";
 import { StreamingGateway } from "../gateways/streaming.gateway.js";
 import { MediasoupService } from "../services/mediasoup.service.js";
@@ -37,6 +38,7 @@ import { PrismaService } from "../prisma/prisma.service.js";
     DareAdminController,
     LoadingMemeController,
     LoadingMemeAdminController,
+    BroadcastModerationAdminController,
     HealthController
   ],
   providers: [

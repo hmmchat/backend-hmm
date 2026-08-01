@@ -63,7 +63,13 @@ export class RoomService {
   private lastViewerReconcileAt = new Map<string, number>();
   private roomDetailsCache = new Map<string, { expiresAt: number; data: any | null }>();
   /** Registered by the WS gateway so endRoom can notify connected participants/viewers (room-ended / broadcast-stopped). */
-  private roomEndedNotifier: ((roomId: string, wasBroadcasting: boolean) => void) | null = null;
+  private roomEndedNotifier:
+    | ((
+        roomId: string,
+        wasBroadcasting: boolean,
+        meta?: { message?: string; reason?: string; endedBy?: string }
+      ) => void)
+    | null = null;
   private activeParticipantRoomCache = new Map<string, { expiresAt: number; data: { roomId: string } | null }>();
   private activeViewerRoomCache = new Map<string, { expiresAt: number; data: { roomId: string } | null }>();
   private activeBroadcastsCache = new Map<string, { expiresAt: number; data: any }>();
@@ -2594,11 +2600,20 @@ export class RoomService {
    * End a call/room
    * Handles ending room gracefully even if not in memory
    */
-  setRoomEndedNotifier(notifier: (roomId: string, wasBroadcasting: boolean) => void): void {
+  setRoomEndedNotifier(
+    notifier: (
+      roomId: string,
+      wasBroadcasting: boolean,
+      meta?: { message?: string; reason?: string; endedBy?: string }
+    ) => void
+  ): void {
     this.roomEndedNotifier = notifier;
   }
 
-  async endRoom(roomId: string): Promise<void> {
+  async endRoom(
+    roomId: string,
+    opts?: { message?: string; reason?: string; endedBy?: string }
+  ): Promise<void> {
     this.clearPullStrangerExpiryTimer(roomId);
 
     // Try to get room from memory, but continue even if not found (will update DB)
@@ -2656,10 +2671,16 @@ export class RoomService {
       }
     });
 
+    const endMeta = {
+      message: opts?.message?.trim() || undefined,
+      reason: opts?.reason || (opts?.message ? "moderator_stop" : "room_ended"),
+      endedBy: opts?.endedBy || undefined
+    };
+
     // Push room-ended (and broadcast-stopped) over WS so connected viewers/participants
     // don't keep watching a dead room (e.g. broadcaster's phone died).
     try {
-      this.roomEndedNotifier?.(roomId, Boolean(session.isBroadcasting));
+      this.roomEndedNotifier?.(roomId, Boolean(session.isBroadcasting), endMeta);
     } catch (error: any) {
       this.logger.warn(`Room-ended notifier failed for ${roomId}: ${error?.message || error}`);
     }
@@ -2672,7 +2693,7 @@ export class RoomService {
           data: {
             sessionId: session.id,
             eventType: "broadcast_stopped",
-            metadata: JSON.stringify({ roomId, reason: "room_ended" })
+            metadata: JSON.stringify({ roomId, ...endMeta })
           }
         });
       } catch (error: any) {
@@ -2686,7 +2707,7 @@ export class RoomService {
         data: {
           sessionId: session.id,
           eventType: "call_ended",
-          metadata: JSON.stringify({ roomId })
+          metadata: JSON.stringify({ roomId, ...endMeta })
         }
       });
     } catch (error: any) {
@@ -3130,6 +3151,57 @@ export class RoomService {
     }
 
     return { roomId: result[0].roomId };
+  }
+
+  /**
+   * Active Beam TV broadcast room where `userId` is an on-stream participant (not a viewer).
+   */
+  async getActiveBroadcastByParticipantUserId(userId: string): Promise<{
+    roomId: string;
+    sessionId: string;
+    status: string;
+    isBroadcasting: boolean;
+    participantUserIds: string[];
+    viewerCount: number;
+  } | null> {
+    const rows = await this.prisma.$queryRaw<
+      Array<{ roomId: string; sessionId: string; status: string; isBroadcasting: boolean }>
+    >`
+      SELECT cs."roomId" as "roomId", cs.id as "sessionId", cs.status::text as status, cs."isBroadcasting" as "isBroadcasting"
+      FROM call_participants cp
+      INNER JOIN call_sessions cs ON cp."sessionId" = cs.id
+      WHERE cp."userId" = ${userId}
+        AND cp.status = 'active'
+        AND cp."leftAt" IS NULL
+        AND cs.status::text != 'ENDED'
+        AND cs."isBroadcasting" = true
+      ORDER BY COALESCE(cs."startedAt", cs."createdAt") DESC
+      LIMIT 1
+    `;
+
+    if (!rows?.length) {
+      return null;
+    }
+
+    const row = rows[0];
+    const [participants, viewerCount] = await Promise.all([
+      this.prisma.callParticipant.findMany({
+        where: { sessionId: row.sessionId, leftAt: null, status: "active" },
+        select: { userId: true }
+      }),
+      this.prisma.callViewer.count({
+        where: { sessionId: row.sessionId, leftAt: null }
+      })
+    ]);
+
+    return {
+      roomId: row.roomId,
+      sessionId: row.sessionId,
+      status: row.status,
+      isBroadcasting: Boolean(row.isBroadcasting),
+      participantUserIds: participants.map((p) => p.userId),
+      viewerCount
+    };
   }
 
   /**

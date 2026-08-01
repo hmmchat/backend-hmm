@@ -14,6 +14,7 @@ import { DareService } from "../services/dare.service.js";
 import { IcebreakerService } from "../services/icebreaker.service.js";
 import { FriendClientService } from "../services/friend-client.service.js";
 import { StreamingNodeRegistryService } from "../services/streaming-node-registry.service.js";
+import { DiscoveryClientService } from "../services/discovery-client.service.js";
 import { verifyToken, AccessPayload } from "@hmm/common";
 import { JWK } from "jose";
 
@@ -61,7 +62,8 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     private dareService: DareService,
     private icebreakerService: IcebreakerService,
     private friendClient: FriendClientService,
-    private nodeRegistry: StreamingNodeRegistryService
+    private nodeRegistry: StreamingNodeRegistryService,
+    private discoveryClient: DiscoveryClientService
   ) {
     this.testMode = process.env.TEST_MODE === "true" || process.env.NODE_ENV === "test";
   }
@@ -114,8 +116,8 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
 
     // Let RoomService push room-ended / broadcast-stopped to connected clients when a room
     // ends for any reason (abnormal disconnect of last participant, HTTP end-room, reap).
-    this.roomService.setRoomEndedNotifier((roomId: string, wasBroadcasting: boolean) => {
-      void this.notifyRoomEnded(roomId, wasBroadcasting);
+    this.roomService.setRoomEndedNotifier((roomId, wasBroadcasting, meta) => {
+      void this.notifyRoomEnded(roomId, wasBroadcasting, meta);
     });
 
     this.logger.log("WebSocket gateway initialized at /streaming/ws");
@@ -145,12 +147,24 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
   }
 
   /** Tell every connection still attached to the room (participants AND Beam TV viewers) that it ended. */
-  private async notifyRoomEnded(roomId: string, wasBroadcasting: boolean) {
+  private async notifyRoomEnded(
+    roomId: string,
+    wasBroadcasting: boolean,
+    meta?: { message?: string; reason?: string; endedBy?: string }
+  ) {
     try {
+      const reason = meta?.reason || "room_ended";
+      const message = meta?.message;
       if (wasBroadcasting) {
-        await this.broadcastToRoom(roomId, { type: "broadcast-stopped", data: { roomId, reason: "room_ended" } });
+        await this.broadcastToRoom(roomId, {
+          type: "broadcast-stopped",
+          data: { roomId, reason, message, endedBy: meta?.endedBy }
+        });
       }
-      await this.broadcastToRoom(roomId, { type: "room-ended", data: { roomId } });
+      await this.broadcastToRoom(roomId, {
+        type: "room-ended",
+        data: { roomId, reason, message, endedBy: meta?.endedBy }
+      });
     } catch (error: any) {
       this.logger.warn(`[RoomEnded] Failed to notify room ${roomId}: ${error?.message || error}`);
     }
@@ -514,6 +528,15 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
             return;
           }
           await this.handleChatMessage(connectionId, userId, data, ws);
+          break;
+
+        // Moderator overlay (Beam TV) — separate from normal chat
+        case "moderator-overlay":
+          if (this.isAnonymousUser(userId)) {
+            this.sendError(ws, "Authentication required.");
+            return;
+          }
+          await this.handleModeratorOverlay(connectionId, userId, data, ws);
           break;
 
         // Dares
@@ -1570,6 +1593,49 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       this.logger.error(`Error sending friend request: ${error.message}`);
       this.sendError(ws, error.message || "Failed to send friend request");
     }
+  }
+
+  private async handleModeratorOverlay(
+    _connectionId: string,
+    userId: string,
+    data: any,
+    ws: any
+  ) {
+    const { roomId, message } = data ?? {};
+    if (!roomId) {
+      this.sendError(ws, "roomId is required");
+      return;
+    }
+    const text = typeof message === "string" ? message.trim() : "";
+    if (!text) {
+      this.sendError(ws, "Message cannot be empty");
+      return;
+    }
+
+    const isModerator = await this.discoveryClient.isUserModerator(userId);
+    if (!isModerator) {
+      this.sendError(ws, "Only moderators can send moderator overlays");
+      return;
+    }
+
+    const roomExists = await this.roomService.roomExists(roomId);
+    if (!roomExists) {
+      this.sendError(ws, `Room ${roomId} not found`);
+      return;
+    }
+
+    const payload = {
+      id: `mod_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      roomId,
+      userId,
+      message: text,
+      isModeratorOverlay: true,
+      label: "Moderator",
+      createdAt: new Date().toISOString()
+    };
+
+    this.send(ws, { type: "moderator-overlay", data: payload });
+    await this.broadcastToRoom(roomId, { type: "moderator-overlay", data: payload }, userId);
   }
 
   private async handleChatMessage(

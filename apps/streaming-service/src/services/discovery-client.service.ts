@@ -343,6 +343,27 @@ export class DiscoveryClientService {
     }
   }
 
+  /** Whether the user is flagged isModerator in user-service. */
+  async isUserModerator(userId: string): Promise<boolean> {
+    try {
+      const response = await fetch(
+        `${this.userServiceUrl}/users/test/${encodeURIComponent(userId)}?fields=isModerator`,
+        {
+          method: "GET",
+          headers: { "Content-Type": "application/json" }
+        }
+      );
+      if (!response.ok) {
+        return false;
+      }
+      const data = (await response.json()) as { user?: { isModerator?: boolean }; isModerator?: boolean };
+      return Boolean(data?.user?.isModerator ?? data?.isModerator);
+    } catch (error: any) {
+      this.logger.warn(`isUserModerator failed for ${userId}: ${error?.message || error}`);
+      return false;
+    }
+  }
+
   /**
    * Get user profile by userId (for enriching broadcast participant info, history)
    */

@@ -3,6 +3,7 @@ import { PrismaService } from "../prisma/prisma.service.js";
 import { MediasoupService } from "./mediasoup.service.js";
 import { DiscoveryClientService } from "./discovery-client.service.js";
 import { StreamingNodeRegistryService } from "./streaming-node-registry.service.js";
+import { SeasonProgressService } from "./season-progress.service.js";
 import { types as MediasoupTypes } from "mediasoup";
 import { v4 as uuidv4 } from "uuid";
 import { resolveRoomEndParticipantStatus } from "@hmm/common";
@@ -80,7 +81,8 @@ export class RoomService {
     private prisma: PrismaService,
     private mediasoup: MediasoupService,
     private discoveryClient: DiscoveryClientService,
-    private nodeRegistry: StreamingNodeRegistryService
+    private nodeRegistry: StreamingNodeRegistryService,
+    private seasonProgress: SeasonProgressService
   ) {
     this.roomReconcileMinIntervalMs = this.parseNonNegativeInt(
       process.env.ROOM_RECONCILE_MIN_INTERVAL_MS,
@@ -997,6 +999,11 @@ export class RoomService {
       }
     });
 
+    // Mystery Beam Box: lifetime unique peer edges (non-blocking)
+    this.seasonProgress.onParticipantJoined(session.id, userId).catch((err) => {
+      this.logger.warn(`Season progress on join failed: ${err?.message || err}`);
+    });
+
     // Keep user-service status aligned with the new active participant row.
     // Without this, GET /streaming/users/:id/room reconcile can immediately remove
     // the participant when status is still ONLINE/AVAILABLE from home/inbox flows.
@@ -1742,7 +1749,7 @@ export class RoomService {
     joiningUserId: string,
     targetUserId: string
   ): Promise<{ roomId: string; sessionId: string }> {
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       // Get room with lock to prevent concurrent joins
       const session = await tx.callSession.findUnique({
         where: { roomId },
@@ -1982,11 +1989,19 @@ export class RoomService {
       );
 
       this.clearHotReadCaches(roomId, allParticipantUserIds);
-      return { roomId, sessionId: session.id };
+      return { roomId, sessionId: session.id, joiningUserId };
     }, {
       isolationLevel: "Serializable", // Highest isolation to prevent concurrent joins (race condition protection)
       timeout: 10000 // 10 seconds timeout
     });
+
+    this.seasonProgress
+      .onParticipantJoined(result.sessionId, result.joiningUserId)
+      .catch((err) => {
+        this.logger.warn(`Season progress on pull-stranger join failed: ${err?.message || err}`);
+      });
+
+    return { roomId: result.roomId, sessionId: result.sessionId };
   }
 
   /**
@@ -2363,6 +2378,10 @@ export class RoomService {
     // Await status sync so GET /users/:id/room reconcile does not strip the new participant row.
     await this.syncParticipantStatusAfterWaitlistAccept(targetUserId, statusToSet);
     this.clearHotReadCaches(roomId, [targetUserId, hostUserId]);
+
+    this.seasonProgress.onParticipantJoined(session.id, targetUserId).catch((err) => {
+      this.logger.warn(`Season progress on waitlist join failed: ${err?.message || err}`);
+    });
 
     // Notify discovery-service of participant join
     this.discoveryClient.notifyParticipantJoined(roomId, targetUserId).catch((err) => {
@@ -2865,6 +2884,11 @@ export class RoomService {
 
     await this.pruneGloballyObsoleteHistorySessions().catch((error: any) => {
       this.logger.warn(`History prune skipped due to error: ${error?.message || error}`);
+    });
+
+    // Mystery Beam Box: peers + beam/beamcast minutes (non-blocking)
+    this.seasonProgress.onRoomEnded(session.id, roomId).catch((err) => {
+      this.logger.warn(`Season progress on room end failed: ${err?.message || err}`);
     });
 
     this.clearHotReadCaches(roomId, [

@@ -283,6 +283,13 @@ export class RoutingService implements OnModuleInit {
       requiresAuth: false
     });
 
+    // Mystery Beam Box / Season ops (wallet-service); auth via X-Admin-Token in-service
+    this.routes.set("/admin/seasons", {
+      path: "/admin/seasons",
+      serviceUrl: walletServiceUrl,
+      requiresAuth: false
+    });
+
     this.logger.log("Route configuration loaded");
   }
 

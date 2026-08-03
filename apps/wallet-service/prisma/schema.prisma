@@ -19,7 +19,7 @@ generator client {
 model Wallet {
   id        String   @id // Links to auth-service User.id (must match auth-service user id)
   balance   Int      @default(0) // Coin balance (non-negative)
-  diamonds Int      @default(0) // Diamond balance (non-negative); separate from coins
+  diamonds  Int      @default(0) // Diamond balance (non-negative); separate from coins
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -33,29 +33,166 @@ model Transaction {
   id               String            @id @default(cuid())
   walletId         String
   wallet           Wallet            @relation(fields: [walletId], references: [id], onDelete: Cascade)
-  amount           Int               // Positive for credits, negative for debits (coins)
+  amount           Int // Positive for credits, negative for debits (coins)
   type             TransactionType
   description      String?
-  giftId           String?           // Gift sticker ID (monkey, pikachu, etc.) - only for CREDIT transactions from gifts
-  diamondAmount    Int?              // Delta for diamonds (positive credit, negative debit); used when transactionKind is DIAMONDS or CONVERSION
-  transactionKind  TransactionKind? // COINS = coin-only, DIAMONDS = diamond-only, CONVERSION = coins->diamonds purchase
-  createdAt        DateTime         @default(now())
+  giftId           String? // Gift sticker ID - only for CREDIT transactions from gifts
+  diamondAmount    Int? // Delta for diamonds; used when transactionKind is DIAMONDS or CONVERSION
+  transactionKind  TransactionKind? // COINS | DIAMONDS | CONVERSION
+  createdAt        DateTime          @default(now())
 
   @@index([walletId])
   @@index([createdAt])
-  @@index([giftId]) // Index for querying gifts received
+  @@index([giftId])
   @@map("transactions")
 }
 
 enum TransactionType {
-  CREDIT      // Coins added (e.g., purchase, reward, bonus)
-  DEBIT       // Coins spent (e.g., premium features, gifts)
-  REFUND      // Refund for a previous transaction
-  ADJUSTMENT  // Manual adjustment by admin
+  CREDIT
+  DEBIT
+  REFUND
+  ADJUSTMENT
 }
 
 enum TransactionKind {
-  COINS       // Coin-only transaction
-  DIAMONDS    // Diamond-only transaction
-  CONVERSION  // Coins to diamonds purchase (coin debit + diamond credit)
+  COINS
+  DIAMONDS
+  CONVERSION
+}
+
+// ─── Mystery Beam Box / Seasons ─────────────────────────────────────────────
+
+enum SeasonStatus {
+  DRAFT
+  ACTIVE
+  ENDED
+}
+
+enum SeasonTaskType {
+  UNIQUE_STRANGERS
+  BEAM_MINUTES
+  BEAMCAST_MINUTES
+  DIAMONDS_EARNED
+}
+
+enum SeasonClaimStatus {
+  PENDING
+  REJECTED
+  APPROVED
+  GIFT_SENT
+  GIFT_RECEIVED
+}
+
+model Season {
+  id            String       @id @default(cuid())
+  name          String
+  status        SeasonStatus @default(DRAFT)
+  giftPoolSize  Int          @default(1000)
+  approvedCount Int          @default(0)
+  startedAt     DateTime?
+  endedAt       DateTime?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  tasks    SeasonTask[]
+  progress UserSeasonProgress[]
+  claims   SeasonClaim[]
+  events   SeasonProgressEvent[]
+
+  @@index([status])
+  @@map("seasons")
+}
+
+model SeasonTask {
+  id        String         @id @default(cuid())
+  seasonId  String
+  season    Season         @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  taskType  SeasonTaskType
+  enabled   Boolean        @default(true)
+  target    Int
+  label     String
+  sortOrder Int            @default(0)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  @@unique([seasonId, taskType])
+  @@index([seasonId])
+  @@map("season_tasks")
+}
+
+model UserSeasonProgress {
+  id               String    @id @default(cuid())
+  seasonId         String
+  season           Season    @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  userId           String
+  uniqueStrangers  Int       @default(0)
+  beamSeconds      Int       @default(0)
+  beamcastSeconds  Int       @default(0)
+  diamondsEarned   Int       @default(0)
+  tasksCompletedAt DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@unique([seasonId, userId])
+  @@index([userId])
+  @@index([seasonId])
+  @@map("user_season_progress")
+}
+
+/// Lifetime unique participatory call peers (not Beam TV viewers).
+model UserCallPeer {
+  id              String   @id @default(cuid())
+  userId          String
+  peerUserId      String
+  firstConnectedAt DateTime @default(now())
+
+  @@unique([userId, peerUserId])
+  @@index([userId])
+  @@map("user_call_peers")
+}
+
+model SeasonClaim {
+  id              String            @id @default(cuid())
+  seasonId        String
+  season          Season            @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  userId          String
+  status          SeasonClaimStatus @default(PENDING)
+  recipientName   String
+  phone           String
+  addressLine1    String
+  addressLine2    String?
+  addressLine3    String?
+  landmark        String?
+  state           String
+  city            String
+  pincode         String
+  rejectMessage   String?
+  courierName     String?
+  trackingNumber  String?
+  submittedAt     DateTime          @default(now())
+  approvedAt      DateTime?
+  rejectedAt      DateTime?
+  giftSentAt      DateTime?
+  giftReceivedAt  DateTime?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@unique([seasonId, userId])
+  @@index([seasonId, status])
+  @@index([userId])
+  @@map("season_claims")
+}
+
+/// Idempotency keys for streaming session contributions (minutes).
+model SeasonProgressEvent {
+  id        String   @id @default(cuid())
+  seasonId  String
+  season    Season   @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  userId    String
+  eventKey  String
+  createdAt DateTime @default(now())
+
+  @@unique([seasonId, userId, eventKey])
+  @@index([seasonId])
+  @@map("season_progress_events")
 }

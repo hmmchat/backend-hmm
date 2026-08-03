@@ -1,10 +1,14 @@
 import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { TransactionKind, Prisma } from "../../node_modules/.prisma/client/index.js";
+import { SeasonService } from "./season.service.js";
 
 @Injectable()
 export class WalletService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly seasonService: SeasonService
+  ) {}
 
   /** Coins per 1 diamond (e.g. 100 = 100 coins for 1 diamond). Aligns with payment service DIAMOND_TO_COIN_RATE. */
   private getCoinsPerDiamond(): number {
@@ -361,6 +365,23 @@ export class WalletService {
         transactionKind: TransactionKind.DIAMONDS
       }
     });
+
+    // Season task: diamonds earned via stickers/gifts only (giftId present)
+    if (giftId) {
+      try {
+        await this.seasonService.creditDiamondsEarned(
+          userId,
+          amount,
+          transaction.id
+        );
+      } catch (err) {
+        // Non-fatal: wallet credit already succeeded
+        console.warn(
+          `Season diamond credit failed for ${userId}:`,
+          err instanceof Error ? err.message : err
+        );
+      }
+    }
 
     return {
       newDiamondBalance: updatedWallet.diamonds,

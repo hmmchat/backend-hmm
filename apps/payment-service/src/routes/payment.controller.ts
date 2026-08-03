@@ -18,8 +18,6 @@ import { PaymentConfigService } from "../config/payment.config.js";
 import {
   InitiatePurchaseSchema,
   VerifyPaymentSchema,
-  PreviewRedemptionSchema,
-  InitiateRedemptionSchema,
   HistoryQuerySchema
 } from "../dtos/payment.dto.js";
 import { getCoinPackage, getCoinPackages, verifyToken } from "@hmm/common";
@@ -206,136 +204,39 @@ export class PaymentController {
   }
 
   /**
-   * Preview redemption with upsell options
-   * POST /v1/payments/redemption/preview
+   * Cash-out / diamond redemption has been replaced by Mystery Beam Box.
+   * Explicit 410 so old clients fail clearly.
    */
+  private redemptionGone(): never {
+    throw new HttpException(
+      {
+        success: false,
+        message:
+          "Diamond cash-out has been removed. Use Mystery Beam Box on your profile instead."
+      },
+      HttpStatus.GONE
+    );
+  }
+
   @Post("redemption/preview")
-  async previewRedemption(
-    @Headers("authorization") authz?: string,
-    @Body() body?: any
-  ) {
-    const token = this.getTokenFromHeader(authz);
-    if (!token) {
-      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
-    }
-
-    const userId = await this.verifyTokenAndGetUserId(token);
-    const dto = PreviewRedemptionSchema.parse(body);
-
-    try {
-      const result = await this.paymentService.previewRedemption(userId, dto.baseDiamonds);
-      return {
-        success: true,
-        baseDiamonds: result.baseDiamonds,
-        baseInrValue: result.baseInrValue,
-        currentDiamonds: result.currentDiamonds,
-        upsellOptions: result.upsellOptions.map(option => ({
-          level: option.level,
-          diamondsRequired: option.diamondsRequired,
-          additionalDiamonds: option.additionalDiamonds,
-          inrValue: option.inrValue,
-          multiplier: option.multiplier,
-          coinsNeeded: option.coinsNeeded
-        }))
-      };
-    } catch (error: any) {
-      if (error instanceof HttpException) {
-        throw error;
-      }
-      throw new HttpException(
-        error.message || "Failed to preview redemption",
-        HttpStatus.BAD_REQUEST
-      );
-    }
+  redemptionPreviewRemoved() {
+    return this.redemptionGone();
   }
 
-  /**
-   * Initiate redemption/cashout
-   * POST /v1/payments/redemption/initiate
-   */
   @Post("redemption/initiate")
-  @HttpCode(HttpStatus.OK)
-  async initiateRedemption(
-    @Headers("authorization") authz?: string,
-    @Body() body?: any
-  ) {
-    const token = this.getTokenFromHeader(authz);
-    if (!token) {
-      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
-    }
-
-    const userId = await this.verifyTokenAndGetUserId(token);
-    const dto = InitiateRedemptionSchema.parse(body);
-
-    try {
-      const result = await this.paymentService.processRedemptionWithUpsell(
-        userId,
-        dto.baseDiamonds,
-        dto.upsellLevel,
-        dto.bankAccountDetails
-      );
-      return {
-        success: true,
-        requestId: result.requestId,
-        inrAmount: result.inrAmount / 100, // Convert paise to INR
-        inrAmountInPaise: result.inrAmount,
-        payoutId: result.payoutId
-      };
-    } catch (error: any) {
-      if (error instanceof HttpException) {
-        throw error;
-      }
-      throw new HttpException(
-        error.message || "Failed to initiate redemption",
-        HttpStatus.BAD_REQUEST
-      );
-    }
+  @HttpCode(HttpStatus.GONE)
+  redemptionInitiateRemoved() {
+    return this.redemptionGone();
   }
 
-  /**
-   * Get redemption history
-   * GET /v1/payments/redemption/requests
-   */
   @Get("redemption/requests")
-  async getRedemptionHistory(
-    @Headers("authorization") authz?: string,
-    @Query() query?: any
-  ) {
-    const token = this.getTokenFromHeader(authz);
-    if (!token) {
-      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
-    }
+  redemptionHistoryRemoved() {
+    return this.redemptionGone();
+  }
 
-    const userId = await this.verifyTokenAndGetUserId(token);
-    const queryWithDefault = {
-      ...query,
-      limit: query?.limit ?? String(this.configService.getHistoryDefaultLimit())
-    };
-    const dto = HistoryQuerySchema.parse(queryWithDefault);
-
-    try {
-      const requests = await this.paymentService.getRedemptionHistory(userId, dto.limit);
-      return {
-        success: true,
-        requests: requests.map(request => ({
-          id: request.id,
-          originalDiamonds: request.originalDiamonds,
-          finalDiamonds: request.finalDiamonds,
-          inrAmount: request.inrAmount / 100, // Convert paise to INR
-          upsellLevel: request.upsellLevel,
-          status: request.status,
-          razorpayPayoutId: request.razorpayPayoutId,
-          createdAt: request.createdAt,
-          completedAt: request.completedAt,
-          failureReason: request.failureReason
-        }))
-      };
-    } catch (error: any) {
-      throw new HttpException(
-        error.message || "Failed to fetch redemption history",
-        HttpStatus.INTERNAL_SERVER_ERROR
-      );
-    }
+  @Post("test/redemption/preview")
+  redemptionPreviewTestRemoved() {
+    return this.redemptionGone();
   }
 
   /**
@@ -544,94 +445,6 @@ export class PaymentController {
       upsellLevel,
       inrAmount,
       multiplier
-    };
-  }
-
-  /**
-   * Test endpoint: Preview redemption with upsell (no wallet service required)
-   * POST /v1/payments/test/redemption/preview
-   */
-  @Post("test/redemption/preview")
-  async previewRedemptionTest(@Body() body: any) {
-    const { baseDiamonds, availableDiamonds } = body;
-    // userId is accepted but not used in test endpoint (no wallet service call needed)
-
-    if (!baseDiamonds || baseDiamonds <= 0) {
-      throw new HttpException("baseDiamonds must be a positive number", HttpStatus.BAD_REQUEST);
-    }
-
-    if (availableDiamonds === undefined || availableDiamonds < 0) {
-      throw new HttpException("availableDiamonds must be provided and non-negative", HttpStatus.BAD_REQUEST);
-    }
-    
-    // Validate minimum redemption
-    const minDiamonds = this.configService.getMinRedemptionDiamonds();
-    if (baseDiamonds < minDiamonds) {
-      throw new HttpException(
-        `Minimum redemption is ${minDiamonds} diamonds. You requested ${baseDiamonds}`,
-        HttpStatus.BAD_REQUEST
-      );
-    }
-
-    // Check if user has enough diamonds
-    if (availableDiamonds < baseDiamonds) {
-      throw new HttpException(
-        `Insufficient diamonds. Available: ${availableDiamonds}, Required: ${baseDiamonds}`,
-        HttpStatus.BAD_REQUEST
-      );
-    }
-
-    // Calculate base INR value
-    const baseInrValue = this.configService.calculateInrForDiamonds(baseDiamonds);
-
-    // Generate upsell options
-    const maxLevels = this.configService.getMaxUpsellLevels();
-    const multipliers = this.configService.getUpsellMultipliers();
-    const upsellOptions: any[] = [];
-
-    // Level 0: No upsell
-    upsellOptions.push({
-      level: 0,
-      diamondsRequired: baseDiamonds,
-      additionalDiamonds: 0,
-      inrValue: baseInrValue,
-      multiplier: multipliers[0] || 1.0,
-      coinsNeeded: 0
-    });
-
-    // Calculate upsell levels
-    for (let level = 1; level <= maxLevels; level++) {
-      const diamondsForThisLevel = baseDiamonds * (level + 1);
-      const additionalDiamonds = diamondsForThisLevel - baseDiamonds;
-      
-      let coinsNeeded = 0;
-      if (availableDiamonds < diamondsForThisLevel) {
-        const diamondsNeeded = diamondsForThisLevel - availableDiamonds;
-        coinsNeeded = this.configService.diamondsToCoins(diamondsNeeded);
-      }
-      
-      let multiplier = 1.0;
-      for (let i = 1; i <= level && i < multipliers.length; i++) {
-        multiplier *= multipliers[i];
-      }
-      
-      const inrValue = this.configService.calculateRedemptionValue(diamondsForThisLevel, level);
-
-      upsellOptions.push({
-        level,
-        diamondsRequired: diamondsForThisLevel,
-        additionalDiamonds,
-        inrValue,
-        multiplier,
-        coinsNeeded
-      });
-    }
-
-    return {
-      baseDiamonds,
-      baseInrValue,
-      currentDiamonds: availableDiamonds,
-      upsellOptions
     };
   }
 

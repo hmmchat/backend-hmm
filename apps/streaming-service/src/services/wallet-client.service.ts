@@ -149,6 +149,76 @@ export class WalletClientService {
     }
   }
 
+  private getInternalHeaders(): Record<string, string> {
+    const token = process.env.INTERNAL_SERVICE_TOKEN || "";
+    return {
+      "Content-Type": "application/json",
+      ...(token ? { "x-internal-token": token } : {})
+    };
+  }
+
+  /**
+   * Record lifetime unique participatory peer for Mystery Beam Box.
+   */
+  async recordSeasonPeer(userId: string, peerUserId: string): Promise<void> {
+    try {
+      const response = await fetch(`${this.walletServiceUrl}/internal/season/peers`, {
+        method: "POST",
+        headers: this.getInternalHeaders(),
+        body: JSON.stringify({ userId, peerUserId })
+      });
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        this.logger.warn(`Season peer record failed: ${response.status} ${text}`);
+      }
+    } catch (error: any) {
+      this.logger.warn(`Season peer record error: ${error?.message || error}`);
+    }
+  }
+
+  async recordSeasonPeerPairs(
+    pairs: Array<{ userId: string; peerUserId: string }>
+  ): Promise<void> {
+    if (!pairs.length) return;
+    try {
+      const response = await fetch(`${this.walletServiceUrl}/internal/season/peers`, {
+        method: "POST",
+        headers: this.getInternalHeaders(),
+        body: JSON.stringify({ pairs })
+      });
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        this.logger.warn(`Season peer pairs failed: ${response.status} ${text}`);
+      }
+    } catch (error: any) {
+      this.logger.warn(`Season peer pairs error: ${error?.message || error}`);
+    }
+  }
+
+  /**
+   * Credit beam / beamcast seconds for a user (idempotent via eventKey).
+   */
+  async creditSeasonCallTime(params: {
+    userId: string;
+    beamSeconds?: number;
+    beamcastSeconds?: number;
+    eventKey: string;
+  }): Promise<void> {
+    try {
+      const response = await fetch(`${this.walletServiceUrl}/internal/season/call-time`, {
+        method: "POST",
+        headers: this.getInternalHeaders(),
+        body: JSON.stringify(params)
+      });
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        this.logger.warn(`Season call-time credit failed: ${response.status} ${text}`);
+      }
+    } catch (error: any) {
+      this.logger.warn(`Season call-time credit error: ${error?.message || error}`);
+    }
+  }
+
   /**
    * Transfer diamonds between users (for dare payments and gifts)
    * Sender pays diamonds; receiver gets diamonds.

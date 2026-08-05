@@ -41,6 +41,10 @@ import {
   shouldUseModeratorFaceCard
 } from "../config/moderator-face-card.config.js";
 import { isPreferredCityAnywhere, PREFERRED_CITY_ANYWHERE_IN_INDIA } from "@hmm/common";
+import {
+  SESSION_DISCOVERY_POOL_ANYWHERE as SESSION_POOL_ANYWHERE,
+  sameDiscoveryPoolCity
+} from "../config/discovery-pool-city.js";
 import { HostedEmbeddingAdapter } from "./embedding-adapters/hosted.adapter.js";
 import {
   FEATURE_GENERATION_JOB_LEASE_MS,
@@ -219,7 +223,7 @@ export class DiscoveryService implements OnModuleInit {
   }
 
   /** In-session pool only; `"*"` = all cities for this session (does not update user profile). */
-  private static readonly SESSION_DISCOVERY_POOL_ANYWHERE = "*";
+  private static readonly SESSION_DISCOVERY_POOL_ANYWHERE = SESSION_POOL_ANYWHERE;
 
   private storedPreferredToDiscoveryPoolCity(stored: string | null): string | null {
     return isPreferredCityAnywhere(stored) ? null : stored;
@@ -4076,6 +4080,25 @@ export class DiscoveryService implements OnModuleInit {
     }
 
     const matchedUser = await this.userClient.getUserFullProfileById(matchedUserId);
+
+    // City-scoped pool: never serve a sticky cross-city match (batch bug / stale row).
+    // Drop it so empty-pool LOCATION handoff can run.
+    if (
+      poolCity !== null &&
+      !sameDiscoveryPoolCity(poolCity, (matchedUser as any).preferredCity)
+    ) {
+      this.debugLog(
+        `[DEBUG] tryServeExistingMatch - dropping cross-pool match ${userId}↔${matchedUserId} (pool=${poolCity}, peer=${(matchedUser as any).preferredCity})`
+      );
+      await this.matchingService.removeMatchAcceptances(existingMatch.user1Id, existingMatch.user2Id);
+      await this.matchingService.removeMatch(existingMatch.user1Id, existingMatch.user2Id);
+      await Promise.all([
+        this.matchingService.updateUserStatus(userId, "AVAILABLE"),
+        this.matchingService.updateUserStatus(matchedUserId, "AVAILABLE")
+      ]);
+      return null;
+    }
+
     const currentUserStatus = String((userProfileResponse as any).status || "");
     const matchedUserStatus = String((matchedUser as any).status || "");
 

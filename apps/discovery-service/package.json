@@ -16,7 +16,7 @@
     "prisma:seed": "tsx prisma/seed.ts",
     "postinstall": "node scripts/postinstall-prisma.js",
     "lint": "echo \"no lint configured yet\"",
-    "test": "tsx --test tests/status-rules.test.ts tests/meet-rn-waiting-message.test.ts tests/fallback-scorer.test.ts tests/semantic-scorer.test.ts tests/batch-allocator.test.ts tests/intent-paraphrase-eval.test.ts tests/matching-config.test.ts tests/discovery-pool-filters.test.ts"
+    "test": "tsx --test tests/status-rules.test.ts tests/meet-rn-waiting-message.test.ts tests/fallback-scorer.test.ts tests/semantic-scorer.test.ts tests/batch-allocator.test.ts tests/intent-paraphrase-eval.test.ts tests/matching-config.test.ts tests/discovery-pool-filters.test.ts tests/discovery-pool-city.test.ts"
   },
   "dependencies": {
     "@hmm/common": "*",

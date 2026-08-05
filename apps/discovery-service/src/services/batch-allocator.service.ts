@@ -27,6 +27,11 @@ import {
   shouldAllocatorShadowLog,
   isBatchPrimaryForCity
 } from "../config/matching-admin.config.js";
+import {
+  SESSION_DISCOVERY_POOL_ANYWHERE,
+  sameDiscoveryPoolCity
+} from "../config/discovery-pool-city.js";
+import { isPreferredCityAnywhere } from "@hmm/common";
 import type { SemanticProfile } from "./semantic-scorer.service.js";
 
 interface AllocatorUser {
@@ -196,13 +201,34 @@ export class BatchAllocatorService implements OnModuleInit {
 
     const sessionMap = new Map(sessions.map((s: any) => [s.userId, s.sessionId]));
 
-    // Group by preferred city — fetch discovery pools per city
+    // Effective pool city = session override (LOCATION handoff) or stored preferred city.
+    // Must not pair across cities — that skips city LOCATION handoff.
     const cityByUser = new Map<string, string | null>();
     await Promise.all(
       userIds.map(async (id) => {
         try {
+          const sessionId = sessionMap.get(id) as string | undefined;
+          let overrideCity: string | null | undefined;
+          if (sessionId && (this.prisma as any).sessionDiscoveryCityOverride) {
+            try {
+              const row = await (this.prisma as any).sessionDiscoveryCityOverride.findUnique({
+                where: { userId_sessionId: { userId: id, sessionId } },
+                select: { poolCity: true }
+              });
+              if (row?.poolCity != null) {
+                overrideCity =
+                  row.poolCity === SESSION_DISCOVERY_POOL_ANYWHERE ? null : row.poolCity;
+              }
+            } catch {
+              /* older deploys without table */
+            }
+          }
+          if (overrideCity !== undefined) {
+            cityByUser.set(id, overrideCity);
+            return;
+          }
           const city = await this.userClient.getPreferredCityById(id);
-          cityByUser.set(id, city);
+          cityByUser.set(id, isPreferredCityAnywhere(city) ? null : city);
         } catch {
           cityByUser.set(id, null);
         }
@@ -334,6 +360,12 @@ export class BatchAllocatorService implements OnModuleInit {
         const u2 = users[j];
 
         if (u1.raincheckedUserIds.has(u2.userId) || u2.raincheckedUserIds.has(u1.userId)) {
+          continue;
+        }
+
+        // Hard city boundary: only same discovery pool (incl. both Anywhere).
+        // Cross-city pairs must go through LOCATION handoff, not a direct USER match.
+        if (!sameDiscoveryPoolCity(u1.city, u2.city)) {
           continue;
         }
 

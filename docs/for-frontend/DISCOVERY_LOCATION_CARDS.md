@@ -36,7 +36,7 @@ A city is **showable** only if someone would actually appear on *your* discovery
 | `cityBoxes` | Handoff cancelled or handoff city went invalid | 0–3 name-only city boxes (tap → session hop) |
 | `emptyOrbit` | Nowhere showable | `Empty orbit. Hang here; someone always beams in.` + quiet poll |
 
-Countdown default **5s** (`CITY_HANDOFF_COUNTDOWN_SECONDS`). Quiet poll default **3s** (`DISCOVERY_AVAILABLE_CITIES_POLL_MS`). Both also exposed via `GET /v1/discovery/ui-config` and embedded on `available-cities`.
+Countdown default **10s** (`CITY_HANDOFF_COUNTDOWN_SECONDS`). Quiet poll default **3s** (`DISCOVERY_AVAILABLE_CITIES_POLL_MS`). Both also exposed via `GET /v1/discovery/ui-config` and embedded on `available-cities`.
 
 ### 1.4 `persistPreference` on location accept
 
@@ -122,7 +122,7 @@ Used only on **`POST /v1/discovery/select-location`**:
 
 | Env | Default | Meaning |
 | --- | --- | --- |
-| `CITY_HANDOFF_COUNTDOWN_SECONDS` | `5` | Auto-advance into next city |
+| `CITY_HANDOFF_COUNTDOWN_SECONDS` | `10` | Auto-advance into next city |
 | `CITY_HANDOFF_VALIDITY_POLL_MS` | `3000` | Poll while countdown is active (abort if city empties) |
 | `DISCOVERY_AVAILABLE_CITIES_POLL_MS` | `8000` | Poll on city boxes / empty orbit |
 

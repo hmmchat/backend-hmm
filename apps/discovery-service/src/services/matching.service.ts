@@ -516,7 +516,8 @@ export class MatchingService {
         this.updateUserStatus(userId, "MATCHED"),
         this.updateUserStatus(pair.user.id, "MATCHED")
       ]);
-      void this.notifyDiscoveryMatched(userId, pair.user.id);
+      // Await so the peer's WS lands before this request returns a face card.
+      await this.notifyDiscoveryMatched(userId, pair.user.id);
       return pair.user;
     }
 
@@ -791,7 +792,7 @@ export class MatchingService {
     }
     if (heal.length > 0) {
       await Promise.all(heal);
-      void this.notifyDiscoveryMatched(userId, partnerId);
+      await this.notifyDiscoveryMatched(userId, partnerId);
     }
   }
 

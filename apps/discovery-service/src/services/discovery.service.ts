@@ -884,7 +884,7 @@ export class DiscoveryService implements OnModuleInit {
           this.matchingService.updateUserStatus(userId, "MATCHED"),
           this.matchingService.updateUserStatus(matchedUserId, "MATCHED")
         ]);
-        void this.matchingService.notifyDiscoveryMatched(userId, matchedUserId);
+        await this.matchingService.notifyDiscoveryMatched(userId, matchedUserId);
         console.log(`[INFO] Match already exists between ${userId} and ${matchedUserId}`);
         return;
       }
@@ -946,7 +946,7 @@ export class DiscoveryService implements OnModuleInit {
         this.matchingService.updateUserStatus(userId, "MATCHED"),
         this.matchingService.updateUserStatus(matchedUserId, "MATCHED")
       ]);
-      void this.matchingService.notifyDiscoveryMatched(userId, matchedUserId);
+      await this.matchingService.notifyDiscoveryMatched(userId, matchedUserId);
 
       console.log(`[INFO] Created match between ${userId} and ${matchedUserId} when showing card`);
     } catch (error: any) {
@@ -1559,7 +1559,7 @@ export class DiscoveryService implements OnModuleInit {
    * Handoff validity stays fast; boxes/empty are slower for production load.
    */
   getDiscoveryUiConfig(): DiscoveryUiConfig {
-    const countdown = parseInt(process.env.CITY_HANDOFF_COUNTDOWN_SECONDS || "5", 10);
+    const countdown = parseInt(process.env.CITY_HANDOFF_COUNTDOWN_SECONDS || "10", 10);
     const handoffValidityMs = parseInt(
       process.env.CITY_HANDOFF_VALIDITY_POLL_MS || "3000",
       10
@@ -1569,7 +1569,7 @@ export class DiscoveryService implements OnModuleInit {
       10
     );
     return {
-      cityHandoffCountdownSeconds: Number.isFinite(countdown) && countdown > 0 ? countdown : 5,
+      cityHandoffCountdownSeconds: Number.isFinite(countdown) && countdown > 0 ? countdown : 10,
       cityHandoffValidityPollMs:
         Number.isFinite(handoffValidityMs) && handoffValidityMs >= 1000 ? handoffValidityMs : 3000,
       availableCitiesPollMs:

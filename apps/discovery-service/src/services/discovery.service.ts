@@ -1565,7 +1565,7 @@ export class DiscoveryService implements OnModuleInit {
       10
     );
     const boxesEmptyMs = parseInt(
-      process.env.DISCOVERY_AVAILABLE_CITIES_POLL_MS || "2000",
+      process.env.DISCOVERY_AVAILABLE_CITIES_POLL_MS || "8000",
       10
     );
     return {
@@ -1573,7 +1573,7 @@ export class DiscoveryService implements OnModuleInit {
       cityHandoffValidityPollMs:
         Number.isFinite(handoffValidityMs) && handoffValidityMs >= 1000 ? handoffValidityMs : 3000,
       availableCitiesPollMs:
-        Number.isFinite(boxesEmptyMs) && boxesEmptyMs >= 1000 ? boxesEmptyMs : 2000
+        Number.isFinite(boxesEmptyMs) && boxesEmptyMs >= 1000 ? boxesEmptyMs : 8000
     };
   }
 

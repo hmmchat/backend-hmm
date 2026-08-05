@@ -42,8 +42,7 @@ import {
 } from "../config/moderator-face-card.config.js";
 import { isPreferredCityAnywhere, PREFERRED_CITY_ANYWHERE_IN_INDIA } from "@hmm/common";
 import {
-  SESSION_DISCOVERY_POOL_ANYWHERE as SESSION_POOL_ANYWHERE,
-  sameDiscoveryPoolCity
+  SESSION_DISCOVERY_POOL_ANYWHERE as SESSION_POOL_ANYWHERE
 } from "../config/discovery-pool-city.js";
 import { HostedEmbeddingAdapter } from "./embedding-adapters/hosted.adapter.js";
 import {
@@ -4081,23 +4080,8 @@ export class DiscoveryService implements OnModuleInit {
 
     const matchedUser = await this.userClient.getUserFullProfileById(matchedUserId);
 
-    // City-scoped pool: never serve a sticky cross-city match (batch bug / stale row).
-    // Drop it so empty-pool LOCATION handoff can run.
-    if (
-      poolCity !== null &&
-      !sameDiscoveryPoolCity(poolCity, (matchedUser as any).preferredCity)
-    ) {
-      this.debugLog(
-        `[DEBUG] tryServeExistingMatch - dropping cross-pool match ${userId}↔${matchedUserId} (pool=${poolCity}, peer=${(matchedUser as any).preferredCity})`
-      );
-      await this.matchingService.removeMatchAcceptances(existingMatch.user1Id, existingMatch.user2Id);
-      await this.matchingService.removeMatch(existingMatch.user1Id, existingMatch.user2Id);
-      await Promise.all([
-        this.matchingService.updateUserStatus(userId, "AVAILABLE"),
-        this.matchingService.updateUserStatus(matchedUserId, "AVAILABLE")
-      ]);
-      return null;
-    }
+    // Always serve an active match to both sides. Preferred cities can differ after a
+    // LOCATION handoff (session pool override); city scoping applies only when creating matches.
 
     const currentUserStatus = String((userProfileResponse as any).status || "");
     const matchedUserStatus = String((matchedUser as any).status || "");

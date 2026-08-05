@@ -18,7 +18,6 @@ import {
 import { DISCOVERY_POOL_LIMIT } from "../config/limits.config.js";
 import fetch from "node-fetch";
 import { isPreferredCityAnywhere } from "@hmm/common";
-import { sameDiscoveryPoolCity } from "../config/discovery-pool-city.js";
 import { resolveAcceptanceTimeoutStatus } from "../status/status-rules.js";
 
 interface UserProfile {
@@ -465,28 +464,12 @@ export class MatchingService {
     genders?: ("MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY")[],
     excludeUserIds: string[] = []
   ): Promise<DiscoveryUser | null> {
-    // Check if user is already matched
+    // Check if user is already matched — always serve; city filters apply only to new matches.
     const existingMatch = await this.getMatchForUser(userId);
     if (existingMatch) {
       const matchedUserId = existingMatch.user1Id === userId ? existingMatch.user2Id : existingMatch.user1Id;
       const matchedUser = await this.userClient.getUserFullProfileById(matchedUserId);
-      // City-scoped pool: ignore (and clear) cross-city sticky matches so LOCATION handoff can run.
-      if (
-        city !== null &&
-        !sameDiscoveryPoolCity(city, (matchedUser as any).preferredCity)
-      ) {
-        console.log(
-          `[DEBUG] findMatchForUser - dropping cross-pool sticky match ${userId}↔${matchedUserId}`
-        );
-        await this.removeMatchAcceptances(existingMatch.user1Id, existingMatch.user2Id);
-        await this.removeMatch(existingMatch.user1Id, existingMatch.user2Id);
-        await Promise.all([
-          this.updateUserStatus(userId, "AVAILABLE"),
-          this.updateUserStatus(matchedUserId, "AVAILABLE")
-        ]);
-      } else {
-        return this.convertToDiscoveryUser(matchedUser);
-      }
+      return this.convertToDiscoveryUser(matchedUser);
     }
 
     // Get matched user IDs once (cached) to use in both getPoolUsers and match selection

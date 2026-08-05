@@ -28,7 +28,8 @@ import {
   OfflineRaincheckRequestSchema,
   DiscoverySessionHeartbeatSchema,
   DiscoverySessionEndSchema,
-  DiscoverySessionEnterSchema
+  DiscoverySessionEnterSchema,
+  GetAvailableCitiesQuerySchema
 } from "../dtos/discovery.dto.js";
 
 @Controller("discovery")
@@ -247,6 +248,52 @@ export class DiscoveryController {
   }
 
   /**
+   * Cities with showable-for-you users (intent required), ranked by count.
+   * GET /discovery/available-cities?sessionId=...&limit=3
+   */
+  @Get("available-cities")
+  async getAvailableCities(
+    @Headers("authorization") authz?: string,
+    @Query() query?: any
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+
+    const dto = GetAvailableCitiesQuerySchema.parse(query || {});
+
+    const { verifyToken } = await import("@hmm/common");
+    const jwkStr = process.env.JWT_PUBLIC_JWK;
+    if (!jwkStr || jwkStr === "undefined") {
+      throw new HttpException("Server configuration error", HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+    const cleanedJwk = jwkStr.trim().replace(/^['"]|['"]$/g, "");
+    const publicJwk = JSON.parse(cleanedJwk);
+    const verifyAccess = await verifyToken(publicJwk);
+    const payload = await verifyAccess(token);
+    const userId = payload.sub;
+
+    return this.discoveryService.getAvailableCitiesForSession({
+      token,
+      userId,
+      sessionId: dto.sessionId,
+      soloOnly: dto.soloOnly || false,
+      limit: dto.limit,
+      excludeCity: dto.excludeCity ?? null
+    });
+  }
+
+  /**
+   * Env-driven discovery UI knobs (handoff countdown, available-cities poll).
+   * GET /discovery/ui-config
+   */
+  @Get("ui-config")
+  async getUiConfig() {
+    return { ok: true, ...this.discoveryService.getDiscoveryUiConfig() };
+  }
+
+  /**
    * Get suggested cities when exhausted
    * GET /discovery/fallback-cities?limit=10
    */
@@ -462,9 +509,41 @@ export class DiscoveryController {
   }
 
   /**
+   * Authenticated: room assigned after mutual Meet rn (Redis room:{userId}).
+   * Waiting clients should poll this — more reliable than streaming GET_USER_ROOM alone.
+   * GET /discovery/my-room
+   */
+  @Get("my-room")
+  async getMyAssignedRoom(@Headers("authorization") authz?: string) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+
+    const { verifyToken } = await import("@hmm/common");
+    const jwkStr = process.env.JWT_PUBLIC_JWK;
+    if (!jwkStr || jwkStr === "undefined") {
+      throw new HttpException("Server configuration error", HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+    const cleanedJwk = jwkStr.trim().replace(/^['"]|['"]$/g, "");
+    const publicJwk = JSON.parse(cleanedJwk);
+    const verifyAccess = await verifyToken(publicJwk);
+    const payload = await verifyAccess(token);
+    const userId = payload.sub;
+
+    const roomData = await this.cache.get<{ roomId: string; sessionId: string }>(`room:${userId}`);
+    return {
+      ok: true,
+      roomId: roomData?.roomId || null,
+      sessionId: roomData?.sessionId || null,
+      hasRoom: !!roomData?.roomId
+    };
+  }
+
+  /**
    * Test endpoint: Check if user has been assigned a room (after mutual match)
    * GET /discovery/test/my-room?userId=xxx
-   * 
+   *
    * Returns the room ID if the user has been matched into a room,
    * or { roomId: null } if not yet assigned.
    */

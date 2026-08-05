@@ -36,6 +36,7 @@ const updateIntentPromptSchema = z.object({
 const createDiscoveryCityOptionSchema = z.object({
   value: z.string().min(1).max(100),
   label: z.string().min(1).max(120),
+  intent: z.string().min(1).max(255),
   faceCardImageUrl: z.string().url().max(2048).optional().nullable(),
   order: z.number().optional(),
   isActive: z.boolean().optional()
@@ -44,6 +45,7 @@ const createDiscoveryCityOptionSchema = z.object({
 const updateDiscoveryCityOptionSchema = z.object({
   value: z.string().min(1).max(100).optional(),
   label: z.string().min(1).max(120).optional(),
+  intent: z.string().min(1).max(255).optional(),
   faceCardImageUrl: z.string().url().max(2048).optional().nullable(),
   order: z.number().optional(),
   isActive: z.boolean().optional()
@@ -223,10 +225,15 @@ export class CatalogAdminController {
   @HttpCode(HttpStatus.CREATED)
   async createDiscoveryCityOption(@Body() body: unknown) {
     const data = createDiscoveryCityOptionSchema.parse(body);
+    const intent = data.intent.trim();
+    if (!intent) {
+      throw new HttpException("Intent is required for discovery cities.", HttpStatus.BAD_REQUEST);
+    }
     const option = await (this.prisma as any).discoveryCityOption.create({
       data: {
         value: data.value,
         label: data.label,
+        intent,
         faceCardImageUrl: data.faceCardImageUrl ?? null,
         order: data.order ?? null,
         isActive: data.isActive !== false
@@ -238,11 +245,24 @@ export class CatalogAdminController {
   @Patch("discovery-city-options/:id")
   async updateDiscoveryCityOption(@Param("id") id: string, @Body() body: unknown) {
     const data = updateDiscoveryCityOptionSchema.parse(body);
+    const existing = await (this.prisma as any).discoveryCityOption.findUnique({ where: { id } });
+    if (!existing) {
+      throw new HttpException("Discovery city option not found.", HttpStatus.NOT_FOUND);
+    }
+    const nextIntent = data.intent !== undefined ? data.intent.trim() : existing.intent;
+    const nextIsActive = data.isActive !== undefined ? data.isActive : existing.isActive;
+    if (nextIsActive && (!nextIntent || String(nextIntent).trim().length === 0)) {
+      throw new HttpException(
+        "Intent is required before publishing an active discovery city.",
+        HttpStatus.BAD_REQUEST
+      );
+    }
     const option = await (this.prisma as any).discoveryCityOption.update({
       where: { id },
       data: {
         value: data.value,
         label: data.label,
+        intent: data.intent !== undefined ? data.intent.trim() : undefined,
         faceCardImageUrl: data.faceCardImageUrl,
         order: data.order,
         isActive: data.isActive

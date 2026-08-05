@@ -61,7 +61,14 @@ export class UserService implements OnModuleInit {
     const options = await this.prisma.discoveryCityOption.findMany({
       where: { isActive: true },
       orderBy: [{ order: "asc" }, { label: "asc" }],
-      select: { id: true, value: true, label: true, order: true, faceCardImageUrl: true }
+      select: {
+        id: true,
+        value: true,
+        label: true,
+        order: true,
+        intent: true,
+        faceCardImageUrl: true
+      }
     });
     return { options };
   }

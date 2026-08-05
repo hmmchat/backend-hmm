@@ -26,7 +26,7 @@ import {
   MATCH_SCORE_BROADCAST_RECENCY_TODAY,
   MATCH_SCORE_BROADCAST_TAG
 } from "../config/scoring.config.js";
-import { DISCOVERY_POOL_LIMIT, CITIES_MAX_USERS_LIMIT } from "../config/limits.config.js";
+import { DISCOVERY_POOL_LIMIT } from "../config/limits.config.js";
 import {
   computeReportLayer,
   getDiscoveryReportLayerConfig
@@ -117,13 +117,33 @@ interface Card {
 
 interface LocationCard {
   type: "LOCATION";
-  city: string | null; // null means "Anywhere"
+  city: string | null; // null means "Anywhere" (legacy; handoff uses specific cities only)
   country?: string;
   state?: string;
   availableCount: number;
-  /** From admin catalog `faceCardImageUrl` when set for this city (or for ANYWHERE_IN_INDIA row on global promo). */
+  /** From admin catalog `faceCardImageUrl` when set for this city. */
   faceCardImageUrl?: string | null;
+  /** City vibe/intent from admin catalog (required to publish face cards). */
+  intent?: string | null;
+  /** Display label from admin catalog. */
+  label?: string | null;
 }
+
+export type ShowableCity = {
+  city: string;
+  label: string;
+  intent: string;
+  faceCardImageUrl: string | null;
+  availableCount: number;
+};
+
+export type DiscoveryUiConfig = {
+  cityHandoffCountdownSeconds: number;
+  /** Poll while city handoff countdown is active (validity check). */
+  cityHandoffValidityPollMs: number;
+  /** Poll on city boxes / empty orbit screens. */
+  availableCitiesPollMs: number;
+};
 
 interface CardResponse {
   card: Card | LocationCard | null;
@@ -609,51 +629,17 @@ export class DiscoveryService implements OnModuleInit {
         }
       }
 
-      // Still no users available - show location cards (never exhausted)
-      // Get location cards already shown
-      const locationCardsShown = await this.getLocationCardsShown(userId, sessionId);
-      const adminCatalog = await this.userClient.getActiveDiscoveryCityCatalog();
-
-      // Get available location cards
-      let locationCards = await this.getLocationCards(locationCardsShown, {
-        homeCityToExclude: poolCity,
-        adminCatalog
+      // Still no users in the current pool — truthful city handoff or empty orbit.
+      return this.resolveEmptyPoolHandoff({
+        token,
+        userId,
+        sessionId,
+        soloOnly,
+        poolCity,
+        statuses,
+        genders,
+        raincheckedUserIds
       });
-
-      // If all location cards are shown, clear them and cycle through again (make it feel infinite)
-      if (locationCards.length === 0) {
-        await this.clearLocationCards(userId, sessionId);
-        // After clearing, get fresh location cards (all cities + anywhere should be available again)
-        locationCards = await this.getLocationCards([], {
-          homeCityToExclude: poolCity,
-          adminCatalog
-        });
-      }
-
-      // Always return a location card (never exhausted)
-      if (locationCards.length > 0) {
-        const selectedLocationCard = locationCards[0];
-
-        // Mark as shown
-        await this.markLocationCardShown(userId, sessionId, selectedLocationCard.city);
-
-        return {
-          card: selectedLocationCard,
-          exhausted: false,
-          isLocationCard: true
-        };
-      }
-
-      // Fallback: if somehow no location cards (should never happen), return "anywhere"
-      return {
-        card: {
-          type: "LOCATION" as const,
-          city: null, // "Anywhere"
-          availableCount: await this.locationService.getAnywhereUsersCount()
-        },
-        exhausted: false,
-        isLocationCard: true
-      };
     }
 
     // No matches found at all - return exhausted
@@ -1368,33 +1354,6 @@ export class DiscoveryService implements OnModuleInit {
   }
 
   /**
-   * Get location cards shown for this session
-   */
-  private async getLocationCardsShown(
-    userId: string,
-    sessionId: string
-  ): Promise<string[]> {
-    // Use a special marker in raincheck session to track location cards
-    // We'll use a special prefix like "LOCATION:" for city names
-    const locationRainchecks = await (this.prisma as any).raincheckSession.findMany({
-      where: {
-        userId,
-        sessionId,
-        raincheckedUserId: {
-          startsWith: "LOCATION:"
-        }
-      },
-      select: {
-        raincheckedUserId: true
-      }
-    });
-
-    return locationRainchecks.map((r: { raincheckedUserId: string }) =>
-      r.raincheckedUserId.replace("LOCATION:", "")
-    );
-  }
-
-  /**
    * Mark location card as shown
    */
   private async markLocationCardShown(
@@ -1422,81 +1381,6 @@ export class DiscoveryService implements OnModuleInit {
         }
       });
     }
-  }
-
-  /**
-   * Get random location cards (8-10 cities + optional "anywhere in India" promo).
-   * When `homeCityToExclude` is set, that city is omitted from promos (other-city face cards).
-   * When `adminCatalog` is set, only those city values are promoted (falls back if the intersection is empty).
-   */
-  private async getLocationCards(
-    excludeCities: string[] = [],
-    opts?: {
-      homeCityToExclude?: string | null;
-      adminCatalog?: Array<{ value: string; faceCardImageUrl?: string | null }> | null;
-    }
-  ): Promise<LocationCard[]> {
-    const homeCityToExclude = opts?.homeCityToExclude ?? null;
-    const adminCatalog = opts?.adminCatalog?.length ? opts.adminCatalog : null;
-    const adminCityValues = adminCatalog?.map((c) => c.value) ?? null;
-    const imageByValueLower = new Map<string, string | null>();
-    if (adminCatalog) {
-      for (const row of adminCatalog) {
-        imageByValueLower.set(row.value.toLowerCase(), row.faceCardImageUrl ?? null);
-      }
-    }
-
-    const allCities = await this.locationService.getCitiesWithMaxUsers(CITIES_MAX_USERS_LIMIT);
-
-    const nullCityUsersCount = await this.locationService.getAnywhereUsersCount();
-    const totalCityUsers = allCities.reduce((sum, city) => sum + city.availableCount, 0);
-    const anywhereCount = nullCityUsersCount + totalCityUsers;
-
-    const anywhereShown = excludeCities.includes("ANYWHERE") || excludeCities.includes(null as any);
-
-    const excludeCitiesFiltered = excludeCities.filter(c => c !== "ANYWHERE" && c !== null);
-    let availableCities = allCities.filter((c) => !excludeCitiesFiltered.includes(c.city));
-
-    if (homeCityToExclude) {
-      const h = homeCityToExclude.toLowerCase();
-      availableCities = availableCities.filter((c) => c.city.toLowerCase() !== h);
-    }
-
-    if (adminCityValues) {
-      const allowed = new Set(adminCityValues.map((v) => v.toLowerCase()));
-      const filtered = availableCities.filter((c) => allowed.has(c.city.toLowerCase()));
-      if (filtered.length > 0) {
-        availableCities = filtered;
-      }
-    }
-
-    const pickCount = Math.min(
-      8 + Math.floor(Math.random() * 3),
-      Math.max(availableCities.length, 1)
-    );
-    const shuffled = [...availableCities].sort(() => Math.random() - 0.5);
-    const selectedCities = shuffled.slice(0, pickCount);
-
-    const locationCards: LocationCard[] = [
-      ...selectedCities.map((c) => ({
-        type: "LOCATION" as const,
-        city: c.city,
-        availableCount: c.availableCount,
-        faceCardImageUrl: imageByValueLower.get(c.city.toLowerCase()) ?? null
-      }))
-    ];
-
-    if (!anywhereShown || excludeCities.length === 0) {
-      locationCards.push({
-        type: "LOCATION" as const,
-        city: null,
-        availableCount: anywhereCount,
-        faceCardImageUrl:
-          imageByValueLower.get(PREFERRED_CITY_ANYWHERE_IN_INDIA.toLowerCase()) ?? null
-      });
-    }
-
-    return locationCards.sort(() => Math.random() - 0.5);
   }
 
   /**
@@ -1668,6 +1552,83 @@ export class DiscoveryService implements OnModuleInit {
   }
 
   /**
+   * Env-driven UI knobs for city handoff / empty-orbit polling.
+   * Handoff validity stays fast; boxes/empty are slower for production load.
+   */
+  getDiscoveryUiConfig(): DiscoveryUiConfig {
+    const countdown = parseInt(process.env.CITY_HANDOFF_COUNTDOWN_SECONDS || "5", 10);
+    const handoffValidityMs = parseInt(
+      process.env.CITY_HANDOFF_VALIDITY_POLL_MS || "3000",
+      10
+    );
+    const boxesEmptyMs = parseInt(
+      process.env.DISCOVERY_AVAILABLE_CITIES_POLL_MS || "8000",
+      10
+    );
+    return {
+      cityHandoffCountdownSeconds: Number.isFinite(countdown) && countdown > 0 ? countdown : 5,
+      cityHandoffValidityPollMs:
+        Number.isFinite(handoffValidityMs) && handoffValidityMs >= 1000 ? handoffValidityMs : 3000,
+      availableCitiesPollMs:
+        Number.isFinite(boxesEmptyMs) && boxesEmptyMs >= 1000 ? boxesEmptyMs : 8000
+    };
+  }
+
+  /**
+   * Cities with users who would appear on *this* requester's discovery deck right now.
+   * Requires non-empty catalog intent. Ordered by showable count desc.
+   */
+  async getAvailableCitiesForSession(args: {
+    token?: string;
+    userId: string;
+    sessionId: string;
+    soloOnly?: boolean;
+    limit?: number;
+    excludeCity?: string | null;
+  }): Promise<{ cities: ShowableCity[]; ui: DiscoveryUiConfig }> {
+    const soloOnly = args.soloOnly ?? false;
+    const limit = Math.min(Math.max(args.limit ?? 3, 1), 50);
+    const cityResponse = args.token
+      ? await this.locationService.getPreferredCity(args.token)
+      : { city: await this.userClient.getPreferredCityById(args.userId) };
+    const storedPreferred = cityResponse.city;
+    const raincheckedUserIds = await this.getRaincheckedUserIds(
+      args.userId,
+      args.sessionId,
+      storedPreferred
+    );
+
+    const genderFilter = await this.genderFilterService.getCurrentPreference(args.userId);
+    const hasActiveGenderFilter =
+      genderFilter && genderFilter.screensRemaining > 0 && (genderFilter.isActive ?? true);
+    let genders: ("MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY")[] | undefined;
+    if (hasActiveGenderFilter) {
+      const gendersJson = genderFilter.genders;
+      if (typeof gendersJson === "string") {
+        genders = JSON.parse(gendersJson);
+      } else if (Array.isArray(gendersJson)) {
+        genders = gendersJson as ("MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY")[];
+      }
+    }
+
+    const statuses: ("AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE")[] = soloOnly
+      ? ["AVAILABLE"]
+      : ["AVAILABLE", "IN_SQUAD_AVAILABLE", "IN_BROADCAST_AVAILABLE"];
+
+    const cities = await this.listShowableCities({
+      token: args.token,
+      userId: args.userId,
+      statuses,
+      genders,
+      raincheckedUserIds,
+      excludeCities: args.excludeCity ? [args.excludeCity] : [],
+      limit
+    });
+
+    return { cities, ui: this.getDiscoveryUiConfig() };
+  }
+
+  /**
    * Get fallback cities when current city is exhausted
    */
   async getFallbackCities(limit: number = 10): Promise<
@@ -1678,6 +1639,108 @@ export class DiscoveryService implements OnModuleInit {
       city: c.city,
       availableCount: c.availableCount
     }));
+  }
+
+  private async resolveEmptyPoolHandoff(args: {
+    token?: string;
+    userId: string;
+    sessionId: string;
+    soloOnly: boolean;
+    poolCity: string | null;
+    statuses: ("AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE")[];
+    genders: ("MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY")[] | undefined;
+    raincheckedUserIds: string[];
+  }): Promise<CardResponse> {
+    const exclude = args.poolCity ? [args.poolCity] : [];
+    const showable = await this.listShowableCities({
+      token: args.token,
+      userId: args.userId,
+      statuses: args.statuses,
+      genders: args.genders,
+      raincheckedUserIds: args.raincheckedUserIds,
+      excludeCities: exclude,
+      limit: 1
+    });
+
+    if (showable.length === 0) {
+      return { card: null, exhausted: true };
+    }
+
+    const top = showable[0];
+    await this.markLocationCardShown(args.userId, args.sessionId, top.city);
+
+    return {
+      card: {
+        type: "LOCATION" as const,
+        city: top.city,
+        availableCount: top.availableCount,
+        faceCardImageUrl: top.faceCardImageUrl,
+        intent: top.intent,
+        label: top.label
+      },
+      exhausted: false,
+      isLocationCard: true
+    };
+  }
+
+  private async listShowableCities(args: {
+    token?: string;
+    userId: string;
+    statuses: ("AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE")[];
+    genders: ("MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY")[] | undefined;
+    raincheckedUserIds: string[];
+    excludeCities?: string[];
+    limit: number;
+  }): Promise<ShowableCity[]> {
+    const catalog = await this.userClient.getActiveDiscoveryCityCatalog();
+    const excludeLower = new Set(
+      (args.excludeCities || [])
+        .filter(Boolean)
+        .map((c) => String(c).toLowerCase())
+    );
+
+    const candidates = catalog.filter((row) => {
+      const intent = (row.intent || "").trim();
+      if (!intent) return false;
+      if (row.value === PREFERRED_CITY_ANYWHERE_IN_INDIA) return false;
+      if (excludeLower.has(row.value.toLowerCase())) return false;
+      return true;
+    });
+
+    const scored = await Promise.all(
+      candidates.map(async (row) => {
+        const users = args.token
+          ? await this.findMatchingUsers(
+              args.token,
+              args.userId,
+              row.value,
+              args.statuses,
+              args.genders,
+              false,
+              args.raincheckedUserIds
+            )
+          : await this.findMatchingUsersForUser(
+              args.userId,
+              row.value,
+              args.statuses,
+              args.genders,
+              false,
+              args.raincheckedUserIds
+            );
+        return {
+          city: row.value,
+          label: row.label || row.value,
+          intent: (row.intent || "").trim(),
+          faceCardImageUrl: row.faceCardImageUrl ?? null,
+          availableCount: users.length
+        } satisfies ShowableCity;
+      })
+    );
+
+    return scored
+      .filter((c) => c.availableCount > 0)
+      .sort((a, b) => b.availableCount - a.availableCount || a.label.localeCompare(b.label))
+      .slice(0, args.limit);
   }
 
   /**
@@ -2336,43 +2399,16 @@ export class DiscoveryService implements OnModuleInit {
         };
       }
 
-      // No users available - show location cards (never exhausted)
-      const locationCardsShown = await this.getLocationCardsShown(userId, sessionId);
-      const adminCatalog = await this.userClient.getActiveDiscoveryCityCatalog();
-
-      let locationCards = await this.getLocationCards(locationCardsShown, {
-        homeCityToExclude: poolCity,
-        adminCatalog
+      // No users in the current pool — truthful city handoff or empty orbit.
+      return this.resolveEmptyPoolHandoff({
+        userId,
+        sessionId,
+        soloOnly,
+        poolCity,
+        statuses,
+        genders,
+        raincheckedUserIds
       });
-
-      if (locationCards.length === 0) {
-        await this.clearLocationCards(userId, sessionId);
-        locationCards = await this.getLocationCards([], {
-          homeCityToExclude: poolCity,
-          adminCatalog
-        });
-      }
-
-      if (locationCards.length > 0) {
-        const selectedLocationCard = locationCards[0];
-        await this.markLocationCardShown(userId, sessionId, selectedLocationCard.city);
-
-        return {
-          card: selectedLocationCard,
-          exhausted: false,
-          isLocationCard: true
-        };
-      }
-
-      return {
-        card: {
-          type: "LOCATION" as const,
-          city: null,
-          availableCount: await this.locationService.getAnywhereUsersCount()
-        },
-        exhausted: false,
-        isLocationCard: true
-      };
     }
 
     // No matches found at all - return exhausted

@@ -149,6 +149,8 @@ model DiscoveryCityOption {
   id                String   @id @default(cuid())
   value             String   @unique
   label             String
+  /// City vibe/intent shown on LOCATION discovery face cards (required when publishing).
+  intent            String?  @db.VarChar(255)
   /// Optional image for LOCATION discovery promos for this city (HTTPS URL).
   faceCardImageUrl  String?
   order             Int?

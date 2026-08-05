@@ -121,3 +121,20 @@ export type GetOfflineCardQuery = z.infer<typeof GetOfflineCardQuerySchema>;
 export type OfflineRaincheckRequest = z.infer<typeof OfflineRaincheckRequestSchema>;
 export type SendFriendRequestFromOfflineCard = z.infer<typeof SendFriendRequestFromOfflineCardSchema>;
 export type SendGiftFromOfflineCard = z.infer<typeof SendGiftFromOfflineCardSchema>;
+
+export const GetAvailableCitiesQuerySchema = z.object({
+  sessionId: z.string().min(1, "Session ID is required"),
+  limit: z
+    .string()
+    .optional()
+    .transform((val) => {
+      if (val === undefined || val === "") return 3;
+      const n = parseInt(val, 10);
+      return Number.isFinite(n) ? n : 3;
+    })
+    .pipe(z.number().int().min(1).max(50)),
+  soloOnly: z.string().optional().transform((val) => val === "true" || val === "1"),
+  excludeCity: z.string().optional()
+});
+
+export type GetAvailableCitiesQuery = z.infer<typeof GetAvailableCitiesQuerySchema>;

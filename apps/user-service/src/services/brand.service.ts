@@ -438,9 +438,68 @@ export class BrandService {
   }
 
   /**
+   * Higher = better match. Exact/local catalog hits must beat weak Brandfetch noise
+   * (e.g. query "UPI" should surface the dashboard "upi" brand first).
+   */
+  private brandSearchScore(name: string, query: string, fromCustomCatalog: boolean): number {
+    const n = name.trim().toLowerCase();
+    const q = query.trim().toLowerCase();
+    let score = 0;
+    if (n === q) score = 1000;
+    else if (n.startsWith(q)) score = 500;
+    else if (n.includes(q)) score = 250;
+    else score = 1;
+    // Prefer content-managed brands within the same match tier.
+    if (fromCustomCatalog) score += 50;
+    return score;
+  }
+
+  private rankBrandSearchResults(
+    query: string,
+    rows: SearchBrandResult[],
+    customIds: Set<string>
+  ): SearchBrandResult[] {
+    return [...rows].sort((a, b) => {
+      const sa = this.brandSearchScore(a.name, query, customIds.has(a.id));
+      const sb = this.brandSearchScore(b.name, query, customIds.has(b.id));
+      if (sb !== sa) return sb - sa;
+      return a.name.localeCompare(b.name);
+    });
+  }
+
+  /** Exact name hits from the local catalog (custom + imported). */
+  private async findExactBrandMatches(
+    query: string
+  ): Promise<{ rows: SearchBrandResult[]; customIds: Set<string> }> {
+    const rows = await this.prisma.brand.findMany({
+      where: { name: { equals: query, mode: "insensitive" } },
+      select: {
+        id: true,
+        name: true,
+        domain: true,
+        logoUrl: true,
+        brandfetchId: true,
+        isCustom: true
+      },
+      take: 10
+    });
+    const customIds = new Set(rows.filter((b) => b.isCustom).map((b) => b.id));
+    return {
+      customIds,
+      rows: rows.map((b) => ({
+        id: b.id,
+        name: b.name,
+        domain: b.domain,
+        brandfetchId: b.brandfetchId,
+        logoUrl: this.resolvePublicLogoUrl(b.domain, b.logoUrl, b.brandfetchId)
+      }))
+    };
+  }
+
+  /**
    * Search brands by name.
-   * Primary source: Brandfetch API.
-   * Fallback: local DB fuzzy matching to avoid regressions if Brandfetch is unavailable.
+   * Merges Brandfetch + local catalog, ranked so exact/local matches win
+   * (Brandfetch alone often ranks poorly for India-specific names like UPI).
    */
   async searchBrands(query: string, limit?: number): Promise<SearchBrandResult[]> {
     const effectiveLimit = limit ?? SEARCH_DEFAULT_LIMIT;
@@ -454,44 +513,53 @@ export class BrandService {
       throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);
     }
 
+    const { rows: exactRows, customIds: exactCustomIds } =
+      await this.findExactBrandMatches(trimmedQuery);
+
     if (this.brandfetchEnabled) {
       try {
         const brandfetchResults = await this.searchBrandfetch(trimmedQuery, effectiveLimit);
-        if (brandfetchResults.length > 0) {
-          const bfPersisted = await this.persistBrandfetchResultsToCatalog(brandfetchResults);
+        if (brandfetchResults.length > 0 || exactRows.length > 0) {
+          const bfPersisted =
+            brandfetchResults.length > 0
+              ? await this.persistBrandfetchResultsToCatalog(brandfetchResults)
+              : [];
           const bfDomainSet = new Set(
-            bfPersisted.map(b => this.domainKey(b.domain)).filter((v): v is string => !!v)
+            bfPersisted.map((b) => this.domainKey(b.domain)).filter((v): v is string => !!v)
           );
 
           const customRows = await this.searchCustomBrandsDb(trimmedQuery, effectiveLimit);
-          const customFiltered = customRows.filter(c => {
+          const customFiltered = customRows.filter((c) => {
             const dk = this.domainKey(c.domain);
             if (!dk) return true;
             return !bfDomainSet.has(dk);
           });
 
+          const customIds = new Set<string>([
+            ...exactCustomIds,
+            ...customFiltered.map((c) => c.id)
+          ]);
+
           const merged: SearchBrandResult[] = [];
           const seen = new Set<string>();
-          for (const b of bfPersisted) {
-            const row = {
-              ...b,
-              logoUrl: this.resolvePublicLogoUrl(b.domain, b.logoUrl, b.brandfetchId)
-            };
-            if (seen.has(row.id)) continue;
+          const pushRow = (row: SearchBrandResult) => {
+            if (seen.has(row.id)) return;
             seen.add(row.id);
-            merged.push(row);
-            if (merged.length >= effectiveLimit) break;
-          }
-          for (const c of customFiltered) {
-            if (merged.length >= effectiveLimit) break;
-            if (seen.has(c.id)) continue;
-            seen.add(c.id);
             merged.push({
-              ...c,
-              logoUrl: this.resolvePublicLogoUrl(c.domain, c.logoUrl, c.brandfetchId)
+              ...row,
+              logoUrl: this.resolvePublicLogoUrl(row.domain, row.logoUrl, row.brandfetchId)
             });
-          }
-          return merged.slice(0, effectiveLimit);
+          };
+
+          // Exact local hits first in the pool (ranking will keep them on top).
+          for (const row of exactRows) pushRow(row);
+          for (const b of bfPersisted) pushRow(b);
+          for (const c of customFiltered) pushRow(c);
+
+          return this.rankBrandSearchResults(trimmedQuery, merged, customIds).slice(
+            0,
+            effectiveLimit
+          );
         }
       } catch (error) {
         // Fall back to DB search so existing flows continue to work.
@@ -534,9 +602,26 @@ export class BrandService {
       `;
     }
 
-    return brands.map(b => ({
-      ...b,
-      logoUrl: this.resolvePublicLogoUrl(b.domain, b.logoUrl, b.brandfetchId)
-    }));
+    const mapped = [...exactRows];
+    const seen = new Set(mapped.map((b) => b.id));
+    for (const b of brands) {
+      if (seen.has(b.id)) continue;
+      seen.add(b.id);
+      mapped.push({
+        ...b,
+        logoUrl: this.resolvePublicLogoUrl(b.domain, b.logoUrl, b.brandfetchId)
+      });
+    }
+
+    const customIds = new Set(
+      (
+        await this.prisma.brand.findMany({
+          where: { id: { in: mapped.map((b) => b.id) }, isCustom: true },
+          select: { id: true }
+        })
+      ).map((r) => r.id)
+    );
+
+    return this.rankBrandSearchResults(trimmedQuery, mapped, customIds).slice(0, effectiveLimit);
   }
 }

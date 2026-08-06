@@ -12,6 +12,7 @@ on:
     paths:
       - 'apps/**'
       - 'packages/**'
+      - 'docker-compose.yml'
       - '.github/workflows/deploy.yml'
   workflow_dispatch:
     inputs:

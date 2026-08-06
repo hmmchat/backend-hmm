@@ -5,6 +5,8 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  # Allow manual re-run if a push event fails to spawn a workflow (GitHub flake)
+  workflow_dispatch:
 
 jobs:
   build:

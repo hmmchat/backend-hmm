@@ -468,10 +468,17 @@ export class UserClientService implements OnModuleInit {
   }
 
   /**
-   * Active discovery city catalog from user-service (values + intent + face-card image URLs).
+   * Active discovery city catalog from user-service (values + intent + face-card image/brands/song).
    */
   async getActiveDiscoveryCityCatalog(): Promise<
-    Array<{ value: string; label: string; intent: string | null; faceCardImageUrl: string | null }>
+    Array<{
+      value: string;
+      label: string;
+      intent: string | null;
+      faceCardImageUrl: string | null;
+      brands: Array<{ name: string; logoUrl?: string }>;
+      musicPreference: { name: string; artist: string; albumArtUrl?: string } | null;
+    }>
   > {
     try {
       const response = await this.fetchWithTimeout(`${this.userServiceUrl}/discovery-city-options/active`, {
@@ -487,13 +494,32 @@ export class UserClientService implements OnModuleInit {
           label?: string;
           intent?: string | null;
           faceCardImageUrl?: string | null;
+          brands?: Array<{ name?: string; logoUrl?: string | null }>;
+          musicPreference?: {
+            name?: string;
+            artist?: string;
+            albumArtUrl?: string | null;
+          } | null;
         }>;
       };
       return (body.options || []).map((o) => ({
         value: o.value,
         label: o.label || o.value,
         intent: o.intent ?? null,
-        faceCardImageUrl: o.faceCardImageUrl ?? null
+        faceCardImageUrl: o.faceCardImageUrl ?? null,
+        brands: (o.brands || [])
+          .filter((b) => Boolean(b?.name))
+          .map((b) => ({
+            name: String(b.name),
+            logoUrl: b.logoUrl || undefined
+          })),
+        musicPreference: o.musicPreference?.name && o.musicPreference?.artist
+          ? {
+              name: o.musicPreference.name,
+              artist: o.musicPreference.artist,
+              albumArtUrl: o.musicPreference.albumArtUrl || undefined
+            }
+          : null
       }));
     } catch {
       return [];

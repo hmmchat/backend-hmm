@@ -153,12 +153,33 @@ model DiscoveryCityOption {
   intent            String?  @db.VarChar(255)
   /// Optional image for LOCATION discovery promos for this city (HTTPS URL).
   faceCardImageUrl  String?
+  /// Optional song shown on LOCATION discovery face cards (same Song catalog as users).
+  musicPreferenceId String?
+  musicPreference   Song?    @relation("DiscoveryCityMusicPreference", fields: [musicPreferenceId], references: [id])
+  brands            DiscoveryCityBrand[]
   order             Int?
   isActive          Boolean  @default(true)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
+  @@index([musicPreferenceId])
   @@map("discovery_city_options")
+}
+
+/// Brands shown on a city LOCATION face card (mirrors UserBrand).
+model DiscoveryCityBrand {
+  id           String              @id @default(cuid())
+  cityOptionId String
+  brandId      String
+  cityOption   DiscoveryCityOption @relation(fields: [cityOptionId], references: [id], onDelete: Cascade)
+  brand        Brand               @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  order        Int
+  createdAt    DateTime            @default(now())
+
+  @@unique([cityOptionId, brandId])
+  @@unique([cityOptionId, order])
+  @@index([cityOptionId])
+  @@map("discovery_city_brands")
 }
 
 /// Singleton (id = "default"): shared discovery face card for moderators when moderatorFaceCardActive is on.
@@ -212,6 +233,7 @@ model Song {
   
   // Users who have this as their music preference
   users       User[]   @relation("UserMusicPreference")
+  discoveryCities DiscoveryCityOption[] @relation("DiscoveryCityMusicPreference")
   
   @@unique([name, artist])
   @@index([name, artist])
@@ -231,6 +253,7 @@ model Brand {
   updatedAt   DateTime @updatedAt
   
   userPreferences UserBrand[]
+  discoveryCities DiscoveryCityBrand[]
   
   @@map("brands")
 }

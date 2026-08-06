@@ -33,13 +33,26 @@ const updateIntentPromptSchema = z.object({
   order: z.number().optional()
 });
 
+const cityMusicPreferenceSchema = z
+  .object({
+    songName: z.string().min(1).max(200),
+    artistName: z.string().min(1).max(200),
+    albumArtUrl: z.string().url().max(2048).optional().nullable(),
+    spotifyId: z.string().max(128).optional().nullable()
+  })
+  .nullable();
+
 const createDiscoveryCityOptionSchema = z.object({
   value: z.string().min(1).max(100),
   label: z.string().min(1).max(120),
   intent: z.string().min(1).max(255),
   faceCardImageUrl: z.string().url().max(2048).optional().nullable(),
   order: z.number().optional(),
-  isActive: z.boolean().optional()
+  isActive: z.boolean().optional(),
+  /** Up to 5 brand ids from the Brands catalog. */
+  brandIds: z.array(z.string().min(1)).max(5).optional(),
+  /** Spotify/manual song for the city face card; null clears. */
+  musicPreference: cityMusicPreferenceSchema.optional()
 });
 
 const updateDiscoveryCityOptionSchema = z.object({
@@ -48,8 +61,68 @@ const updateDiscoveryCityOptionSchema = z.object({
   intent: z.string().min(1).max(255).optional(),
   faceCardImageUrl: z.string().url().max(2048).optional().nullable(),
   order: z.number().optional(),
-  isActive: z.boolean().optional()
+  isActive: z.boolean().optional(),
+  brandIds: z.array(z.string().min(1)).max(5).optional(),
+  musicPreference: cityMusicPreferenceSchema.optional()
 });
+
+const discoveryCityInclude = {
+  musicPreference: {
+    select: {
+      id: true,
+      name: true,
+      artist: true,
+      albumArtUrl: true,
+      spotifyId: true
+    }
+  },
+  brands: {
+    orderBy: { order: "asc" as const },
+    include: {
+      brand: {
+        select: {
+          id: true,
+          name: true,
+          logoUrl: true,
+          domain: true
+        }
+      }
+    }
+  }
+};
+
+function serializeDiscoveryCityOption(option: any) {
+  const brands = (option.brands || []).map((row: any) => ({
+    id: row.brand?.id ?? row.brandId,
+    name: row.brand?.name ?? "",
+    logoUrl: row.brand?.logoUrl ?? null,
+    domain: row.brand?.domain ?? null,
+    order: row.order
+  }));
+  return {
+    id: option.id,
+    value: option.value,
+    label: option.label,
+    intent: option.intent ?? null,
+    faceCardImageUrl: option.faceCardImageUrl ?? null,
+    order: option.order ?? null,
+    isActive: option.isActive,
+    createdAt: option.createdAt,
+    updatedAt: option.updatedAt,
+    musicPreferenceId: option.musicPreferenceId ?? null,
+    musicPreference: option.musicPreference
+      ? {
+          id: option.musicPreference.id,
+          name: option.musicPreference.name,
+          artist: option.musicPreference.artist,
+          albumArtUrl: option.musicPreference.albumArtUrl ?? null,
+          spotifyId: option.musicPreference.spotifyId ?? null
+        }
+      : null,
+    brandIds: brands.map((b: { id: string }) => b.id),
+    brands
+  };
+}
 
 const updateModeratorFaceCardSchema = z.object({
   username: z.string().min(1).max(80).optional(),
@@ -213,12 +286,69 @@ export class CatalogAdminController {
    * Discovery / profile preferred city catalog (values must match `users.preferredCity` for real cities).
    */
 
+  private async resolveCityMusicPreferenceId(
+    musicPreference: z.infer<typeof cityMusicPreferenceSchema> | undefined
+  ): Promise<string | null | undefined> {
+    if (musicPreference === undefined) return undefined;
+    if (musicPreference === null) return null;
+    const song = await this.prisma.song.upsert({
+      where: {
+        name_artist: {
+          name: musicPreference.songName.trim(),
+          artist: musicPreference.artistName.trim()
+        }
+      },
+      create: {
+        name: musicPreference.songName.trim(),
+        artist: musicPreference.artistName.trim(),
+        albumArtUrl: musicPreference.albumArtUrl ?? null,
+        spotifyId: musicPreference.spotifyId ?? undefined
+      },
+      update: {
+        albumArtUrl:
+          musicPreference.albumArtUrl !== undefined
+            ? musicPreference.albumArtUrl || null
+            : undefined,
+        spotifyId:
+          musicPreference.spotifyId !== undefined
+            ? musicPreference.spotifyId || undefined
+            : undefined
+      }
+    });
+    return song.id;
+  }
+
+  private async replaceCityBrands(cityOptionId: string, brandIds: string[]) {
+    const uniqueIds = [...new Set(brandIds.map((id) => id.trim()).filter(Boolean))].slice(0, 5);
+    if (uniqueIds.length > 0) {
+      const found = await this.prisma.brand.findMany({
+        where: { id: { in: uniqueIds } },
+        select: { id: true }
+      });
+      if (found.length !== uniqueIds.length) {
+        throw new HttpException("One or more brand ids are invalid.", HttpStatus.BAD_REQUEST);
+      }
+    }
+    await this.prisma.$transaction(async (tx) => {
+      await (tx as any).discoveryCityBrand.deleteMany({ where: { cityOptionId } });
+      if (uniqueIds.length === 0) return;
+      await (tx as any).discoveryCityBrand.createMany({
+        data: uniqueIds.map((brandId, order) => ({
+          cityOptionId,
+          brandId,
+          order
+        }))
+      });
+    });
+  }
+
   @Get("discovery-city-options")
   async getAllDiscoveryCityOptions() {
     const options = await (this.prisma as any).discoveryCityOption.findMany({
-      orderBy: [{ isActive: "desc" }, { order: "asc" }, { label: "asc" }]
+      orderBy: [{ isActive: "desc" }, { order: "asc" }, { label: "asc" }],
+      include: discoveryCityInclude
     });
-    return { ok: true, options };
+    return { ok: true, options: options.map(serializeDiscoveryCityOption) };
   }
 
   @Post("discovery-city-options")
@@ -229,6 +359,7 @@ export class CatalogAdminController {
     if (!intent) {
       throw new HttpException("Intent is required for discovery cities.", HttpStatus.BAD_REQUEST);
     }
+    const musicPreferenceId = await this.resolveCityMusicPreferenceId(data.musicPreference);
     const option = await (this.prisma as any).discoveryCityOption.create({
       data: {
         value: data.value,
@@ -236,10 +367,19 @@ export class CatalogAdminController {
         intent,
         faceCardImageUrl: data.faceCardImageUrl ?? null,
         order: data.order ?? null,
-        isActive: data.isActive !== false
-      }
+        isActive: data.isActive !== false,
+        musicPreferenceId: musicPreferenceId ?? null
+      },
+      include: discoveryCityInclude
     });
-    return { ok: true, option };
+    if (data.brandIds) {
+      await this.replaceCityBrands(option.id, data.brandIds);
+    }
+    const hydrated = await (this.prisma as any).discoveryCityOption.findUnique({
+      where: { id: option.id },
+      include: discoveryCityInclude
+    });
+    return { ok: true, option: serializeDiscoveryCityOption(hydrated) };
   }
 
   @Patch("discovery-city-options/:id")
@@ -257,7 +397,8 @@ export class CatalogAdminController {
         HttpStatus.BAD_REQUEST
       );
     }
-    const option = await (this.prisma as any).discoveryCityOption.update({
+    const musicPreferenceId = await this.resolveCityMusicPreferenceId(data.musicPreference);
+    await (this.prisma as any).discoveryCityOption.update({
       where: { id },
       data: {
         value: data.value,
@@ -265,10 +406,18 @@ export class CatalogAdminController {
         intent: data.intent !== undefined ? data.intent.trim() : undefined,
         faceCardImageUrl: data.faceCardImageUrl,
         order: data.order,
-        isActive: data.isActive
+        isActive: data.isActive,
+        ...(musicPreferenceId !== undefined ? { musicPreferenceId } : {})
       }
     });
-    return { ok: true, option };
+    if (data.brandIds) {
+      await this.replaceCityBrands(id, data.brandIds);
+    }
+    const option = await (this.prisma as any).discoveryCityOption.findUnique({
+      where: { id },
+      include: discoveryCityInclude
+    });
+    return { ok: true, option: serializeDiscoveryCityOption(option) };
   }
 
   @Delete("discovery-city-options/:id")

@@ -58,7 +58,7 @@ import {
 @Injectable()
 export class UserService implements OnModuleInit {
   async listActiveDiscoveryCityOptions() {
-    const options = await this.prisma.discoveryCityOption.findMany({
+    const rows = await (this.prisma as any).discoveryCityOption.findMany({
       where: { isActive: true },
       orderBy: [{ order: "asc" }, { label: "asc" }],
       select: {
@@ -67,9 +67,48 @@ export class UserService implements OnModuleInit {
         label: true,
         order: true,
         intent: true,
-        faceCardImageUrl: true
+        faceCardImageUrl: true,
+        musicPreference: {
+          select: {
+            name: true,
+            artist: true,
+            albumArtUrl: true
+          }
+        },
+        brands: {
+          orderBy: { order: "asc" },
+          select: {
+            brand: {
+              select: {
+                name: true,
+                logoUrl: true
+              }
+            }
+          }
+        }
       }
     });
+    const options = rows.map((row: any) => ({
+      id: row.id,
+      value: row.value,
+      label: row.label,
+      order: row.order,
+      intent: row.intent,
+      faceCardImageUrl: row.faceCardImageUrl,
+      musicPreference: row.musicPreference
+        ? {
+            name: row.musicPreference.name,
+            artist: row.musicPreference.artist,
+            albumArtUrl: row.musicPreference.albumArtUrl || undefined
+          }
+        : null,
+      brands: (row.brands || [])
+        .map((b: any) => ({
+          name: b.brand?.name,
+          logoUrl: b.brand?.logoUrl || undefined
+        }))
+        .filter((b: { name?: string }) => Boolean(b.name))
+    }));
     return { options };
   }
 

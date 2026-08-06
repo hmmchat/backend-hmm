@@ -130,6 +130,10 @@ interface LocationCard {
   intent?: string | null;
   /** Display label from admin catalog. */
   label?: string | null;
+  /** Brands from admin catalog for city face cards. */
+  brands?: Array<{ name: string; logoUrl?: string }>;
+  /** Song from admin catalog for city face cards. */
+  musicPreference?: { name: string; artist: string; albumArtUrl?: string } | null;
 }
 
 export type ShowableCity = {
@@ -138,6 +142,8 @@ export type ShowableCity = {
   intent: string;
   faceCardImageUrl: string | null;
   availableCount: number;
+  brands: Array<{ name: string; logoUrl?: string }>;
+  musicPreference: { name: string; artist: string; albumArtUrl?: string } | null;
 };
 
 export type DiscoveryUiConfig = {
@@ -1679,7 +1685,9 @@ export class DiscoveryService implements OnModuleInit {
         availableCount: top.availableCount,
         faceCardImageUrl: top.faceCardImageUrl,
         intent: top.intent,
-        label: top.label
+        label: top.label,
+        brands: top.brands || [],
+        musicPreference: top.musicPreference || null
       },
       exhausted: false,
       isLocationCard: true
@@ -1735,7 +1743,9 @@ export class DiscoveryService implements OnModuleInit {
           label: row.label || row.value,
           intent: (row.intent || "").trim(),
           faceCardImageUrl: row.faceCardImageUrl ?? null,
-          availableCount: users.length
+          availableCount: users.length,
+          brands: row.brands || [],
+          musicPreference: row.musicPreference || null
         } satisfies ShowableCity;
       })
     );

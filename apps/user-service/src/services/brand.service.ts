@@ -42,19 +42,26 @@ export class BrandService {
   }
 
   /**
-   * Public logo URL for clients. Brand Search API `asset.brandfetch.io` links expire after ~24h
-   * (see Brand Search API guidelines); do not rely on those for stored or displayed URLs.
-   * Logo API CDN URLs include the client id and stay valid for embedding.
+   * Public logo URL for clients.
+   * - Dashboard / uploaded logos (B2/S3, etc.) always win over Brandfetch.
+   * - Brand Search API `asset.brandfetch.io` hotlinks expire ~24h — never serve those.
+   * - Otherwise fall back to Brandfetch Logo CDN from domain / brandfetchId.
    */
   resolvePublicLogoUrl(
     domain: string | null,
     storedLogoUrl: string | null,
     brandfetchId?: string | null
   ): string | null {
+    const stored = storedLogoUrl?.trim() || null;
+
+    // Uploaded or otherwise persisted logos override Brandfetch CDN.
+    // (Custom "Beam" with a dashboard upload must not be replaced by onbeam.com's icon.)
+    if (stored && !stored.includes("asset.brandfetch.io")) {
+      return stored;
+    }
+
     const d = domain?.trim().toLowerCase();
     const bfid = brandfetchId?.trim();
-
-    // If we can build Logo API CDN URLs, prefer that (stable vs Brand Search hotlink URLs).
     if (this.brandfetchClientId && (d || bfid)) {
       const identifier = d || bfid;
       return `https://cdn.brandfetch.io/${encodeURIComponent(identifier)}/icon.png?c=${encodeURIComponent(
@@ -62,10 +69,7 @@ export class BrandService {
       )}`;
     }
 
-    // If the stored URL is a Brand Search API hotlink, it may be expired after ~24h.
-    if (storedLogoUrl?.includes("asset.brandfetch.io")) return null;
-
-    return storedLogoUrl ?? null;
+    return null;
   }
 
   private getBrandfetchLogo(brand: BrandfetchResult): string | null {

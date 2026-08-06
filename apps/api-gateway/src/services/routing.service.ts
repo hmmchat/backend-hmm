@@ -172,7 +172,9 @@ export class RoutingService implements OnModuleInit {
     this.routes.set("/files", {
       path: "/files",
       serviceUrl: filesServiceUrl,
-      requiresAuth: false // Some endpoints don't require auth
+      requiresAuth: false, // Some endpoints don't require auth
+      // Uploads may run Sightengine moderation before responding
+      timeout: parseInt(this.configService.get<string>("FILES_PROXY_TIMEOUT_MS") || "45000", 10)
     });
 
     this.routes.set("/payments", {

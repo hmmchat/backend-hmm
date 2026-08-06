@@ -2,6 +2,7 @@ import { Injectable, HttpException, HttpStatus } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { R2Service } from "./r2.service.js";
 import { ImageProcessingService } from "./image-processing.service.js";
+import { ModerationClientService } from "./moderation-client.service.js";
 
 export interface UploadFileDto {
   userId?: string;
@@ -31,7 +32,8 @@ export class FilesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly r2Service: R2Service,
-    private readonly imageProcessing: ImageProcessingService
+    private readonly imageProcessing: ImageProcessingService,
+    private readonly moderationClient: ModerationClientService
   ) {
     this.defaultListLimit = parseInt(process.env.FILES_LIST_DEFAULT_LIMIT || "50", 10);
   }
@@ -74,6 +76,21 @@ export class FilesService {
       userId: userId || "anonymous",
       originalFilename: filename
     });
+
+    // Production: moderate user image uploads via Sightengine (public URL).
+    // Skip internal folders (e.g. friends-wall-share). On failure, delete and reject.
+    if (this.moderationClient.shouldModerate(mimeType, folder)) {
+      try {
+        await this.moderationClient.checkImage(url);
+      } catch (error) {
+        try {
+          await this.r2Service.deleteFile(key);
+        } catch (cleanupError) {
+          console.error(`Failed to delete rejected upload ${key}:`, cleanupError);
+        }
+        throw error;
+      }
+    }
 
     // Get image metadata if it's an image
     let width: number | undefined;

@@ -4,43 +4,64 @@ import fetch from "node-fetch";
 export interface ModerationResult {
   safe: boolean;
   confidence: number;
-  isHuman?: boolean; // Whether the image contains a human/person
+  isHuman?: boolean;
   categories?: {
     adult?: number;
     racy?: number;
     violence?: number;
-    medical?: number;
+    aiGenerated?: number;
+    peopleCount?: number;
+    minor?: number;
   };
-  failureReasons?: string[]; // Specific reasons why the image was rejected
+  failureReasons?: string[];
   error?: string;
 }
+
+const SIGHTENGINE_MODELS = "nudity-2.1,faces,people-counting,face-age,genai";
+
+/** Explicit nudity thresholds — bikini / suggestive / raunchy allowed. */
+const NUDITY_REJECT_THRESHOLD = 0.5;
+/** AI-generated rejection threshold. */
+const AI_GENERATED_THRESHOLD = 0.7;
+/** Minor (under 18) rejection threshold. */
+const MINOR_THRESHOLD = 0.5;
 
 @Injectable()
 export class ModerationService {
   private readonly apiUrl: string;
-  private readonly apiKey: string;
+  private readonly apiUser: string;
+  private readonly apiSecret: string;
   private readonly provider: "sightengine" | "google" | "aws" | "mock" | "none";
+  private readonly enforceInProductionOnly: boolean;
 
   constructor() {
-    this.provider = (process.env.MODERATION_PROVIDER as any) || "mock";
-    this.apiUrl = process.env.MODERATION_API_URL || "";
-    this.apiKey = process.env.MODERATION_API_KEY || "";
+    const configuredProvider = (process.env.MODERATION_PROVIDER as any) || "mock";
+    this.apiUrl = process.env.MODERATION_API_URL || "https://api.sightengine.com/1.0/check.json";
+    this.apiUser = process.env.SIGHTENGINE_API_USER || process.env.MODERATION_API_USER || "";
+    this.apiSecret =
+      process.env.SIGHTENGINE_API_SECRET ||
+      process.env.MODERATION_API_SECRET ||
+      process.env.MODERATION_API_KEY ||
+      "";
+    this.enforceInProductionOnly =
+      (process.env.MODERATION_PRODUCTION_ONLY ?? "true").toLowerCase() !== "false";
 
-    // For production, you'd use:
-    // - Sightengine: https://api.sightengine.com/1.0/check.json
-    // - Google Vision: https://vision.googleapis.com/v1/images:annotate
-    // - AWS Rekognition: Use AWS SDK
+    // Production-only: skip real checks outside production unless explicitly disabled.
+    if (this.enforceInProductionOnly && process.env.NODE_ENV !== "production") {
+      this.provider = "none";
+    } else {
+      this.provider = configuredProvider;
+    }
   }
 
   /**
-   * Check if an image URL is appropriate for profile photos
-   * Validates:
-   * 1. Image contains a human/person (not objects or other things)
-   * 2. No NSFW content (nudity, adult content)
-   * 3. Other appropriate checks (violence, offensive content)
-   * 
-   * @param imageUrl - URL of the image to check
-   * @returns ModerationResult with safe/unsafe status and specific failure reasons
+   * Check if an image URL is appropriate for user photo uploads.
+   * Rules:
+   * 1. Must contain a person (no objects-only images)
+   * 2. Must be a real photo (not AI-generated)
+   * 3. No nudity (bikini / raunchy OK; topless / explicit not OK)
+   * 4. Exactly one person
+   * 5. No minors
    */
   async checkImage(imageUrl: string): Promise<ModerationResult> {
     try {
@@ -59,8 +80,6 @@ export class ModerationService {
       }
     } catch (error) {
       console.error("Moderation check failed:", error);
-      // In production, you might want to fail closed (reject) or fail open (allow)
-      // For now, we'll fail closed (reject) if moderation service fails
       throw new HttpException(
         "Image moderation check failed. Please try again.",
         HttpStatus.SERVICE_UNAVAILABLE
@@ -68,54 +87,42 @@ export class ModerationService {
     }
   }
 
-  /** No-op: image checks disabled until a real provider is configured. */
+  /** No-op: image checks disabled (non-production or MODERATION_PROVIDER=none). */
   private checkDisabled(): ModerationResult {
     return {
       safe: true,
       confidence: 1,
       isHuman: true,
-      categories: { adult: 0, racy: 0, violence: 0 }
+      categories: { adult: 0, racy: 0, violence: 0, aiGenerated: 0, peopleCount: 1, minor: 0 }
     };
   }
 
-  /**
-   * Mock implementation for development/testing
-   * 
-   * ⚠️ IMPORTANT LIMITATION: This mock provider only checks URL keywords, NOT actual image content.
-   * It will NOT detect nudity or inappropriate content if the URL is clean.
-   * 
-   * For production, you MUST use a real provider (Sightengine, Google Vision, or AWS Rekognition)
-   * that actually analyzes the image content.
-   * 
-   * Example:
-   * - URL: "https://example.com/profile.jpg" with actual nudity → Mock will mark as SAFE (incorrect!)
-   * - URL: "https://example.com/nsfw-image.jpg" → Mock will mark as UNSAFE (correct, but only because of keyword)
-   * 
-   * Real providers download and analyze the actual image pixels, so they catch content regardless of URL.
-   */
   private async checkWithMock(imageUrl: string): Promise<ModerationResult> {
-    // Mock: Check if URL contains certain keywords (for testing)
-    // ⚠️ WARNING: This does NOT analyze actual image content - only URL string!
-    const unsafeKeywords = ["nsfw", "explicit", "adult", "xxx"];
+    const unsafeKeywords = ["nsfw", "explicit", "adult", "xxx", "nude", "topless"];
     const nonHumanKeywords = ["object", "thing", "landscape", "animal", "car"];
+    const aiKeywords = ["ai-generated", "midjourney", "stablediffusion"];
+    const multiKeywords = ["group", "multiple-people", "crowd"];
+    const minorKeywords = ["minor", "child", "kid"];
     const urlLower = imageUrl.toLowerCase();
-    const hasUnsafeKeyword = unsafeKeywords.some(keyword => urlLower.includes(keyword));
-    const hasNonHumanKeyword = nonHumanKeywords.some(keyword => urlLower.includes(keyword));
 
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 50));
 
     const failureReasons: string[] = [];
-
-    // Check if human (for mock, assume human unless non-human keyword present)
-    const isHuman = !hasNonHumanKeyword;
-
+    const isHuman = !nonHumanKeywords.some((k) => urlLower.includes(k));
     if (!isHuman) {
-      failureReasons.push("Image must contain a human person. Objects, landscapes, or other non-human content is not allowed.");
+      failureReasons.push("Photo must clearly show a person. Objects-only images are not allowed.");
     }
-
-    if (hasUnsafeKeyword) {
-      failureReasons.push("Image contains inappropriate content. Please upload a safe, appropriate photo.");
+    if (aiKeywords.some((k) => urlLower.includes(k))) {
+      failureReasons.push("AI-generated images are not allowed. Please upload a real photo.");
+    }
+    if (unsafeKeywords.some((k) => urlLower.includes(k))) {
+      failureReasons.push("Nudity is not allowed. Swimwear and suggestive photos are fine.");
+    }
+    if (multiKeywords.some((k) => urlLower.includes(k))) {
+      failureReasons.push("Only one person is allowed in the photo.");
+    }
+    if (minorKeywords.some((k) => urlLower.includes(k))) {
+      failureReasons.push("Photos of minors are not allowed.");
     }
 
     if (failureReasons.length > 0) {
@@ -123,10 +130,7 @@ export class ModerationService {
         safe: false,
         confidence: 0.9,
         isHuman,
-        categories: {
-          adult: hasUnsafeKeyword ? 0.9 : 0.1,
-          racy: hasUnsafeKeyword ? 0.7 : 0.1
-        },
+        categories: { adult: 0.9, racy: 0.7 },
         failureReasons
       };
     }
@@ -135,186 +139,204 @@ export class ModerationService {
       safe: true,
       confidence: 0.95,
       isHuman: true,
-      categories: {
-        adult: 0.1,
-        racy: 0.1
-      }
+      categories: { adult: 0.1, racy: 0.1, aiGenerated: 0.1, peopleCount: 1, minor: 0.1 }
     };
   }
 
   /**
-   * Sightengine API implementation
-   * Documentation: https://sightengine.com/docs/image-moderation
+   * Sightengine API — models: nudity-2.1, faces, people-counting, face-age, genai
+   * Docs: https://sightengine.com/docs/
    */
   private async checkWithSightengine(imageUrl: string): Promise<ModerationResult> {
-    if (!this.apiKey) {
-      throw new Error("Sightengine API key not configured");
+    if (!this.apiUser || !this.apiSecret) {
+      throw new Error("Sightengine credentials not configured (SIGHTENGINE_API_USER / SIGHTENGINE_API_SECRET)");
     }
 
-    const url = `${this.apiUrl}?api_user=${this.apiKey}&models=nudity,wad,offensive,celebrities,scam,faces&url=${encodeURIComponent(imageUrl)}`;
+    const params = new URLSearchParams({
+      models: SIGHTENGINE_MODELS,
+      api_user: this.apiUser,
+      api_secret: this.apiSecret,
+      url: imageUrl
+    });
 
-    const response = await fetch(url);
-    const data = await response.json() as any;
+    const response = await fetch(`${this.apiUrl}?${params.toString()}`, {
+      method: "GET",
+      signal: AbortSignal.timeout(25000) as any
+    });
+    const data = (await response.json()) as any;
 
     if (data.status === "failure") {
       throw new Error(`Sightengine API error: ${data.error?.message || "Unknown error"}`);
     }
 
-    const nudity = data.nudity?.sexual_activity || 0;
-    const racy = data.racy || 0;
-    const offensive = data.offensive?.prob || 0;
-    
-    // Check for human/face detection (Sightengine provides faces detection)
-    const faces = data.faces?.length || 0;
-    const isHuman = faces > 0;
+    return this.evaluateSightengineResult(data);
+  }
 
+  private evaluateSightengineResult(data: any): ModerationResult {
     const failureReasons: string[] = [];
 
-    if (!isHuman) {
-      failureReasons.push("Image must contain a human person. Please upload a photo of yourself.");
+    // --- People count (exactly 1) ---
+    const peopleCountScores: Record<string, number> = data.people_count || {};
+    const peopleCountLabel = this.argmaxScore(peopleCountScores) ?? null;
+    const peopleCount =
+      peopleCountLabel === "5+"
+        ? 5
+        : peopleCountLabel != null
+          ? Number(peopleCountLabel)
+          : (data.faces?.length ?? 0);
+
+    const faces: any[] = Array.isArray(data.faces) ? data.faces : [];
+    const isHuman = peopleCount >= 1 || faces.length >= 1;
+
+    if (!isHuman || peopleCountLabel === "0" || (peopleCount === 0 && faces.length === 0)) {
+      failureReasons.push("Photo must clearly show a person. Objects-only images are not allowed.");
+    } else if (peopleCountLabel != null && peopleCountLabel !== "1") {
+      failureReasons.push("Only one person is allowed in the photo.");
+    } else if (peopleCountLabel == null && faces.length > 1) {
+      failureReasons.push("Only one person is allowed in the photo.");
     }
 
-    if (nudity > 0.5) {
-      failureReasons.push("Image contains inappropriate adult content. Please upload a safe, appropriate photo.");
-    } else if (racy > 0.7) {
-      failureReasons.push("Image contains suggestive content. Please upload a more appropriate photo.");
+    // --- Minors ---
+    let maxMinor = 0;
+    for (const face of faces) {
+      const minor = Number(face?.attributes?.age?.minor ?? 0);
+      if (minor > maxMinor) maxMinor = minor;
+    }
+    if (maxMinor >= MINOR_THRESHOLD) {
+      failureReasons.push("Photos of minors are not allowed.");
     }
 
-    if (offensive > 0.7) {
-      failureReasons.push("Image contains offensive or inappropriate content. Please upload another photo.");
+    // --- AI-generated ---
+    const aiGenerated = Number(data.type?.ai_generated ?? 0);
+    if (aiGenerated >= AI_GENERATED_THRESHOLD) {
+      failureReasons.push("AI-generated images are not allowed. Please upload a real photo.");
     }
 
-    const unsafe = !isHuman || nudity > 0.5 || racy > 0.7 || offensive > 0.7;
+    // --- Nudity (allow bikini / suggestive; reject explicit / sexual display / erotica) ---
+    const nudity = data.nudity || {};
+    const sexualActivity = Number(nudity.sexual_activity ?? 0);
+    const sexualDisplay = Number(nudity.sexual_display ?? 0);
+    const erotica = Number(nudity.erotica ?? 0);
+    const visiblyUndressed = Number(nudity.suggestive_classes?.visibly_undressed ?? 0);
+    const adultScore = Math.max(sexualActivity, sexualDisplay, erotica, visiblyUndressed);
+    // Keep suggestive scores for response metadata only — do not reject on them.
+    const racyScore = Math.max(
+      Number(nudity.very_suggestive ?? 0),
+      Number(nudity.suggestive ?? 0),
+      Number(nudity.mildly_suggestive ?? 0)
+    );
+
+    if (adultScore >= NUDITY_REJECT_THRESHOLD) {
+      failureReasons.push("Nudity is not allowed. Swimwear and suggestive photos are fine.");
+    }
+
+    const unsafe = failureReasons.length > 0;
+    const confidence = unsafe
+      ? Math.max(adultScore, aiGenerated, maxMinor, peopleCount !== 1 ? 0.9 : 0)
+      : 1 - Math.max(adultScore, aiGenerated, maxMinor);
 
     return {
       safe: !unsafe,
-      confidence: unsafe ? Math.max(nudity, racy, offensive) : 1 - Math.max(nudity, racy, offensive),
+      confidence,
       isHuman,
       categories: {
-        adult: nudity,
-        racy: racy,
-        violence: offensive
+        adult: adultScore,
+        racy: racyScore,
+        aiGenerated,
+        peopleCount,
+        minor: maxMinor
       },
       failureReasons: failureReasons.length > 0 ? failureReasons : undefined
     };
   }
 
-  /**
-   * Google Vision API implementation
-   * Documentation: https://cloud.google.com/vision/docs/safesearch-detection
-   * 
-   * ✅ This provider ACTUALLY analyzes image content:
-   * - Downloads the image from the URL
-   * - Uses machine learning to detect nudity, adult content, violence
-   * - Analyzes actual image pixels, not URL names
-   * - Works regardless of URL name
-   */
+  private argmaxScore(scores: Record<string, number>): string | null {
+    const entries = Object.entries(scores);
+    if (entries.length === 0) return null;
+    let bestKey: string | null = null;
+    let bestVal = -1;
+    for (const [key, val] of entries) {
+      const n = Number(val) || 0;
+      if (n > bestVal) {
+        bestVal = n;
+        bestKey = key;
+      }
+    }
+    return bestKey;
+  }
+
   private async checkWithGoogleVision(imageUrl: string): Promise<ModerationResult> {
-    if (!this.apiKey) {
+    const apiKey = process.env.MODERATION_API_KEY || "";
+    if (!apiKey) {
       throw new Error("Google Vision API key not configured");
     }
 
-    const url = `https://vision.googleapis.com/v1/images:annotate?key=${this.apiKey}`;
-
+    const url = `https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`;
     const response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        requests: [{
-          image: { source: { imageUri: imageUrl } },
-          features: [{ type: "SAFE_SEARCH_DETECTION" }]
-        }]
+        requests: [
+          {
+            image: { source: { imageUri: imageUrl } },
+            features: [{ type: "SAFE_SEARCH_DETECTION" }, { type: "FACE_DETECTION" }]
+          }
+        ]
       })
     });
 
-    const data = await response.json() as any;
-
+    const data = (await response.json()) as any;
     if (data.error) {
       throw new Error(`Google Vision API error: ${data.error.message}`);
     }
 
-    const safeSearch = data.responses[0]?.safeSearchAnnotation;
+    const annotation = data.responses?.[0];
+    const safeSearch = annotation?.safeSearchAnnotation;
     if (!safeSearch) {
       throw new Error("No safe search annotation in response");
     }
 
-    // Google Vision returns: VERY_UNLIKELY, UNLIKELY, POSSIBLE, LIKELY, VERY_LIKELY
-    const adultLevel = safeSearch.adult;
-    const racyLevel = safeSearch.racy;
-    const violenceLevel = safeSearch.violence;
-    
-    // Google Vision doesn't provide face detection in safe search, so we'd need a separate face detection call
-    // For now, assume human (can be enhanced later)
-    const isHuman = true; // TODO: Add face detection call if needed
-
+    const faces = annotation?.faceAnnotations || [];
+    const isHuman = faces.length > 0;
     const failureReasons: string[] = [];
 
     if (!isHuman) {
-      failureReasons.push("Image must contain a human person. Please upload a photo of yourself.");
+      failureReasons.push("Photo must clearly show a person. Objects-only images are not allowed.");
+    } else if (faces.length > 1) {
+      failureReasons.push("Only one person is allowed in the photo.");
     }
 
     const unsafeLevels = ["LIKELY", "VERY_LIKELY"];
-    const isAdultUnsafe = unsafeLevels.includes(adultLevel);
-    const isRacyUnsafe = unsafeLevels.includes(racyLevel);
-    const isViolenceUnsafe = unsafeLevels.includes(violenceLevel);
-    
-    if (isAdultUnsafe) {
-      failureReasons.push("Image contains inappropriate adult content. Please upload a safe, appropriate photo.");
-    } else if (isRacyUnsafe) {
-      failureReasons.push("Image contains suggestive content. Please upload a more appropriate photo.");
+    if (unsafeLevels.includes(safeSearch.adult)) {
+      failureReasons.push("Nudity is not allowed. Swimwear and suggestive photos are fine.");
     }
 
-    if (isViolenceUnsafe) {
-      failureReasons.push("Image contains violent or offensive content. Please upload another photo.");
-    }
-
-    const unsafe = !isHuman || isAdultUnsafe || isRacyUnsafe || isViolenceUnsafe;
-
-    // Convert to numeric confidence
     const levelToNumber = (level: string) => {
       const map: Record<string, number> = {
-        "VERY_UNLIKELY": 0.1,
-        "UNLIKELY": 0.3,
-        "POSSIBLE": 0.5,
-        "LIKELY": 0.8,
-        "VERY_LIKELY": 0.95
+        VERY_UNLIKELY: 0.1,
+        UNLIKELY: 0.3,
+        POSSIBLE: 0.5,
+        LIKELY: 0.8,
+        VERY_LIKELY: 0.95
       };
       return map[level] || 0.5;
     };
 
     return {
-      safe: !unsafe,
-      confidence: unsafe ? Math.max(
-        levelToNumber(adultLevel),
-        levelToNumber(racyLevel),
-        levelToNumber(violenceLevel)
-      ) : 0.9,
+      safe: failureReasons.length === 0,
+      confidence: 0.9,
       isHuman,
       categories: {
-        adult: levelToNumber(adultLevel),
-        racy: levelToNumber(racyLevel),
-        violence: levelToNumber(violenceLevel)
+        adult: levelToNumber(safeSearch.adult),
+        racy: levelToNumber(safeSearch.racy),
+        violence: levelToNumber(safeSearch.violence),
+        peopleCount: faces.length
       },
       failureReasons: failureReasons.length > 0 ? failureReasons : undefined
     };
   }
 
-  /**
-   * AWS Rekognition implementation
-   * Documentation: https://docs.aws.amazon.com/rekognition/latest/dg/moderation.html
-   * 
-   * ✅ This provider ACTUALLY analyzes image content:
-   * - Downloads the image from the URL
-   * - Uses AWS machine learning to detect inappropriate content
-   * - Analyzes actual image pixels, not URL names
-   * - Works regardless of URL name
-   */
   private async checkWithAWSRekognition(_imageUrl: string): Promise<ModerationResult> {
-    // This would require AWS SDK
-    // const { RekognitionClient, DetectModerationLabelsCommand } = require("@aws-sdk/client-rekognition");
-    
-    // For now, return a placeholder
     throw new Error("AWS Rekognition implementation requires AWS SDK. Please configure AWS credentials.");
   }
 }
-

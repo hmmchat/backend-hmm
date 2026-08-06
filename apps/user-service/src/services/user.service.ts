@@ -633,25 +633,8 @@ export class UserService implements OnModuleInit {
         throw new HttpException("User must be at least 18 years old", HttpStatus.BAD_REQUEST);
       }
 
-      // Validate display picture for NSFW content - MUST be checked before creating profile
-      // This will throw HttpException if image is unsafe or service is unavailable
-      try {
-        await this.moderationClient.checkImage(data.displayPictureUrl);
-      } catch (error) {
-        // In dev/test mode, allow images if moderation check fails
-        const isDevOrTest =
-          process.env.NODE_ENV === "test" ||
-          process.env.NODE_ENV === "development" ||
-          !process.env.NODE_ENV;
-
-        if (isDevOrTest) {
-          console.warn(`Moderation check failed in dev/test mode, allowing image: ${error instanceof Error ? error.message : String(error)}`);
-          // Continue with profile creation
-        } else {
-          // In production, re-throw the error
-          throw error;
-        }
-      }
+      // Validate display picture (production-only Sightengine via moderation-service)
+      await this.moderationClient.checkImage(data.displayPictureUrl);
 
       const zodiac = await this.resolveZodiacFromDob(data.dateOfBirth);
 
@@ -991,6 +974,14 @@ export class UserService implements OnModuleInit {
           HttpStatus.BAD_REQUEST
         );
       }
+    }
+
+    if (
+      data.displayPictureUrl !== undefined &&
+      data.displayPictureUrl &&
+      data.displayPictureUrl !== existingUser.displayPictureUrl
+    ) {
+      await this.moderationClient.checkImage(data.displayPictureUrl);
     }
 
     // Update user

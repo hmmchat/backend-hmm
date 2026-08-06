@@ -87,6 +87,7 @@ services:
       - PORT=3002
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/user-service?schema=public
       - MODERATION_SERVICE_URL=http://moderation-service:3003
+      - MODERATION_PRODUCTION_ONLY=true
       - WALLET_SERVICE_URL=http://wallet-service:3005
       - AUTH_SERVICE_URL=http://auth-service:3001
       - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN}
@@ -117,6 +118,11 @@ services:
       - NODE_ENV=production
       - PORT=3003
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/moderation-service?schema=public
+      - MODERATION_PROVIDER=sightengine
+      - MODERATION_PRODUCTION_ONLY=true
+      - MODERATION_API_URL=https://api.sightengine.com/1.0/check.json
+      - SIGHTENGINE_API_USER=${SIGHTENGINE_API_USER}
+      - SIGHTENGINE_API_SECRET=${SIGHTENGINE_API_SECRET}
     ports:
       - "3003:3003"
     depends_on:
@@ -255,10 +261,15 @@ services:
       - NODE_ENV=production
       - PORT=3008
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/files-service?schema=public
+      - MODERATION_SERVICE_URL=http://moderation-service:3003
+      - MODERATION_PRODUCTION_ONLY=true
+      - MODERATION_SKIP_FOLDERS=friends-wall-share
     ports:
       - "3008:3008"
     depends_on:
       postgres:
+        condition: service_healthy
+      moderation-service:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "node", "-e", "require('http').get('http://localhost:3008/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]

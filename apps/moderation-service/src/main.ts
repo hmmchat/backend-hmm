@@ -9,7 +9,8 @@ async function bootstrap() {
     AppModule,
     new FastifyAdapter({ 
       logger: true,
-      requestTimeout: 8000  // 8 second request timeout (less than gateway's 10s)
+      // Sightengine multi-model checks need headroom beyond the old 8s timeout
+      requestTimeout: 45000
     })
   );
 

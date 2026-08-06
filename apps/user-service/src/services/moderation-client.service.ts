@@ -15,6 +15,9 @@ interface ModerationResult {
     adult?: number;
     racy?: number;
     violence?: number;
+    aiGenerated?: number;
+    peopleCount?: number;
+    minor?: number;
   };
   failureReasons?: string[];
   error?: string;
@@ -24,49 +27,53 @@ interface ModerationResult {
 export class ModerationClientService {
   private readonly moderationServiceUrl: string;
   private readonly skipModeration: boolean;
+  private readonly timeoutMs: number;
 
   constructor() {
     this.moderationServiceUrl = process.env.MODERATION_SERVICE_URL || "http://localhost:3003";
-    // Allow skipping moderation checks in test/dev environments
+    // Production-only by default; SKIP_MODERATION_CHECK always wins.
+    const productionOnly = (process.env.MODERATION_PRODUCTION_ONLY ?? "true").toLowerCase() !== "false";
     this.skipModeration =
-      envFlagEnabled(process.env.SKIP_MODERATION_CHECK) || process.env.NODE_ENV === "test";
+      envFlagEnabled(process.env.SKIP_MODERATION_CHECK) ||
+      process.env.NODE_ENV === "test" ||
+      (productionOnly && process.env.NODE_ENV !== "production");
+    this.timeoutMs = parseInt(process.env.MODERATION_CHECK_TIMEOUT_MS || "25000", 10);
   }
 
   /**
-   * Check if an image is safe for work (NSFW check)
-   * Calls the moderation-service to validate the image
+   * Validate an image URL via moderation-service.
+   * Throws HttpException(400) with a frontend-ready message on rejection.
    */
   async checkImage(imageUrl: string): Promise<boolean> {
-    // Skip moderation check if enabled via environment variable or in test mode
     if (this.skipModeration) {
-      console.log("Moderation check skipped (SKIP_MODERATION_CHECK set or NODE_ENV=test)");
+      console.log("Moderation check skipped (non-production or SKIP_MODERATION_CHECK)");
       return true;
     }
 
     try {
-      // Add timeout to prevent hanging requests (if AbortController is available)
       let controller: AbortController | undefined;
       let timeoutId: NodeJS.Timeout | undefined;
-      
+
       if (typeof AbortController !== "undefined") {
         controller = new AbortController();
-        timeoutId = setTimeout(() => controller!.abort(), 5000); // 5 second timeout
+        timeoutId = setTimeout(() => controller!.abort(), this.timeoutMs);
       }
-      
+
       const fetchOptions: any = {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ imageUrl })
       };
-      
+
       if (controller) {
         fetchOptions.signal = controller.signal;
       }
-      
-      const response = await fetch(`${this.moderationServiceUrl}/moderation/check-image`, fetchOptions).finally(() => {
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-        }
+
+      const response = await fetch(
+        `${this.moderationServiceUrl}/moderation/check-image`,
+        fetchOptions
+      ).finally(() => {
+        if (timeoutId) clearTimeout(timeoutId);
       });
 
       if (!response.ok) {
@@ -74,30 +81,15 @@ export class ModerationClientService {
         throw new Error(`Moderation service error: ${error}`);
       }
 
-      const result = await response.json() as ModerationResult;
+      const result = (await response.json()) as ModerationResult;
 
-      if (!result.safe) {
-        // Use specific error messages if available, otherwise use generic message
-        const errorMessage = result.failureReasons && result.failureReasons.length > 0
-          ? result.failureReasons.join(" ")
-          : "Image failed moderation check. Please upload an appropriate photo of yourself.";
-        
-        throw new HttpException(
-          errorMessage,
-          HttpStatus.BAD_REQUEST
-        );
-      }
+      if (!result.safe || result.isHuman === false) {
+        const errorMessage =
+          result.failureReasons && result.failureReasons.length > 0
+            ? result.failureReasons.join(" ")
+            : "Image failed moderation check. Please upload an appropriate photo of yourself.";
 
-      // Also check if human (even if safe, if not human it should fail)
-      if (result.isHuman === false) {
-        const errorMessage = result.failureReasons && result.failureReasons.length > 0
-          ? result.failureReasons.join(" ")
-          : "Image must contain a human person. Please upload a photo of yourself.";
-        
-        throw new HttpException(
-          errorMessage,
-          HttpStatus.BAD_REQUEST
-        );
+        throw new HttpException(errorMessage, HttpStatus.BAD_REQUEST);
       }
 
       return true;
@@ -106,18 +98,13 @@ export class ModerationClientService {
         throw error;
       }
 
-      // If moderation service is unavailable, you can choose to:
-      // 1. Fail closed (reject) - safer but might block legitimate users
-      // 2. Fail open (allow) - less safe but better UX
-      // For now, we'll fail closed unless in test/dev mode
       console.error("Moderation check failed:", error);
-      
-      // Check if error is a network/connection error (service unavailable)
+
       const errorMessage = error instanceof Error ? error.message : String(error);
       const errorName = error instanceof Error ? error.name : "";
       const errorCode = (error as any)?.code || "";
-      
-      const isNetworkError = 
+
+      const isNetworkError =
         errorMessage.includes("ECONNREFUSED") ||
         errorMessage.includes("ENOTFOUND") ||
         errorMessage.includes("ETIMEDOUT") ||
@@ -128,29 +115,14 @@ export class ModerationClientService {
         errorCode === "ECONNREFUSED" ||
         errorCode === "ENOTFOUND" ||
         errorCode === "ETIMEDOUT";
-      
-      // In test/dev mode or if it's a network error, allow images if moderation service is unavailable
-      const isDevOrTest = 
-        process.env.NODE_ENV === "test" || 
-        process.env.NODE_ENV === "development" ||
-        !process.env.NODE_ENV; // Default to dev mode if NODE_ENV is not set
-      
-      if (isNetworkError && isDevOrTest) {
-        console.warn(`Moderation service unavailable (${errorMessage}) - allowing image in dev/test mode`);
-        return true;
-      }
-      
-      // Also allow if it's any error in dev/test mode (more permissive for local development)
-      if (isDevOrTest && !isNetworkError) {
-        console.warn(`Moderation check error in dev/test mode (${errorMessage}) - allowing image`);
-        return true;
-      }
-      
+
+      // Fail closed in production.
       throw new HttpException(
-        "Unable to verify image content. Please try again later.",
+        isNetworkError
+          ? "Unable to verify image content. Please try again later."
+          : "Unable to verify image content. Please try again later.",
         HttpStatus.SERVICE_UNAVAILABLE
       );
     }
   }
 }
-

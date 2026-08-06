@@ -10,7 +10,8 @@ import { allowEmptyJsonBody } from "./fastify-allow-empty-json.js";
 async function bootstrap() {
   const fastifyAdapter = new FastifyAdapter({
     logger: true,
-    requestTimeout: 12000  // 12 second request timeout (slightly more than proxy timeout)
+    // Files uploads can include Sightengine moderation (~25s); keep headroom for other routes too
+    requestTimeout: parseInt(process.env.GATEWAY_REQUEST_TIMEOUT_MS || "60000", 10)
   });
   allowEmptyJsonBody(fastifyAdapter);
 

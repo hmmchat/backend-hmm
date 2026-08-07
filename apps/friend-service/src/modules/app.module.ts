@@ -19,18 +19,26 @@ import { ShareRateLimitGuard } from "../guards/share-rate-limit.guard.js";
 import { FriendController } from "../routes/friend.controller.js";
 import { HealthController } from "../routes/health.controller.js";
 import { GiftAdminController } from "../routes/gift-admin.controller.js";
+import { NotificationCampaignAdminController } from "../routes/notification-campaign-admin.controller.js";
 import { CleanupTasksService } from "../services/cleanup-tasks.service.js";
 import { MessagingGateway } from "../gateways/messaging.gateway.js";
 import { MessagingRealtimeService } from "../services/messaging-realtime.service.js";
+import { NotificationCampaignService } from "../services/notification-campaign.service.js";
 import { WsAuthService } from "../services/ws-auth.service.js";
 import { GiphyService } from "../services/giphy.service.js";
+import { AdminAuthGuard } from "../guards/admin-auth.guard.js";
 
 @Module({
   imports: [
     ConfigModule.forRoot(),
     ScheduleModule.forRoot() // Enable cron jobs
   ],
-  controllers: [FriendController, HealthController, GiftAdminController],
+  controllers: [
+    FriendController,
+    HealthController,
+    GiftAdminController,
+    NotificationCampaignAdminController
+  ],
   providers: [
     PrismaService,
     FriendService,
@@ -50,8 +58,10 @@ import { GiphyService } from "../services/giphy.service.js";
     CleanupTasksService,
     MessagingGateway,
     MessagingRealtimeService,
+    NotificationCampaignService,
     WsAuthService,
-    GiphyService
+    GiphyService,
+    AdminAuthGuard
   ]
 })
 export class AppModule {}

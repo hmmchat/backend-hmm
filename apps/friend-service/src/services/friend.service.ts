@@ -7,8 +7,13 @@ import { ConversationService } from "./conversation.service.js";
 import { GiftCatalogService } from "./gift-catalog.service.js";
 import { UserClientService } from "./user-client.service.js";
 import { MessagingRealtimeService } from "./messaging-realtime.service.js";
+import { NotificationCampaignService } from "./notification-campaign.service.js";
 import { MessageType, ConversationSection } from "../../node_modules/.prisma/client/index.js";
 import * as crypto from "crypto";
+import {
+  getLineForSystemUserId,
+  isSystemNotificationUserId
+} from "../config/system-notification.js";
 
 @Injectable()
 export class FriendService {
@@ -47,8 +52,15 @@ export class FriendService {
     private readonly conversationService: ConversationService,
     private readonly giftCatalog: GiftCatalogService,
     private readonly userClient: UserClientService,
-    private readonly realtime: MessagingRealtimeService
+    private readonly realtime: MessagingRealtimeService,
+    private readonly notificationCampaigns: NotificationCampaignService
   ) {}
+
+  private assertNotSystemPeer(otherUserId: string, action = "message") {
+    if (isSystemNotificationUserId(otherUserId)) {
+      throw new BadRequestException(`Cannot ${action} BEAM / BEAM MOD threads (read-only)`);
+    }
+  }
 
 
   /**
@@ -678,6 +690,7 @@ export class FriendService {
       height?: number;
     }
   ): Promise<{ messageId: string; newBalance?: number; promotedToInbox?: boolean }> {
+    this.assertNotSystemPeer(toUserId);
     if (fromUserId === toUserId) {
       throw new BadRequestException("Cannot send message to yourself");
     }
@@ -953,6 +966,7 @@ export class FriendService {
       height?: number;
     }
   ): Promise<{ messageId: string; newBalance?: number }> {
+    this.assertNotSystemPeer(toUserId);
     if (fromUserId === toUserId) {
       throw new BadRequestException("Cannot send message to yourself");
     }
@@ -1106,6 +1120,7 @@ export class FriendService {
     },
     promotedToInbox: boolean = false
   ): Promise<{ messageId: string; newBalance?: number; promotedToInbox?: boolean }> {
+    this.assertNotSystemPeer(toUserId);
     if (fromUserId === toUserId) {
       throw new BadRequestException("Cannot send message to yourself");
     }
@@ -1466,6 +1481,15 @@ export class FriendService {
     nextCursor?: string;
     hasMore: boolean;
   }> {
+    if (isSystemNotificationUserId(otherUserId)) {
+      return this.notificationCampaigns.getSystemThreadMessages(
+        userId,
+        otherUserId,
+        limit,
+        cursor
+      );
+    }
+
     const dbMessages = await this.prisma.friendMessage.findMany({
       where: {
         OR: [
@@ -1523,6 +1547,12 @@ export class FriendService {
    * Mark messages as read
    */
   async markMessagesAsRead(userId: string, otherUserId: string): Promise<void> {
+    const systemLine = getLineForSystemUserId(otherUserId);
+    if (systemLine) {
+      await this.notificationCampaigns.markLineAsRead(userId, systemLine);
+      return;
+    }
+
     await this.prisma.friendMessage.updateMany({
       where: {
         fromUserId: otherUserId,
@@ -1889,13 +1919,42 @@ export class FriendService {
     nextCursor?: string;
     hasMore: boolean;
   }> {
-    return await this.conversationService.getConversationsBySection(
+    const result = await this.conversationService.getConversationsBySection(
       userId,
       ConversationSection.INBOX,
       limit,
       cursor,
       filter
     );
+
+    // Strip any persisted system peer rows — overlays own BEAM / BEAM MOD visibility.
+    const withoutSystem = result.conversations.filter(
+      (c) => !isSystemNotificationUserId(c.otherUserId)
+    );
+
+    // Gift/text/follows filters: no system overlays.
+    if (filter === "text_only" || filter === "with_gift" || filter === "only_follows") {
+      return { ...result, conversations: withoutSystem };
+    }
+
+    // First page only: merge system overlays and sort by last activity.
+    if (!cursor) {
+      const overlays = await this.notificationCampaigns.getInboxSystemOverlays(userId);
+      const merged = [...overlays, ...withoutSystem].sort((a, b) => {
+        const timeA = new Date(a.lastMessageAt || a.createdAt || 0).getTime();
+        const timeB = new Date(b.lastMessageAt || b.createdAt || 0).getTime();
+        return timeB - timeA;
+      });
+      const hasMore = merged.length > limit || result.hasMore;
+      const conversations = hasMore ? merged.slice(0, limit) : merged;
+      const nextCursor =
+        hasMore && conversations.length > 0
+          ? conversations[conversations.length - 1].id
+          : undefined;
+      return { conversations, nextCursor, hasMore };
+    }
+
+    return { ...result, conversations: withoutSystem };
   }
 
   /**
@@ -1971,6 +2030,7 @@ export class FriendService {
 
     // Determine other user
     const otherUserId = conversation.userId1 === userId ? conversation.userId2 : conversation.userId1;
+    this.assertNotSystemPeer(otherUserId);
 
     // Check if friends
     const areFriends = await this.areFriends(userId, otherUserId);
@@ -2050,6 +2110,15 @@ export class FriendService {
     }
 
     const otherUserId = conversation.userId1 === userId ? conversation.userId2 : conversation.userId1;
+
+    if (isSystemNotificationUserId(otherUserId)) {
+      return this.notificationCampaigns.getSystemThreadMessages(
+        userId,
+        otherUserId,
+        limit,
+        cursor
+      );
+    }
 
     return await this.getMessageHistory(userId, otherUserId, limit, cursor);
   }
@@ -2246,7 +2315,8 @@ export class FriendService {
         }
       });
 
-      const totalUnreadMessages = inboxCount + receivedCount + sentCount;
+      const systemUnread = await this.notificationCampaigns.countTotalUnread(userId);
+      const totalUnreadMessages = inboxCount + receivedCount + sentCount + systemUnread;
       const hasNotifications = totalUnreadMessages > 0 || friendRequestsCount > 0;
 
       const result = {
@@ -2254,7 +2324,7 @@ export class FriendService {
         totalUnreadMessages,
         pendingFriendRequests: friendRequestsCount,
         breakdown: {
-          inbox: inboxCount,
+          inbox: inboxCount + systemUnread,
           receivedRequests: receivedCount,
           sentRequests: sentCount,
           friendRequests: friendRequestsCount

@@ -652,6 +652,64 @@ export class UserController {
     });
   }
 
+  /**
+   * Internal: user account createdAt for notification eligibility.
+   * GET /users/internal/:userId/created-at
+   */
+  @Get("users/internal/:userId/created-at")
+  async getUserCreatedAt(
+    @Headers("x-service-token") serviceToken: string | undefined,
+    @Param("userId") userId: string
+  ) {
+    const isTestMode = process.env.NODE_ENV === "test" || process.env.TEST_MODE === "true";
+    const expectedToken = process.env.INTERNAL_SERVICE_TOKEN;
+
+    if (!isTestMode) {
+      if (!expectedToken) {
+        throw new HttpException(
+          "Internal service token not configured",
+          HttpStatus.INTERNAL_SERVER_ERROR
+        );
+      }
+      if (serviceToken !== expectedToken) {
+        throw new HttpException("Invalid service token", HttpStatus.UNAUTHORIZED);
+      }
+    }
+
+    const createdAt = await this.userService.getUserCreatedAt(userId);
+    return { userId, createdAt: createdAt ? createdAt.toISOString() : null };
+  }
+
+  /**
+   * Internal: validate which user IDs exist.
+   * POST /users/internal/validate-ids
+   */
+  @Post("users/internal/validate-ids")
+  async validateUserIds(
+    @Headers("x-service-token") serviceToken: string | undefined,
+    @Body() body: unknown
+  ) {
+    const isTestMode = process.env.NODE_ENV === "test" || process.env.TEST_MODE === "true";
+    const expectedToken = process.env.INTERNAL_SERVICE_TOKEN;
+
+    if (!isTestMode) {
+      if (!expectedToken) {
+        throw new HttpException(
+          "Internal service token not configured",
+          HttpStatus.INTERNAL_SERVER_ERROR
+        );
+      }
+      if (serviceToken !== expectedToken) {
+        throw new HttpException("Invalid service token", HttpStatus.UNAUTHORIZED);
+      }
+    }
+
+    const { userIds } = z
+      .object({ userIds: z.array(z.string()).min(1).max(5000) })
+      .parse(body ?? {});
+    return this.userService.validateUserIds(userIds);
+  }
+
   @Get("users/internal/:userId/kyc")
   async getKycSnapshot(@Param("userId") userId: string) {
     return this.userService.getKycSnapshot(userId);

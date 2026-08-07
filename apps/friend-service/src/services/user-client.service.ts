@@ -157,6 +157,77 @@ export class UserClientService {
   }
 
   /**
+   * Fetch user account createdAt for BEAM campaign eligibility.
+   */
+  async getUserCreatedAt(userId: string): Promise<Date | null> {
+    try {
+      const response = await fetch(
+        `${this.userServiceUrl}/users/internal/${encodeURIComponent(userId)}/created-at`,
+        {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+            "x-service-token": process.env.INTERNAL_SERVICE_TOKEN || ""
+          },
+          signal: AbortSignal.timeout(5000)
+        }
+      );
+
+      if (!response.ok) {
+        this.logger.warn(`Failed to fetch createdAt for ${userId}: ${response.status}`);
+        return null;
+      }
+
+      const data = (await response.json()) as { createdAt?: string | null };
+      if (!data.createdAt) return null;
+      const d = new Date(data.createdAt);
+      return Number.isNaN(d.getTime()) ? null : d;
+    } catch (error: any) {
+      this.logger.warn(`Error fetching createdAt for ${userId}: ${error.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Validate which userIds exist (for BEAM MOD targeting).
+   */
+  async validateUserIds(userIds: string[]): Promise<{ validIds: string[]; invalidIds: string[] }> {
+    const unique = [...new Set(userIds.filter(Boolean))];
+    if (unique.length === 0) {
+      return { validIds: [], invalidIds: [] };
+    }
+
+    try {
+      const response = await fetch(`${this.userServiceUrl}/users/internal/validate-ids`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-service-token": process.env.INTERNAL_SERVICE_TOKEN || ""
+        },
+        body: JSON.stringify({ userIds: unique }),
+        signal: AbortSignal.timeout(15000)
+      });
+
+      if (!response.ok) {
+        this.logger.warn(`validate-ids failed: ${response.status}; treating all as valid (fail-open)`);
+        return { validIds: unique, invalidIds: [] };
+      }
+
+      const data = (await response.json()) as {
+        validIds?: string[];
+        invalidIds?: string[];
+      };
+      return {
+        validIds: Array.isArray(data.validIds) ? data.validIds : unique,
+        invalidIds: Array.isArray(data.invalidIds) ? data.invalidIds : []
+      };
+    } catch (error: any) {
+      this.logger.warn(`Error validating userIds: ${error.message}; treating all as valid`);
+      return { validIds: unique, invalidIds: [] };
+    }
+  }
+
+  /**
    * Batch effective presence statuses from user-service (respects heartbeat staleness).
    */
   async getEffectiveStatuses(userIds: string[]): Promise<Map<string, string>> {

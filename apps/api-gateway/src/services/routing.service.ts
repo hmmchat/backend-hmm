@@ -284,6 +284,11 @@ export class RoutingService implements OnModuleInit {
       serviceUrl: friendServiceUrl,
       requiresAuth: false
     });
+    this.routes.set("/admin/notification-campaigns", {
+      path: "/admin/notification-campaigns",
+      serviceUrl: friendServiceUrl,
+      requiresAuth: false
+    });
 
     // Mystery Beam Box / Season ops (wallet-service); auth via X-Admin-Token in-service
     this.routes.set("/admin/seasons", {

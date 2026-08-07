@@ -144,3 +144,76 @@ model SectionLastSeen {
   @@map("section_last_seen")
 }
 
+enum NotificationLine {
+  BEAM
+  BEAM_MOD
+}
+
+enum NotificationCampaignStatus {
+  SENDING
+  SENT
+  RECALLED
+}
+
+/// Shared outbound notification body (not cloned per recipient).
+model NotificationCampaign {
+  id                       String                     @id @default(cuid())
+  line                     NotificationLine
+  status                   NotificationCampaignStatus @default(SENDING)
+  /// Plain-text / rich body shown in the thread
+  body                     String
+  /// Optional title shown above body
+  title                    String?
+  /// JSON: string[] image URLs
+  imagesJson               String?
+  /// JSON: { label, url, kind: "deep"|"external" }[]
+  ctasJson                 String?
+  /// JSON: optional rich formatting payload
+  richJson                 String?
+  /// BEAM: only users with createdAt <= this see the campaign
+  audienceRegisteredBefore DateTime?
+  sentAt                   DateTime?
+  recalledAt               DateTime?
+  createdBy                String?
+  createdAt                DateTime                   @default(now())
+  updatedAt                DateTime                   @updatedAt
+
+  recipients NotificationCampaignRecipient[]
+  deliveries NotificationCampaignDelivery[]
+
+  @@index([line, status, sentAt])
+  @@index([line, createdAt])
+  @@map("notification_campaigns")
+}
+
+model NotificationCampaignRecipient {
+  id         String   @id @default(cuid())
+  campaignId String
+  userId     String
+  createdAt  DateTime @default(now())
+
+  campaign NotificationCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, userId])
+  @@index([userId])
+  @@index([campaignId])
+  @@map("notification_campaign_recipients")
+}
+
+/// Sparse per-user read state for a campaign.
+model NotificationCampaignDelivery {
+  id         String    @id @default(cuid())
+  campaignId String
+  userId     String
+  readAt     DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  campaign NotificationCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, userId])
+  @@index([userId, readAt])
+  @@index([campaignId])
+  @@map("notification_campaign_deliveries")
+}
+

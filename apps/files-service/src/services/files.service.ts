@@ -11,6 +11,8 @@ export interface UploadFileDto {
   maxWidth?: number;
   maxHeight?: number;
   quality?: number;
+  /** display = DP rules; gallery = groups/objects OK. Defaults to gallery at upload. */
+  moderationPurpose?: "display" | "gallery";
 }
 
 export interface FileInfo {
@@ -81,7 +83,7 @@ export class FilesService {
     // Skip internal folders (e.g. friends-wall-share). On failure, delete and reject.
     if (this.moderationClient.shouldModerate(mimeType, folder)) {
       try {
-        await this.moderationClient.checkImage(url);
+        await this.moderationClient.checkImage(url, options.moderationPurpose ?? "gallery");
       } catch (error) {
         try {
           await this.r2Service.deleteFile(key);

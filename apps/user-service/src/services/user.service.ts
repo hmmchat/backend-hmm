@@ -634,7 +634,7 @@ export class UserService implements OnModuleInit {
       }
 
       // Validate display picture (production-only Sightengine via moderation-service)
-      await this.moderationClient.checkImage(data.displayPictureUrl);
+      await this.moderationClient.checkImage(data.displayPictureUrl, "display");
 
       const zodiac = await this.resolveZodiacFromDob(data.dateOfBirth);
 
@@ -981,7 +981,7 @@ export class UserService implements OnModuleInit {
       data.displayPictureUrl &&
       data.displayPictureUrl !== existingUser.displayPictureUrl
     ) {
-      await this.moderationClient.checkImage(data.displayPictureUrl);
+      await this.moderationClient.checkImage(data.displayPictureUrl, "display");
     }
 
     // Update user
@@ -1065,8 +1065,8 @@ export class UserService implements OnModuleInit {
       }
     }
 
-    // Validate photo URL for NSFW content
-    await this.moderationClient.checkImage(data.url);
+    // Gallery slots: groups and objects allowed; still reject NSFW / AI / minors
+    await this.moderationClient.checkImage(data.url, "gallery");
 
     // Upsert: Update existing photo or create new one
     const photo = await this.prisma.userPhoto.upsert({
@@ -2602,8 +2602,8 @@ export class UserService implements OnModuleInit {
       throw new HttpException("Maximum 3 photos allowed", HttpStatus.BAD_REQUEST);
     }
 
-    // Validate photo URL for NSFW content
-    await this.moderationClient.checkImage(data.url);
+    // Gallery slots: groups and objects allowed; still reject NSFW / AI / minors
+    await this.moderationClient.checkImage(data.url, "gallery");
 
     // Check if order is already taken
     const existingPhoto = await this.prisma.userPhoto.findFirst({

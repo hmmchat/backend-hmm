@@ -25,7 +25,8 @@ const UploadFileSchema = z.object({
   processImage: z.boolean().optional().default(true),
   maxWidth: z.coerce.number().positive().optional(),
   maxHeight: z.coerce.number().positive().optional(),
-  quality: z.coerce.number().min(1).max(100).optional()
+  quality: z.coerce.number().min(1).max(100).optional(),
+  moderationPurpose: z.enum(["display", "gallery"]).optional()
 });
 
 const PresignedUrlSchema = z.object({
@@ -110,7 +111,8 @@ export class FilesController {
         processImage: options.processImage,
         maxWidth: options.maxWidth,
         maxHeight: options.maxHeight,
-        quality: options.quality
+        quality: options.quality,
+        moderationPurpose: options.moderationPurpose
       });
 
       console.log(`✅ Upload successful: ${file.id}`);

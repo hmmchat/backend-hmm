@@ -1,6 +1,8 @@
 import { Injectable, HttpException, HttpStatus } from "@nestjs/common";
 import fetch from "node-fetch";
 
+export type ModerationPurpose = "display" | "gallery";
+
 export interface ModerationResult {
   safe: boolean;
   confidence: number;
@@ -25,6 +27,14 @@ const NUDITY_REJECT_THRESHOLD = 0.5;
 const AI_GENERATED_THRESHOLD = 0.7;
 /** Minor (under 18) rejection threshold. */
 const MINOR_THRESHOLD = 0.5;
+
+/**
+ * DP: a face counts as a co-subject only if it is large enough relative to the
+ * main face. Tiny / background / out-of-focus faces are ignored.
+ */
+const PROMINENT_FACE_RELATIVE_AREA = 0.4;
+/** Absolute area floor (normalized 0–1 box) so tiny detections never count. */
+const PROMINENT_FACE_MIN_AREA = 0.02;
 
 @Injectable()
 export class ModerationService {
@@ -56,27 +66,36 @@ export class ModerationService {
 
   /**
    * Check if an image URL is appropriate for user photo uploads.
-   * Rules:
-   * 1. Must contain a person (no objects-only images)
-   * 2. Must be a real photo (not AI-generated)
-   * 3. No nudity (bikini / raunchy OK; topless / explicit not OK)
-   * 4. Exactly one person
-   * 5. No minors
+   *
+   * Shared rules (both purposes):
+   * 1. Must be a real photo (not AI-generated)
+   * 2. No nudity (bikini / raunchy OK; topless / explicit not OK)
+   * 3. No minors
+   *
+   * purpose=display (DP / slot 1):
+   * 4. Must clearly show a person as the main subject
+   * 5. Reject only when 2+ people are co-equal subjects (background / blur OK)
+   *
+   * purpose=gallery (slots 2–3):
+   * 4. Group photos and object / non-person images are allowed
    */
-  async checkImage(imageUrl: string): Promise<ModerationResult> {
+  async checkImage(
+    imageUrl: string,
+    purpose: ModerationPurpose = "display"
+  ): Promise<ModerationResult> {
     try {
       switch (this.provider) {
         case "sightengine":
-          return await this.checkWithSightengine(imageUrl);
+          return await this.checkWithSightengine(imageUrl, purpose);
         case "google":
-          return await this.checkWithGoogleVision(imageUrl);
+          return await this.checkWithGoogleVision(imageUrl, purpose);
         case "aws":
           return await this.checkWithAWSRekognition(imageUrl);
         case "none":
           return this.checkDisabled();
         case "mock":
         default:
-          return await this.checkWithMock(imageUrl);
+          return await this.checkWithMock(imageUrl, purpose);
       }
     } catch (error) {
       console.error("Moderation check failed:", error);
@@ -97,7 +116,10 @@ export class ModerationService {
     };
   }
 
-  private async checkWithMock(imageUrl: string): Promise<ModerationResult> {
+  private async checkWithMock(
+    imageUrl: string,
+    purpose: ModerationPurpose
+  ): Promise<ModerationResult> {
     const unsafeKeywords = ["nsfw", "explicit", "adult", "xxx", "nude", "topless"];
     const nonHumanKeywords = ["object", "thing", "landscape", "animal", "car"];
     const aiKeywords = ["ai-generated", "midjourney", "stablediffusion"];
@@ -109,17 +131,23 @@ export class ModerationService {
 
     const failureReasons: string[] = [];
     const isHuman = !nonHumanKeywords.some((k) => urlLower.includes(k));
-    if (!isHuman) {
-      failureReasons.push("Photo must clearly show a person. Objects-only images are not allowed.");
+
+    if (purpose === "display") {
+      if (!isHuman) {
+        failureReasons.push("Photo must clearly show a person. Objects-only images are not allowed.");
+      }
+      if (multiKeywords.some((k) => urlLower.includes(k))) {
+        failureReasons.push(
+          "Please use a photo where you are the main subject. Clear group photos are not allowed for your display picture."
+        );
+      }
     }
+
     if (aiKeywords.some((k) => urlLower.includes(k))) {
       failureReasons.push("AI-generated images are not allowed. Please upload a real photo.");
     }
     if (unsafeKeywords.some((k) => urlLower.includes(k))) {
       failureReasons.push("Nudity is not allowed. Swimwear and suggestive photos are fine.");
-    }
-    if (multiKeywords.some((k) => urlLower.includes(k))) {
-      failureReasons.push("Only one person is allowed in the photo.");
     }
     if (minorKeywords.some((k) => urlLower.includes(k))) {
       failureReasons.push("Photos of minors are not allowed.");
@@ -138,7 +166,7 @@ export class ModerationService {
     return {
       safe: true,
       confidence: 0.95,
-      isHuman: true,
+      isHuman: purpose === "gallery" ? isHuman : true,
       categories: { adult: 0.1, racy: 0.1, aiGenerated: 0.1, peopleCount: 1, minor: 0.1 }
     };
   }
@@ -147,7 +175,10 @@ export class ModerationService {
    * Sightengine API — models: nudity-2.1, faces, people-counting, face-age, genai
    * Docs: https://sightengine.com/docs/
    */
-  private async checkWithSightengine(imageUrl: string): Promise<ModerationResult> {
+  private async checkWithSightengine(
+    imageUrl: string,
+    purpose: ModerationPurpose
+  ): Promise<ModerationResult> {
     if (!this.apiUser || !this.apiSecret) {
       throw new Error("Sightengine credentials not configured (SIGHTENGINE_API_USER / SIGHTENGINE_API_SECRET)");
     }
@@ -169,13 +200,12 @@ export class ModerationService {
       throw new Error(`Sightengine API error: ${data.error?.message || "Unknown error"}`);
     }
 
-    return this.evaluateSightengineResult(data);
+    return this.evaluateSightengineResult(data, purpose);
   }
 
-  private evaluateSightengineResult(data: any): ModerationResult {
+  private evaluateSightengineResult(data: any, purpose: ModerationPurpose): ModerationResult {
     const failureReasons: string[] = [];
 
-    // --- People count (exactly 1) ---
     const peopleCountScores: Record<string, number> = data.people_count || {};
     const peopleCountLabel = this.argmaxScore(peopleCountScores) ?? null;
     const peopleCount =
@@ -188,18 +218,24 @@ export class ModerationService {
     const faces: any[] = Array.isArray(data.faces) ? data.faces : [];
     const isHuman = peopleCount >= 1 || faces.length >= 1;
 
-    if (!isHuman || peopleCountLabel === "0" || (peopleCount === 0 && faces.length === 0)) {
-      failureReasons.push("Photo must clearly show a person. Objects-only images are not allowed.");
-    } else if (peopleCountLabel != null && peopleCountLabel !== "1") {
-      failureReasons.push("Only one person is allowed in the photo.");
-    } else if (peopleCountLabel == null && faces.length > 1) {
-      failureReasons.push("Only one person is allowed in the photo.");
+    if (purpose === "display") {
+      if (!isHuman || peopleCountLabel === "0" || (peopleCount === 0 && faces.length === 0)) {
+        failureReasons.push("Photo must clearly show a person. Objects-only images are not allowed.");
+      } else {
+        const prominentFaces = this.countProminentFaces(faces);
+        // Only reject when 2+ clear co-subjects. Background / blurry people are fine.
+        if (prominentFaces >= 2) {
+          failureReasons.push(
+            "Please use a photo where you are the main subject. Clear group photos are not allowed for your display picture."
+          );
+        }
+      }
     }
 
     // --- Minors ---
     let maxMinor = 0;
     for (const face of faces) {
-      const minor = Number(face?.attributes?.age?.minor ?? 0);
+      const minor = Number(face?.attributes?.age?.minor ?? face?.attributes?.minor ?? 0);
       if (minor > maxMinor) maxMinor = minor;
     }
     if (maxMinor >= MINOR_THRESHOLD) {
@@ -231,8 +267,10 @@ export class ModerationService {
     }
 
     const unsafe = failureReasons.length > 0;
+    const multiSubjectPenalty =
+      purpose === "display" && this.countProminentFaces(faces) >= 2 ? 0.9 : 0;
     const confidence = unsafe
-      ? Math.max(adultScore, aiGenerated, maxMinor, peopleCount !== 1 ? 0.9 : 0)
+      ? Math.max(adultScore, aiGenerated, maxMinor, multiSubjectPenalty)
       : 1 - Math.max(adultScore, aiGenerated, maxMinor);
 
     return {
@@ -250,6 +288,40 @@ export class ModerationService {
     };
   }
 
+  /** Normalized face area from Sightengine x1/y1/x2/y2 (or legacy w/h). */
+  private faceArea(face: any): number {
+    const x1 = Number(face?.x1);
+    const y1 = Number(face?.y1);
+    const x2 = Number(face?.x2);
+    const y2 = Number(face?.y2);
+    if ([x1, y1, x2, y2].every((n) => Number.isFinite(n))) {
+      return Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+    }
+    const w = Number(face?.w);
+    const h = Number(face?.h);
+    if (Number.isFinite(w) && Number.isFinite(h)) {
+      return Math.max(0, w) * Math.max(0, h);
+    }
+    return 0;
+  }
+
+  /**
+   * Count faces that look like co-equal subjects (not background / incidental).
+   * A face is prominent if it is large enough absolutely AND relative to the largest face.
+   */
+  private countProminentFaces(faces: any[]): number {
+    if (!Array.isArray(faces) || faces.length === 0) return 0;
+    const areas = faces.map((f) => this.faceArea(f));
+    const maxArea = Math.max(...areas, 0);
+    if (maxArea <= 0) {
+      // No usable boxes — fall back to raw face count only when exactly one face.
+      return faces.length === 1 ? 1 : faces.length >= 2 ? 2 : 0;
+    }
+    return areas.filter(
+      (area) => area >= PROMINENT_FACE_MIN_AREA && area >= PROMINENT_FACE_RELATIVE_AREA * maxArea
+    ).length;
+  }
+
   private argmaxScore(scores: Record<string, number>): string | null {
     const entries = Object.entries(scores);
     if (entries.length === 0) return null;
@@ -265,7 +337,10 @@ export class ModerationService {
     return bestKey;
   }
 
-  private async checkWithGoogleVision(imageUrl: string): Promise<ModerationResult> {
+  private async checkWithGoogleVision(
+    imageUrl: string,
+    purpose: ModerationPurpose
+  ): Promise<ModerationResult> {
     const apiKey = process.env.MODERATION_API_KEY || "";
     if (!apiKey) {
       throw new Error("Google Vision API key not configured");
@@ -300,10 +375,17 @@ export class ModerationService {
     const isHuman = faces.length > 0;
     const failureReasons: string[] = [];
 
-    if (!isHuman) {
-      failureReasons.push("Photo must clearly show a person. Objects-only images are not allowed.");
-    } else if (faces.length > 1) {
-      failureReasons.push("Only one person is allowed in the photo.");
+    if (purpose === "display") {
+      if (!isHuman) {
+        failureReasons.push("Photo must clearly show a person. Objects-only images are not allowed.");
+      } else {
+        const prominent = this.countProminentGoogleFaces(faces);
+        if (prominent >= 2) {
+          failureReasons.push(
+            "Please use a photo where you are the main subject. Clear group photos are not allowed for your display picture."
+          );
+        }
+      }
     }
 
     const unsafeLevels = ["LIKELY", "VERY_LIKELY"];
@@ -334,6 +416,36 @@ export class ModerationService {
       },
       failureReasons: failureReasons.length > 0 ? failureReasons : undefined
     };
+  }
+
+  /** Google Vision: use detection confidence + bounding poly area when available. */
+  private countProminentGoogleFaces(faces: any[]): number {
+    if (!Array.isArray(faces) || faces.length === 0) return 0;
+
+    const scored = faces.map((face) => {
+      const confidence = Number(face?.detectionConfidence ?? 0);
+      const verts = face?.boundingPoly?.vertices || face?.fdBoundingPoly?.vertices || [];
+      let area = 0;
+      if (verts.length >= 2) {
+        const xs = verts.map((v: any) => Number(v.x) || 0);
+        const ys = verts.map((v: any) => Number(v.y) || 0);
+        const w = Math.max(...xs) - Math.min(...xs);
+        const h = Math.max(...ys) - Math.min(...ys);
+        // Pixel area — compare relatively within the same image.
+        area = Math.max(0, w) * Math.max(0, h);
+      }
+      return { confidence, area };
+    });
+
+    const maxArea = Math.max(...scored.map((s) => s.area), 0);
+    return scored.filter((s) => {
+      if (s.confidence < 0.5) return false;
+      if (maxArea > 0) {
+        return s.area >= PROMINENT_FACE_RELATIVE_AREA * maxArea;
+      }
+      // No boxes: treat high-confidence faces as prominent.
+      return s.confidence >= 0.8;
+    }).length;
   }
 
   private async checkWithAWSRekognition(_imageUrl: string): Promise<ModerationResult> {

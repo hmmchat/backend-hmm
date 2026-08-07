@@ -6,6 +6,8 @@ function envFlagEnabled(value: string | undefined): boolean {
   return v === "true" || v === "1" || v === "yes";
 }
 
+export type ModerationPurpose = "display" | "gallery";
+
 interface ModerationResult {
   safe: boolean;
   confidence: number;
@@ -47,8 +49,14 @@ export class ModerationClientService {
 
   /**
    * Validate a public image URL. Throws 400 with user-facing message on rejection.
+   *
+   * Default purpose is `gallery` so upload-time checks don't block secondary photos
+   * (groups/objects). DP rules are re-enforced in user-service when attaching as display picture.
    */
-  async checkImage(imageUrl: string): Promise<void> {
+  async checkImage(
+    imageUrl: string,
+    purpose: ModerationPurpose = "gallery"
+  ): Promise<void> {
     if (this.skipModeration) {
       this.logger.log("Moderation check skipped (non-production or SKIP_MODERATION_CHECK)");
       return;
@@ -61,7 +69,7 @@ export class ModerationClientService {
       const response = await fetch(`${this.moderationServiceUrl}/moderation/check-image`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageUrl }),
+        body: JSON.stringify({ imageUrl, purpose }),
         signal: controller.signal
       }).finally(() => clearTimeout(timeoutId));
 
@@ -72,7 +80,8 @@ export class ModerationClientService {
 
       const result = (await response.json()) as ModerationResult;
 
-      if (!result.safe || result.isHuman === false) {
+      // Rely on `safe` + failureReasons. Gallery may have isHuman=false (objects allowed).
+      if (!result.safe) {
         const errorMessage =
           result.failureReasons && result.failureReasons.length > 0
             ? result.failureReasons.join(" ")

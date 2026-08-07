@@ -7,6 +7,8 @@ function envFlagEnabled(value: string | undefined): boolean {
   return v === "true" || v === "1" || v === "yes";
 }
 
+export type ModerationPurpose = "display" | "gallery";
+
 interface ModerationResult {
   safe: boolean;
   confidence: number;
@@ -43,8 +45,13 @@ export class ModerationClientService {
   /**
    * Validate an image URL via moderation-service.
    * Throws HttpException(400) with a frontend-ready message on rejection.
+   *
+   * @param purpose display = DP (person as main subject); gallery = groups/objects OK
    */
-  async checkImage(imageUrl: string): Promise<boolean> {
+  async checkImage(
+    imageUrl: string,
+    purpose: ModerationPurpose = "display"
+  ): Promise<boolean> {
     if (this.skipModeration) {
       console.log("Moderation check skipped (non-production or SKIP_MODERATION_CHECK)");
       return true;
@@ -62,7 +69,7 @@ export class ModerationClientService {
       const fetchOptions: any = {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageUrl })
+        body: JSON.stringify({ imageUrl, purpose })
       };
 
       if (controller) {
@@ -83,7 +90,8 @@ export class ModerationClientService {
 
       const result = (await response.json()) as ModerationResult;
 
-      if (!result.safe || result.isHuman === false) {
+      // Rely on `safe` + failureReasons. Gallery may have isHuman=false (objects allowed).
+      if (!result.safe) {
         const errorMessage =
           result.failureReasons && result.failureReasons.length > 0
             ? result.failureReasons.join(" ")

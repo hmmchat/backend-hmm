@@ -155,6 +155,29 @@ export class SquadController {
     }
   }
 
+  private async notifySquadMembersCallStarted(params: {
+    memberIds: string[];
+    roomId?: string;
+    sessionId?: string;
+    inviterId: string;
+    excludeUserId?: string;
+  }): Promise<void> {
+    const { memberIds, roomId, sessionId, inviterId, excludeUserId } = params;
+    if (!roomId) return;
+    const targets = [...new Set((memberIds || []).filter(Boolean))].filter(
+      (id) => id !== excludeUserId
+    );
+    await Promise.all(
+      targets.map((memberId) =>
+        this.notificationService.notifySquadCallStarted(memberId, {
+          roomId,
+          sessionId,
+          inviterId
+        })
+      )
+    );
+  }
+
   private async ensureUserJoinedSquadRoom(
     roomId: string,
     userId: string,
@@ -714,6 +737,14 @@ export class SquadController {
       );
       pullStrangerEnabled = auto.pullStrangerEnabled;
       pullStrangerRemainingSec = auto.pullStrangerRemainingSec;
+      // Ping other members immediately so they don't wait on lobby poll.
+      void this.notifySquadMembersCallStarted({
+        memberIds,
+        roomId,
+        sessionId,
+        inviterId: inviterForLobby,
+        excludeUserId: userId
+      });
     }
 
     return {
@@ -1255,6 +1286,13 @@ export class SquadController {
       );
       pullStrangerEnabled = auto.pullStrangerEnabled;
       pullStrangerRemainingSec = auto.pullStrangerRemainingSec;
+      void this.notifySquadMembersCallStarted({
+        memberIds,
+        roomId,
+        sessionId,
+        inviterId: inviterForLobby,
+        excludeUserId: userId
+      });
     }
 
     return {

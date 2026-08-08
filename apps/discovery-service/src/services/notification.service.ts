@@ -89,6 +89,35 @@ export class NotificationService {
   }
 
   /**
+   * Notify squad members that the video call went live (lobby → IN_CALL).
+   * Used so other members navigate into /video-chat without waiting on lobby poll.
+   */
+  async notifySquadCallStarted(
+    memberId: string,
+    data: { roomId: string; sessionId?: string; inviterId: string }
+  ): Promise<void> {
+    try {
+      await this.notificationGateway.sendNotification(memberId, {
+        type: "squad:call_started",
+        data: {
+          roomId: data.roomId,
+          sessionId: data.sessionId,
+          inviterId: data.inviterId,
+          at: Date.now()
+        }
+      });
+      this.logger.log(
+        `Notification sent to ${memberId} that squad call started room=${data.roomId}`
+      );
+    } catch (error: any) {
+      this.logger.error(
+        `Failed to send squad call started notification to ${memberId}:`,
+        error.message
+      );
+    }
+  }
+
+  /**
    * Notify lobby members when new member joins
    */
   async notifySquadMemberJoined(

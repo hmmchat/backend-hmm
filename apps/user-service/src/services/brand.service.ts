@@ -44,8 +44,9 @@ export class BrandService {
   /**
    * Public logo URL for clients.
    * - Dashboard / uploaded logos (B2/S3, etc.) always win over Brandfetch.
-   * - Brand Search API `asset.brandfetch.io` hotlinks expire ~24h — never serve those.
-   * - Otherwise fall back to Brandfetch Logo CDN from domain / brandfetchId.
+   * - Brand Search API icons (`asset.brandfetch.io` and signed `cdn.brandfetch.io/...?...`
+   *   tokens) expire — never serve those; rewrite to Logo Link with our client id.
+   * - Stable form: `cdn.brandfetch.io/{domain|brandfetchId}/icon.png?c={CLIENT_ID}`.
    */
   resolvePublicLogoUrl(
     domain: string | null,
@@ -53,22 +54,41 @@ export class BrandService {
     brandfetchId?: string | null
   ): string | null {
     const stored = storedLogoUrl?.trim() || null;
+    const isBrandfetchUrl =
+      !!stored &&
+      (stored.includes("asset.brandfetch.io") || stored.includes("cdn.brandfetch.io"));
 
     // Uploaded or otherwise persisted logos override Brandfetch CDN.
     // (Custom "Beam" with a dashboard upload must not be replaced by onbeam.com's icon.)
-    if (stored && !stored.includes("asset.brandfetch.io")) {
+    if (stored && !isBrandfetchUrl) {
       return stored;
     }
 
-    const d = domain?.trim().toLowerCase();
-    const bfid = brandfetchId?.trim();
+    let d = domain?.trim().toLowerCase() || null;
+    let bfid = brandfetchId?.trim() || null;
+
+    // Recover identifier from a stored Brandfetch CDN path when the row is incomplete
+    // (common for city-catalog brands persisted from search icons).
+    if (!d && !bfid && stored?.includes("cdn.brandfetch.io")) {
+      try {
+        const first = new URL(stored).pathname.split("/").filter(Boolean)[0];
+        if (first) {
+          if (first.includes(".")) d = first.toLowerCase();
+          else bfid = first;
+        }
+      } catch {
+        // ignore malformed stored URLs
+      }
+    }
+
     if (this.brandfetchClientId && (d || bfid)) {
-      const identifier = d || bfid;
+      const identifier = d || bfid!;
       return `https://cdn.brandfetch.io/${encodeURIComponent(identifier)}/icon.png?c=${encodeURIComponent(
         this.brandfetchClientId
       )}`;
     }
 
+    // Don't serve known-expiring Brandfetch search icons.
     return null;
   }
 

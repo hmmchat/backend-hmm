@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, HttpCode, HttpException, HttpStatus, Par
 import { z } from "zod";
 import { PREFERRED_CITY_ANYWHERE_IN_INDIA } from "@hmm/common";
 import { PrismaService } from "../prisma/prisma.service.js";
+import { BrandService } from "../services/brand.service.js";
 import { UserService } from "../services/user.service.js";
 
 const createInterestSchema = z.object({
@@ -84,18 +85,24 @@ const discoveryCityInclude = {
           id: true,
           name: true,
           logoUrl: true,
-          domain: true
+          domain: true,
+          brandfetchId: true
         }
       }
     }
   }
 };
 
-function serializeDiscoveryCityOption(option: any) {
+function serializeDiscoveryCityOption(
+  option: any,
+  resolveLogo?: (domain: string | null, logoUrl: string | null, brandfetchId?: string | null) => string | null
+) {
   const brands = (option.brands || []).map((row: any) => ({
     id: row.brand?.id ?? row.brandId,
     name: row.brand?.name ?? "",
-    logoUrl: row.brand?.logoUrl ?? null,
+    logoUrl: resolveLogo
+      ? resolveLogo(row.brand?.domain ?? null, row.brand?.logoUrl ?? null, row.brand?.brandfetchId ?? null)
+      : (row.brand?.logoUrl ?? null),
     domain: row.brand?.domain ?? null,
     order: row.order
   }));
@@ -135,8 +142,15 @@ const updateModeratorFaceCardSchema = z.object({
 export class CatalogAdminController {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly userService: UserService
+    private readonly userService: UserService,
+    private readonly brandService: BrandService
   ) {}
+
+  private serializeCityOption(option: any) {
+    return serializeDiscoveryCityOption(option, (domain, logoUrl, brandfetchId) =>
+      this.brandService.resolvePublicLogoUrl(domain, logoUrl, brandfetchId)
+    );
+  }
 
   /**
    * Interests catalog management
@@ -348,7 +362,7 @@ export class CatalogAdminController {
       orderBy: [{ isActive: "desc" }, { order: "asc" }, { label: "asc" }],
       include: discoveryCityInclude
     });
-    return { ok: true, options: options.map(serializeDiscoveryCityOption) };
+    return { ok: true, options: options.map((o: any) => this.serializeCityOption(o)) };
   }
 
   @Post("discovery-city-options")
@@ -379,7 +393,7 @@ export class CatalogAdminController {
       where: { id: option.id },
       include: discoveryCityInclude
     });
-    return { ok: true, option: serializeDiscoveryCityOption(hydrated) };
+    return { ok: true, option: this.serializeCityOption(hydrated) };
   }
 
   @Patch("discovery-city-options/:id")
@@ -417,7 +431,7 @@ export class CatalogAdminController {
       where: { id },
       include: discoveryCityInclude
     });
-    return { ok: true, option: serializeDiscoveryCityOption(option) };
+    return { ok: true, option: this.serializeCityOption(option) };
   }
 
   @Delete("discovery-city-options/:id")

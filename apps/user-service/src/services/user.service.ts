@@ -81,7 +81,9 @@ export class UserService implements OnModuleInit {
             brand: {
               select: {
                 name: true,
-                logoUrl: true
+                logoUrl: true,
+                domain: true,
+                brandfetchId: true
               }
             }
           }
@@ -105,7 +107,13 @@ export class UserService implements OnModuleInit {
       brands: (row.brands || [])
         .map((b: any) => ({
           name: b.brand?.name,
-          logoUrl: b.brand?.logoUrl || undefined
+          // Same Brandfetch CDN rewrite as user face cards — raw asset.brandfetch.io URLs break in <img>.
+          logoUrl:
+            this.brandService.resolvePublicLogoUrl(
+              b.brand?.domain ?? null,
+              b.brand?.logoUrl ?? null,
+              b.brand?.brandfetchId ?? null
+            ) || undefined
         }))
         .filter((b: { name?: string }) => Boolean(b.name))
     }));

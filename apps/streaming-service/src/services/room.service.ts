@@ -736,11 +736,53 @@ export class RoomService {
     // If room is ENDED, ensure isBroadcasting is false (data consistency)
     const isBroadcasting = session.status === "ENDED" ? false : session.isBroadcasting;
 
+    let pullStrangerRemainingSec = 0;
+    if (session.pullStrangerEnabled) {
+      try {
+        const enabledEvent = await this.prisma.callEvent.findFirst({
+          where: {
+            sessionId: session.id,
+            eventType: "pull_stranger_enabled"
+          },
+          orderBy: { createdAt: "desc" },
+          select: { createdAt: true, metadata: true }
+        });
+        if (enabledEvent?.createdAt) {
+          let windowMs = this.pullStrangerWindowMs;
+          try {
+            const meta = enabledEvent.metadata
+              ? JSON.parse(String(enabledEvent.metadata))
+              : null;
+            const fromMeta = Number(meta?.windowMs);
+            if (Number.isFinite(fromMeta) && fromMeta > 0) {
+              windowMs = fromMeta;
+            }
+          } catch {
+            // keep default window
+          }
+          const expiresAt = new Date(enabledEvent.createdAt).getTime() + windowMs;
+          pullStrangerRemainingSec = Math.max(
+            0,
+            Math.ceil((expiresAt - Date.now()) / 1000)
+          );
+        } else {
+          pullStrangerRemainingSec = Math.ceil(this.pullStrangerWindowMs / 1000);
+        }
+      } catch (err: any) {
+        this.logger.warn(
+          `Failed to compute pullStrangerRemainingSec for ${roomId}: ${err?.message || err}`
+        );
+        pullStrangerRemainingSec = Math.ceil(this.pullStrangerWindowMs / 1000);
+      }
+    }
+
     const details = {
       id: session.id,
       roomId: session.roomId,
       status: session.status,
       isBroadcasting,
+      pullStrangerEnabled: Boolean(session.pullStrangerEnabled),
+      pullStrangerRemainingSec,
       participantCount: session.participants.length,
       viewerCount: session.viewers.length,
       participants: session.participants,
@@ -1605,11 +1647,12 @@ export class RoomService {
       );
     }
 
-    // Check if room is already in pull stranger mode
+    // Idempotent: already enabled (e.g. squad auto-enable race) — no-op success
     if (session.pullStrangerEnabled) {
-      throw new BadRequestException(
-        `Pull stranger mode is already enabled. Wait for a stranger to join before enabling again.`
+      this.logger.log(
+        `Pull stranger mode already enabled for room ${roomId}; treating as success (requested by ${userId})`
       );
+      return;
     }
 
     // Update database: enable pull stranger mode

@@ -234,6 +234,8 @@ export class StreamingClientService {
     id?: string;
     roomId?: string;
     participants?: Array<{ userId: string }>;
+    pullStrangerEnabled?: boolean;
+    pullStrangerRemainingSec?: number;
   } | null> {
     try {
       const response = await fetch(
@@ -252,6 +254,8 @@ export class StreamingClientService {
         id?: string;
         roomId?: string;
         participants?: Array<{ userId: string }>;
+        pullStrangerEnabled?: boolean;
+        pullStrangerRemainingSec?: number;
       };
     } catch (error: any) {
       this.logger.warn(`getRoomById failed for ${roomId}: ${error?.message || error}`);
@@ -335,6 +339,50 @@ export class StreamingClientService {
         `canViewPullStrangerCard error for visible=${visibleUserId}, viewer=${viewerUserId}: ${error?.message || error}`
       );
       return false;
+    }
+  }
+
+  /**
+   * Enable pull-stranger for a room (HOST userId becomes the visible face card).
+   * Treats "already enabled" as success so squad auto-enable races are safe.
+   */
+  async enablePullStranger(
+    roomId: string,
+    userId: string
+  ): Promise<{ success: boolean; alreadyEnabled?: boolean }> {
+    try {
+      const response = await fetch(
+        `${this.streamingServiceUrl}/streaming/rooms/${encodeURIComponent(roomId)}/enable-pull-stranger`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ userId }),
+          signal: AbortSignal.timeout(this.requestTimeoutMs)
+        } as any
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        if (/already enabled/i.test(errorText)) {
+          return { success: true, alreadyEnabled: true };
+        }
+        this.logger.warn(`enablePullStranger failed: ${errorText}`);
+        throw new Error(`Failed to enable pull stranger: ${errorText}`);
+      }
+
+      return { success: true };
+    } catch (error: any) {
+      if (error?.message && /already enabled/i.test(error.message)) {
+        return { success: true, alreadyEnabled: true };
+      }
+      if (error.name === "AbortError" || error.name === "TimeoutError") {
+        this.logger.warn(`Timeout enablePullStranger for room ${roomId}`);
+        throw new Error("Service timeout when enabling pull stranger");
+      }
+      this.logger.error(`Error enablePullStranger:`, error.message);
+      throw error;
     }
   }
 

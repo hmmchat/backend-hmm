@@ -100,6 +100,61 @@ export class SquadController {
     return { roomId: best.roomId, sessionId: best.sessionId };
   }
 
+  /**
+   * When a squad lobby first goes live (IN_CALL), auto-enable pull-stranger
+   * with the squad inviter as the visible face card. Never fails enter-call.
+   */
+  private async autoEnablePullStrangerForSquadCall(
+    roomId: string | undefined,
+    inviterId: string,
+    memberIds: string[] = []
+  ): Promise<{ pullStrangerEnabled: boolean; pullStrangerRemainingSec: number }> {
+    if (!roomId || !inviterId) {
+      return { pullStrangerEnabled: false, pullStrangerRemainingSec: 0 };
+    }
+    try {
+      // Inviter must be an active HOST participant for enablePullStranger.
+      await this.ensureUserJoinedSquadRoom(roomId, inviterId, memberIds);
+      await this.streamingClientService.enablePullStranger(roomId, inviterId);
+      const details = await this.streamingClientService.getRoomById(roomId);
+      const remaining = Number(details?.pullStrangerRemainingSec);
+      return {
+        pullStrangerEnabled: true,
+        pullStrangerRemainingSec:
+          Number.isFinite(remaining) && remaining > 0
+            ? remaining
+            : Math.ceil(
+                Number.parseInt(process.env.PULL_STRANGER_WINDOW_MS || "60000", 10) / 1000
+              ) || 60
+      };
+    } catch (err: any) {
+      this.logger.warn(
+        `Squad auto pull-stranger failed for room ${roomId} inviter ${inviterId}: ${err?.message || err}`
+      );
+      return { pullStrangerEnabled: false, pullStrangerRemainingSec: 0 };
+    }
+  }
+
+  private async readPullStrangerState(
+    roomId: string | undefined
+  ): Promise<{ pullStrangerEnabled: boolean; pullStrangerRemainingSec: number }> {
+    if (!roomId) {
+      return { pullStrangerEnabled: false, pullStrangerRemainingSec: 0 };
+    }
+    try {
+      const details = await this.streamingClientService.getRoomById(roomId);
+      const enabled = Boolean(details?.pullStrangerEnabled);
+      const remaining = Number(details?.pullStrangerRemainingSec);
+      return {
+        pullStrangerEnabled: enabled,
+        pullStrangerRemainingSec:
+          enabled && Number.isFinite(remaining) && remaining > 0 ? remaining : 0
+      };
+    } catch {
+      return { pullStrangerEnabled: false, pullStrangerRemainingSec: 0 };
+    }
+  }
+
   private async ensureUserJoinedSquadRoom(
     roomId: string,
     userId: string,
@@ -604,12 +659,16 @@ export class SquadController {
           );
         }
       }
+      const pullState = await this.readPullStrangerState(roomId);
       return {
         success: true,
         roomId,
         sessionId,
         memberIds,
-        roomType: "squad"
+        roomType: "squad",
+        pullStrangerEnabled: pullState.pullStrangerEnabled,
+        pullStrangerRemainingSec: pullState.pullStrangerRemainingSec,
+        pullStrangerEnabledBy: inviterForLobby
       };
     }
 
@@ -644,8 +703,17 @@ export class SquadController {
 
     // Keep lobby in READY/WAITING during background audio setup.
     // Lobby transitions to IN_CALL only on explicit "Meet someone now".
+    let pullStrangerEnabled = false;
+    let pullStrangerRemainingSec = 0;
     if (!backgroundOnly) {
       await this.squadService.markLobbyInCall(inviterForLobby);
+      const auto = await this.autoEnablePullStrangerForSquadCall(
+        roomId,
+        inviterForLobby,
+        memberIds
+      );
+      pullStrangerEnabled = auto.pullStrangerEnabled;
+      pullStrangerRemainingSec = auto.pullStrangerRemainingSec;
     }
 
     return {
@@ -653,7 +721,10 @@ export class SquadController {
       roomId,
       sessionId,
       memberIds,
-      roomType: "squad"
+      roomType: "squad",
+      pullStrangerEnabled,
+      pullStrangerRemainingSec,
+      pullStrangerEnabledBy: inviterForLobby
     };
   }
 
@@ -1123,12 +1194,16 @@ export class SquadController {
         );
       }
       await this.ensureUserJoinedSquadRoom(roomId, userId, memberIds);
+      const pullState = await this.readPullStrangerState(roomId);
       return {
         success: true,
         roomId,
         sessionId,
         memberIds,
-        roomType: "squad"
+        roomType: "squad",
+        pullStrangerEnabled: pullState.pullStrangerEnabled,
+        pullStrangerRemainingSec: pullState.pullStrangerRemainingSec,
+        pullStrangerEnabledBy: inviterForLobby
       };
     }
 
@@ -1169,8 +1244,17 @@ export class SquadController {
       }
     }
 
+    let pullStrangerEnabled = false;
+    let pullStrangerRemainingSec = 0;
     if (!backgroundOnly) {
       await this.squadService.markLobbyInCall(inviterForLobby);
+      const auto = await this.autoEnablePullStrangerForSquadCall(
+        roomId,
+        inviterForLobby,
+        memberIds
+      );
+      pullStrangerEnabled = auto.pullStrangerEnabled;
+      pullStrangerRemainingSec = auto.pullStrangerRemainingSec;
     }
 
     return {
@@ -1178,7 +1262,10 @@ export class SquadController {
       roomId,
       sessionId,
       memberIds,
-      roomType: "squad"
+      roomType: "squad",
+      pullStrangerEnabled,
+      pullStrangerRemainingSec,
+      pullStrangerEnabledBy: inviterForLobby
     };
   }
 

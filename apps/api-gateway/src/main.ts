@@ -15,9 +15,12 @@ async function bootstrap() {
     requestTimeout: parseInt(process.env.GATEWAY_REQUEST_TIMEOUT_MS || "60000", 10)
   });
   allowEmptyJsonBody(fastifyAdapter);
-  attachRawJsonBodyParser(fastifyAdapter);
 
-  const app = await NestFactory.create<NestFastifyApplication>(AppModule, fastifyAdapter);
+  // Disable Nest's default JSON parser so we can attach a raw-body-aware one.
+  const app = await NestFactory.create<NestFastifyApplication>(AppModule, fastifyAdapter, {
+    bodyParser: false
+  });
+  attachRawJsonBodyParser(app.getHttpAdapter().getInstance());
 
   const config = app.get(ConfigService);
   const port = config.get<number>("PORT") || 3000;

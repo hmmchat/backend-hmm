@@ -8,11 +8,13 @@ import { attachRawJsonBodyParser } from "./fastify-raw-json-body.js";
 async function bootstrap() {
   const requestTimeout = parseInt(process.env.PAYMENT_REQUEST_TIMEOUT_MS || "8000", 10);
   const fastifyAdapter = new FastifyAdapter({ logger: true, requestTimeout });
-  attachRawJsonBodyParser(fastifyAdapter);
+  // Disable Nest's default JSON parser so we can attach a raw-body-aware one.
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
-    fastifyAdapter
+    fastifyAdapter,
+    { bodyParser: false }
   );
+  attachRawJsonBodyParser(app.getHttpAdapter().getInstance());
 
   const config = app.get(ConfigService);
   const port = config.get<number>("PORT") || 3007;

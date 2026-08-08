@@ -1,12 +1,13 @@
-import type { FastifyAdapter } from "@nestjs/platform-fastify";
+import type { FastifyInstance } from "fastify";
 
 /**
  * Parse JSON while preserving the exact request bytes for Razorpay webhook HMAC.
  * Attaches `request.rawBody` as a utf8 string.
+ *
+ * Must run AFTER NestFactory.create (or with bodyParser: false), otherwise Nest
+ * re-registers application/json and Fastify throws FST_ERR_CTP_ALREADY_PRESENT.
  */
-export function attachRawJsonBodyParser(fastifyAdapter: FastifyAdapter): void {
-  const instance = fastifyAdapter.getInstance();
-
+export function attachRawJsonBodyParser(instance: FastifyInstance): void {
   instance.removeContentTypeParser("application/json");
   instance.addContentTypeParser(
     "application/json",

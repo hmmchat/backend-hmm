@@ -1,8 +1,8 @@
 import { z } from "zod";
 
-// Purchase Initiation Schema
+// Purchase Initiation Schema — catalogue package only (price comes from coin-packages)
 export const InitiatePurchaseSchema = z.object({
-  coinsAmount: z.number().int().positive().min(1, "Coins amount must be at least 1")
+  packageId: z.string().min(1, "Package ID is required")
 });
 
 // Payment Verification Schema

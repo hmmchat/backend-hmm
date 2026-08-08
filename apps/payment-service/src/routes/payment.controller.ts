@@ -6,11 +6,13 @@ import {
   Headers,
   Param,
   Query,
+  Req,
   HttpException,
   HttpStatus,
   HttpCode,
   Logger
 } from "@nestjs/common";
+import type { FastifyRequest } from "fastify";
 import { PaymentService } from "../services/payment.service.js";
 import { RazorpayService } from "../services/razorpay.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
@@ -98,13 +100,16 @@ export class PaymentController {
     const dto = InitiatePurchaseSchema.parse(body);
 
     try {
-      const result = await this.paymentService.initiateCoinPurchase(userId, dto.coinsAmount);
+      const result = await this.paymentService.initiateCoinPurchase(userId, dto.packageId);
       return {
         success: true,
         orderId: result.orderId,
         razorpayOrderId: result.razorpayOrderId,
+        packageId: result.packageId,
+        coinsAmount: result.coinsAmount,
         amountInr: result.amountInr / 100, // Convert paise to INR
         amountInPaise: result.amountInr,
+        razorpayKeyId: result.razorpayKeyId,
         razorpayOrder: result.razorpayOrder
       };
     } catch (error: any) {
@@ -455,6 +460,7 @@ export class PaymentController {
   @Post("webhooks/razorpay")
   @HttpCode(HttpStatus.OK)
   async handleWebhook(
+    @Req() req: FastifyRequest & { rawBody?: string },
     @Headers("x-razorpay-signature") signature?: string,
     @Body() body?: any
   ) {
@@ -462,8 +468,11 @@ export class PaymentController {
       throw new HttpException("Missing webhook signature", HttpStatus.BAD_REQUEST);
     }
 
-    // Get raw body as string for signature verification
-    const rawBody = JSON.stringify(body);
+    // Prefer exact request bytes (gateway + local raw parser); fallback only for direct tests
+    const rawBody =
+      typeof req.rawBody === "string" && req.rawBody.length > 0
+        ? req.rawBody
+        : JSON.stringify(body ?? {});
     const eventType = body?.event || "unknown";
 
     // Verify webhook signature
@@ -574,9 +583,9 @@ export class PaymentController {
               where: { razorpayOrderId: payment.order_id }
             });
 
-            if (order && order.status === "PENDING") {
+            if (order && (order.status === "PENDING" || order.status === "PROCESSING")) {
               // For webhook, signature is already verified at webhook level
-              // Process payment with signature verification skipped
+              // Process payment with signature verification skipped (idempotent with client verify)
               try {
                 await this.paymentService.handlePaymentSuccess(
                   payment.id,
@@ -588,7 +597,7 @@ export class PaymentController {
                 this.logger.error(`Failed to process payment from webhook: ${error.message}`);
                 // Don't throw - webhook should return 200 even if processing fails
               }
-            } else if (order && order.status !== "PENDING") {
+            } else if (order) {
               this.logger.log(`Order ${order.id} already processed (status: ${order.status}), skipping webhook processing`);
             }
           }

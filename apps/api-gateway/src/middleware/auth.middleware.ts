@@ -98,6 +98,7 @@ export class AuthMiddleware {
       "/moderator-face-card",
       "/music/search",
       "/payments/purchase/packages",
+      "/payments/webhooks/razorpay", // Razorpay webhooks (HMAC-verified downstream)
       "/files/upload" // Some file endpoints might be public
     ];
 

@@ -2664,7 +2664,7 @@ Gift send/receive history for the current user.
 **Request:**
 ```json
 {
-  "coinsAmount": 100
+  "packageId": "coin_pack_100"
 }
 ```
 
@@ -2674,17 +2674,20 @@ Gift send/receive history for the current user.
   "success": true,
   "orderId": "string",
   "razorpayOrderId": "string",
-  "amountInr": 99,
-  "amountInPaise": 9900,
+  "packageId": "coin_pack_100",
+  "coinsAmount": 100,
+  "amountInr": 50,
+  "amountInPaise": 5000,
+  "razorpayKeyId": "rzp_test_xxx",
   "razorpayOrder": { }
 }
 ```
 
 **Use Case:** 
-1. Call this to create order
-2. Use `razorpayOrderId` and `razorpayKey` with Razorpay SDK
+1. Call this with a catalogue `packageId` to create the order (price comes from the package catalogue)
+2. Use `razorpayOrderId` and `razorpayKeyId` with Razorpay Checkout
 3. Complete payment on frontend
-4. Call verify endpoint
+4. Call verify endpoint (webhook is also authoritative / idempotent)
 
 #### Verify Purchase
 

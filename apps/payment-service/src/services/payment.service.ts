@@ -1,4 +1,5 @@
 import { Injectable, Logger, BadRequestException, NotFoundException } from "@nestjs/common";
+import { getCoinPackage } from "@hmm/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { RazorpayService } from "./razorpay.service.js";
 import { WalletClientService } from "./wallet-client.service.js";
@@ -27,50 +28,67 @@ export class PaymentService {
   ) {}
 
   /**
-   * Initiate coin purchase - Create Razorpay order and store in DB
+   * Initiate coin purchase from a catalogue package — Create Razorpay order and store in DB.
+   * Amount and coins are taken from the package catalogue (not a free-form coin amount).
    */
   async initiateCoinPurchase(
     userId: string,
-    coinsAmount: number
-  ): Promise<{ orderId: string; razorpayOrderId: string; amountInr: number; razorpayOrder: any }> {
-    if (coinsAmount <= 0) {
-      throw new BadRequestException("Coins amount must be positive");
+    packageId: string
+  ): Promise<{
+    orderId: string;
+    razorpayOrderId: string;
+    amountInr: number;
+    coinsAmount: number;
+    packageId: string;
+    razorpayOrder: any;
+    razorpayKeyId: string;
+  }> {
+    const coinPackage = getCoinPackage(packageId);
+    if (!coinPackage) {
+      throw new BadRequestException(`Unknown coin package: ${packageId}`);
     }
 
-    // Calculate INR amount needed for coins
-    const inrAmount = this.configService.calculateInrForCoins(coinsAmount);
-    const amountInPaise = Math.round(inrAmount * 100); // Convert to paise
+    const coinsAmount = coinPackage.coins;
+    const amountInPaise = Math.round(coinPackage.price * 100);
 
-    if (amountInPaise < 100) {
-      throw new BadRequestException("Minimum purchase amount is ₹1 (100 paise)");
+    if (coinsAmount <= 0 || amountInPaise < 100) {
+      throw new BadRequestException("Invalid coin package pricing");
     }
 
     try {
-      // Create Razorpay order
       const razorpayOrder = await this.razorpayService.createOrder(amountInPaise, "INR", {
         userId,
+        packageId: coinPackage.id,
         coinsAmount: coinsAmount.toString(),
         orderType: "coin_purchase"
       });
 
-      // Store order in database
       const order = await this.prisma.paymentOrder.create({
         data: {
           userId,
           amountInr: amountInPaise,
           coinsAmount,
           razorpayOrderId: razorpayOrder.id,
-          status: "PENDING"
+          status: "PENDING",
+          metadata: {
+            packageId: coinPackage.id,
+            packagePriceInr: coinPackage.price
+          }
         }
       });
 
-      this.logger.log(`Coin purchase initiated: order ${order.id} for user ${userId}, ${coinsAmount} coins`);
+      this.logger.log(
+        `Coin purchase initiated: order ${order.id} for user ${userId}, package ${coinPackage.id}, ${coinsAmount} coins, ₹${coinPackage.price}`
+      );
 
       return {
         orderId: order.id,
         razorpayOrderId: razorpayOrder.id,
         amountInr: amountInPaise,
-        razorpayOrder
+        coinsAmount,
+        packageId: coinPackage.id,
+        razorpayOrder,
+        razorpayKeyId: this.configService.getRazorpayKeyId()
       };
     } catch (error: any) {
       this.logger.error(`Failed to initiate coin purchase: ${error.message}`, error.stack);

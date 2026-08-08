@@ -3,12 +3,15 @@ import { FastifyAdapter, NestFastifyApplication } from "@nestjs/platform-fastify
 import { AppModule } from "./modules/app.module.js";
 import { ConfigService } from "@nestjs/config";
 import { ZodExceptionFilter } from "./filters/zod-exception.filter.js";
+import { attachRawJsonBodyParser } from "./fastify-raw-json-body.js";
 
 async function bootstrap() {
   const requestTimeout = parseInt(process.env.PAYMENT_REQUEST_TIMEOUT_MS || "8000", 10);
+  const fastifyAdapter = new FastifyAdapter({ logger: true, requestTimeout });
+  attachRawJsonBodyParser(fastifyAdapter);
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
-    new FastifyAdapter({ logger: true, requestTimeout })
+    fastifyAdapter
   );
 
   const config = app.get(ConfigService);

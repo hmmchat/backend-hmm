@@ -186,6 +186,12 @@ export class GatewayController {
         if (contentType.includes("multipart/form-data")) {
           // Use the raw request stream for multipart proxying
           requestBody = req.raw;
+        } else if (
+          path.includes("/payments/webhooks/razorpay") &&
+          typeof (req as { rawBody?: string }).rawBody === "string"
+        ) {
+          // Forward exact bytes so payment-service can verify Razorpay HMAC
+          requestBody = (req as { rawBody?: string }).rawBody;
         } else {
           requestBody = req.body;
         }

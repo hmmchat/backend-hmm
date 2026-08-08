@@ -6,6 +6,7 @@ import { ConfigService } from "@nestjs/config";
 import { ZodExceptionFilter } from "./filters/zod-exception.filter.js";
 import { RoutingService } from "./services/routing.service.js";
 import { allowEmptyJsonBody } from "./fastify-allow-empty-json.js";
+import { attachRawJsonBodyParser } from "./fastify-raw-json-body.js";
 
 async function bootstrap() {
   const fastifyAdapter = new FastifyAdapter({
@@ -14,6 +15,7 @@ async function bootstrap() {
     requestTimeout: parseInt(process.env.GATEWAY_REQUEST_TIMEOUT_MS || "60000", 10)
   });
   allowEmptyJsonBody(fastifyAdapter);
+  attachRawJsonBodyParser(fastifyAdapter);
 
   const app = await NestFactory.create<NestFastifyApplication>(AppModule, fastifyAdapter);
 

@@ -13,11 +13,13 @@ export class RateLimitService implements OnModuleInit {
   private redisClient: ReturnType<typeof createClient> | null = null;
   private enabled: boolean = false;
 
-  // Default rate limits
+  // Default rate limits (matched via path.includes — see checkRateLimit)
   private readonly defaultLimits: Map<string, RateLimitConfig> = new Map([
     ["/auth", { windowMs: 60000, maxRequests: 10 }], // 10 requests per minute
     ["/files/upload", { windowMs: 3600000, maxRequests: 20 }], // 20 uploads per hour
-    ["/payments", { windowMs: 3600000, maxRequests: 10 }], // 10 payment attempts per hour
+    // Buy-coins: limit initiate/verify only (not package catalogue or webhooks)
+    ["/payments/purchase/initiate", { windowMs: 3600000, maxRequests: 20 }],
+    ["/payments/purchase/verify", { windowMs: 3600000, maxRequests: 40 }],
     ["/v1/ads/me/ads/reward/verify", { windowMs: 3600000, maxRequests: 30 }], // 30 rewarded-ad verifies per hour
     ["/ads/me/ads/reward/verify", { windowMs: 3600000, maxRequests: 30 }],
     ["default", { windowMs: 60000, maxRequests: 100 }] // 100 requests per minute for other endpoints
@@ -61,12 +63,14 @@ export class RateLimitService implements OnModuleInit {
       return { allowed: true, remaining: Infinity, resetAt: Date.now() + 60000 };
     }
 
-    // Find rate limit config for this path
+    // Find most specific rate limit config for this path (skip the default bucket)
     let config = this.defaultLimits.get("default");
+    let bestLen = 0;
     for (const [routePath, routeConfig] of this.defaultLimits.entries()) {
-      if (path.startsWith(routePath)) {
+      if (routePath === "default") continue;
+      if (path.includes(routePath) && routePath.length > bestLen) {
         config = routeConfig;
-        break;
+        bestLen = routePath.length;
       }
     }
 

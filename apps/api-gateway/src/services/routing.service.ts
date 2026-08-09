@@ -297,6 +297,13 @@ export class RoutingService implements OnModuleInit {
       requiresAuth: false
     });
 
+    // Coin mining analytics (wallet-service); auth via X-Admin-Token in-service
+    this.routes.set("/admin/mining", {
+      path: "/admin/mining",
+      serviceUrl: walletServiceUrl,
+      requiresAuth: false
+    });
+
     this.logger.log("Route configuration loaded");
   }
 

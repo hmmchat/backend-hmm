@@ -220,6 +220,52 @@ export class WalletClientService {
   }
 
   /**
+   * Start coin-mining accrual for a user (wallet-service owns progress + credits).
+   */
+  async startMiningSession(params: {
+    userId: string;
+    bucket: "BROADCAST" | "VIDEO_CALL" | "VIEWER";
+    roomId?: string | null;
+    sessionId?: string | null;
+  }): Promise<void> {
+    try {
+      const response = await fetch(`${this.walletServiceUrl}/internal/mining/session/start`, {
+        method: "POST",
+        headers: this.getInternalHeaders(),
+        body: JSON.stringify(params)
+      });
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        this.logger.warn(`Mining session start failed: ${response.status} ${text}`);
+      }
+    } catch (error: any) {
+      this.logger.warn(`Mining session start error: ${error?.message || error}`);
+    }
+  }
+
+  /**
+   * Stop coin-mining accrual for a user (settles elapsed time into wallet progress).
+   */
+  async stopMiningSession(params: {
+    userId: string;
+    bucket?: "BROADCAST" | "VIDEO_CALL" | "VIEWER" | null;
+  }): Promise<void> {
+    try {
+      const response = await fetch(`${this.walletServiceUrl}/internal/mining/session/stop`, {
+        method: "POST",
+        headers: this.getInternalHeaders(),
+        body: JSON.stringify(params)
+      });
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        this.logger.warn(`Mining session stop failed: ${response.status} ${text}`);
+      }
+    } catch (error: any) {
+      this.logger.warn(`Mining session stop error: ${error?.message || error}`);
+    }
+  }
+
+  /**
    * Transfer diamonds between users (for dare payments and gifts)
    * Sender pays diamonds; receiver gets diamonds.
    */

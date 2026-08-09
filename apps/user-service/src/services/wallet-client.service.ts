@@ -59,6 +59,7 @@ export class WalletClientService {
 
   /**
    * Award referral rewards to both referrer and referred user
+   * @deprecated Prefer awardFaceCardMiningComplete for new FaceCard-100% referral mining.
    */
   async awardReferralRewards(
     referrerId: string,
@@ -99,6 +100,49 @@ export class WalletClientService {
     } catch (error: any) {
       this.logger.error(`Error awarding referral rewards: ${error.message}`);
       throw error; // Re-throw to let caller handle (don't block profile creation)
+    }
+  }
+
+  /**
+   * FaceCard 100% mining reward (+ optional referrer-only referral) via wallet-service.
+   */
+  async awardFaceCardMiningComplete(
+    userId: string,
+    referrerId?: string | null
+  ): Promise<{
+    faceCardAwarded: boolean;
+    faceCardAlreadyAwarded: boolean;
+    referralAwarded: boolean;
+    referralAlreadyAwarded: boolean;
+    faceCardCoins: number;
+    referralCoins: number;
+  }> {
+    try {
+      const response = await fetch(`${this.walletServiceUrl}/internal/mining/facecard-complete`, {
+        method: "POST",
+        headers: this.getInternalHeaders(),
+        body: JSON.stringify({
+          userId,
+          referrerId: referrerId ?? null
+        })
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => "Unknown error");
+        throw new Error(`Failed to award FaceCard mining complete: ${errorText}`);
+      }
+
+      return await response.json() as {
+        faceCardAwarded: boolean;
+        faceCardAlreadyAwarded: boolean;
+        referralAwarded: boolean;
+        referralAlreadyAwarded: boolean;
+        faceCardCoins: number;
+        referralCoins: number;
+      };
+    } catch (error: any) {
+      this.logger.error(`Error awarding FaceCard mining complete: ${error.message}`);
+      throw error;
     }
   }
 }

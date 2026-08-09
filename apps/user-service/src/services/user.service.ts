@@ -676,10 +676,9 @@ export class UserService implements OnModuleInit {
       // Calculate profile completion percentage
       const completion = await this.profileCompletion.calculateCompletion(userId);
 
-      // Process referral reward (non-blocking - profile creation already succeeded)
-      this.processReferralReward(userId).catch((error) => {
-        // Log error but don't throw - profile creation already succeeded
-        console.error(`Error processing referral reward for user ${userId}:`, error);
+      // FaceCard 100% mining + referrer-only referral (non-blocking)
+      this.maybeAwardOnFaceCardComplete(userId).catch((error) => {
+        console.error(`Error processing FaceCard mining reward for user ${userId}:`, error);
       });
 
       return { user: this.mapUserBrandLogos(user), profileCompletion: completion };
@@ -713,101 +712,76 @@ export class UserService implements OnModuleInit {
   }
 
   /**
-   * Process referral reward when profile is completed
-   * This is called asynchronously after profile creation succeeds
+   * When backend FaceCard completion hits 100%: award once-lifetime FaceCard coins
+   * and (if applicable) referrer-only referral coins via wallet-service mining.
    */
-  private async processReferralReward(userId: string): Promise<void> {
+  private async maybeAwardOnFaceCardComplete(userId: string): Promise<void> {
     try {
+      const completion = await this.profileCompletion.calculateCompletion(userId);
+      if (!completion || completion.percentage < 100) {
+        return;
+      }
+
       console.log(JSON.stringify({
-        event: "referral_payout_attempted",
-        referredUserId: userId,
+        event: "facecard_mining_attempted",
+        userId,
+        percentage: completion.percentage,
         ts: new Date().toISOString()
       }));
 
-      // Get referral status from auth-service
+      let referrerId: string | null = null;
       const referralStatus = await this.authClient.getReferralStatus(userId);
-
-      // If no referral or already claimed, skip
-      if (!referralStatus || !referralStatus.referredBy || referralStatus.referralRewardClaimed) {
-        console.log(JSON.stringify({
-          event: "referral_payout_skipped",
-          referredUserId: userId,
-          reason: !referralStatus ? "no_referral_status" : (!referralStatus.referredBy ? "no_referrer" : "already_claimed"),
-          ts: new Date().toISOString()
-        }));
-        return;
+      if (
+        referralStatus?.referredBy &&
+        !referralStatus.referralRewardClaimed &&
+        referralStatus.referredBy !== userId
+      ) {
+        const isReferrerActive = await this.authClient.isAccountActive(referralStatus.referredBy);
+        if (isReferrerActive) {
+          referrerId = referralStatus.referredBy;
+        } else {
+          // Inactive referrer: mark claimed so we don't keep retrying
+          await this.authClient.markReferralClaimed(userId).catch(() => undefined);
+          console.log(JSON.stringify({
+            event: "referral_payout_skipped",
+            referredUserId: userId,
+            referrerId: referralStatus.referredBy,
+            reason: "inactive_referrer",
+            ts: new Date().toISOString()
+          }));
+        }
       }
 
-      // Verify referrer account is still active before awarding rewards
-      const referrerId = referralStatus.referredBy;
-      const isReferrerActive = await this.authClient.isAccountActive(referrerId);
+      const payout = await this.walletClient.awardFaceCardMiningComplete(userId, referrerId);
 
-      if (!isReferrerActive) {
-        console.warn(`Referrer ${referrerId} is not active, skipping referral reward for user ${userId}`);
-        // Mark as claimed to prevent retry attempts
+      if (referrerId && (payout.referralAwarded || payout.referralAlreadyAwarded)) {
         await this.authClient.markReferralClaimed(userId);
-        console.log(JSON.stringify({
-          event: "referral_payout_skipped",
-          referredUserId: userId,
-          referrerId,
-          reason: "inactive_referrer",
-          ts: new Date().toISOString()
-        }));
-        return;
       }
-
-      // Prevent self-referral (additional safety check)
-      if (referrerId === userId) {
-        console.warn(`Self-referral detected for user ${userId}, skipping reward`);
-        await this.authClient.markReferralClaimed(userId);
-        console.log(JSON.stringify({
-          event: "referral_payout_skipped",
-          referredUserId: userId,
-          referrerId,
-          reason: "self_referral",
-          ts: new Date().toISOString()
-        }));
-        return;
-      }
-
-      // Get reward amounts from environment variables (with defaults)
-      const parsedReferrerReward = parseInt(process.env.REFERRAL_REWARD_REFERRER || "100", 10);
-      const parsedReferredReward = parseInt(process.env.REFERRAL_REWARD_REFERRED || "50", 10);
-      const referrerReward = parsedReferrerReward > 0 ? parsedReferrerReward : 100;
-      const referredReward = parsedReferredReward > 0 ? parsedReferredReward : 50;
-
-      // Award coins to both referrer and referred user
-      const payoutResult = await this.walletClient.awardReferralRewards(
-        referrerId,
-        userId,
-        referrerReward,
-        referredReward
-      );
-
-      // Mark referral as claimed in auth-service
-      await this.authClient.markReferralClaimed(userId);
 
       console.log(JSON.stringify({
-        event: "referral_payout_succeeded",
-        referredUserId: userId,
+        event: "facecard_mining_succeeded",
+        userId,
         referrerId,
-        referrerReward,
-        referredReward,
-        alreadyAwarded: payoutResult.alreadyAwarded,
-        referrerTransactionId: payoutResult.referrerTransactionId,
-        referredTransactionId: payoutResult.referredTransactionId,
+        ...payout,
         ts: new Date().toISOString()
       }));
     } catch (error) {
-      // Log error but don't throw - this is non-blocking
       console.error(JSON.stringify({
-        event: "referral_payout_failed",
-        referredUserId: userId,
+        event: "facecard_mining_failed",
+        userId,
         message: error instanceof Error ? error.message : String(error),
         ts: new Date().toISOString()
       }));
-      // Don't re-throw - profile creation already succeeded
     }
+  }
+
+  /** Fire-and-forget FaceCard mining check after profile-scoring writes. */
+  private triggerFaceCardMiningCheck(userId: string): void {
+    this.maybeAwardOnFaceCardComplete(userId).catch((error) => {
+      this.logger.error(
+        `FaceCard mining check failed for ${userId}: ${error instanceof Error ? error.message : error}`
+      );
+    });
   }
 
   async getProfile(userId: string, fields?: string[]) {
@@ -1039,6 +1013,7 @@ export class UserService implements OnModuleInit {
 
     // Calculate profile completion percentage
     const completion = await this.profileCompletion.calculateCompletion(userId);
+    this.triggerFaceCardMiningCheck(userId);
 
     return { user: userWithLogos, profileCompletion: completion };
   }
@@ -1094,6 +1069,7 @@ export class UserService implements OnModuleInit {
       }
     });
 
+    this.triggerFaceCardMiningCheck(userId);
     return { photo };
   }
 
@@ -1112,6 +1088,7 @@ export class UserService implements OnModuleInit {
       where: { id: photoId }
     });
 
+    this.triggerFaceCardMiningCheck(userId);
     return { ok: true };
   }
 
@@ -1165,6 +1142,7 @@ export class UserService implements OnModuleInit {
       this.logger.error(`Feature generation trigger failed for ${userId}: ${err.message}`)
     );
 
+    this.triggerFaceCardMiningCheck(userId);
     return { user };
   }
 
@@ -1211,6 +1189,7 @@ export class UserService implements OnModuleInit {
       this.logger.error(`Feature generation trigger failed for ${userId}: ${err.message}`)
     );
 
+    this.triggerFaceCardMiningCheck(userId);
     return { preferences: this.mapBrandPreferencesLogos(preferences) };
   }
 
@@ -1257,6 +1236,7 @@ export class UserService implements OnModuleInit {
       this.logger.error(`Feature generation trigger failed for ${userId}: ${err.message}`)
     );
 
+    this.triggerFaceCardMiningCheck(userId);
     return { interests: userInterests };
   }
 
@@ -1303,6 +1283,7 @@ export class UserService implements OnModuleInit {
       this.logger.error(`Feature generation trigger failed for ${userId}: ${err.message}`)
     );
 
+    this.triggerFaceCardMiningCheck(userId);
     return { values: userValues };
   }
 
@@ -1602,6 +1583,7 @@ export class UserService implements OnModuleInit {
       this.logger.error(`Feature generation trigger failed for ${userId}: ${err.message}`)
     );
 
+    this.triggerFaceCardMiningCheck(userId);
     return { city: (user as any).preferredCity || null };
   }
 
@@ -1761,6 +1743,7 @@ export class UserService implements OnModuleInit {
       this.logger.error(`Feature generation trigger failed for ${userId}: ${err.message}`)
     );
 
+    this.triggerFaceCardMiningCheck(userId);
     return { intent: user.intent || null };
   }
 
@@ -2592,6 +2575,7 @@ export class UserService implements OnModuleInit {
 
     // Calculate profile completion percentage
     const completion = await this.profileCompletion.calculateCompletion(userId);
+    this.triggerFaceCardMiningCheck(userId);
 
     return { user: this.mapUserBrandLogos(user), profileCompletion: completion };
   }

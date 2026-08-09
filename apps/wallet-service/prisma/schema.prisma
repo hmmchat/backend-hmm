@@ -196,3 +196,67 @@ model SeasonProgressEvent {
   @@index([seasonId])
   @@map("season_progress_events")
 }
+
+// ─── Coin mining ─────────────────────────────────────────────────────────────
+
+enum CoinMiningBucket {
+  BROADCAST
+  VIDEO_CALL
+  VIEWER
+}
+
+/// Persistent remainder seconds toward the next threshold per time bucket.
+model UserCoinMiningProgress {
+  userId                     String    @id
+  broadcastRemainderSeconds  Int       @default(0)
+  videoCallRemainderSeconds  Int       @default(0)
+  viewerRemainderSeconds     Int       @default(0)
+  faceCardRewardedAt         DateTime?
+  createdAt                  DateTime  @default(now())
+  updatedAt                  DateTime  @updatedAt
+
+  @@map("user_coin_mining_progress")
+}
+
+/// At most one active earning session per user (exclusive bucket).
+model CoinMiningActiveSession {
+  userId        String           @id
+  bucket        CoinMiningBucket
+  startedAt     DateTime         @default(now())
+  lastSettledAt DateTime         @default(now())
+  roomId        String?
+  sessionId     String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  @@index([bucket])
+  @@map("coin_mining_active_sessions")
+}
+
+/// Idempotent referrer-only payout when referred user hits FaceCard 100%.
+model CoinMiningReferralPayout {
+  id                    String   @id @default(cuid())
+  referredUserId        String   @unique
+  referrerId            String
+  referrerReward        Int
+  referrerTransactionId String?
+  awardedAt             DateTime @default(now())
+  createdAt             DateTime @default(now())
+
+  @@index([referrerId])
+  @@map("coin_mining_referral_payouts")
+}
+
+/// Singleton lifetime counters for successful coin mines (V1 analytics).
+model CoinMiningAnalytics {
+  id              String   @id @default("global")
+  broadcastMines  Int      @default(0)
+  videoCallMines  Int      @default(0)
+  viewerMines     Int      @default(0)
+  faceCardMines   Int      @default(0)
+  referralMines   Int      @default(0)
+  updatedAt       DateTime @updatedAt
+  createdAt       DateTime @default(now())
+
+  @@map("coin_mining_analytics")
+}

@@ -4,6 +4,7 @@ import { MediasoupService } from "./mediasoup.service.js";
 import { DiscoveryClientService } from "./discovery-client.service.js";
 import { StreamingNodeRegistryService } from "./streaming-node-registry.service.js";
 import { SeasonProgressService } from "./season-progress.service.js";
+import { CoinMiningProgressService } from "./coin-mining-progress.service.js";
 import { types as MediasoupTypes } from "mediasoup";
 import { v4 as uuidv4 } from "uuid";
 import { resolveRoomEndParticipantStatus } from "@hmm/common";
@@ -82,7 +83,8 @@ export class RoomService {
     private mediasoup: MediasoupService,
     private discoveryClient: DiscoveryClientService,
     private nodeRegistry: StreamingNodeRegistryService,
-    private seasonProgress: SeasonProgressService
+    private seasonProgress: SeasonProgressService,
+    private coinMining: CoinMiningProgressService
   ) {
     this.roomReconcileMinIntervalMs = this.parseNonNegativeInt(
       process.env.ROOM_RECONCILE_MIN_INTERVAL_MS,
@@ -665,6 +667,12 @@ export class RoomService {
       // Notify discovery-service (Redis / internal hooks); does not throw on HTTP failure
       await this.discoveryClient.notifyRoomCreated(roomId, userIds);
 
+      // Coin mining: participants start in video-call bucket (not broadcasting yet)
+      this.coinMining.startMany(userIds, "VIDEO_CALL", {
+        roomId,
+        sessionId: session.id
+      });
+
       this.clearHotReadCaches(roomId, userIds);
       return { roomId, sessionId: session.id, sfuNode: sfuNode.nodeId };
     } catch (error: any) {
@@ -1046,6 +1054,12 @@ export class RoomService {
       this.logger.warn(`Season progress on join failed: ${err?.message || err}`);
     });
 
+    this.coinMining.start(
+      userId,
+      this.coinMining.participantBucket(!!session.isBroadcasting),
+      { roomId, sessionId: session.id }
+    );
+
     // Keep user-service status aligned with the new active participant row.
     // Without this, GET /streaming/users/:id/room reconcile can immediately remove
     // the participant when status is still ONLINE/AVAILABLE from home/inbox flows.
@@ -1077,7 +1091,7 @@ export class RoomService {
       return;
     }
 
-    await this.prisma.callParticipant.updateMany({
+    const updateResult = await this.prisma.callParticipant.updateMany({
       where: {
         sessionId: session.id,
         userId,
@@ -1089,6 +1103,10 @@ export class RoomService {
         status: "left"
       }
     });
+
+    if (updateResult.count > 0) {
+      this.coinMining.stop(userId);
+    }
 
     // Check if room should be ended
     // BUSINESS RULE: Room ends only when no participants remain
@@ -1215,6 +1233,8 @@ export class RoomService {
     }
 
     this.logger.log(`Updated ${updateResult.count} participant record(s) for user ${userId} in room ${roomId}`);
+
+    this.coinMining.stop(userId);
 
     await this.prisma.callEvent.create({
       data: {
@@ -1504,6 +1524,12 @@ export class RoomService {
       this.logger.error(`Failed to update user statuses: ${err.message}`);
     });
 
+    // Coin mining: switch participants from video-call → broadcast bucket
+    this.coinMining.startMany(participantUserIds, "BROADCAST", {
+      roomId,
+      sessionId: session.id
+    });
+
     this.clearHotReadCaches(roomId, participantUserIds);
     this.logger.log(`Broadcasting enabled for room ${roomId} by HOST ${userId}`);
   }
@@ -1581,6 +1607,16 @@ export class RoomService {
       this.logger.error(`Failed to update user statuses: ${err.message}`);
     });
 
+    // Capture active viewers before marking them left (for mining stop + status)
+    const activeViewers = await this.prisma.callViewer.findMany({
+      where: {
+        sessionId: session.id,
+        leftAt: null
+      },
+      select: { userId: true }
+    });
+    const viewerUserIds = activeViewers.map((v) => v.userId);
+
     // Remove all viewers when broadcast stops
     await this.prisma.callViewer.updateMany({
       where: {
@@ -1592,20 +1628,18 @@ export class RoomService {
       }
     });
 
-    // Update viewer statuses to OFFLINE
-    const viewers = await this.prisma.callViewer.findMany({
-      where: {
-        sessionId: session.id,
-        leftAt: { not: null }
-      },
-      select: { userId: true }
-    });
-    const viewerUserIds = viewers.map(v => v.userId);
     if (viewerUserIds.length > 0) {
       this.discoveryClient.updateUserStatuses(viewerUserIds, "OFFLINE").catch((err) => {
         this.logger.error(`Failed to update viewer statuses: ${err.message}`);
       });
+      this.coinMining.stopMany(viewerUserIds, "VIEWER");
     }
+
+    // Coin mining: participants return to video-call bucket
+    this.coinMining.startMany(participantUserIds, "VIDEO_CALL", {
+      roomId,
+      sessionId: session.id
+    });
 
     this.clearHotReadCaches(roomId, [...participantUserIds, ...viewerUserIds]);
     this.logger.log(`Broadcasting disabled for room ${roomId} by HOST ${userId} - returning to IN_SQUAD`);
@@ -2044,6 +2078,16 @@ export class RoomService {
         this.logger.warn(`Season progress on pull-stranger join failed: ${err?.message || err}`);
       });
 
+    const pullSession = await this.prisma.callSession.findUnique({
+      where: { id: result.sessionId },
+      select: { isBroadcasting: true }
+    });
+    this.coinMining.start(
+      result.joiningUserId,
+      this.coinMining.participantBucket(!!pullSession?.isBroadcasting),
+      { roomId: result.roomId, sessionId: result.sessionId }
+    );
+
     return { roomId: result.roomId, sessionId: result.sessionId };
   }
 
@@ -2426,6 +2470,14 @@ export class RoomService {
       this.logger.warn(`Season progress on waitlist join failed: ${err?.message || err}`);
     });
 
+    // Coin mining: leave viewer bucket, join as participant
+    this.coinMining.stop(targetUserId, "VIEWER");
+    this.coinMining.start(
+      targetUserId,
+      this.coinMining.participantBucket(!!session.isBroadcasting),
+      { roomId, sessionId: session.id }
+    );
+
     // Notify discovery-service of participant join
     this.discoveryClient.notifyParticipantJoined(roomId, targetUserId).catch((err) => {
       this.logger.error(`Failed to notify discovery-service: ${err.message}`);
@@ -2464,6 +2516,7 @@ export class RoomService {
     // This avoids reconnect/raincheck races failing the flow.
     if (room.viewers.has(userId)) {
       this.logger.log(`Viewer ${userId} already present in-memory for room ${roomId}; skipping duplicate add`);
+      this.coinMining.start(userId, "VIEWER", { roomId, sessionId: session.id });
       return;
     }
 
@@ -2481,6 +2534,7 @@ export class RoomService {
     if (existingAnyViewer) {
       if (existingAnyViewer.leftAt === null) {
         this.logger.log(`Viewer ${userId} already active in room ${roomId}; skipping duplicate add`);
+        this.coinMining.start(userId, "VIEWER", { roomId, sessionId: session.id });
         return;
       }
       if (this.maxViewersPerBroadcast > 0) {
@@ -2520,6 +2574,8 @@ export class RoomService {
         }
       });
     }
+
+    this.coinMining.start(userId, "VIEWER", { roomId, sessionId: session.id });
 
     this.clearHotReadCaches(roomId, [userId]);
     this.logger.log(`Viewer ${userId} added to room ${roomId}`);
@@ -2604,6 +2660,10 @@ export class RoomService {
       this.logger.error(`❌ Failed to update viewer record for user ${userId} in room ${roomId}: ${error.message}`);
       this.logger.error(`Error details: ${JSON.stringify(error)}`);
       throw error; // Re-throw so caller knows update failed
+    }
+
+    if (dbViewerUpdated) {
+      this.coinMining.stop(userId, "VIEWER");
     }
 
     // Check if user is on waitlist
@@ -2933,6 +2993,10 @@ export class RoomService {
     this.seasonProgress.onRoomEnded(session.id, roomId).catch((err) => {
       this.logger.warn(`Season progress on room end failed: ${err?.message || err}`);
     });
+
+    // Coin mining: settle any remaining active sessions for participants + viewers
+    this.coinMining.stopMany(participantUserIds);
+    this.coinMining.stopMany(viewerUserIds, "VIEWER");
 
     this.clearHotReadCaches(roomId, [
       ...participantUserIds,

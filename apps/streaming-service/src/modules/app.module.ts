@@ -21,6 +21,7 @@ import { IcebreakerService } from "../services/icebreaker.service.js";
 import { LoadingMemeService } from "../services/loading-meme.service.js";
 import { WalletClientService } from "../services/wallet-client.service.js";
 import { SeasonProgressService } from "../services/season-progress.service.js";
+import { CoinMiningProgressService } from "../services/coin-mining-progress.service.js";
 import { DiscoveryClientService } from "../services/discovery-client.service.js";
 import { FriendClientService } from "../services/friend-client.service.js";
 import { HistoryService } from "../services/history.service.js";
@@ -55,6 +56,7 @@ import { PrismaService } from "../prisma/prisma.service.js";
     LoadingMemeService,
     WalletClientService,
     SeasonProgressService,
+    CoinMiningProgressService,
     DiscoveryClientService,
     FriendClientService,
     HistoryService,

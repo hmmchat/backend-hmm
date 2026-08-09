@@ -27,6 +27,7 @@ import {
   MATCH_SCORE_BROADCAST_TAG
 } from "../config/scoring.config.js";
 import { DISCOVERY_POOL_LIMIT } from "../config/limits.config.js";
+import { DISCOVERY_MATCHMAKING_STATUSES } from "../config/discovery-pool-filters.js";
 import {
   computeReportLayer,
   getDiscoveryReportLayerConfig
@@ -211,6 +212,14 @@ export class DiscoveryService implements OnModuleInit {
 
   private isKycPriorityEnabled(): boolean {
     return process.env.KYC_ENABLED === "true" && process.env.KYC_MODERATOR_PRIORITY_ENABLED === "true";
+  }
+
+  /**
+   * Statuses for face cards + city handoff. Single source of truth shared with
+   * matching getPoolUsers — see DISCOVERY_MATCHMAKING_STATUSES.
+   */
+  private discoveryPoolStatuses(): Array<(typeof DISCOVERY_MATCHMAKING_STATUSES)[number]> {
+    return [...DISCOVERY_MATCHMAKING_STATUSES];
   }
 
   private shouldPrioritizeModeratorCandidate(currentUser: UserProfile, candidate: DiscoveryUser): boolean {
@@ -485,10 +494,7 @@ export class DiscoveryService implements OnModuleInit {
 
     // No match found, check fallback options
     this.debugLog(`[DEBUG] getNextCardForUser - findMatchForUser returned null for user ${userId}, city: ${poolCity || 'null (Anywhere)'}`);
-    // Determine statuses to filter
-    const statuses: ("AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE")[] = soloOnly
-      ? ["AVAILABLE"]
-      : ["AVAILABLE", "IN_SQUAD_AVAILABLE", "IN_BROADCAST_AVAILABLE"];
+    const statuses = this.discoveryPoolStatuses();
 
     // If no matches found, check if we should show fallback
     if (true) {
@@ -505,8 +511,22 @@ export class DiscoveryService implements OnModuleInit {
           raincheckedUserIds
         );
 
-        // If users exist in other cities, use them (unlimited scroll)
+        // If users exist in other cities:
+        // - city-scoped pool → LOCATION handoff (never leak cross-city face cards)
+        // - Anywhere pool → show face cards directly
         if (usersInOtherCities.length > 0) {
+          if (poolCity !== null) {
+            return this.resolveEmptyPoolHandoff({
+              token,
+              userId,
+              sessionId,
+              soloOnly,
+              poolCity,
+              genders,
+              raincheckedUserIds
+            });
+          }
+
           const selectedUser = await this.selectBestMatchAndCreate(userId, usersInOtherCities, currentUser);
           const card = await this.buildCard(selectedUser, poolCity, currentUser);
 
@@ -532,6 +552,18 @@ export class DiscoveryService implements OnModuleInit {
         );
 
         if (usersWithoutGenderFilter.length > 0) {
+          if (poolCity !== null) {
+            return this.resolveEmptyPoolHandoff({
+              token,
+              userId,
+              sessionId,
+              soloOnly,
+              poolCity,
+              genders: undefined,
+              raincheckedUserIds
+            });
+          }
+
           const selectedUser = await this.selectBestMatchAndCreate(userId, usersWithoutGenderFilter, currentUser);
           const card = await this.buildCard(selectedUser, poolCity, currentUser);
 
@@ -645,7 +677,6 @@ export class DiscoveryService implements OnModuleInit {
         sessionId,
         soloOnly,
         poolCity,
-        statuses,
         genders,
         raincheckedUserIds
       });
@@ -1595,7 +1626,8 @@ export class DiscoveryService implements OnModuleInit {
     limit?: number;
     excludeCity?: string | null;
   }): Promise<{ cities: ShowableCity[]; ui: DiscoveryUiConfig }> {
-    const soloOnly = args.soloOnly ?? false;
+    // Note: args.soloOnly does not narrow showability — pull-stranger hosts must
+    // still make a city handoff-eligible (see discoveryPoolStatuses).
     const limit = Math.min(Math.max(args.limit ?? 3, 1), 50);
     const cityResponse = args.token
       ? await this.locationService.getPreferredCity(args.token)
@@ -1620,14 +1652,9 @@ export class DiscoveryService implements OnModuleInit {
       }
     }
 
-    const statuses: ("AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE")[] = soloOnly
-      ? ["AVAILABLE"]
-      : ["AVAILABLE", "IN_SQUAD_AVAILABLE", "IN_BROADCAST_AVAILABLE"];
-
     const cities = await this.listShowableCities({
       token: args.token,
       userId: args.userId,
-      statuses,
       genders,
       raincheckedUserIds,
       excludeCities: args.excludeCity ? [args.excludeCity] : [],
@@ -1656,15 +1683,14 @@ export class DiscoveryService implements OnModuleInit {
     sessionId: string;
     soloOnly: boolean;
     poolCity: string | null;
-    statuses: ("AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE")[];
     genders: ("MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY")[] | undefined;
     raincheckedUserIds: string[];
   }): Promise<CardResponse> {
     const exclude = args.poolCity ? [args.poolCity] : [];
+    // Always same statuses as the matchmaking pool (never narrow via soloOnly).
     const showable = await this.listShowableCities({
       token: args.token,
       userId: args.userId,
-      statuses: args.statuses,
       genders: args.genders,
       raincheckedUserIds: args.raincheckedUserIds,
       excludeCities: exclude,
@@ -1697,7 +1723,6 @@ export class DiscoveryService implements OnModuleInit {
   private async listShowableCities(args: {
     token?: string;
     userId: string;
-    statuses: ("AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE")[];
     genders: ("MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY")[] | undefined;
     raincheckedUserIds: string[];
     excludeCities?: string[];
@@ -1709,6 +1734,7 @@ export class DiscoveryService implements OnModuleInit {
         .filter(Boolean)
         .map((c) => String(c).toLowerCase())
     );
+    const statuses = this.discoveryPoolStatuses();
 
     const candidates = catalog.filter((row) => {
       const intent = (row.intent || "").trim();
@@ -1725,7 +1751,7 @@ export class DiscoveryService implements OnModuleInit {
               args.token,
               args.userId,
               row.value,
-              args.statuses,
+              statuses,
               args.genders,
               false,
               args.raincheckedUserIds
@@ -1733,7 +1759,7 @@ export class DiscoveryService implements OnModuleInit {
           : await this.findMatchingUsersForUser(
               args.userId,
               row.value,
-              args.statuses,
+              statuses,
               args.genders,
               false,
               args.raincheckedUserIds
@@ -2181,29 +2207,32 @@ export class DiscoveryService implements OnModuleInit {
 
     if (matchedUser) {
       this.logShadowAgreement(userId, matchedUser.id);
-      // findMatchForUser already creates the match, but let's verify it exists
-      // This ensures the match is definitely in the database before returning the card
-      try {
-        const verifyMatch = await this.matchingService.getMatchForUser(userId);
-        if (!verifyMatch || (verifyMatch.user1Id !== matchedUser.id && verifyMatch.user2Id !== matchedUser.id)) {
-          console.warn(`[WARN] Match not found after findMatchForUser, creating it now for ${userId} and ${matchedUser.id}`);
-          // This will throw if match creation fails - which is correct
-          // Cards should NOT be shown if match creation fails
-          await this.createMatchForCard(userId, matchedUser.id, currentUser, matchedUser);
+      // Pull-stranger cards skip active_matches / MATCHED — don't require a match row.
+      if (matchedUser.status !== "IN_SQUAD_AVAILABLE") {
+        // findMatchForUser already creates the match, but let's verify it exists
+        // This ensures the match is definitely in the database before returning the card
+        try {
+          const verifyMatch = await this.matchingService.getMatchForUser(userId);
+          if (!verifyMatch || (verifyMatch.user1Id !== matchedUser.id && verifyMatch.user2Id !== matchedUser.id)) {
+            console.warn(`[WARN] Match not found after findMatchForUser, creating it now for ${userId} and ${matchedUser.id}`);
+            // This will throw if match creation fails - which is correct
+            // Cards should NOT be shown if match creation fails
+            await this.createMatchForCard(userId, matchedUser.id, currentUser, matchedUser);
+          }
+        } catch (verifyError: any) {
+          console.error(`[ERROR] Failed to verify/create match:`, verifyError?.message || verifyError);
+          // Don't show card if match creation fails
+          throw new HttpException(
+            {
+              message: 'Failed to create match for card',
+              error: verifyError?.message || 'Match creation failed',
+              code: verifyError?.code || 'MATCH_CREATION_FAILED',
+              details: verifyError?.details || verifyError?.error || verifyError,
+              suggestion: 'Please check database connection and active_matches table. Check service logs for details.'
+            },
+            HttpStatus.INTERNAL_SERVER_ERROR
+          );
         }
-      } catch (verifyError: any) {
-        console.error(`[ERROR] Failed to verify/create match:`, verifyError?.message || verifyError);
-        // Don't show card if match creation fails
-        throw new HttpException(
-          {
-            message: 'Failed to create match for card',
-            error: verifyError?.message || 'Match creation failed',
-            code: verifyError?.code || 'MATCH_CREATION_FAILED',
-            details: verifyError?.details || verifyError?.error || verifyError,
-            suggestion: 'Please check database connection and active_matches table. Check service logs for details.'
-          },
-          HttpStatus.INTERNAL_SERVER_ERROR
-        );
       }
 
       const card = await this.buildCard(matchedUser, poolCity, currentUser);
@@ -2221,10 +2250,7 @@ export class DiscoveryService implements OnModuleInit {
     // No mutual match found, use fallback logic
     this.debugLog(`[DEBUG] getNextCardForUser - No mutual match found, using fallback logic. poolCity: ${poolCity}`);
 
-    // Determine statuses to filter
-    const statuses: ("AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE")[] = soloOnly
-      ? ["AVAILABLE"]
-      : ["AVAILABLE", "IN_SQUAD_AVAILABLE", "IN_BROADCAST_AVAILABLE"];
+    const statuses = this.discoveryPoolStatuses();
 
     // Find matching users (using a fake token - won't be validated in test mode)
     this.debugLog(`[DEBUG] getNextCardForUser - Calling findMatchingUsersForUser with city: ${poolCity}`);
@@ -2307,8 +2333,19 @@ export class DiscoveryService implements OnModuleInit {
           raincheckedUserIds
         );
 
-        // If users exist in other cities, use them (unlimited scroll)
+        // City-scoped pool → LOCATION handoff; Anywhere → face cards
         if (usersInOtherCities.length > 0) {
+          if (poolCity !== null) {
+            return this.resolveEmptyPoolHandoff({
+              userId,
+              sessionId,
+              soloOnly,
+              poolCity,
+              genders,
+              raincheckedUserIds
+            });
+          }
+
           const selectedUser = await this.selectBestMatchAndCreate(userId, usersInOtherCities, currentUser);
           const card = await this.buildCard(selectedUser, poolCity, currentUser);
 
@@ -2333,6 +2370,17 @@ export class DiscoveryService implements OnModuleInit {
         );
 
         if (usersWithoutGenderFilter.length > 0) {
+          if (poolCity !== null) {
+            return this.resolveEmptyPoolHandoff({
+              userId,
+              sessionId,
+              soloOnly,
+              poolCity,
+              genders: undefined,
+              raincheckedUserIds
+            });
+          }
+
           const selectedUser = await this.selectBestMatchAndCreate(userId, usersWithoutGenderFilter, currentUser);
           const card = await this.buildCard(selectedUser, poolCity, currentUser);
 
@@ -2418,7 +2466,6 @@ export class DiscoveryService implements OnModuleInit {
         sessionId,
         soloOnly,
         poolCity,
-        statuses,
         genders,
         raincheckedUserIds
       });
@@ -2480,8 +2527,21 @@ export class DiscoveryService implements OnModuleInit {
       return true;
     });
 
+    const sessionEligibleUsers = await this.discoverySessionService.filterSoloPoolCandidates(filteredUsers);
+
+    // Same pull-stranger gate as findMatchingUsers / getPoolUsers — handoff must not
+    // count cities the viewer cannot actually see.
+    const eligibility = await Promise.all(
+      sessionEligibleUsers.map(async (candidate) => {
+        if (candidate.status !== "IN_SQUAD_AVAILABLE") {
+          return true;
+        }
+        return this.streamingClient.canViewPullStrangerCard(candidate.id, userId);
+      })
+    );
+
     this.debugLog(`[DEBUG] findMatchingUsersForUser - users from service: ${users.length}, after filtering: ${filteredUsers.length}`);
-    return this.discoverySessionService.filterSoloPoolCandidates(filteredUsers);
+    return sessionEligibleUsers.filter((_, index) => eligibility[index]);
   }
 
   /**

@@ -16,6 +16,7 @@ import {
   MATCH_SCORE_MODERATOR_PRIORITY
 } from "../config/scoring.config.js";
 import { DISCOVERY_POOL_LIMIT } from "../config/limits.config.js";
+import { DISCOVERY_MATCHMAKING_STATUSES } from "../config/discovery-pool-filters.js";
 import fetch from "node-fetch";
 import { isPreferredCityAnywhere } from "@hmm/common";
 import { resolveAcceptanceTimeoutStatus } from "../status/status-rules.js";
@@ -269,11 +270,7 @@ export class MatchingService {
       "../config/discovery-pool-filters.js"
     );
 
-    const statuses: ("AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE")[] = [
-      "AVAILABLE",
-      "IN_SQUAD_AVAILABLE",
-      "IN_BROADCAST_AVAILABLE"
-    ];
+    const statuses = [...DISCOVERY_MATCHMAKING_STATUSES];
 
     const requesterIsModerator = Boolean(requestingUser?.isModerator);
     const requesterKycStatus = requestingUser?.kycStatus || "UNVERIFIED";
@@ -502,6 +499,12 @@ export class MatchingService {
     // Use atomic createMatch() to enforce one-active-match-per-user at write time,
     // instead of relying on stale cached matched-user snapshots.
     for (const pair of scoredPairs) {
+      // Pull-stranger hosts are one-way joins — never create active_matches or flip
+      // them to MATCHED (that kills the summoning window / replacement loop).
+      if (pair.user.status === "IN_SQUAD_AVAILABLE") {
+        return pair.user;
+      }
+
       // Create match (no expiration - persists until raincheck)
       const result = await this.createMatch(userId, pair.user.id, pair.score);
       if (!result.success) {

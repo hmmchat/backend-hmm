@@ -27,6 +27,7 @@ import {
   shouldAllocatorShadowLog,
   isBatchPrimaryForCity
 } from "../config/matching-admin.config.js";
+import { DISCOVERY_MATCHMAKING_STATUSES } from "../config/discovery-pool-filters.js";
 import {
   SESSION_DISCOVERY_POOL_ANYWHERE,
   sameDiscoveryPoolCity
@@ -248,7 +249,7 @@ export class BatchAllocatorService implements OnModuleInit {
       try {
         const users = await this.userClient.getUsersForDiscoveryById("", {
           city: cityFilter,
-          statuses: ["AVAILABLE", "IN_SQUAD_AVAILABLE", "IN_BROADCAST_AVAILABLE"],
+          statuses: [...DISCOVERY_MATCHMAKING_STATUSES],
           limit: MATCHING_MAX_POOL_SIZE
         });
         for (const u of users) {

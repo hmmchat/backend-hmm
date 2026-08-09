@@ -5,7 +5,21 @@ import {
 } from "./report-pool.config.js";
 
 type Gender = "MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY";
-type Status = "AVAILABLE" | "IN_SQUAD_AVAILABLE" | "IN_BROADCAST_AVAILABLE";
+
+/**
+ * Statuses that enter the live matchmaking / face-card pool.
+ * City handoff + available-cities MUST use this same set — anything showable
+ * as a face card must also make its city handoff-eligible.
+ */
+export const DISCOVERY_MATCHMAKING_STATUSES = [
+  "AVAILABLE",
+  "IN_SQUAD_AVAILABLE",
+  "IN_BROADCAST_AVAILABLE"
+] as const;
+
+export type DiscoveryMatchmakingStatus = (typeof DISCOVERY_MATCHMAKING_STATUSES)[number];
+
+type Status = DiscoveryMatchmakingStatus;
 
 export type DiscoveryPoolRequester = {
   isModerator?: boolean | null;

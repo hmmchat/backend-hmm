@@ -2224,15 +2224,14 @@ export class UserService implements OnModuleInit {
   }
 
   /**
-   * Get cities with maximum available users
-   * Returns cities sorted by available user count (descending)
-   * Counts users who are active in discovery, squads, broadcast, or Beam TV.
+   * Get cities with maximum matchmaking-pool users.
+   * Counts the same statuses as discovery face cards / city handoff:
+   * AVAILABLE, IN_SQUAD_AVAILABLE, IN_BROADCAST_AVAILABLE.
    */
   async getCitiesWithMaxUsers(
     limit?: number
   ): Promise<Array<{ city: string; availableCount: number }>> {
     const l = limit ?? CITIES_MAX_USERS_DEFAULT_LIMIT;
-    // Query to get cities with active/chatting user counts.
     const cities = await this.prisma.$queryRaw<Array<{ city: string; count: bigint }>>`
       SELECT 
         "preferredCity" as city,
@@ -2242,7 +2241,7 @@ export class UserService implements OnModuleInit {
         AND "preferredCity" != ''
         AND "preferredCity" <> ${PREFERRED_CITY_ANYWHERE_IN_INDIA}
         AND "profileCompleted" = true
-        AND status IN ('AVAILABLE', 'IN_SQUAD', 'IN_SQUAD_AVAILABLE', 'IN_BROADCAST', 'IN_BROADCAST_AVAILABLE', 'VIEWER')
+        AND status IN ('AVAILABLE', 'IN_SQUAD_AVAILABLE', 'IN_BROADCAST_AVAILABLE')
       GROUP BY "preferredCity"
       ORDER BY count DESC
       LIMIT ${l}
@@ -2256,8 +2255,8 @@ export class UserService implements OnModuleInit {
   }
 
   /**
-   * Get count of users with preferredCity = null (users who selected "Anywhere")
-   * These are users who can see and be seen by other "Anywhere" users
+   * Count of "Anywhere" users currently in the matchmaking pool
+   * (same statuses as face cards / city handoff).
    */
   async getAnywhereUsersCount(): Promise<number> {
     const result = await this.prisma.$queryRaw<Array<{ count: bigint }>>`
@@ -2265,7 +2264,7 @@ export class UserService implements OnModuleInit {
       FROM users
       WHERE ("preferredCity" IS NULL OR "preferredCity" = ${PREFERRED_CITY_ANYWHERE_IN_INDIA})
         AND "profileCompleted" = true
-        AND status IN ('AVAILABLE', 'IN_SQUAD', 'IN_SQUAD_AVAILABLE', 'IN_BROADCAST', 'IN_BROADCAST_AVAILABLE', 'VIEWER')
+        AND status IN ('AVAILABLE', 'IN_SQUAD_AVAILABLE', 'IN_BROADCAST_AVAILABLE')
     `;
     return Number(result[0]?.count || 0);
   }

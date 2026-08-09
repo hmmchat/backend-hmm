@@ -121,6 +121,7 @@ export class AuthService implements OnModuleInit {
       await this.phone.send(phone);
       return { ok: true };
     } catch (err) {
+      if (err instanceof HttpException) throw err;
       throw new HttpException(
         err instanceof Error ? err.message : "Failed to send OTP",
         HttpStatus.INTERNAL_SERVER_ERROR
@@ -129,7 +130,15 @@ export class AuthService implements OnModuleInit {
   }
 
   async verifyPhoneOtp(phone: string, code: string, termsVer: string, referralCode?: string) {
-    await this.phone.verify(phone, code);
+    try {
+      await this.phone.verify(phone, code);
+    } catch (err) {
+      if (err instanceof HttpException) throw err;
+      throw new HttpException(
+        err instanceof Error ? err.message : "OTP verification failed",
+        HttpStatus.UNAUTHORIZED
+      );
+    }
     return this.signInOrUp({ phone }, termsVer, referralCode);
   }
 
@@ -582,12 +591,15 @@ export class AuthService implements OnModuleInit {
       this.getReferrals(userId)
     ]);
 
-    const referrerCoins = parseInt(process.env.REFERRAL_REWARD_REFERRER || "100", 10);
-    const referredCoins = parseInt(process.env.REFERRAL_REWARD_REFERRED || "50", 10);
-    const successCriteriaLabel = process.env.REFERRAL_SUCCESS_CRITERIA_LABEL || "Profile completed";
+    // Align display with wallet-service coin mining referral (referrer-only).
+    const parsedReferrer = parseInt(process.env.COIN_MINING_REFERRAL_REWARD || "20", 10);
+    const referrerCoins = Number.isFinite(parsedReferrer) && parsedReferrer > 0 ? parsedReferrer : 20;
+    const referredCoins = 0;
+    const successCriteriaLabel =
+      process.env.REFERRAL_SUCCESS_CRITERIA_LABEL || "FaceCard completed to 100%";
     const deepLink = this.buildReferralShareDeepLink(referralCode);
     const rawTemplate = process.env.REFERRAL_SHARE_TEMPLATE
-      || "Join me on Beam! Use my referral code {code} and get rewards: {link}";
+      || "Join me on Beam! Use my referral code {code}: {link}";
 
     const messageTemplate = rawTemplate
       .replaceAll("{code}", referralCode)

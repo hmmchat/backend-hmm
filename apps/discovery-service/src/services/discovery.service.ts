@@ -210,6 +210,12 @@ export class DiscoveryService implements OnModuleInit {
     return sessionId.startsWith("offline-") ? sessionId : `offline-${sessionId}`;
   }
 
+  /**
+   * Persistent offline-card exclusions for heart / message / gift.
+   * Survives session refresh and raincheck recycle (unlike X-only rainchecks).
+   */
+  private static readonly OFFLINE_ENGAGED_SESSION_ID = "offline-engaged";
+
   private isKycPriorityEnabled(): boolean {
     return process.env.KYC_ENABLED === "true" && process.env.KYC_MODERATOR_PRIORITY_ENABLED === "true";
   }
@@ -2776,6 +2782,8 @@ export class DiscoveryService implements OnModuleInit {
    * Get next OFFLINE card for user (users with ONLINE/OFFLINE/VIEWER status)
    * IMPORTANT: Does NOT create matches - this is for browsing only
    * Uses "offline-" prefix for sessionId to avoid conflicts with video call rainchecks
+   * Offline cards are NOT location-specific (always search anywhere).
+   * Refresh (new session) recycles X-only rainchecks; heart/message/gift stays excluded.
    */
   async getNextOfflineCard(
     token: string,
@@ -2789,11 +2797,12 @@ export class DiscoveryService implements OnModuleInit {
     const cityResponse = await this.locationService.getPreferredCity(token);
     const storedPreferred = cityResponse.city;
     const offlineSessionId = this.toOfflineSessionId(sessionId);
-    const poolCity = await this.getEffectiveDiscoveryPoolCity(userId, offlineSessionId, storedPreferred);
+    // Offline cards always browse the global pool (not location-specific)
+    const poolCity: string | null = null;
 
-    // Get viewer's actual city from location if in "anywhere" mode
+    // Get viewer's actual city from location for same-city scoring bonus only
     let actualCity: string | null = null;
-    if (isPreferredCityAnywhere(storedPreferred) && (userProfileResponse as any).latitude && (userProfileResponse as any).longitude) {
+    if ((userProfileResponse as any).latitude && (userProfileResponse as any).longitude) {
       try {
         const locationResult = await this.locationService.locateMe(
           (userProfileResponse as any).latitude,
@@ -2840,39 +2849,36 @@ export class DiscoveryService implements OnModuleInit {
       }
     }
 
-    // Get rainchecked user IDs for this OFFLINE session and city
-    const raincheckedUserIds = await this.getOfflineRaincheckedUserIds(userId, offlineSessionId, storedPreferred);
-
     // Determine statuses to filter - OFFLINE cards show ONLINE, OFFLINE, VIEWER
     const statuses: ("ONLINE" | "OFFLINE" | "VIEWER")[] = ["ONLINE", "OFFLINE", "VIEWER"];
 
-    // Find matching users (same scoring system, but no match creation)
-    const matchingUsers = await this.findOfflineMatchingUsers(
-      token,
-      userId,
-      poolCity,
-      statuses,
-      genders,
-      soloOnly,
-      raincheckedUserIds
-    );
-
-    // If matches found, return the best match (using same scoring)
-    if (matchingUsers.length > 0) {
+    const tryPick = async (excludeUserIds: string[]) => {
+      const matchingUsers = await this.findOfflineMatchingUsers(
+        token,
+        userId,
+        poolCity,
+        statuses,
+        genders,
+        soloOnly,
+        excludeUserIds
+      );
+      if (matchingUsers.length === 0) return null;
       const selectedUser = this.selectBestMatch(matchingUsers, currentUser);
       const card = await this.buildCard(selectedUser, poolCity, currentUser);
-
       if (hasActiveGenderFilter) {
         await this.genderFilterService.decrementScreen(userId);
       }
+      return card;
+    };
 
-      return {
-        card,
-        exhausted: false
-      };
+    const excludeIds = await this.getOfflineExcludeUserIds(userId, offlineSessionId);
+    const card = await tryPick(excludeIds);
+    if (card) {
+      return { card, exhausted: false };
     }
 
-    // No matches found - return exhausted
+    // Exhausted for this session. Refresh (new sessionId) recycles X-only rainchecks;
+    // heart/message/gift engagements persist via offline-engaged exclusions.
     return {
       card: null,
       exhausted: true
@@ -2913,19 +2919,19 @@ export class DiscoveryService implements OnModuleInit {
   }
 
   /**
-   * Get rainchecked user IDs for OFFLINE cards session (uses prefixed sessionId)
+   * Get rainchecked user IDs for OFFLINE cards session (uses prefixed sessionId).
+   * City is ignored — offline cards are not location-specific.
    */
   private async getOfflineRaincheckedUserIds(
     userId: string,
     offlineSessionId: string,
-    city: string | null
+    _city?: string | null
   ): Promise<string[]> {
     try {
       const rainchecks = await (this.prisma as any).raincheckSession.findMany({
         where: {
           userId,
-          sessionId: offlineSessionId, // Uses "offline-" prefixed sessionId
-          city: city || null,
+          sessionId: offlineSessionId,
           raincheckedUserId: {
             not: {
               startsWith: "LOCATION:"
@@ -2948,28 +2954,100 @@ export class DiscoveryService implements OnModuleInit {
     }
   }
 
+  /** Users engaged via heart / message / gift — persist across offline session refreshes. */
+  private async getOfflineEngagedUserIds(userId: string): Promise<string[]> {
+    try {
+      const rows = await (this.prisma as any).raincheckSession.findMany({
+        where: {
+          userId,
+          sessionId: DiscoveryService.OFFLINE_ENGAGED_SESSION_ID,
+          raincheckedUserId: {
+            not: {
+              startsWith: "LOCATION:"
+            }
+          }
+        },
+        select: {
+          raincheckedUserId: true
+        }
+      });
+      return rows.map((r: { raincheckedUserId: string }) => r.raincheckedUserId);
+    } catch (error: any) {
+      if (error?.code === 'P2021' || error?.message?.includes('does not exist')) {
+        return [];
+      }
+      console.error("Error fetching OFFLINE engaged users:", error);
+      return [];
+    }
+  }
+
+  private async getOfflineExcludeUserIds(
+    userId: string,
+    offlineSessionId: string
+  ): Promise<string[]> {
+    const [rainchecked, engaged] = await Promise.all([
+      this.getOfflineRaincheckedUserIds(userId, offlineSessionId),
+      this.getOfflineEngagedUserIds(userId)
+    ]);
+    return [...new Set([...rainchecked, ...engaged])];
+  }
+
+  /**
+   * Persist engagement (heart / message / gift) so the card is not recycled on exhaustion.
+   */
+  async markOfflineEngagement(userId: string, engagedUserId: string): Promise<void> {
+    if (!userId || !engagedUserId || userId === engagedUserId) return;
+    try {
+      const existing = await (this.prisma as any).raincheckSession.findFirst({
+        where: {
+          userId,
+          sessionId: DiscoveryService.OFFLINE_ENGAGED_SESSION_ID,
+          raincheckedUserId: engagedUserId
+        }
+      });
+      if (!existing) {
+        await (this.prisma as any).raincheckSession.create({
+          data: {
+            userId,
+            sessionId: DiscoveryService.OFFLINE_ENGAGED_SESSION_ID,
+            raincheckedUserId: engagedUserId,
+            city: null
+          }
+        });
+      }
+      console.log(
+        `[INFO] OFFLINE card engagement recorded: ${userId} engaged ${engagedUserId}`
+      );
+    } catch (error: any) {
+      if (error?.code === 'P2021' || error?.message?.includes('does not exist')) {
+        console.warn("Raincheck table not found, skipping OFFLINE engagement:", error.message);
+        return;
+      }
+      throw error;
+    }
+  }
+
   /**
    * Mark user as rainchecked in OFFLINE cards (uses prefixed sessionId)
    * IMPORTANT: Does NOT create or remove matches - this is for browsing only
+   * City is always stored as null — offline cards are not location-specific.
    */
   async markOfflineRaincheck(
     userId: string,
     sessionId: string,
     raincheckedUserId: string,
-    city: string | null
+    _city: string | null = null
   ): Promise<void> {
     try {
       // Use prefixed sessionId to avoid conflicts with video call rainchecks
       const offlineSessionId = this.toOfflineSessionId(sessionId);
 
       // IMPORTANT: Do NOT check for matches or reset statuses - OFFLINE cards don't create matches
-      // Just mark as rainchecked in session (bidirectionally - both users should exclude each other)
       const existing1 = await (this.prisma as any).raincheckSession.findFirst({
         where: {
           userId,
           sessionId: offlineSessionId,
-          raincheckedUserId,
-          city: city || null
+          raincheckedUserId
         }
       });
 
@@ -2979,28 +3057,7 @@ export class DiscoveryService implements OnModuleInit {
             userId,
             sessionId: offlineSessionId,
             raincheckedUserId,
-            city: city || null
-          }
-        });
-      }
-
-      // Also record the reverse raincheck (User B should also exclude User A)
-      const existing2 = await (this.prisma as any).raincheckSession.findFirst({
-        where: {
-          userId: raincheckedUserId,
-          sessionId: offlineSessionId,
-          raincheckedUserId: userId,
-          city: city || null
-        }
-      });
-
-      if (!existing2) {
-        await (this.prisma as any).raincheckSession.create({
-          data: {
-            userId: raincheckedUserId,
-            sessionId: offlineSessionId,
-            raincheckedUserId: userId,
-            city: city || null
+            city: null
           }
         });
       }
@@ -3028,11 +3085,12 @@ export class DiscoveryService implements OnModuleInit {
 
     const storedPreferred = await this.userClient.getPreferredCityById(userId);
     const offlineSessionId = this.toOfflineSessionId(sessionId);
-    const poolCity = await this.getEffectiveDiscoveryPoolCity(userId, offlineSessionId, storedPreferred);
+    // Offline cards always browse the global pool (not location-specific)
+    const poolCity: string | null = null;
 
-    // Get viewer's actual city from location if in "anywhere" mode
+    // Get viewer's actual city from location for same-city scoring bonus only
     let actualCity: string | null = null;
-    if (isPreferredCityAnywhere(storedPreferred) && (userProfileResponse as any).latitude && (userProfileResponse as any).longitude) {
+    if ((userProfileResponse as any).latitude && (userProfileResponse as any).longitude) {
       try {
         const locationResult = await this.locationService.locateMe(
           (userProfileResponse as any).latitude,
@@ -3079,38 +3137,33 @@ export class DiscoveryService implements OnModuleInit {
       }
     }
 
-    // Get rainchecked user IDs for this OFFLINE session
-    const raincheckedUserIds = await this.getOfflineRaincheckedUserIds(userId, offlineSessionId, storedPreferred);
-
     // Determine statuses - OFFLINE cards show ONLINE, OFFLINE, VIEWER
     const statuses: ("ONLINE" | "OFFLINE" | "VIEWER")[] = ["ONLINE", "OFFLINE", "VIEWER"];
 
-    // Find matching users (no match creation)
-    const matchingUsers = await this.findOfflineMatchingUsersForUser(
-      userId,
-      poolCity,
-      statuses,
-      genders,
-      soloOnly,
-      raincheckedUserIds
-    );
-
-    // If matches found, return the best match
-    if (matchingUsers.length > 0) {
+    const tryPick = async (excludeUserIds: string[]) => {
+      const matchingUsers = await this.findOfflineMatchingUsersForUser(
+        userId,
+        poolCity,
+        statuses,
+        genders,
+        soloOnly,
+        excludeUserIds
+      );
+      if (matchingUsers.length === 0) return null;
       const selectedUser = this.selectBestMatch(matchingUsers, currentUser);
       const card = await this.buildCard(selectedUser, poolCity, currentUser);
-
       if (hasActiveGenderFilter) {
         await this.genderFilterService.decrementScreen(userId);
       }
+      return card;
+    };
 
-      return {
-        card,
-        exhausted: false
-      };
+    const excludeIds = await this.getOfflineExcludeUserIds(userId, offlineSessionId);
+    const card = await tryPick(excludeIds);
+    if (card) {
+      return { card, exhausted: false };
     }
 
-    // No matches found - return exhausted
     return {
       card: null,
       exhausted: true

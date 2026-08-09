@@ -26,6 +26,7 @@ import {
   CallEndedRequestSchema,
   GetOfflineCardQuerySchema,
   OfflineRaincheckRequestSchema,
+  OfflineEngageRequestSchema,
   DiscoverySessionHeartbeatSchema,
   DiscoverySessionEndSchema,
   DiscoverySessionEnterSchema,
@@ -714,16 +715,12 @@ export class DiscoveryController {
     const payload = await verifyAccess(token);
     const userId = payload.sub;
 
-    // Get user's preferred city
-    const cityResponse = await this.locationService.getPreferredCity(token);
-    const city = cityResponse.city;
-
-    // Mark as rainchecked (uses prefixed sessionId to avoid conflicts)
+    // Offline cards are not location-specific — always store rainchecks with city=null
     await this.discoveryService.markOfflineRaincheck(
       userId,
       dto.sessionId,
       dto.raincheckedUserId,
-      city
+      null
     );
 
     // Return next card
@@ -738,6 +735,39 @@ export class DiscoveryController {
       success: true,
       nextCard: nextCard.card
     };
+  }
+
+  /**
+   * Mark an offline card as engaged (heart / message / gift).
+   * Engaged users stay excluded after raincheck recycle / session refresh.
+   * POST /discovery/offline-cards/engage
+   */
+  @Post("offline-cards/engage")
+  async offlineEngage(
+    @Headers("authorization") authz: string,
+    @Body() body: any
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+
+    const dto = OfflineEngageRequestSchema.parse(body);
+
+    const { verifyToken } = await import("@hmm/common");
+    const jwkStr = process.env.JWT_PUBLIC_JWK;
+    if (!jwkStr || jwkStr === "undefined") {
+      throw new HttpException("Server configuration error", HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+    const cleanedJwk = jwkStr.trim().replace(/^['"]|['"]$/g, "");
+    const publicJwk = JSON.parse(cleanedJwk);
+    const verifyAccess = await verifyToken(publicJwk);
+    const payload = await verifyAccess(token);
+    const userId = payload.sub;
+
+    await this.discoveryService.markOfflineEngagement(userId, dto.engagedUserId);
+
+    return { success: true };
   }
 
   /* ---------- Test Endpoints for OFFLINE Cards (No Auth Required) ---------- */
@@ -772,12 +802,8 @@ export class DiscoveryController {
       throw new HttpException("userId, sessionId, and raincheckedUserId are required", HttpStatus.BAD_REQUEST);
     }
 
-    // Get user's preferred city directly from user service
-    const cityResponse = await this.locationService.getPreferredCityForUser(userId);
-    const city = cityResponse.city;
-
-    // Mark as rainchecked (uses prefixed sessionId)
-    await this.discoveryService.markOfflineRaincheck(userId, sessionId, raincheckedUserId, city);
+    // Offline cards are not location-specific
+    await this.discoveryService.markOfflineRaincheck(userId, sessionId, raincheckedUserId, null);
 
     // Return next card
     const nextCard = await this.discoveryService.getNextOfflineCardForUser(userId, sessionId, false);

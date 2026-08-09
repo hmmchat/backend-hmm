@@ -107,6 +107,11 @@ export const OfflineRaincheckRequestSchema = z.object({
   raincheckedUserId: z.string().min(1, "Rainchecked user ID is required")
 });
 
+/** Heart / message / gift — persist across offline-card session refreshes. */
+export const OfflineEngageRequestSchema = z.object({
+  engagedUserId: z.string().min(1, "Engaged user ID is required")
+});
+
 export const SendFriendRequestFromOfflineCardSchema = z.object({
   toUserId: z.string().min(1, "To user ID is required")
 });
@@ -119,6 +124,7 @@ export const SendGiftFromOfflineCardSchema = z.object({
 
 export type GetOfflineCardQuery = z.infer<typeof GetOfflineCardQuerySchema>;
 export type OfflineRaincheckRequest = z.infer<typeof OfflineRaincheckRequestSchema>;
+export type OfflineEngageRequest = z.infer<typeof OfflineEngageRequestSchema>;
 export type SendFriendRequestFromOfflineCard = z.infer<typeof SendFriendRequestFromOfflineCardSchema>;
 export type SendGiftFromOfflineCard = z.infer<typeof SendGiftFromOfflineCardSchema>;
 

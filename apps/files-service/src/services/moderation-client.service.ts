@@ -43,6 +43,8 @@ export class ModerationClientService {
   shouldModerate(mimeType: string, folder?: string): boolean {
     if (this.skipModeration) return false;
     if (!mimeType?.startsWith("image/")) return false;
+    // Sightengine expects raster images; SVG catalog assets skip moderation.
+    if (mimeType.toLowerCase() === "image/svg+xml") return false;
     if (folder && this.skipFolders.has(folder)) return false;
     return true;
   }

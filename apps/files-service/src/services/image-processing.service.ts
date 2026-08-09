@@ -26,8 +26,20 @@ export class ImageProcessingService {
     "image/jpg",
     "image/png",
     "image/webp",
-    "image/gif"
+    "image/gif",
+    "image/svg+xml"
   ];
+
+  /** Dashboard catalog folders may upload SVG; consumer profile photos stay raster-only. */
+  private readonly SVG_ALLOWED_FOLDERS = new Set([
+    "zodiacs",
+    "brand-logos",
+    "gift-images",
+    "discovery-city-faces",
+    "loading-memes",
+    "notifications",
+    "moderator-face-card"
+  ]);
 
   constructor() {
     this.maxWidth = parseInt(process.env.IMAGE_MAX_WIDTH || "2000", 10);
@@ -44,6 +56,43 @@ export class ImageProcessingService {
     return this.ALLOWED_TYPES.includes(mimeType.toLowerCase());
   }
 
+  isSvg(mimeType: string): boolean {
+    return mimeType.toLowerCase() === "image/svg+xml";
+  }
+
+  isSvgAllowedForFolder(folder?: string): boolean {
+    return !!folder && this.SVG_ALLOWED_FOLDERS.has(folder);
+  }
+
+  /**
+   * Normalize MIME when clients send text/xml, application/xml, or octet-stream for .svg.
+   */
+  resolveImageMimeType(buffer: Buffer, mimeType: string, filename?: string): string {
+    const lower = (mimeType || "").toLowerCase();
+    if (lower === "image/svg+xml") return "image/svg+xml";
+    if (filename?.toLowerCase().endsWith(".svg") && this.looksLikeSvg(buffer)) {
+      return "image/svg+xml";
+    }
+    if (
+      (lower === "text/xml" ||
+        lower === "application/xml" ||
+        lower === "application/octet-stream" ||
+        lower === "text/plain") &&
+      this.looksLikeSvg(buffer)
+    ) {
+      return "image/svg+xml";
+    }
+    return mimeType;
+  }
+
+  looksLikeSvg(buffer: Buffer): boolean {
+    const head = buffer.subarray(0, Math.min(buffer.length, 2048)).toString("utf8").trimStart();
+    if (head.startsWith("<svg") || head.startsWith("<?xml")) {
+      return /<svg[\s>]/i.test(head);
+    }
+    return false;
+  }
+
   /**
    * Declared MIME is GIF — never run the static image pipeline (would drop frames / change format).
    */
@@ -55,13 +104,14 @@ export class ImageProcessingService {
    * True if this buffer must be uploaded without Sharp resize/re-encode.
    * Browsers and clients often mislabel animated GIFs (e.g. application/octet-stream); MIME-only
    * checks flatten them to single-frame JPEG via processImage().
+   * SVG must stay vector — Sharp would rasterize/re-encode and lose the format.
    */
   async shouldPreserveImageWithoutReencode(buffer: Buffer, mimeType: string): Promise<boolean> {
-    if (this.isAnimatedImage(mimeType)) return true;
+    if (this.isAnimatedImage(mimeType) || this.isSvg(mimeType)) return true;
 
     try {
       const meta = await sharp(buffer).metadata();
-      if (meta.format === "gif") return true;
+      if (meta.format === "gif" || meta.format === "svg") return true;
       const pages = meta.pages ?? 1;
       if (pages > 1) return true;
     } catch {
@@ -73,10 +123,17 @@ export class ImageProcessingService {
   /**
    * Validate image file
    */
-  async validateImage(buffer: Buffer, mimeType: string): Promise<void> {
+  async validateImage(buffer: Buffer, mimeType: string, folder?: string): Promise<void> {
     if (!this.isImage(mimeType)) {
       throw new HttpException(
         `Invalid image type. Allowed types: ${this.ALLOWED_TYPES.join(", ")}`,
+        HttpStatus.BAD_REQUEST
+      );
+    }
+
+    if (this.isSvg(mimeType) && !this.isSvgAllowedForFolder(folder)) {
+      throw new HttpException(
+        "SVG uploads are only allowed for dashboard catalog assets",
         HttpStatus.BAD_REQUEST
       );
     }
@@ -86,6 +143,13 @@ export class ImageProcessingService {
         `Image too large. Maximum size: ${this.maxFileSize / 1024 / 1024}MB`,
         HttpStatus.BAD_REQUEST
       );
+    }
+
+    if (this.isSvg(mimeType)) {
+      if (!this.looksLikeSvg(buffer)) {
+        throw new HttpException("Invalid SVG file", HttpStatus.BAD_REQUEST);
+      }
+      return;
     }
 
     // Verify it's actually a valid image
@@ -162,6 +226,21 @@ export class ImageProcessingService {
    * Get image metadata without processing
    */
   async getImageMetadata(buffer: Buffer): Promise<ImageMetadata> {
+    if (this.looksLikeSvg(buffer)) {
+      try {
+        const metadata = await sharp(buffer).metadata();
+        return {
+          width: metadata.width || 0,
+          height: metadata.height || 0,
+          format: "svg",
+          size: buffer.length
+        };
+      } catch {
+        // SVG without explicit size (viewBox-only) — still valid for <img>
+        return { width: 0, height: 0, format: "svg", size: buffer.length };
+      }
+    }
+
     try {
       const metadata = await sharp(buffer).metadata();
       return {
@@ -182,6 +261,13 @@ export class ImageProcessingService {
    * Generate thumbnail
    */
   async generateThumbnail(buffer: Buffer, size?: number): Promise<Buffer> {
+    if (this.looksLikeSvg(buffer)) {
+      throw new HttpException(
+        "Thumbnails are not generated for SVG; use the original file",
+        HttpStatus.BAD_REQUEST
+      );
+    }
+
     const thumbSize = size ?? this.thumbnailSize;
     try {
       return await sharp(buffer)

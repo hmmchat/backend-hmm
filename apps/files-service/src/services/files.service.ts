@@ -50,6 +50,7 @@ export class FilesService {
     options: UploadFileDto = {}
   ): Promise<FileInfo> {
     const { userId, folder, processImage = true } = options;
+    mimeType = this.imageProcessing.resolveImageMimeType(buffer, mimeType, filename);
     const isImage = this.imageProcessing.isImage(mimeType);
     const preserveBytes =
       isImage && (await this.imageProcessing.shouldPreserveImageWithoutReencode(buffer, mimeType));
@@ -57,9 +58,9 @@ export class FilesService {
 
     // Validate image if it's an image
     if (isImage) {
-      await this.imageProcessing.validateImage(buffer, mimeType);
+      await this.imageProcessing.validateImage(buffer, mimeType, folder);
 
-      // Process static images only. Animated GIFs must be preserved as-is.
+      // Process static images only. Animated GIFs and SVGs must be preserved as-is.
       if (shouldProcessImage) {
         const processed = await this.imageProcessing.processImage(buffer, {
           maxWidth: options.maxWidth,

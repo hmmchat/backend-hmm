@@ -80,8 +80,8 @@ export class FilesService {
       originalFilename: filename
     });
 
-    // Production: moderate user image uploads via Sightengine (public URL).
-    // Skip internal folders (e.g. friends-wall-share). On failure, delete and reject.
+    // Sightengine only for end-user profile photos (folder=profile-photos).
+    // Dashboard catalog uploads (memes, zodiacs, gifts, …) are not moderated.
     if (this.moderationClient.shouldModerate(mimeType, folder)) {
       try {
         await this.moderationClient.checkImage(url, options.moderationPurpose ?? "gallery");

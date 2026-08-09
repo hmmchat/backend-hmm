@@ -1,5 +1,6 @@
 import { Injectable, HttpException, HttpStatus } from "@nestjs/common";
 import sharp from "sharp";
+import { DASHBOARD_CATALOG_FOLDERS } from "../config/dashboard-catalog-folders.js";
 
 export interface ImageMetadata {
   width: number;
@@ -31,15 +32,7 @@ export class ImageProcessingService {
   ];
 
   /** Dashboard catalog folders may upload SVG; consumer profile photos stay raster-only. */
-  private readonly SVG_ALLOWED_FOLDERS = new Set([
-    "zodiacs",
-    "brand-logos",
-    "gift-images",
-    "discovery-city-faces",
-    "loading-memes",
-    "notifications",
-    "moderator-face-card"
-  ]);
+  private readonly SVG_ALLOWED_FOLDERS = new Set<string>(DASHBOARD_CATALOG_FOLDERS);
 
   constructor() {
     this.maxWidth = parseInt(process.env.IMAGE_MAX_WIDTH || "2000", 10);

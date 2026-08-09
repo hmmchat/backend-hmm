@@ -57,6 +57,15 @@ services:
       - PORT=3001
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/auth-service?schema=public
       - REDIS_URL=redis://redis:6379
+      - MSG91_AUTH_KEY=${MSG91_AUTH_KEY}
+      - MSG91_TEMPLATE_ID=${MSG91_TEMPLATE_ID}
+      - MSG91_SENDER_ID=${MSG91_SENDER_ID:-}
+      - OTP_LENGTH=${OTP_LENGTH:-6}
+      - OTP_TTL_SECONDS=${OTP_TTL_SECONDS:-300}
+      - OTP_RESEND_COOLDOWN_SECONDS=${OTP_RESEND_COOLDOWN_SECONDS:-45}
+      - OTP_MAX_SENDS_PER_DAY=${OTP_MAX_SENDS_PER_DAY:-10}
+      - OTP_MAX_VERIFY_ATTEMPTS=${OTP_MAX_VERIFY_ATTEMPTS:-5}
+      - OTP_PEPPER=${OTP_PEPPER:-}
       - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN}
       # Ban force-logout notify targets + temp ban lockout / support copy
       - DISCOVERY_SERVICE_URL=http://discovery-service:3004
@@ -263,6 +272,8 @@ services:
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/files-service?schema=public
       - MODERATION_SERVICE_URL=http://moderation-service:3003
       - MODERATION_PRODUCTION_ONLY=true
+      # Sightengine only for end-user profile photos; dashboard uploads skip moderation.
+      - MODERATION_FOLDERS=profile-photos
       - MODERATION_SKIP_FOLDERS=friends-wall-share
     ports:
       - "3008:3008"

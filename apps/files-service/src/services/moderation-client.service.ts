@@ -6,6 +6,14 @@ function envFlagEnabled(value: string | undefined): boolean {
   return v === "true" || v === "1" || v === "yes";
 }
 
+function parseFolderList(value: string | undefined, fallback: string[]): string[] {
+  if (value === undefined || value.trim() === "") return fallback;
+  return value
+    .split(",")
+    .map((f) => f.trim())
+    .filter(Boolean);
+}
+
 export type ModerationPurpose = "display" | "gallery";
 
 interface ModerationResult {
@@ -16,12 +24,18 @@ interface ModerationResult {
   error?: string;
 }
 
+/** End-user profile photo slots (DP + gallery). Dashboard/catalog uploads are not moderated. */
+const DEFAULT_MODERATED_FOLDERS = ["profile-photos"];
+
 @Injectable()
 export class ModerationClientService {
   private readonly logger = new Logger(ModerationClientService.name);
   private readonly moderationServiceUrl: string;
   private readonly skipModeration: boolean;
   private readonly timeoutMs: number;
+  /** Only these folders run Sightengine (user's 3 photos). */
+  private readonly moderatedFolders: Set<string>;
+  /** Extra hard skips (e.g. internal generated assets). */
   private readonly skipFolders: Set<string>;
 
   constructor() {
@@ -32,20 +46,21 @@ export class ModerationClientService {
       process.env.NODE_ENV === "test" ||
       (productionOnly && process.env.NODE_ENV !== "production");
     this.timeoutMs = parseInt(process.env.MODERATION_CHECK_TIMEOUT_MS || "25000", 10);
+    this.moderatedFolders = new Set(
+      parseFolderList(process.env.MODERATION_FOLDERS, DEFAULT_MODERATED_FOLDERS)
+    );
     this.skipFolders = new Set(
-      (process.env.MODERATION_SKIP_FOLDERS || "friends-wall-share")
-        .split(",")
-        .map((f) => f.trim())
-        .filter(Boolean)
+      parseFolderList(process.env.MODERATION_SKIP_FOLDERS, ["friends-wall-share"])
     );
   }
 
   shouldModerate(mimeType: string, folder?: string): boolean {
     if (this.skipModeration) return false;
     if (!mimeType?.startsWith("image/")) return false;
-    // Sightengine expects raster images; SVG catalog assets skip moderation.
     if (mimeType.toLowerCase() === "image/svg+xml") return false;
-    if (folder && this.skipFolders.has(folder)) return false;
+    // Dashboard / gifts / memes / etc. — no Sightengine. Only user profile-photos.
+    if (!folder || !this.moderatedFolders.has(folder)) return false;
+    if (this.skipFolders.has(folder)) return false;
     return true;
   }
 

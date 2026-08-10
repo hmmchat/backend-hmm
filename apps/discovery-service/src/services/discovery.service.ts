@@ -2095,6 +2095,16 @@ export class DiscoveryService implements OnModuleInit {
     } else {
       // Only one user has accepted - wait for the other user
       console.log(`[INFO] User ${userId} accepted match, waiting for ${matchedUserId} to accept`);
+      // Drop stale Redis room assignments from a prior call so the waiting poller
+      // does not navigate into an old room before the peer also accepts.
+      try {
+        await this.cache.del(`room:${userId}`);
+        await this.cache.del(`room:${matchedUserId}`);
+      } catch (clearErr: any) {
+        console.warn(
+          `[WARN] Failed to clear stale room keys while waiting: ${clearErr?.message || clearErr}`,
+        );
+      }
       // The match will expire if the other user doesn't accept within the timeout
       // Cleanup will be handled by the cleanupExpiredMatches function
       return {

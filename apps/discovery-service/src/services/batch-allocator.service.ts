@@ -263,9 +263,16 @@ export class BatchAllocatorService implements OnModuleInit {
     const matchedIds = await this.matching.getMatchedUserIdsCached();
     const matchedSet = new Set(matchedIds);
 
+    const inboundTtlMinutes = parseInt(
+      process.env.RAINCHECK_INBOUND_TTL_MINUTES || "20",
+      10,
+    );
+    const raincheckCutoff = new Date(
+      Date.now() - (Number.isFinite(inboundTtlMinutes) ? inboundTtlMinutes : 20) * 60 * 1000,
+    );
     const rainchecks = await (this.prisma as any).raincheckSession.findMany({
       where: { userId: { in: userIds } },
-      select: { userId: true, sessionId: true, raincheckedUserId: true }
+      select: { userId: true, sessionId: true, raincheckedUserId: true, createdAt: true }
     });
     const raincheckMap = new Map<string, Set<string>>();
     const ensureSet = (id: string) => {
@@ -274,14 +281,22 @@ export class BatchAllocatorService implements OnModuleInit {
     };
     for (const rc of rainchecks) {
       const sessionId = sessionMap.get(rc.userId);
-      if (sessionId && rc.sessionId !== sessionId) continue;
+      const sessionMatch = Boolean(sessionId && rc.sessionId === sessionId);
+      const recent =
+        rc.createdAt instanceof Date
+          ? rc.createdAt > raincheckCutoff
+          : rc.createdAt
+            ? new Date(rc.createdAt) > raincheckCutoff
+            : false;
+      // Keep exclusions for the live session OR a short TTL after heartbeat drop.
+      if (!sessionMatch && !recent) continue;
       // Outbound: rainchecker excludes target
       ensureSet(rc.userId).add(rc.raincheckedUserId);
       // Inbound: target also excludes rainchecker (mutual for this search wave)
       if (
         typeof rc.raincheckedUserId === "string" &&
         !rc.raincheckedUserId.startsWith("LOCATION:") &&
-        sessionMap.has(rc.raincheckedUserId)
+        (sessionMap.has(rc.raincheckedUserId) || recent)
       ) {
         ensureSet(rc.raincheckedUserId).add(rc.userId);
       }

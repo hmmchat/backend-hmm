@@ -1396,19 +1396,30 @@ export class DiscoveryService implements OnModuleInit {
         if (row.raincheckedUserId) excluded.add(row.raincheckedUserId);
       }
 
-      // Inbound: someone rainchecked me while that raincheck still belongs to
-      // their live discovery session (same search wave).
+      // Inbound: someone rainchecked me in their current live session, OR recently
+      // enough that a heartbeat expiry shouldn't flash them back on my deck.
       try {
+        const inboundTtlMinutes = parseInt(
+          process.env.RAINCHECK_INBOUND_TTL_MINUTES || "20",
+          10,
+        );
+        const ttlMinutes = Number.isFinite(inboundTtlMinutes) ? inboundTtlMinutes : 20;
         const inbound = await (this.prisma as any).$queryRawUnsafe(
           `SELECT rs."userId" AS "userId"
            FROM raincheck_sessions rs
-           INNER JOIN discovery_sessions ds
-             ON ds."userId" = rs."userId"
-            AND ds."sessionId" = rs."sessionId"
-            AND ds."expiresAt" > CURRENT_TIMESTAMP
            WHERE rs."raincheckedUserId" = $1
-             AND rs."raincheckedUserId" NOT LIKE 'LOCATION:%'`,
-          userId
+             AND rs."raincheckedUserId" NOT LIKE 'LOCATION:%'
+             AND (
+               EXISTS (
+                 SELECT 1 FROM discovery_sessions ds
+                 WHERE ds."userId" = rs."userId"
+                   AND ds."sessionId" = rs."sessionId"
+                   AND ds."expiresAt" > CURRENT_TIMESTAMP
+               )
+               OR rs."createdAt" > CURRENT_TIMESTAMP - ($2::int * INTERVAL '1 minute')
+             )`,
+          userId,
+          ttlMinutes,
         );
         for (const row of (inbound || []) as { userId: string }[]) {
           if (row?.userId) excluded.add(row.userId);
@@ -1466,6 +1477,11 @@ export class DiscoveryService implements OnModuleInit {
     const match = await this.matchingService.getMatchForUser(userId);
     if (!match) return null;
     return match.user1Id === userId ? match.user2Id : match.user1Id;
+  }
+
+  /** Partner userId if a Meet rn acceptance row is still live for this user. */
+  async getAcceptancePartnerForUser(userId: string): Promise<string | null> {
+    return this.matchingService.getAcceptancePartnerForUser(userId);
   }
 
   /**
@@ -2128,26 +2144,22 @@ export class DiscoveryService implements OnModuleInit {
     );
 
     if (bothAccepted) {
-      // Both users have accepted - proceed to IN_SQUAD
-      await this.matchingService.removeMatch(match.user1Id, match.user2Id);
-      await this.matchingService.removeMatchAcceptances(match.user1Id, match.user2Id);
-
-      // IMPORTANT: Create room FIRST while users are still MATCHED status
-      // Room service expects users to be MATCHED when creating rooms
+      // IMPORTANT: Create room WHILE active_matches + MATCHED still exist.
+      // Deleting the match before room create made waiters see match-status=false
+      // with no Redis room → false raincheck / solo rematch.
       let roomResult: { roomId?: string; sessionId?: string } = {};
       try {
         roomResult = await this.streamingClient.createMatchedRoom([match.user1Id, match.user2Id]);
         console.log(`[INFO] Created streaming room ${roomResult.roomId} for matched users`);
       } catch (error: any) {
         console.error(`[ERROR] Failed to create streaming room:`, error?.message || error);
-        // Don't throw - room creation failure shouldn't block the match
-        // Frontend can create room separately if needed
+        // Don't throw - frontend CREATE_ROOM fallback can still succeed.
       }
 
-      // Only move users to IN_SQUAD when a room was actually created.
-      // If room creation failed, keep users in MATCHED so frontend fallback
-      // create-room can still succeed.
       if (roomResult.roomId) {
+        await this.matchingService.removeMatch(match.user1Id, match.user2Id);
+        await this.matchingService.removeMatchAcceptances(match.user1Id, match.user2Id);
+
         await this.matchingService.updateUserStatus(match.user1Id, "IN_SQUAD");
         await this.matchingService.updateUserStatus(match.user2Id, "IN_SQUAD");
 
@@ -2159,7 +2171,8 @@ export class DiscoveryService implements OnModuleInit {
         console.log(`[INFO] Stored room ${roomResult.roomId} in Redis for both users`);
         console.log(`[INFO] Both users accepted match - ${match.user1Id} and ${match.user2Id} moved to IN_SQUAD`);
       } else {
-        // Defensive reset: keep both sides in MATCHED for frontend room-creation fallback path.
+        // Keep match + acceptances + MATCHED so waiter polls stay stable while
+        // the second accepter's frontend CREATE_ROOM + room-created hook finishes.
         await this.matchingService.updateUserStatus(match.user1Id, "MATCHED");
         await this.matchingService.updateUserStatus(match.user2Id, "MATCHED");
         console.warn(`[WARN] Match accepted by both users but room creation failed. Keeping ${match.user1Id} and ${match.user2Id} in MATCHED for fallback room creation.`);
@@ -2817,6 +2830,32 @@ export class DiscoveryService implements OnModuleInit {
       await Promise.all(
         userIds.map((userId) => this.matchingService.updateUserStatus(userId, "IN_SQUAD"))
       );
+
+      // Assign Redis room keys so Meet rn waiters (and FE CREATE_ROOM fallback)
+      // learn the room without re-calling proceed.
+      const roomData = { roomId, sessionId: roomId };
+      await Promise.all(
+        userIds.map((userId) => this.cache.set(`room:${userId}`, roomData, 300))
+      );
+
+      // Mutual face-card pairs: consume match/acceptances now that a room exists.
+      // Only when these two users still share an active_matches row (not squad lobbies).
+      if (userIds.length === 2) {
+        try {
+          const existing = await this.matchingService.getMatchForUser(userIds[0]);
+          const paired =
+            existing &&
+            (existing.user1Id === userIds[1] || existing.user2Id === userIds[1]);
+          if (paired) {
+            await this.matchingService.removeMatch(userIds[0], userIds[1]);
+            await this.matchingService.removeMatchAcceptances(userIds[0], userIds[1]);
+          }
+        } catch (matchClearErr: any) {
+          console.warn(
+            `[WARN] Failed to clear match after room-created: ${matchClearErr?.message || matchClearErr}`,
+          );
+        }
+      }
 
       console.log(`[INFO] Successfully updated ${userIds.length} users to IN_SQUAD for room ${roomId}`);
     } catch (error: any) {
@@ -4267,7 +4306,7 @@ export class DiscoveryService implements OnModuleInit {
    */
   private async tryServeExistingMatch(
     userId: string,
-    sessionId: string,
+    _sessionId: string,
     _storedPreferred: string | null,
     poolCity: string | null,
     currentUser: UserProfile,

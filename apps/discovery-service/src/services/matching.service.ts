@@ -742,6 +742,15 @@ export class MatchingService {
 
       await this.cacheService.del("matched:user:ids");
       if (txResult.created) {
+        // Drop stale Meet rn room assignments so a prior call cannot hijack waiters.
+        try {
+          await Promise.all([
+            this.cacheService.del(`room:${id1}`),
+            this.cacheService.del(`room:${id2}`)
+          ]);
+        } catch (_) {
+          /* best-effort */
+        }
         console.log(`[DEBUG] Created match between ${id1} and ${id2} (atomic)`);
       } else {
         console.log(`[DEBUG] Match not created between ${id1} and ${id2}: ${txResult.reason || 'already_exists'}`);
@@ -797,22 +806,51 @@ export class MatchingService {
 
   /**
    * When active_matches exists but statuses drifted, restore MATCHED instead of deleting the pair.
+   * If either side drifted, force-write BOTH to MATCHED (avoids one AVAILABLE + one MATCHED).
    */
   async ensureMatchedStatuses(userId: string, partnerId: string): Promise<void> {
     const [userProfile, partnerProfile] = await Promise.all([
       this.userClient.getUserFullProfileById(userId),
       this.userClient.getUserFullProfileById(partnerId)
     ]);
-    const heal: Promise<void>[] = [];
-    if (String((userProfile as any).status || "") !== "MATCHED") {
-      heal.push(this.updateUserStatus(userId, "MATCHED"));
+    const userOk = String((userProfile as any).status || "") === "MATCHED";
+    const partnerOk = String((partnerProfile as any).status || "") === "MATCHED";
+    if (userOk && partnerOk) {
+      return;
     }
-    if (String((partnerProfile as any).status || "") !== "MATCHED") {
-      heal.push(this.updateUserStatus(partnerId, "MATCHED"));
-    }
-    if (heal.length > 0) {
-      await Promise.all(heal);
-      await this.notifyDiscoveryMatched(userId, partnerId);
+    // Force both sides — partial heal left UI diverging until the next poll.
+    await Promise.all([
+      this.updateUserStatus(userId, "MATCHED"),
+      this.updateUserStatus(partnerId, "MATCHED")
+    ]);
+    await this.notifyDiscoveryMatched(userId, partnerId);
+  }
+
+  /**
+   * Partner id if this user still has a non-expired Meet rn acceptance row.
+   * Used by match-status so waiters don't treat "match row deleted during room create" as raincheck.
+   */
+  async getAcceptancePartnerForUser(userId: string): Promise<string | null> {
+    try {
+      const escaped = userId.replace(/'/g, "''");
+      const rows = await (this.prisma as any).$queryRawUnsafe(
+        `SELECT "user1Id", "user2Id", "acceptedBy"
+         FROM match_acceptances
+         WHERE ("user1Id" = '${escaped}' OR "user2Id" = '${escaped}')
+           AND "expiresAt" > CURRENT_TIMESTAMP
+         ORDER BY "createdAt" DESC
+         LIMIT 4`
+      );
+      if (!rows?.length) return null;
+      const row = rows[0];
+      const a = String(row.user1Id);
+      const b = String(row.user2Id);
+      return a === userId ? b : a;
+    } catch (error: any) {
+      console.warn(
+        `[WARN] getAcceptancePartnerForUser failed: ${error?.message || error}`,
+      );
+      return null;
     }
   }
 
@@ -1147,10 +1185,26 @@ export class MatchingService {
         await this.removeMatch(user1Id, user2Id);
         await this.removeMatchAcceptances(user1Id, user2Id);
 
+        try {
+          await Promise.all([
+            this.cacheService.del(`room:${user1Id}`),
+            this.cacheService.del(`room:${user2Id}`)
+          ]);
+        } catch (_) {
+          /* best-effort */
+        }
+
         for (const uid of [user1Id, user2Id]) {
           const hasSession = await this.discoverySessionService.hasActiveSession(uid);
           const nextStatus = resolveAcceptanceTimeoutStatus(uid, acceptedBy, hasSession);
           await this.updateUserStatus(uid, nextStatus);
+        }
+
+        // Wake waiters stuck on "Waiting for response" when WS/presence is down.
+        try {
+          await this.notifyDiscoveryRainchecked(user1Id, user2Id);
+        } catch (_) {
+          /* best-effort */
         }
 
         console.log(

@@ -533,11 +533,44 @@ export class DiscoveryController {
     const payload = await verifyAccess(token);
     const userId = payload.sub;
 
+    // Room / pending acceptance count as still-matched for Meet rn waiters so
+    // deleting active_matches during room create never looks like a raincheck.
+    const roomData = await this.cache.get<{ roomId: string; sessionId: string }>(
+      `room:${userId}`,
+    );
+    if (roomData?.roomId) {
+      return {
+        ok: true,
+        matched: true,
+        partnerId: null,
+        hasRoom: true,
+        roomId: roomData.roomId,
+        sessionId: roomData.sessionId || null,
+      };
+    }
+
     const match = await this.discoveryService.getActiveMatchPartnerId(userId);
+    if (match) {
+      return {
+        ok: true,
+        matched: true,
+        partnerId: match,
+        hasRoom: false,
+        roomId: null,
+        sessionId: null,
+      };
+    }
+
+    const acceptancePartner =
+      await this.discoveryService.getAcceptancePartnerForUser(userId);
     return {
       ok: true,
-      matched: Boolean(match),
-      partnerId: match
+      matched: Boolean(acceptancePartner),
+      partnerId: acceptancePartner,
+      hasRoom: false,
+      roomId: null,
+      sessionId: null,
+      pendingAcceptance: Boolean(acceptancePartner),
     };
   }
 

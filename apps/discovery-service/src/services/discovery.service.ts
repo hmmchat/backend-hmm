@@ -43,7 +43,8 @@ import {
 } from "../config/moderator-face-card.config.js";
 import { isPreferredCityAnywhere, PREFERRED_CITY_ANYWHERE_IN_INDIA } from "@hmm/common";
 import {
-  SESSION_DISCOVERY_POOL_ANYWHERE as SESSION_POOL_ANYWHERE
+  SESSION_DISCOVERY_POOL_ANYWHERE as SESSION_POOL_ANYWHERE,
+  shouldOfferAutoCityHandoff
 } from "../config/discovery-pool-city.js";
 import { HostedEmbeddingAdapter } from "./embedding-adapters/hosted.adapter.js";
 import {
@@ -1776,20 +1777,27 @@ export class DiscoveryService implements OnModuleInit {
   }): Promise<CardResponse> {
     const exclude = args.poolCity ? [args.poolCity] : [];
     // Always same statuses as the matchmaking pool (never narrow via soloOnly).
+    // Fetch several candidates so a singleton dest that would cause a mutual
+    // swap can be skipped in favor of a fuller later city.
     const showable = await this.listShowableCities({
       token: args.token,
       userId: args.userId,
       genders: args.genders,
       raincheckedUserIds: args.raincheckedUserIds,
       excludeCities: exclude,
-      limit: 1
+      limit: 20
     });
 
-    if (showable.length === 0) {
+    // One-sided auto handoff: visitor hops, host stays (Bangalore↔Delhi alone).
+    const eligible = showable.filter((city) =>
+      shouldOfferAutoCityHandoff(args.poolCity, city)
+    );
+
+    if (eligible.length === 0) {
       return { card: null, exhausted: true };
     }
 
-    const top = showable[0];
+    const top = eligible[0];
     await this.markLocationCardShown(args.userId, args.sessionId, top.city);
 
     return {

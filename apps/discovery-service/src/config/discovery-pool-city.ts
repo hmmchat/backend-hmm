@@ -22,3 +22,30 @@ export function sameDiscoveryPoolCity(
 ): boolean {
   return normalizeDiscoveryPoolCity(a) === normalizeDiscoveryPoolCity(b);
 }
+
+/**
+ * One-sided auto LOCATION handoff (visitor hops, host stays).
+ *
+ * When two users are each alone in different cities, both must not see LOCATION
+ * toward each other (they'd swap and miss). Meet in the lexicographically
+ * earlier city: the later-city user is the visitor and gets LOCATION; the
+ * earlier-city user stays home until the visitor arrives.
+ *
+ * - Destination with >1 showable users: always allow (stable pool).
+ * - Singleton destination: allow only if homeCity > destCity (case-insensitive).
+ * - Anywhere / null home: always allow.
+ *
+ * Example: Bangalore alone + Delhi alone → only Delhi sees LOCATION Bangalore.
+ */
+export function shouldOfferAutoCityHandoff(
+  homeCity: string | null | undefined,
+  dest: { city: string; availableCount: number }
+): boolean {
+  const home = normalizeDiscoveryPoolCity(homeCity);
+  if (!home) return true;
+  if (!Number.isFinite(dest.availableCount) || dest.availableCount <= 0) return false;
+  if (dest.availableCount > 1) return true;
+  const destNorm = normalizeDiscoveryPoolCity(dest.city);
+  if (!destNorm || destNorm === home) return false;
+  return home.localeCompare(destNorm) > 0;
+}

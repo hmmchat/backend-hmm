@@ -4,6 +4,7 @@ import {
   SeasonClaimStatus,
   SeasonStatus,
   SeasonTaskType,
+  TransactionKind,
   Prisma
 } from "../../node_modules/.prisma/client/index.js";
 
@@ -776,6 +777,50 @@ export class SeasonService {
       if (!season) throw new HttpException("Season not found", HttpStatus.NOT_FOUND);
       if (season.approvedCount >= season.giftPoolSize) {
         throw new HttpException("Gift pool is full", HttpStatus.BAD_REQUEST);
+      }
+
+      // Charge the DIAMONDS_EARNED task target when the team approves shipping.
+      // This is the mystery-box fee — only charged once the claim is locked in.
+      const diamondTask = await tx.seasonTask.findUnique({
+        where: {
+          seasonId_taskType: {
+            seasonId: claim.seasonId,
+            taskType: SeasonTaskType.DIAMONDS_EARNED
+          }
+        }
+      });
+      const unlockCost =
+        diamondTask?.enabled && diamondTask.target > 0 ? diamondTask.target : 0;
+
+      if (unlockCost > 0) {
+        let wallet = await tx.wallet.findUnique({ where: { id: claim.userId } });
+        if (!wallet) {
+          wallet = await tx.wallet.create({
+            data: { id: claim.userId, balance: 0, diamonds: 0 } as any
+          });
+        }
+
+        const debited = await tx.wallet.updateMany({
+          where: { id: claim.userId, diamonds: { gte: unlockCost } },
+          data: { diamonds: { decrement: unlockCost } }
+        });
+        if (debited.count === 0) {
+          throw new HttpException(
+            `Cannot approve: user needs ${unlockCost} diamonds to claim this box (insufficient balance).`,
+            HttpStatus.BAD_REQUEST
+          );
+        }
+
+        await tx.transaction.create({
+          data: {
+            walletId: wallet.id,
+            amount: 0,
+            type: "DEBIT",
+            description: `Mystery Beam Box approved: ${unlockCost} diamonds`,
+            diamondAmount: -unlockCost,
+            transactionKind: TransactionKind.DIAMONDS
+          }
+        });
       }
 
       await tx.season.update({

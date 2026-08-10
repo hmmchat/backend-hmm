@@ -515,15 +515,24 @@ export class FriendController {
     await this.verifyTokenAndGetUserId(token!);
     const rows = await this.giftCatalogService.getAllActiveGifts();
     const firstMessageCostCoins = parseInt(process.env.FIRST_MESSAGE_COST_COINS || "10", 10);
+    // Align with wallet-service DIAMOND_TO_COIN_RATE (coins required to buy 1 diamond).
+    const parsedRate = parseInt(process.env.DIAMOND_TO_COIN_RATE || "100", 10);
+    const diamondToCoinRate =
+      Number.isFinite(parsedRate) && parsedRate > 0 ? parsedRate : 100;
     return {
       firstMessageCostCoins,
-      gifts: rows.map((g: any) => ({
-        giftId: g.giftId,
-        name: g.name,
-        emoji: g.emoji,
-        diamonds: g.diamonds ?? g.coins ?? 0,
-        imageUrl: resolveGiftStickerUrl(g.imageUrl, g.giftId)
-      }))
+      diamondToCoinRate,
+      gifts: rows.map((g: any) => {
+        const diamonds = g.diamonds ?? g.coins ?? 0;
+        return {
+          giftId: g.giftId,
+          name: g.name,
+          emoji: g.emoji,
+          diamonds,
+          coinPrice: diamonds * diamondToCoinRate,
+          imageUrl: resolveGiftStickerUrl(g.imageUrl, g.giftId)
+        };
+      })
     };
   }
 

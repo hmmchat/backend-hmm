@@ -11,15 +11,20 @@ export class WalletService {
   ) {}
 
   /** Coins per 1 diamond (e.g. 100 = 100 coins for 1 diamond). Aligns with payment service DIAMOND_TO_COIN_RATE. */
-  private getCoinsPerDiamond(): number {
-    return parseInt(process.env.DIAMOND_TO_COIN_RATE || "100", 10);
+  getCoinsPerDiamond(): number {
+    const n = parseInt(process.env.DIAMOND_TO_COIN_RATE || "100", 10);
+    return Number.isFinite(n) && n > 0 ? n : 100;
   }
 
   /**
    * Get wallet balance for a user (coins and diamonds)
    * Creates wallet if it doesn't exist (lazy initialization)
    */
-  async getBalance(userId: string): Promise<{ balance: number; diamonds: number }> {
+  async getBalance(userId: string): Promise<{
+    balance: number;
+    diamonds: number;
+    diamondToCoinRate: number;
+  }> {
     let wallet = await this.prisma.wallet.findUnique({
       where: { id: userId }
     });
@@ -37,7 +42,8 @@ export class WalletService {
 
     return {
       balance: wallet.balance,
-      diamonds: wallet.diamonds ?? 0
+      diamonds: wallet.diamonds ?? 0,
+      diamondToCoinRate: this.getCoinsPerDiamond()
     };
   }
 

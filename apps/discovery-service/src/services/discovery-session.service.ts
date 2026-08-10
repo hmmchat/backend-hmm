@@ -81,6 +81,18 @@ export class DiscoverySessionService {
     return Boolean(row && row.expiresAt > new Date());
   }
 
+  /** Active discovery sessionId for a user, or null if none / expired. */
+  async getActiveSessionId(userId: string): Promise<string | null> {
+    const row = await (this.prisma as any).discoverySession.findUnique({
+      where: { userId },
+      select: { sessionId: true, expiresAt: true }
+    });
+    if (!row || row.expiresAt <= new Date()) {
+      return null;
+    }
+    return row.sessionId || null;
+  }
+
   async filterSoloPoolCandidates<T extends { id: string; status?: string }>(users: T[]): Promise<T[]> {
     if (users.length === 0) {
       return users;

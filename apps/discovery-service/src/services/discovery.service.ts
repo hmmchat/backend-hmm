@@ -1466,8 +1466,55 @@ export class DiscoveryService implements OnModuleInit {
         );
       }
 
+      // Record exclusions BEFORE status reset / notify so the peer's next get-card
+      // cannot rematch the same person (reverse must use the peer's own sessionId).
+      const partnerSessionId =
+        (await this.discoverySessionService.getActiveSessionId(raincheckedUserId)) || sessionId;
+
+      let callerExclusionCreated = false;
+      const existing1 = await (this.prisma as any).raincheckSession.findFirst({
+        where: {
+          userId,
+          sessionId,
+          raincheckedUserId,
+          city: null
+        }
+      });
+
+      if (!existing1) {
+        await (this.prisma as any).raincheckSession.create({
+          data: {
+            userId,
+            sessionId,
+            raincheckedUserId,
+            city: null
+          }
+        });
+        callerExclusionCreated = true;
+      }
+
+      const existing2 = await (this.prisma as any).raincheckSession.findFirst({
+        where: {
+          userId: raincheckedUserId,
+          sessionId: partnerSessionId,
+          raincheckedUserId: userId,
+          city: null
+        }
+      });
+
+      if (!existing2) {
+        await (this.prisma as any).raincheckSession.create({
+          data: {
+            userId: raincheckedUserId,
+            sessionId: partnerSessionId,
+            raincheckedUserId: userId,
+            city: null
+          }
+        });
+      }
+
       // Status reset rules:
-      // - Caller (rainchecked) returns to AVAILABLE when MATCHED/IN_SQUAD (still searching).
+      // - Caller returns to AVAILABLE when MATCHED/IN_SQUAD (still searching).
       // - Passive partner returns to ONLINE unless they have an active solo discovery session.
       try {
         const resettableStatuses = new Set(["MATCHED", "IN_SQUAD"]);
@@ -1495,55 +1542,15 @@ export class DiscoveryService implements OnModuleInit {
         // Continue anyway - raincheck should still be recorded
       }
 
-      // Tell both clients (incl. Meet rn waiters) to leave this face card and rematch.
-      try {
-        await this.matchingService.notifyDiscoveryRainchecked(userId, raincheckedUserId);
-      } catch (notifyErr: any) {
-        console.warn(
-          `[WARN] Failed to notify discovery:rainchecked: ${notifyErr?.message || notifyErr}`,
-        );
-      }
-
-      // Mark as rainchecked in session (bidirectionally - both users should exclude each other)
-      const existing1 = await (this.prisma as any).raincheckSession.findFirst({
-        where: {
-          userId,
-          sessionId,
-          raincheckedUserId,
-          city: null
+      // Notify only on the first raincheck from this caller (avoid mirror loops).
+      if (callerExclusionCreated) {
+        try {
+          await this.matchingService.notifyDiscoveryRainchecked(userId, raincheckedUserId);
+        } catch (notifyErr: any) {
+          console.warn(
+            `[WARN] Failed to notify discovery:rainchecked: ${notifyErr?.message || notifyErr}`,
+          );
         }
-      });
-
-      if (!existing1) {
-        await (this.prisma as any).raincheckSession.create({
-          data: {
-            userId,
-            sessionId,
-            raincheckedUserId,
-            city: null
-          }
-        });
-      }
-
-      // Also record the reverse raincheck (User B should also exclude User A)
-      const existing2 = await (this.prisma as any).raincheckSession.findFirst({
-        where: {
-          userId: raincheckedUserId,
-          sessionId,
-          raincheckedUserId: userId,
-          city: null
-        }
-      });
-
-      if (!existing2) {
-        await (this.prisma as any).raincheckSession.create({
-          data: {
-            userId: raincheckedUserId,
-            sessionId,
-            raincheckedUserId: userId,
-            city: null
-          }
-        });
       }
 
       // Do NOT proactively rematch both users here.

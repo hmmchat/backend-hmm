@@ -1447,6 +1447,25 @@ export class DiscoveryService implements OnModuleInit {
         await this.matchingService.removeMatch(userId, raincheckedUserId);
       }
 
+      // Clear one-sided Meet rn acceptances so neither side stays stuck waiting.
+      try {
+        await this.matchingService.removeMatchAcceptances(userId, raincheckedUserId);
+      } catch (acceptErr: any) {
+        console.warn(
+          `[WARN] Failed to clear match acceptances after raincheck: ${acceptErr?.message || acceptErr}`,
+        );
+      }
+
+      // Drop stale Meet rn room assignments for both sides.
+      try {
+        await this.cache.del(`room:${userId}`);
+        await this.cache.del(`room:${raincheckedUserId}`);
+      } catch (roomClearErr: any) {
+        console.warn(
+          `[WARN] Failed to clear room keys after raincheck: ${roomClearErr?.message || roomClearErr}`,
+        );
+      }
+
       // Status reset rules:
       // - Caller (rainchecked) returns to AVAILABLE when MATCHED/IN_SQUAD (still searching).
       // - Passive partner returns to ONLINE unless they have an active solo discovery session.
@@ -1474,6 +1493,15 @@ export class DiscoveryService implements OnModuleInit {
       } catch (error) {
         console.error(`[ERROR] Failed to check/reset user statuses after raincheck:`, error);
         // Continue anyway - raincheck should still be recorded
+      }
+
+      // Tell both clients (incl. Meet rn waiters) to leave this face card and rematch.
+      try {
+        await this.matchingService.notifyDiscoveryRainchecked(userId, raincheckedUserId);
+      } catch (notifyErr: any) {
+        console.warn(
+          `[WARN] Failed to notify discovery:rainchecked: ${notifyErr?.message || notifyErr}`,
+        );
       }
 
       // Mark as rainchecked in session (bidirectionally - both users should exclude each other)

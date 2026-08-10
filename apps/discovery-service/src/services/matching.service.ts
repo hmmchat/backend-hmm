@@ -779,6 +779,23 @@ export class MatchingService {
   }
 
   /**
+   * Push both users to leave a broken mutual face-card / Meet rn wait and rematch.
+   */
+  async notifyDiscoveryRainchecked(userId: string, partnerId: string): Promise<void> {
+    const at = Date.now();
+    await Promise.all([
+      this.notificationGateway.sendNotification(userId, {
+        type: "discovery:rainchecked",
+        data: { partnerId, at }
+      }),
+      this.notificationGateway.sendNotification(partnerId, {
+        type: "discovery:rainchecked",
+        data: { partnerId: userId, at }
+      })
+    ]);
+  }
+
+  /**
    * When active_matches exists but statuses drifted, restore MATCHED instead of deleting the pair.
    */
   async ensureMatchedStatuses(userId: string, partnerId: string): Promise<void> {

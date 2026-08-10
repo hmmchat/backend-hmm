@@ -43,6 +43,8 @@ See `.env.example`. Minimum for buy-coins:
 
 ## Notes
 
-- Initiate accepts **`packageId` only** (not a free-form coin amount). Prices live in `@hmm/common` `coin-packages`.
+- Initiate accepts **`packageId` only** (not a free-form coin amount). Prices default in `@hmm/common` `coin-packages`.
+- Optional **`COIN_PACKAGES_JSON`**: JSON array override for coins/prices/offers without a code change. Set the **same** value on **payment-service** and **api-gateway**, then restart both. Invalid JSON falls back to defaults.
+  - Fields: `id`, `coins`, `price`, optional `originalPrice`, `discount`, `popular`, `mostValue`, `sortOrder`, `displayPrice`.
 - Never expose `RAZORPAY_KEY_SECRET` or `RAZORPAY_WEBHOOK_SECRET` to the browser.
 - Webhook path must stay **public** on the API gateway (no JWT). Signature verification is mandatory.

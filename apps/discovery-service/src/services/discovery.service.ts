@@ -1429,6 +1429,13 @@ export class DiscoveryService implements OnModuleInit {
     }
   }
 
+  /** Partner userId if caller still has an active_matches row, else null. */
+  async getActiveMatchPartnerId(userId: string): Promise<string | null> {
+    const match = await this.matchingService.getMatchForUser(userId);
+    if (!match) return null;
+    return match.user1Id === userId ? match.user2Id : match.user1Id;
+  }
+
   /**
    * Mark user as rainchecked
    * When a user rainchecks, both users are rematched with new partners
@@ -1513,6 +1520,17 @@ export class DiscoveryService implements OnModuleInit {
         });
       }
 
+      // Notify peers immediately after exclusions — before slow user-service status HTTP.
+      if (callerExclusionCreated) {
+        try {
+          await this.matchingService.notifyDiscoveryRainchecked(userId, raincheckedUserId);
+        } catch (notifyErr: any) {
+          console.warn(
+            `[WARN] Failed to notify discovery:rainchecked: ${notifyErr?.message || notifyErr}`,
+          );
+        }
+      }
+
       // Status reset rules:
       // - Caller returns to AVAILABLE when MATCHED/IN_SQUAD (still searching).
       // - Passive partner returns to ONLINE unless they have an active solo discovery session.
@@ -1540,17 +1558,6 @@ export class DiscoveryService implements OnModuleInit {
       } catch (error) {
         console.error(`[ERROR] Failed to check/reset user statuses after raincheck:`, error);
         // Continue anyway - raincheck should still be recorded
-      }
-
-      // Notify only on the first raincheck from this caller (avoid mirror loops).
-      if (callerExclusionCreated) {
-        try {
-          await this.matchingService.notifyDiscoveryRainchecked(userId, raincheckedUserId);
-        } catch (notifyErr: any) {
-          console.warn(
-            `[WARN] Failed to notify discovery:rainchecked: ${notifyErr?.message || notifyErr}`,
-          );
-        }
       }
 
       // Do NOT proactively rematch both users here.

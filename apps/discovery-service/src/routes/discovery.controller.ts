@@ -510,6 +510,38 @@ export class DiscoveryController {
   }
 
   /**
+   * Authenticated: whether the caller still has an active mutual match.
+   * Meet rn waiters poll this so a peer raincheck exits waiting immediately
+   * even if the discovery:rainchecked websocket event is delayed/missed.
+   * GET /discovery/match-status
+   */
+  @Get("match-status")
+  async getMatchStatus(@Headers("authorization") authz?: string) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+
+    const { verifyToken } = await import("@hmm/common");
+    const jwkStr = process.env.JWT_PUBLIC_JWK;
+    if (!jwkStr || jwkStr === "undefined") {
+      throw new HttpException("Server configuration error", HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+    const cleanedJwk = jwkStr.trim().replace(/^['"]|['"]$/g, "");
+    const publicJwk = JSON.parse(cleanedJwk);
+    const verifyAccess = await verifyToken(publicJwk);
+    const payload = await verifyAccess(token);
+    const userId = payload.sub;
+
+    const match = await this.discoveryService.getActiveMatchPartnerId(userId);
+    return {
+      ok: true,
+      matched: Boolean(match),
+      partnerId: match
+    };
+  }
+
+  /**
    * Authenticated: room assigned after mutual Meet rn (Redis room:{userId}).
    * Waiting clients should poll this — more reliable than streaming GET_USER_ROOM alone.
    * GET /discovery/my-room

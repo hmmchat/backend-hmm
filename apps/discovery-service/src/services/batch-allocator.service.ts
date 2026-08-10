@@ -268,11 +268,23 @@ export class BatchAllocatorService implements OnModuleInit {
       select: { userId: true, sessionId: true, raincheckedUserId: true }
     });
     const raincheckMap = new Map<string, Set<string>>();
+    const ensureSet = (id: string) => {
+      if (!raincheckMap.has(id)) raincheckMap.set(id, new Set());
+      return raincheckMap.get(id)!;
+    };
     for (const rc of rainchecks) {
       const sessionId = sessionMap.get(rc.userId);
       if (sessionId && rc.sessionId !== sessionId) continue;
-      if (!raincheckMap.has(rc.userId)) raincheckMap.set(rc.userId, new Set());
-      raincheckMap.get(rc.userId)!.add(rc.raincheckedUserId);
+      // Outbound: rainchecker excludes target
+      ensureSet(rc.userId).add(rc.raincheckedUserId);
+      // Inbound: target also excludes rainchecker (mutual for this search wave)
+      if (
+        typeof rc.raincheckedUserId === "string" &&
+        !rc.raincheckedUserId.startsWith("LOCATION:") &&
+        sessionMap.has(rc.raincheckedUserId)
+      ) {
+        ensureSet(rc.raincheckedUserId).add(rc.userId);
+      }
     }
 
     const fairnessCounters = await this.getFairnessCounters(userIds);

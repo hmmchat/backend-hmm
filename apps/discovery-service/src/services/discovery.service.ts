@@ -1364,7 +1364,11 @@ export class DiscoveryService implements OnModuleInit {
   }
 
   /**
-   * Get rainchecked user IDs for current session and city
+   * Users this caller must not see as face cards:
+   * 1) Outbound — people they rainchecked in this session
+   * 2) Inbound — people who rainchecked them in that person's *current* active
+   *    discovery session (mutual for the search wave, even if reverse row was
+   *    written under the wrong sessionId)
    */
   private async getRaincheckedUserIds(
     userId: string,
@@ -1372,7 +1376,9 @@ export class DiscoveryService implements OnModuleInit {
     _city: string | null
   ): Promise<string[]> {
     try {
-      const rainchecks = await (this.prisma as any).raincheckSession.findMany({
+      const excluded = new Set<string>();
+
+      const outbound = await (this.prisma as any).raincheckSession.findMany({
         where: {
           userId,
           sessionId,
@@ -1386,8 +1392,34 @@ export class DiscoveryService implements OnModuleInit {
           raincheckedUserId: true
         }
       });
+      for (const row of outbound as { raincheckedUserId: string }[]) {
+        if (row.raincheckedUserId) excluded.add(row.raincheckedUserId);
+      }
 
-      return rainchecks.map((r: { raincheckedUserId: string }) => r.raincheckedUserId);
+      // Inbound: someone rainchecked me while that raincheck still belongs to
+      // their live discovery session (same search wave).
+      try {
+        const inbound = await (this.prisma as any).$queryRawUnsafe(
+          `SELECT rs."userId" AS "userId"
+           FROM raincheck_sessions rs
+           INNER JOIN discovery_sessions ds
+             ON ds."userId" = rs."userId"
+            AND ds."sessionId" = rs."sessionId"
+            AND ds."expiresAt" > CURRENT_TIMESTAMP
+           WHERE rs."raincheckedUserId" = $1
+             AND rs."raincheckedUserId" NOT LIKE 'LOCATION:%'`,
+          userId
+        );
+        for (const row of (inbound || []) as { userId: string }[]) {
+          if (row?.userId) excluded.add(row.userId);
+        }
+      } catch (inboundErr: any) {
+        console.warn(
+          `[WARN] Inbound raincheck lookup failed: ${inboundErr?.message || inboundErr}`,
+        );
+      }
+
+      return [...excluded];
     } catch (error: any) {
       // If table doesn't exist or other Prisma error, return empty array
       if (error?.code === 'P2021' || error?.message?.includes('does not exist')) {
@@ -4235,7 +4267,7 @@ export class DiscoveryService implements OnModuleInit {
    */
   private async tryServeExistingMatch(
     userId: string,
-    _sessionId: string,
+    sessionId: string,
     _storedPreferred: string | null,
     poolCity: string | null,
     currentUser: UserProfile,
@@ -4247,9 +4279,32 @@ export class DiscoveryService implements OnModuleInit {
 
     const matchedUserId =
       existingMatch.user1Id === userId ? existingMatch.user2Id : existingMatch.user1Id;
-    if (raincheckedUserIds.includes(matchedUserId)) {
+
+    // Mutual raincheck: dissolve if either side excluded the other this search wave.
+    let partnerExcludedUs = false;
+    try {
+      const partnerSessionId =
+        (await this.discoverySessionService.getActiveSessionId(matchedUserId)) || "";
+      if (partnerSessionId) {
+        const partnerExclusions = await this.getRaincheckedUserIds(
+          matchedUserId,
+          partnerSessionId,
+          null
+        );
+        partnerExcludedUs = partnerExclusions.includes(userId);
+      }
+    } catch (_) {
+      partnerExcludedUs = false;
+    }
+
+    if (raincheckedUserIds.includes(matchedUserId) || partnerExcludedUs) {
       await this.matchingService.removeMatchAcceptances(existingMatch.user1Id, existingMatch.user2Id);
       await this.matchingService.removeMatch(existingMatch.user1Id, existingMatch.user2Id);
+      try {
+        await this.matchingService.notifyDiscoveryRainchecked(userId, matchedUserId);
+      } catch (_) {
+        /* best-effort: peer should drop asymmetric face card */
+      }
       return null;
     }
 

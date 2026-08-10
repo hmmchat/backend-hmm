@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildReportAwareDiscoveryFilters } from "../src/config/discovery-pool-filters.js";
+import {
+  applyReportPoolBucket,
+  buildReportAwareDiscoveryFilters,
+} from "../src/config/discovery-pool-filters.js";
 
 const baseArgs = {
   city: "Mumbai" as string | null,
@@ -36,4 +39,18 @@ test("normal user does not get moderatorWorkQueue", () => {
   });
   assert.equal(filters.moderatorWorkQueue, undefined);
   assert.equal(filters.onlyCriticalReview, undefined);
+});
+
+test("score_mix falls back when preferred bucket is empty", () => {
+  const users = [
+    { id: "u1", isModerator: false, moderatorFaceCardActive: false },
+  ];
+  // Force mod bucket preference with ratio 1 — only normals exist, so fall back.
+  const out = applyReportPoolBucket(users, {
+    mode: "score_mix",
+    modRatio: 1,
+    reportLayer: 3,
+  });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].id, "u1");
 });

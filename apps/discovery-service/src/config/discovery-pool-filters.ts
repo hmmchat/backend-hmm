@@ -128,6 +128,10 @@ export function applyReportPoolBucket<T extends {
   const wantMod = Math.random() < poolMode.modRatio;
   const mods = users.filter((u) => Boolean(u.isModerator && u.moderatorFaceCardActive));
   const normals = users.filter((u) => !u.isModerator);
-  const bucket = wantMod ? mods : normals;
-  return bucket;
+  const preferred = wantMod ? mods : normals;
+  // Prefer the rolled bucket, but never hide the only live peer (e.g. Bangalore↔Delhi
+  // city handoff) when that bucket is empty.
+  if (preferred.length > 0) return preferred;
+  const fallback = wantMod ? normals : mods;
+  return fallback.length > 0 ? fallback : users;
 }

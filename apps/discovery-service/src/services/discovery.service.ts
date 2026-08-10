@@ -1396,30 +1396,22 @@ export class DiscoveryService implements OnModuleInit {
         if (row.raincheckedUserId) excluded.add(row.raincheckedUserId);
       }
 
-      // Inbound: someone rainchecked me in their current live session, OR recently
-      // enough that a heartbeat expiry shouldn't flash them back on my deck.
+      // Inbound: someone rainchecked me while that raincheck still belongs to
+      // their *live* discovery session (same search wave).
+      // Do NOT use a long createdAt TTL here — that hid the only cross-city peer
+      // from LOCATION handoff / post-hop USER cards for ~20 minutes after any
+      // prior raincheck (Bangalore↔Delhi alone case).
       try {
-        const inboundTtlMinutes = parseInt(
-          process.env.RAINCHECK_INBOUND_TTL_MINUTES || "20",
-          10,
-        );
-        const ttlMinutes = Number.isFinite(inboundTtlMinutes) ? inboundTtlMinutes : 20;
         const inbound = await (this.prisma as any).$queryRawUnsafe(
           `SELECT rs."userId" AS "userId"
            FROM raincheck_sessions rs
+           INNER JOIN discovery_sessions ds
+             ON ds."userId" = rs."userId"
+            AND ds."sessionId" = rs."sessionId"
+            AND ds."expiresAt" > CURRENT_TIMESTAMP
            WHERE rs."raincheckedUserId" = $1
-             AND rs."raincheckedUserId" NOT LIKE 'LOCATION:%'
-             AND (
-               EXISTS (
-                 SELECT 1 FROM discovery_sessions ds
-                 WHERE ds."userId" = rs."userId"
-                   AND ds."sessionId" = rs."sessionId"
-                   AND ds."expiresAt" > CURRENT_TIMESTAMP
-               )
-               OR rs."createdAt" > CURRENT_TIMESTAMP - ($2::int * INTERVAL '1 minute')
-             )`,
+             AND rs."raincheckedUserId" NOT LIKE 'LOCATION:%'`,
           userId,
-          ttlMinutes,
         );
         for (const row of (inbound || []) as { userId: string }[]) {
           if (row?.userId) excluded.add(row.userId);

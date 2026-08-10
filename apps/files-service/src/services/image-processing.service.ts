@@ -12,6 +12,8 @@ export interface ImageMetadata {
 export interface ProcessedImage {
   buffer: Buffer;
   metadata: ImageMetadata;
+  /** Actual MIME after encode (may differ from the upload Content-Type). */
+  mimeType: string;
 }
 
 @Injectable()
@@ -154,6 +156,44 @@ export class ImageProcessingService {
   }
 
   /**
+   * Pick output format. Default JPEG for photos, but keep PNG/WebP when the
+   * source has an alpha channel — JPEG would flatten transparency onto black.
+   */
+  resolveOutputFormat(
+    hasAlpha: boolean,
+    preferred?: "jpeg" | "png" | "webp"
+  ): "jpeg" | "png" | "webp" {
+    if (preferred) {
+      if (preferred === "jpeg" && hasAlpha) return "png";
+      return preferred;
+    }
+    return hasAlpha ? "png" : "jpeg";
+  }
+
+  mimeTypeForFormat(format: "jpeg" | "png" | "webp"): string {
+    if (format === "png") return "image/png";
+    if (format === "webp") return "image/webp";
+    return "image/jpeg";
+  }
+
+  /**
+   * Align filename extension with the bytes we actually store.
+   */
+  filenameForMimeType(filename: string, mimeType: string): string {
+    const ext =
+      mimeType === "image/png"
+        ? "png"
+        : mimeType === "image/webp"
+          ? "webp"
+          : mimeType === "image/jpeg" || mimeType === "image/jpg"
+            ? "jpg"
+            : null;
+    if (!ext) return filename;
+    const base = filename.replace(/\.[^/.]+$/, "") || filename;
+    return `${base}.${ext}`;
+  }
+
+  /**
    * Process and optimize image
    */
   async processImage(
@@ -169,10 +209,12 @@ export class ImageProcessingService {
       const maxWidth = options?.maxWidth ?? this.maxWidth;
       const maxHeight = options?.maxHeight ?? this.maxHeight;
       const quality = options?.quality || 85;
-      const format = options?.format || "jpeg";
 
       // Get original metadata
       const originalMetadata = await sharp(buffer).metadata();
+      const hasAlpha = Boolean(originalMetadata.hasAlpha);
+      const format = this.resolveOutputFormat(hasAlpha, options?.format);
+      const mimeType = this.mimeTypeForFormat(format);
 
       // Resize if needed
       let image = sharp(buffer);
@@ -185,12 +227,12 @@ export class ImageProcessingService {
         }
       }
 
-      // Convert and optimize
+      // Convert and optimize (PNG/WebP keep alpha; JPEG does not)
       let processedBuffer: Buffer;
       if (format === "webp") {
         processedBuffer = await image.webp({ quality }).toBuffer();
       } else if (format === "png") {
-        processedBuffer = await image.png({ quality }).toBuffer();
+        processedBuffer = await image.png({ compressionLevel: 9 }).toBuffer();
       } else {
         processedBuffer = await image.jpeg({ quality, mozjpeg: true }).toBuffer();
       }
@@ -200,6 +242,7 @@ export class ImageProcessingService {
 
       return {
         buffer: processedBuffer,
+        mimeType,
         metadata: {
           width: finalMetadata.width || 0,
           height: finalMetadata.height || 0,

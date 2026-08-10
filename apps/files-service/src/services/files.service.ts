@@ -68,6 +68,8 @@ export class FilesService {
           quality: options.quality
         });
         buffer = processed.buffer;
+        mimeType = processed.mimeType;
+        filename = this.imageProcessing.filenameForMimeType(filename, mimeType);
       }
     }
 

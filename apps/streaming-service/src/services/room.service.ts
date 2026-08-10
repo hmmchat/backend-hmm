@@ -1105,7 +1105,7 @@ export class RoomService {
     });
 
     if (updateResult.count > 0) {
-      this.coinMining.stop(userId);
+      this.coinMining.stop(userId, null, { roomId, sessionId: session.id });
     }
 
     // Check if room should be ended
@@ -1234,7 +1234,7 @@ export class RoomService {
 
     this.logger.log(`Updated ${updateResult.count} participant record(s) for user ${userId} in room ${roomId}`);
 
-    this.coinMining.stop(userId);
+    this.coinMining.stop(userId, null, { roomId, sessionId: session.id });
 
     await this.prisma.callEvent.create({
       data: {
@@ -1632,7 +1632,10 @@ export class RoomService {
       this.discoveryClient.updateUserStatuses(viewerUserIds, "OFFLINE").catch((err) => {
         this.logger.error(`Failed to update viewer statuses: ${err.message}`);
       });
-      this.coinMining.stopMany(viewerUserIds, "VIEWER");
+      this.coinMining.stopMany(viewerUserIds, "VIEWER", {
+        roomId,
+        sessionId: session.id
+      });
     }
 
     // Coin mining: participants return to video-call bucket
@@ -2471,7 +2474,7 @@ export class RoomService {
     });
 
     // Coin mining: leave viewer bucket, join as participant
-    this.coinMining.stop(targetUserId, "VIEWER");
+    this.coinMining.stop(targetUserId, "VIEWER", { roomId, sessionId: session.id });
     this.coinMining.start(
       targetUserId,
       this.coinMining.participantBucket(!!session.isBroadcasting),
@@ -2663,7 +2666,7 @@ export class RoomService {
     }
 
     if (dbViewerUpdated) {
-      this.coinMining.stop(userId, "VIEWER");
+      this.coinMining.stop(userId, "VIEWER", { roomId, sessionId: session.id });
     }
 
     // Check if user is on waitlist
@@ -2995,8 +2998,14 @@ export class RoomService {
     });
 
     // Coin mining: settle any remaining active sessions for participants + viewers
-    this.coinMining.stopMany(participantUserIds);
-    this.coinMining.stopMany(viewerUserIds, "VIEWER");
+    this.coinMining.stopMany(participantUserIds, null, {
+      roomId,
+      sessionId: session.id
+    });
+    this.coinMining.stopMany(viewerUserIds, "VIEWER", {
+      roomId,
+      sessionId: session.id
+    });
 
     this.clearHotReadCaches(roomId, [
       ...participantUserIds,

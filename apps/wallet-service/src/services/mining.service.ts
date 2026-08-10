@@ -299,6 +299,20 @@ export class MiningService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /**
+   * True when a stop/start targets an older room/call than the active session.
+   * Used so a late stop from call A cannot wipe call B after a fast rematch.
+   */
+  private isStaleRoomBinding(
+    session: { roomId: string | null; sessionId: string | null },
+    roomId?: string | null,
+    sessionId?: string | null
+  ): boolean {
+    if (roomId && session.roomId && roomId !== session.roomId) return true;
+    if (sessionId && session.sessionId && sessionId !== session.sessionId) return true;
+    return false;
+  }
+
   async startSession(params: {
     userId: string;
     bucket: CoinMiningBucket;
@@ -320,18 +334,43 @@ export class MiningService implements OnModuleInit, OnModuleDestroy {
 
     if (existing) {
       if (existing.bucket === bucket) {
-        // Same bucket already active — refresh metadata, keep accrual clock.
+        const rebound = this.isStaleRoomBinding(
+          existing,
+          params.roomId,
+          params.sessionId
+        );
+        if (!rebound) {
+          // Same bucket + same room/call — refresh metadata, keep accrual clock.
+          await this.prisma.coinMiningActiveSession.update({
+            where: { userId },
+            data: {
+              roomId: params.roomId ?? existing.roomId,
+              sessionId: params.sessionId ?? existing.sessionId
+            }
+          });
+          return { started: true, bucket, switchedFrom: null };
+        }
+
+        // Same bucket but a new room/call (fast rematch): bank elapsed, rebind
+        // so a late stop for the previous room cannot delete this session.
+        await this.settleActive(userId);
         await this.prisma.coinMiningActiveSession.update({
           where: { userId },
           data: {
             roomId: params.roomId ?? existing.roomId,
-            sessionId: params.sessionId ?? existing.sessionId
+            sessionId: params.sessionId ?? existing.sessionId,
+            lastSettledAt: new Date()
           }
         });
         return { started: true, bucket, switchedFrom: null };
       }
       switchedFrom = existing.bucket as CoinMiningBucket;
-      await this.stopSession({ userId, bucket: switchedFrom });
+      await this.stopSession({
+        userId,
+        bucket: switchedFrom,
+        roomId: existing.roomId,
+        sessionId: existing.sessionId
+      });
     }
 
     const now = new Date();
@@ -352,6 +391,8 @@ export class MiningService implements OnModuleInit, OnModuleDestroy {
   async stopSession(params: {
     userId: string;
     bucket?: CoinMiningBucket | null;
+    roomId?: string | null;
+    sessionId?: string | null;
   }): Promise<{
     stopped: boolean;
     coinsCredited: number;
@@ -367,8 +408,36 @@ export class MiningService implements OnModuleInit, OnModuleDestroy {
       // Stop request for a different bucket — ignore (exclusive session is elsewhere).
       return { stopped: false, coinsCredited: 0, bucket: session.bucket as CoinMiningBucket };
     }
+    if (this.isStaleRoomBinding(session, params.roomId, params.sessionId)) {
+      // Active session already belongs to a newer room/call — ignore stale stop.
+      return {
+        stopped: false,
+        coinsCredited: 0,
+        bucket: session.bucket as CoinMiningBucket
+      };
+    }
 
     const settle = await this.settleActive(params.userId);
+
+    // Re-read: a concurrent start may have rebound this user to a newer room/call.
+    const current = await this.prisma.coinMiningActiveSession.findUnique({
+      where: { userId: params.userId }
+    });
+    if (!current) {
+      return {
+        stopped: true,
+        coinsCredited: settle.coinsCredited,
+        bucket: session.bucket as CoinMiningBucket
+      };
+    }
+    if (this.isStaleRoomBinding(current, params.roomId, params.sessionId)) {
+      return {
+        stopped: false,
+        coinsCredited: settle.coinsCredited,
+        bucket: current.bucket as CoinMiningBucket
+      };
+    }
+
     await this.prisma.coinMiningActiveSession.delete({
       where: { userId: params.userId }
     }).catch(() => undefined);

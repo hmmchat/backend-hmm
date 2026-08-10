@@ -3,6 +3,8 @@ import { WalletClientService } from "./wallet-client.service.js";
 
 export type MiningBucket = "BROADCAST" | "VIDEO_CALL" | "VIEWER";
 
+type MiningMeta = { roomId?: string | null; sessionId?: string | null };
+
 @Injectable()
 export class CoinMiningProgressService {
   private readonly logger = new Logger(CoinMiningProgressService.name);
@@ -12,7 +14,7 @@ export class CoinMiningProgressService {
   start(
     userId: string,
     bucket: MiningBucket,
-    meta?: { roomId?: string | null; sessionId?: string | null }
+    meta?: MiningMeta
   ): void {
     if (!userId || userId.startsWith("anonymous:")) return;
     this.walletClient
@@ -29,10 +31,15 @@ export class CoinMiningProgressService {
       });
   }
 
-  stop(userId: string, bucket?: MiningBucket | null): void {
+  stop(userId: string, bucket?: MiningBucket | null, meta?: MiningMeta): void {
     if (!userId || userId.startsWith("anonymous:")) return;
     this.walletClient
-      .stopMiningSession({ userId, bucket: bucket ?? null })
+      .stopMiningSession({
+        userId,
+        bucket: bucket ?? null,
+        roomId: meta?.roomId ?? null,
+        sessionId: meta?.sessionId ?? null
+      })
       .catch((err) => {
         this.logger.warn(
           `Mining stop failed for ${userId}: ${err?.message || err}`
@@ -43,16 +50,20 @@ export class CoinMiningProgressService {
   startMany(
     userIds: string[],
     bucket: MiningBucket,
-    meta?: { roomId?: string | null; sessionId?: string | null }
+    meta?: MiningMeta
   ): void {
     for (const userId of userIds) {
       this.start(userId, bucket, meta);
     }
   }
 
-  stopMany(userIds: string[], bucket?: MiningBucket | null): void {
+  stopMany(
+    userIds: string[],
+    bucket?: MiningBucket | null,
+    meta?: MiningMeta
+  ): void {
     for (const userId of userIds) {
-      this.stop(userId, bucket);
+      this.stop(userId, bucket, meta);
     }
   }
 

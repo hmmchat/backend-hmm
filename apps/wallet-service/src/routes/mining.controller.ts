@@ -20,7 +20,9 @@ const StartSessionSchema = z.object({
 
 const StopSessionSchema = z.object({
   userId: z.string().min(1),
-  bucket: BucketSchema.optional().nullable()
+  bucket: BucketSchema.optional().nullable(),
+  roomId: z.string().optional().nullable(),
+  sessionId: z.string().optional().nullable()
 });
 
 const FaceCardCompleteSchema = z.object({
@@ -75,7 +77,9 @@ export class MiningController {
     const dto = StopSessionSchema.parse(body);
     return this.miningService.stopSession({
       userId: dto.userId,
-      bucket: (dto.bucket as CoinMiningBucket | null | undefined) ?? null
+      bucket: (dto.bucket as CoinMiningBucket | null | undefined) ?? null,
+      roomId: dto.roomId ?? null,
+      sessionId: dto.sessionId ?? null
     });
   }
 

@@ -249,6 +249,8 @@ export class WalletClientService {
   async stopMiningSession(params: {
     userId: string;
     bucket?: "BROADCAST" | "VIDEO_CALL" | "VIEWER" | null;
+    roomId?: string | null;
+    sessionId?: string | null;
   }): Promise<void> {
     try {
       const response = await fetch(`${this.walletServiceUrl}/internal/mining/session/stop`, {

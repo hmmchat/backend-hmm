@@ -54,13 +54,22 @@ export class AuthController {
     return t?.toLowerCase() === "bearer" ? v : null;
   }
 
-  private async verifyTokenAndGetUserId(token: string): Promise<string> {
+  private async verifyTokenAndGetUserId(
+    token: string,
+    opts?: { requireExistingUser?: boolean }
+  ): Promise<string> {
     if (!token) {
       throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
     }
     await this.initializeJWT();
     const payload = await this.verifyAccess(token);
-    return payload.sub;
+    const userId = payload.sub;
+    // Default: reject JWTs for hard-deleted / soft-deleted accounts.
+    // Opt out for idempotent self-delete so clients can clear a stale session cleanly.
+    if (opts?.requireExistingUser !== false) {
+      await this.auth.assertAuthUserExists(userId);
+    }
+    return userId;
   }
 
   private assertInternalRequest(internalToken?: string) {
@@ -178,7 +187,9 @@ export class AuthController {
   @Delete("me")
   async deleteAccount(@Headers("authorization") authz: string) {
     const token = this.getTokenFromHeader(authz);
-    const userId = await this.verifyTokenAndGetUserId(token!);
+    // Allow missing/already-deleted auth rows so leftover JWTs after dashboard hard-delete
+    // can finish cleanup without a 500.
+    const userId = await this.verifyTokenAndGetUserId(token!, { requireExistingUser: false });
     
     await this.auth.deleteAccount(userId);
     return { ok: true, message: "Account deletion initiated. Your data will be permanently deleted within 30 days." };

@@ -1052,8 +1052,19 @@ export class AuthService implements OnModuleInit {
    * Delete user account (user-initiated, soft delete)
    * Sets deletedAt timestamp and deactivates account
    * Actual data deletion should be handled by a cleanup job
+   *
+   * Idempotent: if the auth row was already hard-deleted (dashboard Delete),
+   * treat as success so clients can clear their session instead of getting 500.
    */
   async deleteAccount(userId: string): Promise<void> {
+    const existing = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true }
+    });
+    if (!existing) {
+      return;
+    }
+
     await this.prisma.user.update({
       where: { id: userId },
       data: {
@@ -1067,6 +1078,24 @@ export class AuthService implements OnModuleInit {
     await this.prisma.session.deleteMany({
       where: { userId }
     });
+  }
+
+  /**
+   * Ensure JWT subject still maps to an auth user that has not been closed.
+   * Blocks hard-deleted rows and soft-deleted (deletedAt) accounts from using a leftover token.
+   * DEACTIVATED users are still allowed (they may call /me/reactivate).
+   */
+  async assertAuthUserExists(userId: string): Promise<void> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, deletedAt: true }
+    });
+    if (!user || user.deletedAt) {
+      throw new HttpException(
+        "Account no longer exists. Please sign in again.",
+        HttpStatus.UNAUTHORIZED
+      );
+    }
   }
 
   /**

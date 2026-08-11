@@ -449,26 +449,54 @@ export class UsersAdminController {
   }
 
   /**
-   * GET /admin/users/:id — merged auth + profile (richest row for dashboard detail)
+   * GET /admin/users/:id — merged auth + profile (richest row for dashboard detail).
+   * Also returns profile-only orphans (auth hard-deleted but user-service row still present).
    */
   @Get(":id")
   async getOne(@Param("id") id: string) {
-    const authRes = await authFetchOrThrow(authAdminUserPath(id), { method: "GET" }, "Admin user");
-    const authPayload = await parseAuthJsonResponse<{ ok?: boolean; user?: AuthAdminUser }>(
-      authRes,
-      "admin user"
-    );
-    const a = authPayload.user;
-    if (!a || a.id !== id) {
+    const authRes = await authFetch(authAdminUserPath(id), { method: "GET" });
+    let a: AuthAdminUser | null = null;
+    if (authRes.ok) {
+      const authPayload = await parseAuthJsonResponse<{ ok?: boolean; user?: AuthAdminUser }>(
+        authRes,
+        "admin user"
+      );
+      a = authPayload.user && authPayload.user.id === id ? authPayload.user : null;
+    } else if (authRes.status !== 404) {
+      const t = await authRes.text();
+      throw new HttpException(`Admin user fetch failed: ${authRes.status} ${t}`, HttpStatus.BAD_GATEWAY);
+    }
+
+    const p = await this.findUniqueAdminProfile(id);
+    if (!a && !p) {
       throw new HttpException("User not found", HttpStatus.NOT_FOUND);
     }
-    const p = await this.findUniqueAdminProfile(id);
+
     const reportThreshold = this.userService.getReportThresholdForAdmin();
+    const authFallback: AuthAdminUser = a ?? {
+      id,
+      email: null,
+      phone: null,
+      name: null,
+      createdAt: p?.createdAt ? iso(p.createdAt) ?? new Date(0).toISOString() : new Date(0).toISOString(),
+      updatedAt: p?.createdAt ? iso(p.createdAt) ?? new Date(0).toISOString() : new Date(0).toISOString(),
+      accountStatus: "DEACTIVATED",
+      bannedAt: null,
+      banReason: null,
+      suspendedAt: null,
+      suspensionReason: null,
+      deactivatedAt: null,
+      deletedAt: new Date().toISOString()
+    };
+
     return {
       ok: true,
       user: {
-        ...mergeAuthUserWithProfile(a, p ?? undefined, (d, u) => this.brandService.resolvePublicLogoUrl(d, u)),
-        reportThreshold
+        ...mergeAuthUserWithProfile(authFallback, p ?? undefined, (d, u) =>
+          this.brandService.resolvePublicLogoUrl(d, u)
+        ),
+        reportThreshold,
+        orphanProfile: !a && !!p
       },
       reportThreshold
     };

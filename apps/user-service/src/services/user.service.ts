@@ -624,6 +624,16 @@ export class UserService implements OnModuleInit {
 
   async createProfile(userId: string, data: CreateProfileDto) {
     try {
+      // Reject orphan profiles: JWT/userId must still map to an ACTIVE auth account.
+      // After dashboard hard-delete, a leftover token must not recreate a profile.
+      const authActive = await this.authClient.isAccountActive(userId);
+      if (!authActive) {
+        throw new HttpException(
+          "Account no longer exists. Please sign in again.",
+          HttpStatus.UNAUTHORIZED
+        );
+      }
+
       // Check if profile already exists
       const existing = await this.prisma.user.findUnique({
         where: { id: userId }

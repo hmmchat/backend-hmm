@@ -71,7 +71,27 @@ export class UserController {
   /* ---------- Profile Management ---------- */
 
   @Post("users/:userId/profile")
-  async createProfile(@Param("userId") userId: string, @Body() body: any) {
+  async createProfile(
+    @Param("userId") userId: string,
+    @Body() body: any,
+    @Headers("authorization") authz?: string
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) {
+      throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    }
+    const { verifyToken } = await import("@hmm/common");
+    const jwkStr = process.env.JWT_PUBLIC_JWK;
+    if (!jwkStr || jwkStr === "undefined") {
+      throw new HttpException("Server configuration error", HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+    const cleanedJwk = jwkStr.trim().replace(/^['"]|['"]$/g, "");
+    const publicJwk = JSON.parse(cleanedJwk);
+    const verifyAccess = await verifyToken(publicJwk);
+    const payload = await verifyAccess(token);
+    if (payload.sub !== userId) {
+      throw new HttpException("Token does not match userId", HttpStatus.FORBIDDEN);
+    }
     const dto = CreateProfileSchema.parse(body);
     return this.userService.createProfile(userId, dto);
   }

@@ -25,8 +25,12 @@ const SIGHTENGINE_MODELS = "nudity-2.1,faces,people-counting,face-age,genai";
 const NUDITY_REJECT_THRESHOLD = 0.5;
 /** AI-generated rejection threshold. */
 const AI_GENERATED_THRESHOLD = 0.7;
-/** Minor (under 18) rejection threshold. */
-const MINOR_THRESHOLD = 0.5;
+/**
+ * Minor (under 18) rejection threshold.
+ * Sightengine scores ~0.5 when a face looks near 18; young Indian adults (18–22)
+ * often land in that band. Only reject high-confidence minors (clear children).
+ */
+const MINOR_THRESHOLD = 0.8;
 
 /**
  * DP: a face counts as a co-subject only if it is large enough relative to the

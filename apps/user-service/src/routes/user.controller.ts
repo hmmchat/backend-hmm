@@ -38,6 +38,18 @@ import {
   SEARCH_DEFAULT_LIMIT
 } from "../config/limits.config.js";
 
+const CUID_LIKE_ID = /^[A-Za-z0-9_-]{8,64}$/;
+
+function parseExcludeIds(exclude?: string | string[]): string[] {
+  const parts = Array.isArray(exclude)
+    ? exclude.flatMap((value) => String(value).split(","))
+    : String(exclude || "").split(",");
+  return parts
+    .map((id) => id.trim())
+    .filter((id) => CUID_LIKE_ID.test(id))
+    .slice(0, 100);
+}
+
 @Controller()
 export class UserController {
   constructor(
@@ -225,13 +237,17 @@ export class UserController {
   }
 
   @Get("interests")
-  async getInterests(@Query("q") query?: string, @Query("limit") limit?: string) {
+  async getInterests(
+    @Query("q") query?: string,
+    @Query("limit") limit?: string,
+    @Query("exclude") exclude?: string | string[]
+  ) {
     if (query === undefined || query === null || query === "") {
       const limitNum = limit !== undefined && limit !== "" ? parseInt(limit, 10) : 8;
       if (isNaN(limitNum) || limitNum < 1 || limitNum > 50) {
         throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);
       }
-      return this.userService.getInterests(limitNum);
+      return this.userService.getInterests(limitNum, parseExcludeIds(exclude));
     }
 
     const trimmedQuery = query.trim();
@@ -248,13 +264,17 @@ export class UserController {
   }
 
   @Get("values")
-  async getValues(@Query("q") query?: string, @Query("limit") limit?: string) {
+  async getValues(
+    @Query("q") query?: string,
+    @Query("limit") limit?: string,
+    @Query("exclude") exclude?: string | string[]
+  ) {
     if (query === undefined || query === null || query === "") {
       const limitNum = limit !== undefined && limit !== "" ? parseInt(limit, 10) : 8;
       if (isNaN(limitNum) || limitNum < 1 || limitNum > 50) {
         throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);
       }
-      return this.userService.getValues(limitNum);
+      return this.userService.getValues(limitNum, parseExcludeIds(exclude));
     }
 
     const trimmedQuery = query.trim();

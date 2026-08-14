@@ -28,7 +28,7 @@ import {
   UpdateIntentDto,
   CreateMusicPreferenceDto
 } from "../dtos/profile.dto.js";
-import { Gender, KycStatus, UserStatus } from "../../node_modules/.prisma/client/index.js";
+import { Gender, KycStatus, UserStatus, Prisma } from "../../node_modules/.prisma/client/index.js";
 import {
   NEARBY_DEFAULT_RADIUS_KM,
   NEARBY_DEFAULT_LIMIT,
@@ -54,6 +54,16 @@ import {
   MODERATOR_FACE_CARD_SETTING_ID,
   mergeModeratorFaceCardPresentation
 } from "../config/moderator-face-card.config.js";
+
+const CUID_LIKE_ID = /^[A-Za-z0-9_-]{8,64}$/;
+
+function excludeWhere(excludeIds: string[] = []) {
+  const safeExclude = (excludeIds || [])
+    .filter((id) => typeof id === "string" && CUID_LIKE_ID.test(id))
+    .slice(0, 100);
+  if (safeExclude.length === 0) return Prisma.empty;
+  return Prisma.sql`WHERE id NOT IN (${Prisma.join(safeExclude.map((id) => Prisma.sql`${id}`))})`;
+}
 
 @Injectable()
 export class UserService implements OnModuleInit {
@@ -1421,11 +1431,13 @@ export class UserService implements OnModuleInit {
     };
   }
 
-  async getInterests(limit: number = 8) {
+  async getInterests(limit: number = 8, excludeIds: string[] = []) {
     const effectiveLimit = limit ?? 8;
     if (effectiveLimit < 1 || effectiveLimit > 50) {
       throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);
     }
+
+    const excludeFilter = excludeWhere(excludeIds);
 
     // Only return sub-genres (name) to users, not genre
     // Genre is used internally for matching but not shown to users
@@ -1437,6 +1449,7 @@ export class UserService implements OnModuleInit {
         name,
         "createdAt"
       FROM "interests"
+      ${excludeFilter}
       ORDER BY random()
       LIMIT ${effectiveLimit};
     `;
@@ -1485,11 +1498,13 @@ export class UserService implements OnModuleInit {
     return { interests };
   }
 
-  async getValues(limit: number = 8) {
+  async getValues(limit: number = 8, excludeIds: string[] = []) {
     const effectiveLimit = limit ?? 8;
     if (effectiveLimit < 1 || effectiveLimit > 50) {
       throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);
     }
+
+    const excludeFilter = excludeWhere(excludeIds);
 
     const values = await this.prisma.$queryRaw<
       { id: string; name: string }[]
@@ -1498,6 +1513,7 @@ export class UserService implements OnModuleInit {
         id,
         name
       FROM "values"
+      ${excludeFilter}
       ORDER BY random()
       LIMIT ${effectiveLimit};
     `;

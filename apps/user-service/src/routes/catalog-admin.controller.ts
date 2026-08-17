@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpException, HttpStatus, Param, Patch, Post } from "@nestjs/common";
 import { z } from "zod";
-import { PREFERRED_CITY_ANYWHERE_IN_INDIA } from "@hmm/common";
+import { PREFERRED_CITY_ANYWHERE_IN_INDIA, rewriteExpiredStorageUrl } from "@hmm/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { BrandService } from "../services/brand.service.js";
 import { UserService } from "../services/user.service.js";
@@ -111,7 +111,7 @@ function serializeDiscoveryCityOption(
     value: option.value,
     label: option.label,
     intent: option.intent ?? null,
-    faceCardImageUrl: option.faceCardImageUrl ?? null,
+    faceCardImageUrl: rewriteExpiredStorageUrl(option.faceCardImageUrl ?? null),
     order: option.order ?? null,
     isActive: option.isActive,
     createdAt: option.createdAt,
@@ -379,7 +379,7 @@ export class CatalogAdminController {
         value: data.value,
         label: data.label,
         intent,
-        faceCardImageUrl: data.faceCardImageUrl ?? null,
+        faceCardImageUrl: rewriteExpiredStorageUrl(data.faceCardImageUrl ?? null),
         order: data.order ?? null,
         isActive: data.isActive !== false,
         musicPreferenceId: musicPreferenceId ?? null
@@ -418,7 +418,10 @@ export class CatalogAdminController {
         value: data.value,
         label: data.label,
         intent: data.intent !== undefined ? data.intent.trim() : undefined,
-        faceCardImageUrl: data.faceCardImageUrl,
+        faceCardImageUrl:
+          data.faceCardImageUrl !== undefined
+            ? rewriteExpiredStorageUrl(data.faceCardImageUrl)
+            : undefined,
         order: data.order,
         isActive: data.isActive,
         ...(musicPreferenceId !== undefined ? { musicPreferenceId } : {})

@@ -29,6 +29,11 @@ export {
   getCoinPackages,
   type CoinPackage
 } from "./coin-packages.js";
+export {
+  resolvePublicStorageBase,
+  rewriteExpiredStorageUrl,
+  rewrittenStorageUrlOrNull
+} from "./storage-url.js";
 
 /* ---------- Types ---------- */
 export type Provider = "google" | "apple" | "facebook" | "phone";

@@ -2,6 +2,7 @@ import { Injectable, OnModuleInit, HttpException, HttpStatus } from "@nestjs/com
 import { ConfigService } from "@nestjs/config";
 import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { resolvePublicStorageBase } from "@hmm/common";
 import { v4 as uuidv4 } from "uuid";
 
 @Injectable()
@@ -15,19 +16,27 @@ export class R2Service implements OnModuleInit {
   async onModuleInit() {
     const accessKeyId = this.configService.get<string>("R2_ACCESS_KEY_ID");
     const secretAccessKey = this.configService.get<string>("R2_SECRET_ACCESS_KEY");
-    const bucketName = this.configService.get<string>("R2_BUCKET_NAME");
+    const bucketName =
+      this.configService.get<string>("R2_BUCKET_NAME") ||
+      this.configService.get<string>("R2_BUCKET");
     const publicUrl = this.configService.get<string>("R2_PUBLIC_URL");
     const endpoint = this.configService.get<string>("R2_ENDPOINT");
     const region = this.configService.get<string>("R2_REGION") || "auto";
+    const resolvedPublicUrl = resolvePublicStorageBase({
+      publicUrl,
+      endpoint,
+      region,
+      bucketName
+    });
 
-    if (!accessKeyId || !secretAccessKey || !bucketName || !publicUrl) {
+    if (!accessKeyId || !secretAccessKey || !bucketName || !resolvedPublicUrl) {
       console.warn("⚠️  Storage configuration missing. File uploads will not work.");
-      console.warn("Required: R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME, R2_PUBLIC_URL");
+      console.warn("Required: R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME, R2_PUBLIC_URL (or B2 endpoint+region to derive it)");
       return;
     }
 
     this.bucketName = bucketName;
-    this.publicUrl = publicUrl.endsWith("/") ? publicUrl.slice(0, -1) : publicUrl;
+    this.publicUrl = resolvedPublicUrl;
 
     // Support both Cloudflare R2 and Backblaze B2 (S3-compatible)
     const s3Config: any = {
@@ -53,6 +62,7 @@ export class R2Service implements OnModuleInit {
 
     this.s3Client = new S3Client(s3Config);
     console.log(`✅ Storage initialized - Bucket: ${this.bucketName}`);
+    console.log(`✅ Public object URL base: ${this.publicUrl}`);
   }
 
   /**
@@ -77,8 +87,7 @@ export class R2Service implements OnModuleInit {
   }
 
   /**
-   * Upload a file to storage and return presigned URL
-   * For private buckets, returns a presigned URL with 1 week expiry
+   * Upload a file and return a stable public URL (not a 7-day signed GET).
    */
   async uploadFile(
     key: string,
@@ -100,11 +109,7 @@ export class R2Service implements OnModuleInit {
       });
 
       await this.s3Client.send(command);
-
-      // Generate presigned URL with 1 week expiry (for private buckets)
-      // This allows images to be viewed for 1 week without making bucket public
-      const presignedUrl = await this.generatePresignedViewUrl(key, 604800); // 1 week
-      return presignedUrl;
+      return this.publicUrlForKey(key);
     } catch (error: any) {
       throw new HttpException(
         `Failed to upload file: ${error.message}`,
@@ -212,5 +217,14 @@ export class R2Service implements OnModuleInit {
    */
   getPublicUrl(): string {
     return this.publicUrl || "";
+  }
+
+  publicUrlForKey(key: string): string {
+    const base = this.getPublicUrl();
+    const normalized = key.replace(/^\//, "");
+    if (!base) {
+      throw new HttpException("R2_PUBLIC_URL is not configured", HttpStatus.SERVICE_UNAVAILABLE);
+    }
+    return `${base}/${normalized}`;
   }
 }

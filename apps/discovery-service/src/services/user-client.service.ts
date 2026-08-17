@@ -1,6 +1,6 @@
 import { Injectable, HttpException, HttpStatus, OnModuleInit } from "@nestjs/common";
 import fetch from "node-fetch";
-import { verifyToken, AccessPayload } from "@hmm/common";
+import { verifyToken, AccessPayload, rewriteExpiredStorageUrl } from "@hmm/common";
 import { JWK } from "jose";
 import {
   moderatorFaceCardPresentationFromEnv,
@@ -506,7 +506,7 @@ export class UserClientService implements OnModuleInit {
         value: o.value,
         label: o.label || o.value,
         intent: o.intent ?? null,
-        faceCardImageUrl: o.faceCardImageUrl ?? null,
+        faceCardImageUrl: rewriteExpiredStorageUrl(o.faceCardImageUrl ?? null),
         brands: (o.brands || [])
           .filter((b) => Boolean(b?.name))
           .map((b) => ({

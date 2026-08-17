@@ -1,5 +1,6 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Param, Patch } from "@nestjs/common";
 import { z } from "zod";
+import { rewriteExpiredStorageUrl } from "@hmm/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 
 const updateZodiacSchema = z.object({
@@ -20,7 +21,13 @@ export class ZodiacAdminController {
     const zodiacs = await (this.prisma as any).zodiac.findMany({
       orderBy: [{ order: "asc" }, { name: "asc" }]
     });
-    return { ok: true, zodiacs };
+    return {
+      ok: true,
+      zodiacs: zodiacs.map((z: { imageUrl: string }) => ({
+        ...z,
+        imageUrl: rewriteExpiredStorageUrl(z.imageUrl) ?? z.imageUrl
+      }))
+    };
   }
 
   /**
@@ -34,7 +41,9 @@ export class ZodiacAdminController {
     const updated = await (this.prisma as any).zodiac.update({
       where: { id },
       data: {
-        imageUrl: data.imageUrl !== undefined ? (data.imageUrl as any) : undefined,
+        imageUrl: data.imageUrl !== undefined
+          ? (data.imageUrl ? rewriteExpiredStorageUrl(data.imageUrl as string) : data.imageUrl)
+          : undefined,
         order: data.order !== undefined ? data.order : undefined
       }
     });

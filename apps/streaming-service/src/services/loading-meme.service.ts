@@ -1,4 +1,5 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
+import { rewriteExpiredStorageUrl, rewrittenStorageUrlOrNull } from "@hmm/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 
 // Fallback list if database is empty (migration helper)
@@ -18,10 +19,41 @@ const DEFAULT_LOADING_MEMES = [
 ];
 
 @Injectable()
-export class LoadingMemeService {
+export class LoadingMemeService implements OnModuleInit {
   private readonly logger = new Logger(LoadingMemeService.name);
 
   constructor(private prisma: PrismaService) {}
+
+  async onModuleInit() {
+    await this.rewriteExpiredMemeUrls();
+  }
+
+  private withPublicImageUrl<T extends { imageUrl: string }>(row: T): T {
+    return { ...row, imageUrl: rewriteExpiredStorageUrl(row.imageUrl) ?? row.imageUrl };
+  }
+
+  private async rewriteExpiredMemeUrls() {
+    try {
+      const rows = await (this.prisma as any).loadingScreenMeme.findMany({
+        select: { id: true, imageUrl: true }
+      });
+      let updated = 0;
+      for (const row of rows) {
+        const next = rewrittenStorageUrlOrNull(row.imageUrl);
+        if (!next) continue;
+        await (this.prisma as any).loadingScreenMeme.update({
+          where: { id: row.id },
+          data: { imageUrl: next }
+        });
+        updated++;
+      }
+      if (updated > 0) {
+        this.logger.log(`Rewrote ${updated} expired loading-meme URL(s)`);
+      }
+    } catch (error: any) {
+      this.logger.warn(`Loading-meme URL rewrite skipped: ${error?.message || error}`);
+    }
+  }
 
   /**
    * Get a random loading screen meme from database
@@ -45,7 +77,7 @@ export class LoadingMemeService {
       const randomIndex = Math.floor(Math.random() * activeMemes.length);
       const meme = activeMemes[randomIndex];
       this.logger.debug(`Generated random loading meme: ${meme.text}`);
-      return meme;
+      return this.withPublicImageUrl(meme);
     } catch (error: any) {
       this.logger.error(`Error fetching loading meme from database: ${error.message}`);
       // Fallback to default list on error
@@ -67,13 +99,14 @@ export class LoadingMemeService {
     createdAt: Date;
     updatedAt: Date;
   }>> {
-    return await (this.prisma as any).loadingScreenMeme.findMany({
+    const rows = await (this.prisma as any).loadingScreenMeme.findMany({
       orderBy: [
         { isActive: "desc" },
         { order: "asc" },
         { createdAt: "desc" }
       ]
     });
+    return rows.map((row: { imageUrl: string }) => this.withPublicImageUrl(row));
   }
 
   /**
@@ -86,7 +119,7 @@ export class LoadingMemeService {
     category: string | null;
     order: number | null;
   }>> {
-    return await (this.prisma as any).loadingScreenMeme.findMany({
+    const rows = await (this.prisma as any).loadingScreenMeme.findMany({
       where: { isActive: true },
       select: {
         id: true,
@@ -100,6 +133,7 @@ export class LoadingMemeService {
         { createdAt: "desc" }
       ]
     });
+    return rows.map((row: { imageUrl: string }) => this.withPublicImageUrl(row));
   }
 
   /**
@@ -146,7 +180,7 @@ export class LoadingMemeService {
     });
 
     this.logger.log(`Created loading screen meme: ${meme.id} - "${meme.text}"`);
-    return meme;
+    return this.withPublicImageUrl(meme);
   }
 
   /**
@@ -213,7 +247,7 @@ export class LoadingMemeService {
     });
 
     this.logger.log(`Updated loading screen meme: ${id}`);
-    return updated;
+    return this.withPublicImageUrl(updated);
   }
 
   /**

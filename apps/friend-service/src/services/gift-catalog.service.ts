@@ -1,4 +1,5 @@
-import { Injectable, NotFoundException, BadRequestException } from "@nestjs/common";
+import { Injectable, NotFoundException, BadRequestException, Logger, OnModuleInit } from "@nestjs/common";
+import { rewriteExpiredStorageUrl, rewrittenStorageUrlOrNull } from "@hmm/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 
 /** Stable preset art when `imageUrl` is unset (giftId is often a UUID, not a filename). */
@@ -14,14 +15,72 @@ export function fallbackPresetGiftImagePath(giftId: string): string {
 }
 
 export function resolveGiftStickerUrl(imageUrl: string | null | undefined, giftId: string): string {
-  const trimmed = imageUrl?.trim();
+  const trimmed = rewriteExpiredStorageUrl(imageUrl?.trim() || null);
   if (trimmed) return trimmed;
   return fallbackPresetGiftImagePath(giftId);
 }
 
 @Injectable()
-export class GiftCatalogService {
+export class GiftCatalogService implements OnModuleInit {
+  private readonly logger = new Logger(GiftCatalogService.name);
+
   constructor(private readonly prisma: PrismaService) {}
+
+  async onModuleInit() {
+    await this.rewriteExpiredGiftUrls();
+  }
+
+  private withPublicImageUrl<T extends { imageUrl?: string | null }>(gift: T): T {
+    if (!gift?.imageUrl) return gift;
+    return { ...gift, imageUrl: rewriteExpiredStorageUrl(gift.imageUrl) ?? gift.imageUrl };
+  }
+
+  private async rewriteExpiredGiftUrls() {
+    try {
+      const gifts = await this.prisma.gift.findMany({
+        select: { id: true, imageUrl: true }
+      });
+      let updated = 0;
+      for (const gift of gifts) {
+        const next = rewrittenStorageUrlOrNull(gift.imageUrl);
+        if (!next) continue;
+        await this.prisma.gift.update({
+          where: { id: gift.id },
+          data: { imageUrl: next }
+        });
+        updated++;
+      }
+
+      const campaigns = await (this.prisma as any).notificationCampaign.findMany({
+        select: { id: true, imagesJson: true }
+      }).catch(() => []);
+      for (const campaign of campaigns) {
+        if (!campaign.imagesJson) continue;
+        let images: unknown;
+        try {
+          images = JSON.parse(campaign.imagesJson);
+        } catch {
+          continue;
+        }
+        if (!Array.isArray(images)) continue;
+        const rewritten = images.map((item) =>
+          typeof item === "string" ? rewriteExpiredStorageUrl(item) : item
+        );
+        if (JSON.stringify(rewritten) === JSON.stringify(images)) continue;
+        await (this.prisma as any).notificationCampaign.update({
+          where: { id: campaign.id },
+          data: { imagesJson: JSON.stringify(rewritten) }
+        });
+        updated++;
+      }
+
+      if (updated > 0) {
+        this.logger.log(`Rewrote ${updated} expired gift/notification URL(s)`);
+      }
+    } catch (error: any) {
+      this.logger.warn(`Gift URL rewrite skipped: ${error?.message || error}`);
+    }
+  }
 
   /**
    * Get gift by giftId
@@ -49,7 +108,7 @@ export class GiftCatalogService {
       throw new BadRequestException(`Gift ${giftId} is not active`);
     }
 
-    return gift;
+    return this.withPublicImageUrl(gift);
   }
 
   /**
@@ -70,7 +129,7 @@ export class GiftCatalogService {
    * Get all active gifts
    */
   async getAllActiveGifts() {
-    return await this.prisma.gift.findMany({
+    const gifts = await this.prisma.gift.findMany({
       where: { isActive: true },
       select: {
         id: true,
@@ -85,6 +144,7 @@ export class GiftCatalogService {
         diamonds: "asc"
       } as any
     });
+    return gifts.map((gift) => this.withPublicImageUrl(gift));
   }
 
   /**

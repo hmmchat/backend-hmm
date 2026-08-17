@@ -17,6 +17,7 @@ import { BadgeService } from "../services/badge.service.js";
 import { WalletClientService } from "../services/wallet-client.service.js";
 import { AuthClientService } from "../services/auth-client.service.js";
 import { DiscoveryClientService } from "../services/discovery-client.service.js";
+import { StorageUrlBackfillService } from "../services/storage-url-backfill.service.js";
 
 @Module({
   imports: [ConfigModule.forRoot()],
@@ -29,7 +30,7 @@ import { DiscoveryClientService } from "../services/discovery-client.service.js"
     ZodiacAdminController,
     UsersAdminController
   ],
-  providers: [PrismaService, UserService, ProfileCompletionService, ModerationClientService, MusicService, BrandService, BadgeService, WalletClientService, AuthClientService, DiscoveryClientService]
+  providers: [PrismaService, UserService, ProfileCompletionService, ModerationClientService, MusicService, BrandService, BadgeService, WalletClientService, AuthClientService, DiscoveryClientService, StorageUrlBackfillService]
 })
 export class AppModule {}
 

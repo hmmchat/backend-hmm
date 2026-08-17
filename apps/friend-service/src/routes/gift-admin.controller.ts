@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post } from "@nestjs/common";
 import { randomUUID } from "crypto";
 import { z } from "zod";
+import { rewriteExpiredStorageUrl } from "@hmm/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 
 const createGiftSchema = z.object({
@@ -30,6 +31,11 @@ const updateGiftSchema = z.object({
 export class GiftAdminController {
   constructor(private readonly prisma: PrismaService) {}
 
+  private withPublicImageUrl<T extends { imageUrl?: string | null }>(gift: T): T {
+    if (!gift?.imageUrl) return gift;
+    return { ...gift, imageUrl: rewriteExpiredStorageUrl(gift.imageUrl) ?? gift.imageUrl };
+  }
+
   /**
    * List all gifts (active + inactive)
    * GET /admin/gifts
@@ -43,7 +49,7 @@ export class GiftAdminController {
         { name: "asc" }
       ] as any
     });
-    return { ok: true, gifts };
+    return { ok: true, gifts: gifts.map((gift) => this.withPublicImageUrl(gift)) };
   }
 
   /**
@@ -59,7 +65,7 @@ export class GiftAdminController {
         { name: "asc" }
       ] as any
     });
-    return { ok: true, gifts };
+    return { ok: true, gifts: gifts.map((gift) => this.withPublicImageUrl(gift)) };
   }
 
   /**
@@ -88,7 +94,7 @@ export class GiftAdminController {
         isActive: true
       }
     });
-    return { ok: true, gift };
+    return { ok: true, gift: this.withPublicImageUrl(gift) };
   }
 
   /**
@@ -114,7 +120,7 @@ export class GiftAdminController {
       where: { id },
       data: updateData as any
     });
-    return { ok: true, gift };
+    return { ok: true, gift: this.withPublicImageUrl(gift) };
   }
 
   /**

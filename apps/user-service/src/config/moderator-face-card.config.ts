@@ -1,3 +1,5 @@
+import { rewriteExpiredStorageUrl } from "@hmm/common";
+
 /**
  * Env fallbacks when DB row is missing or displayPictureUrl is unset.
  * Prefer dashboard: GET/PATCH /v1/admin/moderator-face-card (user-service).
@@ -31,8 +33,9 @@ export function mergeModeratorFaceCardPresentation(
   return {
     username: row.username?.trim() || env.username,
     intent: row.intent?.trim() || env.intent,
-    displayPictureUrl:
-      row.displayPictureUrl?.trim() || env.displayPictureUrl,
+    displayPictureUrl: rewriteExpiredStorageUrl(
+      row.displayPictureUrl?.trim() || env.displayPictureUrl
+    ) || env.displayPictureUrl,
     city: row.city?.trim() || env.city
   };
 }

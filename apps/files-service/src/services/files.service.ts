@@ -1,4 +1,5 @@
-import { Injectable, HttpException, HttpStatus } from "@nestjs/common";
+import { Injectable, HttpException, HttpStatus, Logger, OnModuleInit } from "@nestjs/common";
+import { rewrittenStorageUrlOrNull } from "@hmm/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { R2Service } from "./r2.service.js";
 import { ImageProcessingService } from "./image-processing.service.js";
@@ -28,7 +29,8 @@ export interface FileInfo {
 }
 
 @Injectable()
-export class FilesService {
+export class FilesService implements OnModuleInit {
+  private readonly logger = new Logger(FilesService.name);
   private readonly defaultListLimit: number;
 
   constructor(
@@ -38,6 +40,66 @@ export class FilesService {
     private readonly moderationClient: ModerationClientService
   ) {
     this.defaultListLimit = parseInt(process.env.FILES_LIST_DEFAULT_LIMIT || "50", 10);
+  }
+
+  async onModuleInit() {
+    await this.rewriteExpiredFileUrls();
+  }
+
+  private toFileInfo(file: {
+    id: string;
+    url: string;
+    key: string;
+    mimeType: string;
+    size: number;
+    width: number | null;
+    height: number | null;
+    metadata: unknown;
+    createdAt: Date;
+  }): FileInfo {
+    return {
+      id: file.id,
+      url: this.stableFileUrl(file.key, file.url),
+      key: file.key,
+      mimeType: file.mimeType,
+      size: file.size,
+      width: file.width || undefined,
+      height: file.height || undefined,
+      metadata: file.metadata as any,
+      createdAt: file.createdAt
+    };
+  }
+
+  private stableFileUrl(key: string, storedUrl: string): string {
+    const base = this.r2Service.getPublicUrl();
+    if (base) {
+      return `${base}/${key.replace(/^\//, "")}`;
+    }
+    return rewrittenStorageUrlOrNull(storedUrl) || storedUrl;
+  }
+
+  private async rewriteExpiredFileUrls() {
+    try {
+      const files = await this.prisma.file.findMany({
+        select: { id: true, key: true, url: true }
+      });
+      let updated = 0;
+      for (const file of files) {
+        const next = this.stableFileUrl(file.key, file.url);
+        if (next !== file.url) {
+          await this.prisma.file.update({
+            where: { id: file.id },
+            data: { url: next }
+          });
+          updated++;
+        }
+      }
+      if (updated > 0) {
+        this.logger.log(`Rewrote ${updated} expired file URL(s) to the public object URL`);
+      }
+    } catch (error: any) {
+      this.logger.warn(`File URL rewrite skipped: ${error?.message || error}`);
+    }
   }
 
   /**
@@ -124,17 +186,7 @@ export class FilesService {
       }
     });
 
-    return {
-      id: file.id,
-      url: file.url,
-      key: file.key,
-      mimeType: file.mimeType,
-      size: file.size,
-      width: file.width || undefined,
-      height: file.height || undefined,
-      metadata: file.metadata as any,
-      createdAt: file.createdAt
-    };
+    return this.toFileInfo(file);
   }
 
   /**
@@ -149,17 +201,7 @@ export class FilesService {
       throw new HttpException("File not found", HttpStatus.NOT_FOUND);
     }
 
-    return {
-      id: file.id,
-      url: file.url,
-      key: file.key,
-      mimeType: file.mimeType,
-      size: file.size,
-      width: file.width || undefined,
-      height: file.height || undefined,
-      metadata: file.metadata as any,
-      createdAt: file.createdAt
-    };
+    return this.toFileInfo(file);
   }
 
   /**
@@ -246,16 +288,6 @@ export class FilesService {
       take
     });
 
-    return files.map((file) => ({
-      id: file.id,
-      url: file.url,
-      key: file.key,
-      mimeType: file.mimeType,
-      size: file.size,
-      width: file.width || undefined,
-      height: file.height || undefined,
-      metadata: file.metadata as any,
-      createdAt: file.createdAt
-    }));
+    return files.map((file) => this.toFileInfo(file));
   }
 }

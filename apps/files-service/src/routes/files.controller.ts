@@ -16,7 +16,7 @@ import { FastifyRequest } from "fastify";
 import { FilesService } from "../services/files.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { z } from "zod";
-import { verifyToken } from "@hmm/common";
+import { verifyToken, rewriteExpiredStorageUrl } from "@hmm/common";
 
 /** Query params are strings; coerce numeric fields so `?maxWidth=1600` validates. */
 const UploadFileSchema = z.object({
@@ -162,7 +162,7 @@ export class FilesController {
         },
       });
 
-    let upstream = await fetchImage(parsed.toString());
+    let upstream = await fetchImage(rewriteExpiredStorageUrl(parsed.toString()));
     // Many stored URLs are expiring presigned links; retry without query if host is public B2/S3.
     if (
       !upstream.ok &&
@@ -170,8 +170,12 @@ export class FilesController {
       parsed.search &&
       (parsed.hostname.includes("backblazeb2.com") || parsed.hostname.includes("amazonaws.com"))
     ) {
-      const unsignedUrl = `${parsed.origin}${parsed.pathname}`;
-      upstream = await fetchImage(unsignedUrl);
+      const unsignedUrl = rewriteExpiredStorageUrl(parsed.toString());
+      if (unsignedUrl !== parsed.toString()) {
+        upstream = await fetchImage(unsignedUrl);
+      } else {
+        upstream = await fetchImage(`${parsed.origin}${parsed.pathname}`);
+      }
     }
 
     if (!upstream.ok) {

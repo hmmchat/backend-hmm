@@ -12,7 +12,8 @@ import {
   AccessPayload,
   PREFERRED_CITY_ANYWHERE_IN_INDIA,
   canTransitionToOffline,
-  canTransitionToOnline
+  canTransitionToOnline,
+  rewriteExpiredStorageUrl
 } from "@hmm/common";
 import { JWK } from "jose";
 import {
@@ -106,7 +107,7 @@ export class UserService implements OnModuleInit {
       label: row.label,
       order: row.order,
       intent: row.intent,
-      faceCardImageUrl: row.faceCardImageUrl,
+      faceCardImageUrl: rewriteExpiredStorageUrl(row.faceCardImageUrl),
       musicPreference: row.musicPreference
         ? {
             name: row.musicPreference.name,
@@ -582,10 +583,27 @@ export class UserService implements OnModuleInit {
   }
 
   private mapUserBrandLogos(user: any): any {
-    if (!user?.brandPreferences?.length) return user;
+    if (!user) return user;
+    const photos = Array.isArray(user.photos)
+      ? user.photos.map((photo: { url?: string }) => ({
+          ...photo,
+          url: rewriteExpiredStorageUrl(photo.url ?? null) ?? photo.url
+        }))
+      : user.photos;
+    const zodiac = user.zodiac
+      ? {
+          ...user.zodiac,
+          imageUrl: rewriteExpiredStorageUrl(user.zodiac.imageUrl) ?? user.zodiac.imageUrl
+        }
+      : user.zodiac;
     return {
       ...user,
-      brandPreferences: this.mapBrandPreferencesLogos(user.brandPreferences)
+      displayPictureUrl: rewriteExpiredStorageUrl(user.displayPictureUrl) ?? user.displayPictureUrl,
+      photos,
+      zodiac,
+      brandPreferences: user.brandPreferences?.length
+        ? this.mapBrandPreferencesLogos(user.brandPreferences)
+        : user.brandPreferences
     };
   }
 
@@ -627,7 +645,9 @@ export class UserService implements OnModuleInit {
       where: { name },
       select: { id: true, name: true, imageUrl: true }
     });
-    return z || null;
+    return z
+      ? { ...z, imageUrl: rewriteExpiredStorageUrl(z.imageUrl) ?? z.imageUrl }
+      : null;
   }
 
   /* ---------- Profile Management ---------- */
@@ -2503,7 +2523,13 @@ export class UserService implements OnModuleInit {
       select: { id: true, name: true, imageUrl: true, order: true },
       orderBy: [{ order: "asc" }, { name: "asc" }]
     });
-    return { ok: true, zodiacs };
+    return {
+      ok: true,
+      zodiacs: zodiacs.map((z: { imageUrl: string }) => ({
+        ...z,
+        imageUrl: rewriteExpiredStorageUrl(z.imageUrl) ?? z.imageUrl
+      }))
+    };
   }
 
   async updateMyZodiac(accessToken: string, data: { zodiacId: string }) {
@@ -2875,7 +2901,7 @@ export class UserService implements OnModuleInit {
         username: user.username,
         dateOfBirth: user.dateOfBirth,
         gender: user.gender,
-        displayPictureUrl: user.displayPictureUrl,
+        displayPictureUrl: rewriteExpiredStorageUrl(user.displayPictureUrl) ?? user.displayPictureUrl,
         intent: user.intent,
         status: user.status,
         latitude: user.latitude,
@@ -2892,7 +2918,7 @@ export class UserService implements OnModuleInit {
       },
       photos: user.photos.map(photo => ({
         id: photo.id,
-        url: photo.url,
+        url: rewriteExpiredStorageUrl(photo.url) ?? photo.url,
         order: photo.order,
         createdAt: photo.createdAt
       })),

@@ -16,6 +16,7 @@ import fetch from "node-fetch";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { UserService } from "../services/user.service.js";
 import { BrandService } from "../services/brand.service.js";
+import { rewriteExpiredStorageUrl } from "@hmm/common";
 
 const authBase = () => (process.env.AUTH_SERVICE_URL || "http://localhost:3001").replace(/\/$/, "");
 
@@ -162,7 +163,7 @@ function mergeAuthUserWithProfile(
     username: p?.username ?? null,
     firstName: null as string | null,
     lastName: null as string | null,
-    avatarUrl: p?.displayPictureUrl ?? null,
+    avatarUrl: rewriteExpiredStorageUrl(p?.displayPictureUrl ?? null),
     bio: p?.intent ?? null,
     createdAt: p?.createdAt ? iso(p.createdAt) : a.createdAt ?? null,
     isActive: !inactive && !banned,
@@ -197,7 +198,7 @@ function mergeAuthUserWithProfile(
     musicPreferenceId: p?.musicPreferenceId ?? null,
     photos: (p?.photos ?? []).map((ph) => ({
       id: ph.id,
-      url: ph.url,
+      url: rewriteExpiredStorageUrl(ph.url) ?? ph.url,
       order: ph.order
     })),
     brandPreferences: (p?.brandPreferences ?? [])

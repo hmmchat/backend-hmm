@@ -1,5 +1,6 @@
 import { Injectable, HttpException, HttpStatus } from "@nestjs/common";
 import fetch from "node-fetch";
+import { rewriteExpiredStorageUrl } from "@hmm/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { SEARCH_DEFAULT_LIMIT } from "../config/limits.config.js";
 
@@ -61,7 +62,7 @@ export class BrandService {
     // Uploaded or otherwise persisted logos override Brandfetch CDN.
     // (Custom "Beam" with a dashboard upload must not be replaced by onbeam.com's icon.)
     if (stored && !isBrandfetchUrl) {
-      return stored;
+      return rewriteExpiredStorageUrl(stored);
     }
 
     let d = domain?.trim().toLowerCase() || null;

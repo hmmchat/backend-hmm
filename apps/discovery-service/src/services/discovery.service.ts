@@ -41,7 +41,7 @@ import type { DiscoveryUser } from "./user-client.service.js";
 import {
   shouldUseModeratorFaceCard
 } from "../config/moderator-face-card.config.js";
-import { isPreferredCityAnywhere, PREFERRED_CITY_ANYWHERE_IN_INDIA } from "@hmm/common";
+import { getMatchmakingProfileGap, isPreferredCityAnywhere, PREFERRED_CITY_ANYWHERE_IN_INDIA } from "@hmm/common";
 import {
   SESSION_DISCOVERY_POOL_ANYWHERE as SESSION_POOL_ANYWHERE,
   shouldOfferAutoCityHandoff
@@ -2665,6 +2665,10 @@ export class DiscoveryService implements OnModuleInit {
    */
   async enterDiscoverySession(token: string, sessionId: string): Promise<{ success: boolean; status: string }> {
     const userProfileResponse = await this.userClient.getUserFullProfile(token);
+    const gap = getMatchmakingProfileGap(userProfileResponse);
+    if (gap) {
+      throw new HttpException("Incomplete profile", HttpStatus.BAD_REQUEST);
+    }
     const userId = userProfileResponse.id;
     await this.discoverySessionService.upsertSession(userId, sessionId, "solo");
     await this.matchingService.updateUserStatus(userId, "AVAILABLE");

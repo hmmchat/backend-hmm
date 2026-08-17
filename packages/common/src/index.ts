@@ -10,6 +10,12 @@ export {
   isPreferredCityAnywhere
 } from "./preferred-city.js";
 export {
+  isPlaceholderDisplayPicture,
+  getMatchmakingProfileGap,
+  isMatchmakingProfileComplete,
+  type MatchmakingProfileFields
+} from "./matchmaking-profile.js";
+export {
   resolveAcceptanceTimeoutStatus,
   resolveRaincheckPartnerStatus,
   resolveRoomEndParticipantStatus,

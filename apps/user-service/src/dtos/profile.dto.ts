@@ -1,5 +1,18 @@
 import { z } from "zod";
-import { PREFERRED_CITY_ANYWHERE_IN_INDIA } from "@hmm/common";
+import { isPlaceholderDisplayPicture, PREFERRED_CITY_ANYWHERE_IN_INDIA } from "@hmm/common";
+
+const RealDisplayPictureUrl = z
+  .string()
+  .url()
+  .refine((url) => !isPlaceholderDisplayPicture(url), {
+    message: "A real profile photo is required"
+  });
+
+const RequiredIntent = z
+  .string()
+  .trim()
+  .min(1, "Intent is required")
+  .max(255);
 
 export const USERNAME_MAX_LEN = 8;
 
@@ -49,10 +62,10 @@ export const CreateProfileSchema = z.object({
   username: DisplayNameSchema,
   dateOfBirth: z.string().datetime().or(z.date()).transform((val) => new Date(val)),
   gender: GenderEnum,
-  displayPictureUrl: z.string().url(),
+  displayPictureUrl: RealDisplayPictureUrl,
   /** Must be an active admin catalog `value`, typically `ANYWHERE_IN_INDIA` or a city value. */
   preferredCity: z.string().min(1).max(100),
-  intent: z.string().max(255).optional()
+  intent: RequiredIntent
 });
 
 export const UpdateProfileSchema = z.object({
@@ -61,8 +74,8 @@ export const UpdateProfileSchema = z.object({
     DisplayNameSchema.optional()
   ),
   gender: GenderEnum.optional(),
-  displayPictureUrl: z.string().url().optional(),
-  intent: z.string().max(255).optional(),
+  displayPictureUrl: RealDisplayPictureUrl.optional(),
+  intent: RequiredIntent.optional(),
   musicPreferenceId: z.string().optional(),
   videoEnabled: z.boolean().optional()
 });
@@ -114,7 +127,7 @@ export const ReportAppPresenceSchema = z.object({
 
 // Intent DTO
 export const UpdateIntentSchema = z.object({
-  intent: z.string().max(255).nullable() // Increased limit to allow longer bios
+  intent: RequiredIntent
 });
 
 // Music Preference DTO

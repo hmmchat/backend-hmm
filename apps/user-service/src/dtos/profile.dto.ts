@@ -1,9 +1,17 @@
 import { z } from "zod";
 import { PREFERRED_CITY_ANYWHERE_IN_INDIA } from "@hmm/common";
 
+export const USERNAME_MAX_LEN = 8;
+
 /** NBSP, figure/thin/en spaces, ideographic space → ASCII space (does not collapse runs of spaces). */
 function normalizeDisplayNameWhitespace(input: string): string {
   return input.replace(/[\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]/g, " ");
+}
+
+/** Cap stored usernames for display without rewriting the database. */
+export function capDisplayedUsername(name: string | null | undefined): string | null | undefined {
+  if (typeof name !== "string") return name;
+  return name.length > USERNAME_MAX_LEN ? name.slice(0, USERNAME_MAX_LEN) : name;
 }
 
 /** Display name / username: letters, digits, underscore, ASCII spaces (including double spaces between parts). */
@@ -15,7 +23,7 @@ export const DisplayNameSchema = z
       .string()
       .trim()
       .min(3, "Name must be at least 3 characters")
-      .max(50, "Name must be at most 50 characters")
+      .max(USERNAME_MAX_LEN, `Name must be at most ${USERNAME_MAX_LEN} characters`)
       .regex(
         /^[a-zA-Z0-9_ ]+$/,
         "Name can only contain letters, numbers, underscores, and spaces"

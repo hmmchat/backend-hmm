@@ -27,7 +27,8 @@ import {
   UpdatePreferredCityDto,
   UpdateStatusDto,
   UpdateIntentDto,
-  CreateMusicPreferenceDto
+  CreateMusicPreferenceDto,
+  capDisplayedUsername
 } from "../dtos/profile.dto.js";
 import { Gender, KycStatus, UserStatus, Prisma } from "../../node_modules/.prisma/client/index.js";
 import {
@@ -598,6 +599,7 @@ export class UserService implements OnModuleInit {
       : user.zodiac;
     return {
       ...user,
+      username: capDisplayedUsername(user.username),
       displayPictureUrl: rewriteExpiredStorageUrl(user.displayPictureUrl) ?? user.displayPictureUrl,
       photos,
       zodiac,

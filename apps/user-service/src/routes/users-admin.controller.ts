@@ -17,6 +17,7 @@ import { PrismaService } from "../prisma/prisma.service.js";
 import { UserService } from "../services/user.service.js";
 import { BrandService } from "../services/brand.service.js";
 import { rewriteExpiredStorageUrl } from "@hmm/common";
+import { USERNAME_MAX_LEN } from "../dtos/profile.dto.js";
 
 const authBase = () => (process.env.AUTH_SERVICE_URL || "http://localhost:3001").replace(/\/$/, "");
 
@@ -244,8 +245,8 @@ function mergeAuthUserWithProfile(
 }
 
 const patchUserSchema = z.object({
-  displayName: z.string().nullable().optional(),
-  username: z.string().nullable().optional(),
+  displayName: z.string().max(USERNAME_MAX_LEN, `Name must be at most ${USERNAME_MAX_LEN} characters`).nullable().optional(),
+  username: z.string().max(USERNAME_MAX_LEN, `Name must be at most ${USERNAME_MAX_LEN} characters`).nullable().optional(),
   email: z.string().nullable().optional(),
   phone: z.string().nullable().optional(),
   bio: z.string().nullable().optional(),

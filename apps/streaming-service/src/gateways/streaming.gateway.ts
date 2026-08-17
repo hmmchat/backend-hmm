@@ -48,9 +48,15 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
   private heartbeatTimer: NodeJS.Timeout | null = null;
   /** Delayed reap timers for preserve-participant-on-close sockets that never reconnect. Key: `${userId}|${roomId}` */
   private preserveReapTimers = new Map<string, NodeJS.Timeout>();
+  private chatSenderProfileCache = new Map<string, {
+    username: string | null;
+    displayPictureUrl: string | null;
+    cachedAt: number;
+  }>();
   private static readonly HEARTBEAT_INTERVAL_MS = 45_000;
   private static readonly HEARTBEAT_MISSES_BEFORE_TERMINATE = 2;
   private static readonly PRESERVE_REAP_DELAY_MS = 60_000;
+  private static readonly CHAT_SENDER_PROFILE_TTL_MS = 5 * 60 * 1000;
   private readonly testMode: boolean;
 
   constructor(
@@ -1638,6 +1644,34 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     await this.broadcastToRoom(roomId, { type: "moderator-overlay", data: payload }, userId);
   }
 
+  private async getChatSenderProfile(userId: string): Promise<{
+    username: string | null;
+    displayPictureUrl: string | null;
+  }> {
+    const id = String(userId || "").trim();
+    if (!id) return { username: null, displayPictureUrl: null };
+    const cached = this.chatSenderProfileCache.get(id);
+    if (
+      cached &&
+      Date.now() - cached.cachedAt < StreamingGateway.CHAT_SENDER_PROFILE_TTL_MS
+    ) {
+      return { username: cached.username, displayPictureUrl: cached.displayPictureUrl };
+    }
+    try {
+      const profile = await this.discoveryClient.getUserProfile(id);
+      const entry = {
+        username: profile?.username || null,
+        displayPictureUrl: profile?.displayPictureUrl || null,
+        cachedAt: Date.now()
+      };
+      this.chatSenderProfileCache.set(id, entry);
+      return { username: entry.username, displayPictureUrl: entry.displayPictureUrl };
+    } catch (error: any) {
+      this.logger.warn(`Chat sender profile lookup failed for ${id}: ${error?.message || error}`);
+      return { username: null, displayPictureUrl: null };
+    }
+  }
+
   private async handleChatMessage(
     _connectionId: string,
     userId: string,
@@ -1689,30 +1723,40 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
           : undefined
       });
 
+      const isControlJson = (() => {
+        if (!hasText || !trimmed.startsWith("{")) return false;
+        try {
+          const parsed = JSON.parse(trimmed);
+          return Boolean(parsed && typeof parsed === "object");
+        } catch {
+          return false;
+        }
+      })();
+      const senderProfile = isControlJson
+        ? { username: null, displayPictureUrl: null }
+        : await this.getChatSenderProfile(String(chatMessage.userId || userId));
+      const payload = {
+        id: chatMessage.id,
+        roomId: chatMessage.roomId,
+        userId: String(chatMessage.userId || userId),
+        message: chatMessage.message,
+        messageType: chatMessage.messageType,
+        gif: chatMessage.gif,
+        createdAt: chatMessage.createdAt,
+        username: senderProfile.username || undefined,
+        displayPictureUrl: senderProfile.displayPictureUrl || undefined
+      };
+
       // Send confirmation back to client
       this.send(ws, {
         type: "chat-message",
-        data: {
-          id: chatMessage.id,
-          roomId: chatMessage.roomId,
-          userId: chatMessage.userId,
-          message: chatMessage.message,
-          messageType: chatMessage.messageType,
-          gif: chatMessage.gif,
-          createdAt: chatMessage.createdAt
-        }
+        data: payload
       });
 
       // Broadcast message to all participants and viewers
       await this.broadcastToRoom(roomId, {
         type: "chat-message",
-        data: {
-          userId,
-          message: chatMessage.message,
-          messageType: chatMessage.messageType,
-          gif: chatMessage.gif,
-          createdAt: chatMessage.createdAt
-        }
+        data: payload
       }, userId);
     } catch (error: any) {
       // Handle errors from chat service (e.g., room not found, validation errors)

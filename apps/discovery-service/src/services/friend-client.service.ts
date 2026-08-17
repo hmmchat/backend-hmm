@@ -174,6 +174,68 @@ export class FriendClientService {
   }
 
   /**
+   * All friend IDs for offline-card exclusion. Never throws — returns [] on failure.
+   */
+  async getFriendIds(userId: string): Promise<string[]> {
+    const ids: string[] = [];
+    const pageSize = 200;
+    const maxPages = 5;
+    let cursor: string | undefined;
+
+    try {
+      const serviceToken = process.env.INTERNAL_SERVICE_TOKEN;
+      if (!serviceToken) {
+        this.logger.warn("INTERNAL_SERVICE_TOKEN not configured, cannot exclude friends from offline cards");
+        return [];
+      }
+
+      for (let page = 0; page < maxPages; page++) {
+        const params = new URLSearchParams({
+          userId,
+          limit: String(pageSize)
+        });
+        if (cursor) params.set("cursor", cursor);
+
+        const response = await fetch(
+          `${this.friendServiceUrl}/internal/friends?${params.toString()}`,
+          {
+            method: "GET",
+            headers: {
+              "x-service-token": serviceToken,
+              "Content-Type": "application/json"
+            },
+            signal: AbortSignal.timeout(this.requestTimeoutMs)
+          } as any
+        );
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          this.logger.warn(`Failed to get friend ids for ${userId}: ${errorText}`);
+          return ids;
+        }
+
+        const result = await response.json() as {
+          friends?: Array<{ friendId: string }>;
+          nextCursor?: string;
+          hasMore?: boolean;
+        };
+
+        for (const friend of result.friends || []) {
+          if (friend.friendId) ids.push(friend.friendId);
+        }
+
+        if (!result.hasMore || !result.nextCursor) break;
+        cursor = result.nextCursor;
+      }
+
+      return [...new Set(ids)];
+    } catch (error: any) {
+      this.logger.warn(`Error getting friend ids for ${userId}: ${error?.message || error}`);
+      return [...new Set(ids)];
+    }
+  }
+
+  /**
    * Record squad invite or outcome in friend inbox (best-effort; logs on failure).
    */
   async postSquadInboxMessage(

@@ -1118,15 +1118,22 @@ export class FriendController {
       }
     }
 
-    const { userId, limit } = z.object({
+    const { userId, limit, cursor } = z.object({
       userId: z.string(),
-      limit: z.string().optional().transform((val) => val ? parseInt(val, 10) : 50)
+      limit: z.string().optional().transform((val) => {
+        const parsed = val ? parseInt(val, 10) : 50;
+        if (!Number.isFinite(parsed)) return 50;
+        return Math.min(Math.max(parsed, 1), 200);
+      }),
+      cursor: z.string().optional().transform((val) => val?.trim() || undefined)
     }).parse(query);
 
-    const result = await this.friendService.getFriends(userId, limit || 50);
+    const result = await this.friendService.getFriends(userId, limit || 50, cursor);
 
     return {
-      friends: result.friends
+      friends: result.friends,
+      nextCursor: result.nextCursor,
+      hasMore: result.hasMore
     };
   }
 

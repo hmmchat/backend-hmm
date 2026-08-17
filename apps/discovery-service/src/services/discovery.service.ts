@@ -5,6 +5,7 @@ import { GenderFilterService } from "./gender-filter.service.js";
 import { LocationService } from "./location.service.js";
 import { MatchingService } from "./matching.service.js";
 import { StreamingClientService } from "./streaming-client.service.js";
+import { FriendClientService } from "./friend-client.service.js";
 import { CacheService } from "./cache.service.js";
 import { SquadService } from "./squad.service.js";
 import { DiscoverySessionService } from "./discovery-session.service.js";
@@ -178,6 +179,7 @@ export class DiscoveryService implements OnModuleInit {
     private readonly locationService: LocationService,
     private readonly matchingService: MatchingService,
     private readonly streamingClient: StreamingClientService,
+    private readonly friendClient: FriendClientService,
     private readonly cache: CacheService,
     private readonly squadService: SquadService,
     private readonly discoverySessionService: DiscoverySessionService,
@@ -2911,6 +2913,7 @@ export class DiscoveryService implements OnModuleInit {
    * Uses "offline-" prefix for sessionId to avoid conflicts with video call rainchecks
    * Offline cards are NOT location-specific (always search anywhere).
    * Refresh (new session) recycles X-only rainchecks; heart/message/gift stays excluded.
+   * Existing friends are always excluded so already-connected people never appear.
    */
   async getNextOfflineCard(
     token: string,
@@ -3108,15 +3111,25 @@ export class DiscoveryService implements OnModuleInit {
     }
   }
 
+  private async getOfflineFriendUserIds(userId: string): Promise<string[]> {
+    try {
+      return await this.friendClient.getFriendIds(userId);
+    } catch (error: any) {
+      this.logger.warn(`Failed to exclude friends from offline cards: ${error?.message || error}`);
+      return [];
+    }
+  }
+
   private async getOfflineExcludeUserIds(
     userId: string,
     offlineSessionId: string
   ): Promise<string[]> {
-    const [rainchecked, engaged] = await Promise.all([
+    const [rainchecked, engaged, friends] = await Promise.all([
       this.getOfflineRaincheckedUserIds(userId, offlineSessionId),
-      this.getOfflineEngagedUserIds(userId)
+      this.getOfflineEngagedUserIds(userId),
+      this.getOfflineFriendUserIds(userId)
     ]);
-    return [...new Set([...rainchecked, ...engaged])];
+    return [...new Set([...rainchecked, ...engaged, ...friends])];
   }
 
   /**

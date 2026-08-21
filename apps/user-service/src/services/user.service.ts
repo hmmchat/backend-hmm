@@ -3013,10 +3013,16 @@ export class UserService implements OnModuleInit {
    * Note: This should be called after auth-service marks account as deleted
    */
   async deleteUserAccount(userId: string): Promise<void> {
-    // Delete all user data
-    await this.prisma.user.delete({
-      where: { id: userId }
-    });
+    try {
+      await this.prisma.user.delete({
+        where: { id: userId }
+      });
+    } catch (error: any) {
+      if (error?.code === "P2025") {
+        return;
+      }
+      throw error;
+    }
 
     // Note: Related data (photos, preferences, etc.) will be cascade deleted
     // Additional cleanup may be needed for:

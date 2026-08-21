@@ -1068,8 +1068,14 @@ export class UserController {
    */
   @Delete("users/internal/:userId")
   async deleteUserAccountInternal(@Param("userId") userId: string) {
-    // TODO: Add internal service authentication
-    await this.userService.deleteUserAccount(userId);
+    try {
+      await this.userService.deleteUserAccount(userId);
+    } catch (error: any) {
+      if (error?.status === 404 || error?.code === "P2025") {
+        return { ok: true, message: `User account ${userId} already absent` };
+      }
+      throw error;
+    }
     return { ok: true, message: `User account ${userId} deleted` };
   }
 }

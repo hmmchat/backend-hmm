@@ -37,6 +37,7 @@ interface UserProfileResponse {
   reportModeratorCardsOnly?: boolean;
   criticalReviewActive?: boolean;
   criticalReviewReason?: string | null;
+  zodiac?: { id: string; name: string; imageUrl: string } | null;
 }
 
 export interface DiscoveryUser {
@@ -60,6 +61,7 @@ export interface DiscoveryUser {
   kycStatus?: "UNVERIFIED" | "VERIFIED" | "PENDING_REVIEW" | "REVOKED" | "EXPIRED";
   kycRiskScore?: number;
   kycExpiresAt?: string | null;
+  zodiac?: { id: string; name: string; imageUrl: string } | null;
 }
 
 interface DiscoveryUsersResponse {
@@ -212,7 +214,7 @@ export class UserClientService implements OnModuleInit {
     
     try {
       const response = await this.fetchWithTimeout(
-        `${this.userServiceUrl}/users/${userId}?fields=username,dateOfBirth,gender,displayPictureUrl,preferredCity,intent,status,photos,musicPreference,brandPreferences,interests,values,videoEnabled,latitude,longitude,reportCount,isModerator,moderatorFaceCardActive,kycStatus,kycRiskScore,kycExpiresAt,reportModeratorCardsOnly,criticalReviewActive,criticalReviewReason`,
+        `${this.userServiceUrl}/users/${userId}?fields=username,dateOfBirth,gender,displayPictureUrl,preferredCity,intent,status,photos,musicPreference,brandPreferences,interests,values,zodiac,videoEnabled,latitude,longitude,reportCount,isModerator,moderatorFaceCardActive,kycStatus,kycRiskScore,kycExpiresAt,reportModeratorCardsOnly,criticalReviewActive,criticalReviewReason`,
         {
           method: "GET",
           headers: {

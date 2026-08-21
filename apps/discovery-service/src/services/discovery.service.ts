@@ -109,6 +109,7 @@ interface Card {
   isModeratorFaceCard?: boolean;
   /** KYC state from user-service. Omitted on moderator face cards. Show verified badge when `VERIFIED`. */
   kycStatus?: "UNVERIFIED" | "VERIFIED" | "PENDING_REVIEW" | "REVOKED" | "EXPIRED";
+  zodiac?: { id: string; name: string; imageUrl: string } | null;
   matchExplanation?: {
     reasons: string[];
     score: number;
@@ -794,9 +795,23 @@ export class DiscoveryService implements OnModuleInit {
       kycStatus: profile.kycStatus || "UNVERIFIED",
       kycRiskScore: profile.kycRiskScore || 0,
       kycExpiresAt: profile.kycExpiresAt || null,
-      moderatorFaceCardActive: Boolean(profile.moderatorFaceCardActive)
+      moderatorFaceCardActive: Boolean(profile.moderatorFaceCardActive),
+      zodiac: profile.zodiac?.id
+        ? {
+            id: profile.zodiac.id,
+            name: profile.zodiac.name,
+            imageUrl: profile.zodiac.imageUrl || ""
+          }
+        : null
     };
   }
+
+  /** Same minimum profile as Meet Someone (`enterDiscoverySession`). */
+  private isShowableOfflineCardProfile(user: DiscoveryUser): boolean {
+    if (shouldUseModeratorFaceCard(user)) return true;
+    return !getMatchmakingProfileGap(user);
+  }
+
   private calculateMatchScore(user: UserProfile, targetUser: DiscoveryUser): number {
     let score = 0;
 
@@ -1238,6 +1253,13 @@ export class DiscoveryService implements OnModuleInit {
       },
       reported: reportLayer >= 1,
       kycStatus: user.kycStatus || "UNVERIFIED",
+      zodiac: user.zodiac?.id
+        ? {
+            id: user.zodiac.id,
+            name: user.zodiac.name,
+            imageUrl: user.zodiac.imageUrl || ""
+          }
+        : null,
       matchExplanation
     };
 
@@ -1262,7 +1284,8 @@ export class DiscoveryService implements OnModuleInit {
         pages: modPages,
         matchExplanation: undefined,
         isModeratorFaceCard: true,
-        kycStatus: undefined
+        kycStatus: undefined,
+        zodiac: null
       };
     }
 
@@ -2914,6 +2937,7 @@ export class DiscoveryService implements OnModuleInit {
    * Offline cards are NOT location-specific (always search anywhere).
    * Refresh (new session) recycles X-only rainchecks; heart/message/gift stays excluded.
    * Existing friends are always excluded so already-connected people never appear.
+   * Candidates must pass the same onboarding gate as Meet Someone (name, DOB, gender, real photo, intent).
    */
   async getNextOfflineCard(
     token: string,
@@ -3045,7 +3069,9 @@ export class DiscoveryService implements OnModuleInit {
     });
 
     const users = await this.userClient.getUsersForDiscovery(token, filters as any);
-    return applyReportPoolBucket(users, poolMode);
+    return applyReportPoolBucket(users, poolMode).filter((user) =>
+      this.isShowableOfflineCardProfile(user)
+    );
   }
 
   /**
@@ -3346,6 +3372,9 @@ export class DiscoveryService implements OnModuleInit {
     // Filter out users who are matched (they shouldn't appear in OFFLINE cards)
     const matchedUserIds = await this.matchingService.getMatchedUserIdsCached();
     const filteredUsers = users.filter(user => {
+      if (!this.isShowableOfflineCardProfile(user)) {
+        return false;
+      }
       // Exclude if user is in matchedUserIds AND is still MATCHED.
       if (matchedUserIds.has(user.id)) {
         return user.status !== 'MATCHED';

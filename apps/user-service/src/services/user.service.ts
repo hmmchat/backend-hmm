@@ -13,7 +13,8 @@ import {
   PREFERRED_CITY_ANYWHERE_IN_INDIA,
   canTransitionToOffline,
   canTransitionToOnline,
-  rewriteExpiredStorageUrl
+  rewriteExpiredStorageUrl,
+  isMatchmakingProfileComplete
 } from "@hmm/common";
 import { JWK } from "jose";
 import {
@@ -2340,6 +2341,7 @@ export class UserService implements OnModuleInit {
    * Get users for discovery matching
    * Filters by city, status, gender, and excludes specific user IDs
    * Excludes MATCHED users from the pool (they're already matched)
+   * Requires the same onboarding fields as Meet Someone (name, DOB, gender, real photo, intent)
    */
   async getUsersForDiscovery(filters: {
     city?: string | null; // null means anywhere
@@ -2466,6 +2468,28 @@ export class UserService implements OnModuleInit {
       where.reportCount = { lt: getReportThreshold() };
     }
 
+    // Same minimum as Meet Someone: name, DOB, gender, real photo URL, intent.
+    // Moderator face-card personas are allowed through even if the personal profile is thin.
+    where.AND = [
+      ...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []),
+      {
+        OR: [
+          {
+            AND: [
+              { username: { not: "" } },
+              { dateOfBirth: { not: null } },
+              { gender: { not: null } },
+              { displayPictureUrl: { not: "" } },
+              { intent: { not: "" } }
+            ]
+          },
+          {
+            AND: [{ isModerator: true }, { moderatorFaceCardActive: true }]
+          }
+        ]
+      }
+    ];
+
     const users = await this.prisma.user.findMany({
       where,
       include: {
@@ -2482,12 +2506,21 @@ export class UserService implements OnModuleInit {
         values: {
           include: { value: true },
           orderBy: { order: "asc" }
-        }
+        },
+        zodiac: true
       },
       take: filters.limit ?? DISCOVERY_USERS_DEFAULT_LIMIT
     });
 
-    return { users: users.map((u) => this.mapUserBrandLogos(u)) };
+    return {
+      users: users
+        .map((u) => this.mapUserBrandLogos(u))
+        .filter(
+          (u) =>
+            (Boolean(u.isModerator) && Boolean(u.moderatorFaceCardActive)) ||
+            isMatchmakingProfileComplete(u)
+        )
+    };
   }
 
   /* ---------- Horoscope ---------- */

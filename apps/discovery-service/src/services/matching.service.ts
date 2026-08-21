@@ -1042,7 +1042,14 @@ export class MatchingService {
       kycStatus: profile.kycStatus || "UNVERIFIED",
       kycRiskScore: profile.kycRiskScore || 0,
       kycExpiresAt: profile.kycExpiresAt || null,
-      moderatorFaceCardActive: Boolean(profile.moderatorFaceCardActive)
+      moderatorFaceCardActive: Boolean(profile.moderatorFaceCardActive),
+      zodiac: profile.zodiac?.id
+        ? {
+            id: profile.zodiac.id,
+            name: profile.zodiac.name,
+            imageUrl: profile.zodiac.imageUrl || ""
+          }
+        : null
     };
   }
 

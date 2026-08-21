@@ -3,6 +3,11 @@ import fetch from "node-fetch";
 import { rewriteExpiredStorageUrl } from "@hmm/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { SEARCH_DEFAULT_LIMIT } from "../config/limits.config.js";
+import {
+  catalogFuzzyFallbackOrderBy,
+  catalogFuzzyOrderBy,
+  catalogFuzzyWhere
+} from "../utils/catalog-fuzzy-search.js";
 
 export interface SearchBrandResult {
   id: string;
@@ -25,6 +30,24 @@ interface BrandfetchResult {
   brandId?: string;
   icon?: string;
   logos?: BrandfetchLogo[];
+}
+
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  const row = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i += 1) {
+    let prev = i - 1;
+    row[0] = i;
+    for (let j = 1; j <= b.length; j += 1) {
+      const tmp = row[j];
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + cost);
+      prev = tmp;
+    }
+  }
+  return row[b.length];
 }
 
 /**
@@ -138,8 +161,8 @@ export class BrandService {
         "brandfetchId"
       FROM "brands"
       WHERE "isCustom" = true
-        AND lower(name) % lower(${query})
-      ORDER BY similarity(lower(name), lower(${query})) DESC, name ASC
+        AND (${catalogFuzzyWhere(query)})
+      ORDER BY ${catalogFuzzyOrderBy(query)}
       LIMIT ${limit};
     `;
 
@@ -153,7 +176,11 @@ export class BrandService {
           "brandfetchId"
         FROM "brands"
         WHERE "isCustom" = true
-        ORDER BY similarity(lower(name), lower(${query})) DESC, name ASC
+          AND GREATEST(
+            similarity(lower(name), lower(${query})),
+            word_similarity(lower(${query}), lower(name))
+          ) >= 0.12
+        ORDER BY ${catalogFuzzyFallbackOrderBy(query)}
         LIMIT ${limit};
       `;
     }
@@ -473,7 +500,12 @@ export class BrandService {
     if (n === q) score = 1000;
     else if (n.startsWith(q)) score = 500;
     else if (n.includes(q)) score = 250;
-    else score = 1;
+    else if (n.replace(/\s+/g, "") === q.replace(/\s+/g, "")) score = 400;
+    else {
+      const dist = levenshtein(n, q);
+      const maxLen = Math.max(n.length, q.length, 1);
+      score = dist <= Math.max(1, Math.floor(maxLen * 0.34)) ? 120 : 1;
+    }
     // Prefer content-managed brands within the same match tier.
     if (fromCustomCatalog) score += 50;
     return score;
@@ -497,7 +529,13 @@ export class BrandService {
     query: string
   ): Promise<{ rows: SearchBrandResult[]; customIds: Set<string> }> {
     const rows = await this.prisma.brand.findMany({
-      where: { name: { equals: query, mode: "insensitive" } },
+      where: {
+        OR: [
+          { name: { equals: query, mode: "insensitive" } },
+          { name: { startsWith: query, mode: "insensitive" } },
+          { name: { contains: query, mode: "insensitive" } }
+        ]
+      },
       select: {
         id: true,
         name: true,
@@ -506,7 +544,7 @@ export class BrandService {
         brandfetchId: true,
         isCustom: true
       },
-      take: 10
+      take: 20
     });
     const customIds = new Set(rows.filter((b) => b.isCustom).map((b) => b.id));
     return {
@@ -607,8 +645,8 @@ export class BrandService {
           "logoUrl",
           "brandfetchId"
         FROM "brands"
-        WHERE lower(name) % lower(${trimmedQuery})
-        ORDER BY similarity(lower(name), lower(${trimmedQuery})) DESC, name ASC
+        WHERE ${catalogFuzzyWhere(trimmedQuery)}
+        ORDER BY ${catalogFuzzyOrderBy(trimmedQuery)}
         LIMIT ${effectiveLimit};
       `;
     }
@@ -622,7 +660,11 @@ export class BrandService {
           "logoUrl",
           "brandfetchId"
         FROM "brands"
-        ORDER BY similarity(lower(name), lower(${trimmedQuery})) DESC, name ASC
+        WHERE GREATEST(
+          similarity(lower(name), lower(${trimmedQuery})),
+          word_similarity(lower(${trimmedQuery}), lower(name))
+        ) >= 0.12
+        ORDER BY ${catalogFuzzyFallbackOrderBy(trimmedQuery)}
         LIMIT ${effectiveLimit};
       `;
     }

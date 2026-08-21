@@ -53,6 +53,11 @@ import {
   NEEDS_KYC_STATUSES
 } from "../config/report-layers.config.js";
 import {
+  catalogFuzzyFallbackOrderBy,
+  catalogFuzzyOrderBy,
+  catalogFuzzyWhere
+} from "../utils/catalog-fuzzy-search.js";
+import {
   MODERATOR_FACE_CARD_SETTING_ID,
   mergeModeratorFaceCardPresentation
 } from "../config/moderator-face-card.config.js";
@@ -65,6 +70,14 @@ function excludeWhere(excludeIds: string[] = []) {
     .slice(0, 100);
   if (safeExclude.length === 0) return Prisma.empty;
   return Prisma.sql`WHERE id NOT IN (${Prisma.join(safeExclude.map((id) => Prisma.sql`${id}`))})`;
+}
+
+function excludeAnd(excludeIds: string[] = []) {
+  const safeExclude = (excludeIds || [])
+    .filter((id) => typeof id === "string" && CUID_LIKE_ID.test(id))
+    .slice(0, 100);
+  if (safeExclude.length === 0) return Prisma.empty;
+  return Prisma.sql`AND id NOT IN (${Prisma.join(safeExclude.map((id) => Prisma.sql`${id}`))})`;
 }
 
 @Injectable()
@@ -1331,7 +1344,7 @@ export class UserService implements OnModuleInit {
 
   /* ---------- Catalog Data (Public) ---------- */
 
-  async getBrands(limit: number = 8, userId?: string | null) {
+  async getBrands(limit: number = 8, userId?: string | null, excludeIds: string[] = []) {
     const effectiveLimit = limit ?? 8;
     if (effectiveLimit < 1 || effectiveLimit > 50) {
       throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);
@@ -1357,23 +1370,25 @@ export class UserService implements OnModuleInit {
       });
     }
 
-    const fetchLimit = effectiveLimit + selectedIds.size;
+    const blockedIds = new Set([
+      ...selectedIds,
+      ...(excludeIds || []).filter((id) => typeof id === "string" && CUID_LIKE_ID.test(id))
+    ]);
+    const fetchLimit = Math.min(50, effectiveLimit + blockedIds.size);
+    const mapped: Array<{ id: string; name: string; logoUrl: string | null }> = [];
+    const seen = new Set<string>(blockedIds);
 
     try {
       const suggestions = await this.brandService.getBrandSuggestions(fetchLimit);
-      if (suggestions.length > 0) {
-        const brands = suggestions
-          .filter((b) => !selectedIds.has(b.id))
-          .slice(0, effectiveLimit)
-          .map((b) => ({
-            id: b.id,
-            name: b.name,
-            logoUrl: b.logoUrl
-          }));
-        if (userId) {
-          return { brands, selectedBrands };
-        }
-        return { brands };
+      for (const b of suggestions) {
+        if (!b?.id || seen.has(b.id)) continue;
+        seen.add(b.id);
+        mapped.push({
+          id: b.id,
+          name: b.name,
+          logoUrl: b.logoUrl
+        });
+        if (mapped.length >= effectiveLimit) break;
       }
     } catch (error) {
       console.warn(
@@ -1382,29 +1397,34 @@ export class UserService implements OnModuleInit {
       );
     }
 
-    const brands = await this.prisma.$queryRaw<
-      { id: string; name: string; domain: string | null; logoUrl: string | null; brandfetchId: string | null }[]
-    >`
-      SELECT
-        id,
-        name,
-        domain,
-        "logoUrl",
-        "brandfetchId"
-      FROM "brands"
-      WHERE "isCustom" = true
-      ORDER BY random()
-      LIMIT ${fetchLimit};
-    `;
+    if (mapped.length < effectiveLimit) {
+      const brands = await this.prisma.$queryRaw<
+        { id: string; name: string; domain: string | null; logoUrl: string | null; brandfetchId: string | null }[]
+      >`
+        SELECT
+          id,
+          name,
+          domain,
+          "logoUrl",
+          "brandfetchId"
+        FROM "brands"
+        WHERE "isCustom" = true
+        ${excludeAnd([...seen])}
+        ORDER BY random()
+        LIMIT ${fetchLimit};
+      `;
 
-    const mapped = brands
-      .filter((b) => !selectedIds.has(b.id))
-      .slice(0, effectiveLimit)
-      .map((b) => ({
-        id: b.id,
-        name: b.name,
-        logoUrl: this.brandService.resolvePublicLogoUrl(b.domain, b.logoUrl, b.brandfetchId)
-      }));
+      for (const b of brands) {
+        if (!b?.id || seen.has(b.id)) continue;
+        seen.add(b.id);
+        mapped.push({
+          id: b.id,
+          name: b.name,
+          logoUrl: this.brandService.resolvePublicLogoUrl(b.domain, b.logoUrl, b.brandfetchId)
+        });
+        if (mapped.length >= effectiveLimit) break;
+      }
+    }
 
     if (userId) {
       return { brands: mapped, selectedBrands };
@@ -1498,8 +1518,8 @@ export class UserService implements OnModuleInit {
         name,
         "createdAt"
       FROM "interests"
-      WHERE lower(name) % lower(${trimmedQuery})
-      ORDER BY similarity(lower(name), lower(${trimmedQuery})) DESC, name ASC
+      WHERE ${catalogFuzzyWhere(trimmedQuery)}
+      ORDER BY ${catalogFuzzyOrderBy(trimmedQuery)}
       LIMIT ${limit};
     `;
 
@@ -1512,7 +1532,11 @@ export class UserService implements OnModuleInit {
           name,
           "createdAt"
         FROM "interests"
-        ORDER BY similarity(lower(name), lower(${trimmedQuery})) DESC, name ASC
+        WHERE GREATEST(
+          similarity(lower(name), lower(${trimmedQuery})),
+          word_similarity(lower(${trimmedQuery}), lower(name))
+        ) >= 0.12
+        ORDER BY ${catalogFuzzyFallbackOrderBy(trimmedQuery)}
         LIMIT ${limit};
       `;
     }
@@ -1561,8 +1585,8 @@ export class UserService implements OnModuleInit {
         id,
         name
       FROM "values"
-      WHERE lower(name) % lower(${trimmedQuery})
-      ORDER BY similarity(lower(name), lower(${trimmedQuery})) DESC, name ASC
+      WHERE ${catalogFuzzyWhere(trimmedQuery)}
+      ORDER BY ${catalogFuzzyOrderBy(trimmedQuery)}
       LIMIT ${limit};
     `;
 
@@ -1574,7 +1598,11 @@ export class UserService implements OnModuleInit {
           id,
           name
         FROM "values"
-        ORDER BY similarity(lower(name), lower(${trimmedQuery})) DESC, name ASC
+        WHERE GREATEST(
+          similarity(lower(name), lower(${trimmedQuery})),
+          word_similarity(lower(${trimmedQuery}), lower(name))
+        ) >= 0.12
+        ORDER BY ${catalogFuzzyFallbackOrderBy(trimmedQuery)}
         LIMIT ${limit};
       `;
     }

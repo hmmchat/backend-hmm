@@ -204,13 +204,17 @@ export class UserController {
   /* ---------- Catalog Data (Public Endpoints) ---------- */
 
   @Get("brands")
-  async getBrands(@Query("limit") limit?: string, @Headers("authorization") authz?: string) {
+  async getBrands(
+    @Query("limit") limit?: string,
+    @Query("exclude") exclude?: string | string[],
+    @Headers("authorization") authz?: string
+  ) {
     const limitNum = limit !== undefined && limit !== "" ? parseInt(limit, 10) : 8;
     if (isNaN(limitNum) || limitNum < 1 || limitNum > 50) {
       throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);
     }
     const userId = await this.verifyOptionalUserId(authz);
-    return this.userService.getBrands(limitNum, userId);
+    return this.userService.getBrands(limitNum, userId, parseExcludeIds(exclude));
   }
 
   @Get("brands/search")

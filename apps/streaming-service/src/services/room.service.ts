@@ -72,6 +72,21 @@ export class RoomService {
         meta?: { message?: string; reason?: string; endedBy?: string }
       ) => void)
     | null = null;
+  /** Registered by the WS gateway so waitlist join/cancel/accept reaches host + accepted viewer sockets. */
+  private waitlistNotifier:
+    | ((payload: {
+        roomId: string;
+        action: "joined" | "cancelled" | "accepted";
+        userId: string;
+        waitlist: Array<{
+          userId: string;
+          requestedAt: Date;
+          username?: string | null;
+          displayPictureUrl?: string | null;
+        }>;
+        waitlistCount: number;
+      }) => void)
+    | null = null;
   private activeParticipantRoomCache = new Map<string, { expiresAt: number; data: { roomId: string } | null }>();
   private activeViewerRoomCache = new Map<string, { expiresAt: number; data: { roomId: string } | null }>();
   private activeBroadcastsCache = new Map<string, { expiresAt: number; data: any }>();
@@ -2163,7 +2178,6 @@ export class RoomService {
    * Adds user to waitlist and updates status to MATCHED
    */
   async requestToJoin(roomId: string, userId: string): Promise<void> {
-    // Ensure room exists
     const session = await this.prisma.callSession.findUnique({
       where: { roomId },
       include: {
@@ -2180,59 +2194,92 @@ export class RoomService {
       throw new NotFoundException(`Room ${roomId} not found`);
     }
 
-    // Verify broadcast is active
     if (!session.isBroadcasting) {
       throw new BadRequestException("Room is not broadcasting");
     }
 
-    // Verify user is currently a viewer
-    const viewer = await this.prisma.callViewer.findFirst({
+    const priorParticipant = await this.prisma.callParticipant.findUnique({
       where: {
-        sessionId: session.id,
-        userId,
-        leftAt: null
+        sessionId_userId: {
+          sessionId: session.id,
+          userId
+        }
+      },
+      select: { id: true }
+    });
+    if (priorParticipant) {
+      throw new BadRequestException(
+        `User ${userId} has already participated in this room and cannot rejoin the waitlist.`
+      );
+    }
+
+    const existingWaitlist = await this.prisma.callWaitlist.findUnique({
+      where: {
+        sessionId_userId: {
+          sessionId: session.id,
+          userId
+        }
       }
     });
 
-    if (!viewer) {
-      throw new BadRequestException(`User ${userId} is not a viewer of this broadcast`);
+    if (existingWaitlist?.status === "accepted") {
+      throw new BadRequestException(
+        `User ${userId} has already been accepted from the waitlist for this room.`
+      );
     }
 
-    // Check if user already has pending request
-    const existingRequest = await this.prisma.callWaitlist.findFirst({
-      where: {
-        sessionId: session.id,
-        userId,
-        status: "pending"
-      }
-    });
-
-    if (existingRequest) {
-      throw new BadRequestException(`User ${userId} already has a pending join request`);
-    }
-
-    // Check room capacity
     if (session.participants.length >= this.maxParticipants) {
       throw new BadRequestException(
         `Room is full (${session.participants.length}/${this.maxParticipants} participants). Cannot add to waitlist.`
       );
     }
 
-    // Create waitlist entry
-    await this.prisma.callWaitlist.create({
-      data: {
-        sessionId: session.id,
-        userId,
-        status: "pending"
+    if (!existingWaitlist) {
+      const anyViewer = await this.prisma.callViewer.findUnique({
+        where: {
+          sessionId_userId: {
+            sessionId: session.id,
+            userId
+          }
+        },
+        select: { id: true }
+      });
+      if (!anyViewer) {
+        throw new BadRequestException(`User ${userId} is not a viewer of this broadcast`);
       }
-    });
+    }
 
-    // Update user status: VIEWER → MATCHED
+    if (existingWaitlist?.status === "pending") {
+      await this.discoveryClient.updateUserStatus(userId, "MATCHED").catch((err) => {
+        this.logger.error(`Failed to update user ${userId} status to MATCHED: ${err.message}`);
+      });
+      await this.emitWaitlistUpdated(roomId, "joined", userId);
+      this.logger.log(`User ${userId} already pending on waitlist for room ${roomId}; treating as success`);
+      return;
+    }
+
+    if (existingWaitlist) {
+      await this.prisma.callWaitlist.update({
+        where: { id: existingWaitlist.id },
+        data: {
+          status: "pending",
+          requestedAt: new Date()
+        }
+      });
+    } else {
+      await this.prisma.callWaitlist.create({
+        data: {
+          sessionId: session.id,
+          userId,
+          status: "pending"
+        }
+      });
+    }
+
     await this.discoveryClient.updateUserStatus(userId, "MATCHED").catch((err) => {
       this.logger.error(`Failed to update user ${userId} status to MATCHED: ${err.message}`);
     });
 
-    // Log event
     await this.prisma.callEvent.create({
       data: {
         sessionId: session.id,
@@ -2242,6 +2289,7 @@ export class RoomService {
       }
     });
 
+    await this.emitWaitlistUpdated(roomId, "joined", userId);
     this.logger.log(`User ${userId} requested to join room ${roomId}, added to waitlist`);
   }
 
@@ -2258,7 +2306,6 @@ export class RoomService {
       throw new NotFoundException(`Room ${roomId} not found`);
     }
 
-    // Verify user has pending request
     const waitlistEntry = await this.prisma.callWaitlist.findFirst({
       where: {
         sessionId: session.id,
@@ -2268,21 +2315,18 @@ export class RoomService {
     });
 
     if (!waitlistEntry) {
-      throw new BadRequestException(`User ${userId} does not have a pending join request`);
+      return;
     }
 
-    // Update waitlist entry: status = "cancelled"
     await this.prisma.callWaitlist.update({
       where: { id: waitlistEntry.id },
       data: { status: "cancelled" }
     });
 
-    // Update user status: MATCHED → VIEWER
     await this.discoveryClient.updateUserStatus(userId, "VIEWER").catch((err) => {
       this.logger.error(`Failed to update user ${userId} status to VIEWER: ${err.message}`);
     });
 
-    // Log event
     await this.prisma.callEvent.create({
       data: {
         sessionId: session.id,
@@ -2292,6 +2336,7 @@ export class RoomService {
       }
     });
 
+    await this.emitWaitlistUpdated(roomId, "cancelled", userId);
     this.logger.log(`User ${userId} cancelled join request for room ${roomId}`);
   }
 
@@ -2388,43 +2433,37 @@ export class RoomService {
       );
     }
 
-    // Verify targetUserId is still a viewer (hasn't scrolled away)
-    const viewer = await this.prisma.callViewer.findFirst({
-      where: {
-        sessionId: session.id,
-        userId: targetUserId,
-        leftAt: null
-      }
-    });
-
-    if (!viewer) {
-      throw new BadRequestException(
-        `User ${targetUserId} is no longer viewing this broadcast. They may have left.`
-      );
-    }
-
-    // Verify room has capacity
     if (session.participants.length >= this.maxParticipants) {
       throw new BadRequestException(
         `Room is full (${session.participants.length}/${this.maxParticipants} participants). Cannot add more participants.`
       );
     }
 
-    // Verify target is not already a participant
     const existingParticipant = session.participants.find(p => p.userId === targetUserId);
     if (existingParticipant) {
       throw new BadRequestException(`User ${targetUserId} is already a participant in this room`);
     }
 
-    // Use transaction to ensure atomicity
+    const existingAnyParticipant = await this.prisma.callParticipant.findUnique({
+      where: {
+        sessionId_userId: {
+          sessionId: session.id,
+          userId: targetUserId
+        }
+      }
+    });
+    if (existingAnyParticipant && existingAnyParticipant.status !== "active") {
+      throw new BadRequestException(
+        `User ${targetUserId} has already participated in this room and cannot rejoin.`
+      );
+    }
+
     await this.prisma.$transaction(async (tx) => {
-      // Remove from waitlist (mark as "accepted")
       await tx.callWaitlist.update({
         where: { id: waitlistEntry.id },
         data: { status: "accepted" }
       });
 
-      // Remove from viewers (if still viewing)
       await tx.callViewer.updateMany({
         where: {
           sessionId: session.id,
@@ -2436,18 +2475,28 @@ export class RoomService {
         }
       });
 
-      // Add as PARTICIPANT with previousStatus = "VIEWER" since they came from waitlist
-      await tx.callParticipant.create({
-        data: {
-          sessionId: session.id,
-          userId: targetUserId,
-          role: "PARTICIPANT",
-          status: "active",
-          previousStatus: "VIEWER"
-        }
-      });
+      if (existingAnyParticipant) {
+        await tx.callParticipant.update({
+          where: { id: existingAnyParticipant.id },
+          data: {
+            role: "PARTICIPANT",
+            status: "active",
+            leftAt: null,
+            previousStatus: "VIEWER"
+          }
+        });
+      } else {
+        await tx.callParticipant.create({
+          data: {
+            sessionId: session.id,
+            userId: targetUserId,
+            role: "PARTICIPANT",
+            status: "active",
+            previousStatus: "VIEWER"
+          }
+        });
+      }
 
-      // Log event
       await tx.callEvent.create({
         data: {
           sessionId: session.id,
@@ -2485,6 +2534,8 @@ export class RoomService {
     this.discoveryClient.notifyParticipantJoined(roomId, targetUserId).catch((err) => {
       this.logger.error(`Failed to notify discovery-service: ${err.message}`);
     });
+
+    await this.emitWaitlistUpdated(roomId, "accepted", targetUserId);
 
     this.logger.log(
       `User ${targetUserId} accepted from waitlist and added to room ${roomId} as PARTICIPANT by HOST ${hostUserId}. Status: MATCHED → ${statusToSet}`
@@ -2669,52 +2720,30 @@ export class RoomService {
       this.coinMining.stop(userId, "VIEWER", { roomId, sessionId: session.id });
     }
 
-    // Check if user is on waitlist
-    const waitlistEntry = await this.prisma.callWaitlist.findFirst({
+    const isAnonymous = userId.startsWith("anonymous:");
+    const pendingWaitlist = await this.prisma.callWaitlist.findFirst({
       where: {
         sessionId: session.id,
         userId,
         status: "pending"
-      }
+      },
+      select: { id: true }
     });
 
-    // Check if user is anonymous
-    const isAnonymous = userId.startsWith('anonymous:');
-
-    if (waitlistEntry) {
-      // Remove from waitlist (mark as "cancelled")
-      await this.prisma.callWaitlist.update({
-        where: { id: waitlistEntry.id },
-        data: { status: "cancelled" }
+    // Waitlist seat is independent of the viewer socket. Do not cancel here.
+    if (pendingWaitlist) {
+      this.logger.log(
+        `Viewer ${userId} removed from room ${roomId}; pending waitlist seat kept`
+      );
+    } else if (leavingHMMTV && !isAnonymous) {
+      this.discoveryClient.updateUserStatus(userId, "ONLINE").catch((err) => {
+        this.logger.error(`Failed to update user ${userId} status to ONLINE: ${err.message}`);
       });
-
-      // Update status: MATCHED → VIEWER (user still in HMM_TV, just scrolled to different broadcast)
-      // Skip status update for anonymous users
-      if (!isAnonymous) {
-        this.discoveryClient.updateUserStatus(userId, "VIEWER").catch((err) => {
-          this.logger.error(`Failed to update user ${userId} status to VIEWER: ${err.message}`);
-        });
-        this.logger.log(`Viewer ${userId} removed from room ${roomId} and waitlist, status: MATCHED → VIEWER`);
-      } else {
-        this.logger.log(`Anonymous viewer ${userId} removed from room ${roomId} and waitlist`);
-      }
+      this.logger.log(`Viewer ${userId} removed from room ${roomId}, status: VIEWER → ONLINE (leaving HMM_TV)`);
+    } else if (!isAnonymous) {
+      this.logger.log(`Viewer ${userId} removed from room ${roomId}, status remains VIEWER (still in HMM_TV)`);
     } else {
-      // Not on waitlist - handle status based on context
-      if (leavingHMMTV && !isAnonymous) {
-        // Only update status for authenticated users
-        // User leaving HMM_TV section entirely → ONLINE
-        this.discoveryClient.updateUserStatus(userId, "ONLINE").catch((err) => {
-          this.logger.error(`Failed to update user ${userId} status to ONLINE: ${err.message}`);
-        });
-        this.logger.log(`Viewer ${userId} removed from room ${roomId}, status: VIEWER → ONLINE (leaving HMM_TV)`);
-      } else if (!isAnonymous) {
-        // User still in HMM_TV, just scrolling to next broadcast → keep VIEWER
-        // Status remains VIEWER (no change needed)
-        this.logger.log(`Viewer ${userId} removed from room ${roomId}, status remains VIEWER (still in HMM_TV)`);
-      } else {
-        // Anonymous user - no status update needed
-        this.logger.log(`Anonymous viewer ${userId} removed from room ${roomId}`);
-      }
+      this.logger.log(`Anonymous viewer ${userId} removed from room ${roomId}`);
     }
 
     this.clearHotReadCaches(roomId, [userId]);
@@ -2733,6 +2762,49 @@ export class RoomService {
     ) => void
   ): void {
     this.roomEndedNotifier = notifier;
+  }
+
+  setWaitlistNotifier(
+    notifier: (
+      payload: {
+        roomId: string;
+        action: "joined" | "cancelled" | "accepted";
+        userId: string;
+        waitlist: Array<{
+          userId: string;
+          requestedAt: Date;
+          username?: string | null;
+          displayPictureUrl?: string | null;
+        }>;
+        waitlistCount: number;
+      }
+    ) => void
+  ): void {
+    this.waitlistNotifier = notifier;
+  }
+
+  private async emitWaitlistUpdated(
+    roomId: string,
+    action: "joined" | "cancelled" | "accepted",
+    userId: string
+  ): Promise<void> {
+    if (!this.waitlistNotifier) {
+      return;
+    }
+    try {
+      const waitlist = await this.getWaitlist(roomId);
+      this.waitlistNotifier({
+        roomId,
+        action,
+        userId,
+        waitlist,
+        waitlistCount: waitlist.length
+      });
+    } catch (err: any) {
+      this.logger.warn(
+        `Failed to emit waitlist-updated for ${roomId} (${action}): ${err?.message || err}`
+      );
+    }
   }
 
   async endRoom(

@@ -125,6 +125,9 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     this.roomService.setRoomEndedNotifier((roomId, wasBroadcasting, meta) => {
       void this.notifyRoomEnded(roomId, wasBroadcasting, meta);
     });
+    this.roomService.setWaitlistNotifier((payload) => {
+      this.notifyWaitlistUpdated(payload);
+    });
 
     this.logger.log("WebSocket gateway initialized at /streaming/ws");
   }
@@ -757,6 +760,60 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
   }
 
   /** Tell the removed user to leave the call UI (remaining peers already got participant-left). */
+  private notifyWaitlistUpdated(payload: {
+    roomId: string;
+    action: "joined" | "cancelled" | "accepted";
+    userId: string;
+    waitlist: Array<{
+      userId: string;
+      requestedAt: Date;
+      username?: string | null;
+      displayPictureUrl?: string | null;
+    }>;
+    waitlistCount: number;
+  }): void {
+    const message = {
+      type: "waitlist-updated",
+      data: {
+        roomId: payload.roomId,
+        action: payload.action,
+        userId: payload.userId,
+        waitlist: payload.waitlist,
+        waitlistCount: payload.waitlistCount
+      }
+    };
+    const connectionIds = this.roomConnections.get(payload.roomId);
+    for (const connId of connectionIds ?? []) {
+      const conn = this.connections.get(connId);
+      if (!conn?.ws || conn.connectionKind === "viewer") continue;
+      try {
+        this.send(conn.ws, message);
+      } catch (error) {
+        this.logger.error(`Error sending waitlist-updated to ${connId}:`, error);
+      }
+    }
+
+    if (payload.action !== "accepted") {
+      return;
+    }
+    const acceptedMessage = {
+      type: "waitlist-accepted",
+      data: {
+        roomId: payload.roomId,
+        userId: payload.userId
+      }
+    };
+    for (const connId of this.userConnections.get(payload.userId) ?? []) {
+      const conn = this.connections.get(connId);
+      if (!conn?.ws) continue;
+      try {
+        this.send(conn.ws, acceptedMessage);
+      } catch (error) {
+        this.logger.error(`Error sending waitlist-accepted to ${connId}:`, error);
+      }
+    }
+  }
+
   private notifyUserRemovedFromRoom(
     userId: string,
     roomId: string,

@@ -1708,7 +1708,8 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
         "isSummoningActive",
         "isPeerNextClicked",
         "isCamOffChanged",
-        "isUserUnavailable"
+        "isUserUnavailable",
+        "isPageHidden"
       ];
       return controlKeys.some((key) => parsed[key] !== undefined) ? parsed : null;
     } catch {

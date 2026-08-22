@@ -756,6 +756,23 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     );
   }
 
+  /** Tell the removed user to leave the call UI (remaining peers already got participant-left). */
+  private notifyUserRemovedFromRoom(
+    userId: string,
+    roomId: string,
+    reason: "left" | "disconnected" | "reaped"
+  ): void {
+    const connIds = this.userConnections.get(userId);
+    for (const connId of connIds ?? []) {
+      const conn = this.connections.get(connId);
+      if (!conn?.ws) continue;
+      this.send(conn.ws, {
+        type: "removed-from-room",
+        data: { roomId, reason }
+      });
+    }
+  }
+
   /**
    * Handle leave room
    */
@@ -811,6 +828,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     }
 
     if (removedAsParticipant) {
+      this.notifyUserRemovedFromRoom(userId, roomId, "left");
       await this.broadcastParticipantLeft(roomId, userId);
     }
 
@@ -1672,6 +1690,32 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  private parseCallControlMessage(text: string): Record<string, unknown> | null {
+    const trimmed = String(text || "").trim();
+    if (!trimmed.startsWith("{")) return null;
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (!parsed || typeof parsed !== "object") return null;
+      const controlKeys = [
+        "isGift",
+        "isGiftDismissed",
+        "isDareSync",
+        "isDareResponse",
+        "isDareClose",
+        "isDareInitiated",
+        "isDiceRoll",
+        "isIcebreakerTrigger",
+        "isSummoningActive",
+        "isPeerNextClicked",
+        "isCamOffChanged",
+        "isUserUnavailable"
+      ];
+      return controlKeys.some((key) => parsed[key] !== undefined) ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
   private async handleChatMessage(
     _connectionId: string,
     userId: string,
@@ -1684,6 +1728,30 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
+    const text = typeof message === "string" ? message : "";
+    const trimmed = text.trim();
+    const control = this.parseCallControlMessage(trimmed);
+    if (control) {
+      const payload = {
+        id: `ctrl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        roomId,
+        userId: String(userId),
+        message: trimmed,
+        messageType: "TEXT",
+        gif: null,
+        createdAt: new Date().toISOString()
+      };
+      this.send(ws, { type: "chat-message", data: payload });
+      try {
+        if (await this.roomService.roomExists(roomId)) {
+          await this.broadcastToRoom(roomId, { type: "chat-message", data: payload }, userId);
+        }
+      } catch {
+        /* control events must never tear down media */
+      }
+      return;
+    }
+
     // Check if room exists first (checks both memory and database)
     const roomExists = await this.roomService.roomExists(roomId);
     if (!roomExists) {
@@ -1691,8 +1759,6 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    const text = typeof message === "string" ? message : "";
-    const trimmed = text.trim();
     const hasText = trimmed.length > 0;
     const hasGif = !!gif;
     if (!hasText && !hasGif) {
@@ -1723,18 +1789,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
           : undefined
       });
 
-      const isControlJson = (() => {
-        if (!hasText || !trimmed.startsWith("{")) return false;
-        try {
-          const parsed = JSON.parse(trimmed);
-          return Boolean(parsed && typeof parsed === "object");
-        } catch {
-          return false;
-        }
-      })();
-      const senderProfile = isControlJson
-        ? { username: null, displayPictureUrl: null }
-        : await this.getChatSenderProfile(String(chatMessage.userId || userId));
+      const senderProfile = await this.getChatSenderProfile(String(chatMessage.userId || userId));
       const payload = {
         id: chatMessage.id,
         roomId: chatMessage.roomId,
@@ -1758,9 +1813,8 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
         type: "chat-message",
         data: payload
       }, userId);
-    } catch (error: any) {
-      // Handle errors from chat service (e.g., room not found, validation errors)
-      this.sendError(ws, error.message || "Failed to send chat message");
+    } catch {
+      this.sendError(ws, "Failed to send chat message");
     }
   }
 
@@ -1887,6 +1941,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     }
 
     if (removedAsParticipant) {
+      this.notifyUserRemovedFromRoom(userId, resolvedRoomId, "disconnected");
       await this.broadcastParticipantLeft(resolvedRoomId, userId);
     }
   }
@@ -1957,6 +2012,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
             this.logger.debug(`[PreserveReap] removeViewer failed for ${userId} in ${roomId}: ${error.message}`);
           }
           if (removedAsParticipant) {
+            this.notifyUserRemovedFromRoom(userId, roomId, "reaped");
             await this.broadcastParticipantLeft(roomId, userId);
           }
         } catch (error: any) {

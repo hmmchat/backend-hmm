@@ -75,6 +75,10 @@ export class FriendService {
       throw new BadRequestException("Cannot send friend request to yourself");
     }
 
+    if (await this.isBlocked(fromUserId, toUserId)) {
+      throw new BadRequestException("Cannot send friend request to this user");
+    }
+
     // Check if already friends
     const areFriends = await this.areFriends(fromUserId, toUserId);
     if (areFriends) {
@@ -509,6 +513,58 @@ export class FriendService {
       friends: enrichedFriends,
       nextCursor: friendsResult.nextCursor,
       hasMore: friendsResult.hasMore,
+      pageSize
+    };
+  }
+
+  /**
+   * Users this person blocked (outgoing BLOCKED rows), with profile photos.
+   */
+  async getBlockedUsers(
+    userId: string,
+    limit: number = 100,
+    cursor?: string
+  ): Promise<{
+    users: Array<{
+      userId: string;
+      photoUrl: string | null;
+      createdAt: Date;
+    }>;
+    nextCursor?: string;
+    hasMore: boolean;
+    pageSize: number;
+  }> {
+    const pageSize = Number.isFinite(limit) && limit > 0 ? Math.min(limit, 200) : 100;
+
+    const rows = await this.prisma.friendRequest.findMany({
+      where: {
+        fromUserId: userId,
+        status: "BLOCKED"
+      },
+      orderBy: {
+        updatedAt: "desc"
+      },
+      take: pageSize + 1,
+      ...(cursor && {
+        cursor: { id: cursor },
+        skip: 1
+      })
+    });
+
+    const hasMore = rows.length > pageSize;
+    const page = hasMore ? rows.slice(0, pageSize) : rows;
+    const nextCursor = hasMore ? page[page.length - 1].id : undefined;
+    const blockedIds = page.map((row) => row.toUserId);
+    const photoMap = await this.userClient.getUsersDisplayPictures(blockedIds);
+
+    return {
+      users: page.map((row) => ({
+        userId: row.toUserId,
+        photoUrl: photoMap.get(row.toUserId) || null,
+        createdAt: row.updatedAt || row.createdAt
+      })),
+      nextCursor,
+      hasMore,
       pageSize
     };
   }
@@ -1659,6 +1715,23 @@ export class FriendService {
       }
     });
 
+    // Always persist an outgoing BLOCKED row so this user can list/unblock them.
+    await this.prisma.friendRequest.upsert({
+      where: {
+        fromUserId_toUserId: { fromUserId, toUserId }
+      },
+      create: {
+        fromUserId,
+        toUserId,
+        status: "BLOCKED"
+      },
+      update: {
+        status: "BLOCKED",
+        acceptedAt: null,
+        rejectedAt: null
+      }
+    });
+
     // Remove friendship if exists
     await this.removeFriendship(fromUserId, toUserId);
 
@@ -1668,6 +1741,44 @@ export class FriendService {
 
     this.logger.log(`User ${fromUserId} blocked ${toUserId}`);
     this.emitRealtimeConversationRefresh(fromUserId, toUserId, "user_blocked");
+  }
+
+  /**
+   * Unblock a user this person previously blocked.
+   */
+  async unblockUser(fromUserId: string, toUserId: string): Promise<void> {
+    if (fromUserId === toUserId) {
+      throw new BadRequestException("Cannot unblock yourself");
+    }
+
+    const outgoing = await this.prisma.friendRequest.findFirst({
+      where: {
+        fromUserId,
+        toUserId,
+        status: "BLOCKED"
+      }
+    });
+
+    if (!outgoing) {
+      throw new NotFoundException("User is not blocked");
+    }
+
+    await this.prisma.friendRequest.updateMany({
+      where: {
+        OR: [
+          { fromUserId, toUserId, status: "BLOCKED" },
+          { fromUserId: toUserId, toUserId: fromUserId, status: "BLOCKED" }
+        ]
+      },
+      data: {
+        status: "CANCELLED",
+        acceptedAt: null,
+        rejectedAt: null
+      }
+    });
+
+    this.logger.log(`User ${fromUserId} unblocked ${toUserId}`);
+    this.emitRealtimeConversationRefresh(fromUserId, toUserId, "user_unblocked");
   }
 
   // Helper methods

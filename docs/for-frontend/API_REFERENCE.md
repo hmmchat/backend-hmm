@@ -276,6 +276,8 @@ For flows and examples see **[FRONTEND_INTEGRATION.md](./FRONTEND_INTEGRATION.md
 | `GET` | `/v1/friends/me/conversations/sent-requests` | `/me/conversations/sent-requests` |
 | `GET` | `/v1/friends/me/friends` | `/me/friends` |
 | `POST` | `/v1/friends/me/friends/:friendId/block` | `/me/friends/:friendId/block` |
+| `POST` | `/v1/friends/me/friends/:friendId/unblock` | `/me/friends/:friendId/unblock` |
+| `GET` | `/v1/friends/me/friends/blocked` | `/me/friends/blocked` |
 | `GET` | `/v1/friends/me/friends/:friendId/check` | `/me/friends/:friendId/check` |
 | `GET` | `/v1/friends/me/friends/:friendId/messages` | `/me/friends/:friendId/messages` |
 | `POST` | `/v1/friends/me/friends/:friendId/messages` | `/me/friends/:friendId/messages` |

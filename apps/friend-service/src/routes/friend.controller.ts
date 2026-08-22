@@ -343,6 +343,22 @@ export class FriendController {
   }
 
   /**
+   * Get users this person blocked (photos for settings grid)
+   * GET /me/friends/blocked
+   */
+  @Get("me/friends/blocked")
+  async getBlockedUsers(
+    @Headers("authorization") authz?: string,
+    @Query() query?: any
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    const userId = await this.verifyTokenAndGetUserId(token!);
+    const limit = query?.limit ? parseInt(query.limit, 10) : undefined;
+    const cursor = query?.cursor;
+    return this.friendService.getBlockedUsers(userId, limit, cursor);
+  }
+
+  /**
    * Generate and share friends wall image
    * POST /me/friends/wall/share
    * Returns imageUrl, deepLink, and productLink for sharing
@@ -782,6 +798,21 @@ export class FriendController {
     const token = this.getTokenFromHeader(authz);
     const userId = await this.verifyTokenAndGetUserId(token!);
     await this.friendService.blockUser(userId, friendId);
+    return { ok: true };
+  }
+
+  /**
+   * Unblock a user
+   * POST /me/friends/:friendId/unblock
+   */
+  @Post("me/friends/:friendId/unblock")
+  async unblockUser(
+    @Headers("authorization") authz: string,
+    @Param("friendId") friendId: string
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    const userId = await this.verifyTokenAndGetUserId(token!);
+    await this.friendService.unblockUser(userId, friendId);
     return { ok: true };
   }
 

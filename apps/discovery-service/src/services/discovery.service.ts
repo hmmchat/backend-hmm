@@ -45,6 +45,7 @@ import {
 import { getMatchmakingProfileGap, isPreferredCityAnywhere, PREFERRED_CITY_ANYWHERE_IN_INDIA } from "@hmm/common";
 import {
   SESSION_DISCOVERY_POOL_ANYWHERE as SESSION_POOL_ANYWHERE,
+  countImmobileDiscoveryUsers,
   shouldOfferAutoCityHandoff
 } from "../config/discovery-pool-city.js";
 import { HostedEmbeddingAdapter } from "./embedding-adapters/hosted.adapter.js";
@@ -146,6 +147,8 @@ export type ShowableCity = {
   intent: string;
   faceCardImageUrl: string | null;
   availableCount: number;
+  /** Pull-stranger / beamcast hosts in this city (cannot LOCATION-hop). */
+  immobileCount: number;
   brands: Array<{ name: string; logoUrl?: string }>;
   musicPreference: { name: string; artist: string; albumArtUrl?: string } | null;
 };
@@ -1891,6 +1894,7 @@ export class DiscoveryService implements OnModuleInit {
           intent: (row.intent || "").trim(),
           faceCardImageUrl: row.faceCardImageUrl ?? null,
           availableCount: users.length,
+          immobileCount: countImmobileDiscoveryUsers(users),
           brands: row.brands || [],
           musicPreference: row.musicPreference || null
         } satisfies ShowableCity;

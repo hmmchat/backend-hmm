@@ -4,6 +4,7 @@ import {
   normalizeDiscoveryPoolCity,
   sameDiscoveryPoolCity,
   shouldOfferAutoCityHandoff,
+  countImmobileDiscoveryUsers,
   SESSION_DISCOVERY_POOL_ANYWHERE
 } from "../src/config/discovery-pool-city.js";
 
@@ -51,5 +52,48 @@ test("shouldOfferAutoCityHandoff - fuller destinations always allowed", () => {
   assert.equal(
     shouldOfferAutoCityHandoff(null, { city: "Delhi", availableCount: 1 }),
     true,
+  );
+});
+
+test("countImmobileDiscoveryUsers - pull-stranger and beamcast only", () => {
+  assert.equal(
+    countImmobileDiscoveryUsers([
+      { status: "AVAILABLE" },
+      { status: "IN_SQUAD_AVAILABLE" },
+      { status: "IN_BROADCAST_AVAILABLE" },
+      { status: "MATCHED" }
+    ]),
+    2
+  );
+  assert.equal(countImmobileDiscoveryUsers([]), 0);
+});
+
+test("shouldOfferAutoCityHandoff - immobile pull-stranger host is always visitable", () => {
+  // Delhi empty + lone Mumbai pull-stranger host: Delhi must hop even though
+  // delhi < mumbai (the lexico singleton rule would otherwise block it).
+  assert.equal(
+    shouldOfferAutoCityHandoff("Delhi", {
+      city: "Mumbai",
+      availableCount: 1,
+      immobileCount: 1,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldOfferAutoCityHandoff("Mumbai", {
+      city: "Delhi",
+      availableCount: 1,
+      immobileCount: 1,
+    }),
+    true,
+  );
+  // Same singleton without an in-call host still uses the lexico rule.
+  assert.equal(
+    shouldOfferAutoCityHandoff("Delhi", {
+      city: "Mumbai",
+      availableCount: 1,
+      immobileCount: 0,
+    }),
+    false,
   );
 });

@@ -28,7 +28,7 @@ export class WalletController {
   private async settleMiningQuietly(userId: string): Promise<number> {
     try {
       const mined = await this.miningService.settleActive(userId);
-      return mined.coinsCredited || 0;
+      return mined.coinsCredited || this.miningService.takeRecentCredit(userId) || 0;
     } catch {
       return 0;
     }

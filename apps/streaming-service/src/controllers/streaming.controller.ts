@@ -106,6 +106,32 @@ export class StreamingController {
     return { ok: true, ...result };
   }
 
+  /**
+   * Wallet tick/settle credited this user. Push only to their sockets.
+   * POST /streaming/internal/mining-credited
+   */
+  @Post("internal/mining-credited")
+  async internalMiningCredited(
+    @Headers("x-internal-token") internalToken: string | undefined,
+    @Headers("x-service-token") serviceToken: string | undefined,
+    @Body() body: { userId?: string; coins?: number }
+  ) {
+    const expected = process.env.INTERNAL_SERVICE_TOKEN;
+    const token = internalToken || serviceToken;
+    if (expected && token !== expected) {
+      throw new UnauthorizedException("Invalid service token");
+    }
+    const userId = body?.userId?.trim();
+    const coins = Number(body?.coins) || 0;
+    if (!userId) {
+      throw new BadRequestException("userId is required");
+    }
+    if (coins <= 0) {
+      return { ok: true, notified: 0 };
+    }
+    return { ok: true, ...this.streamingGateway.notifyMiningCredited(userId, coins) };
+  }
+
   @Post("rooms")
   async createRoom(@Body() body: unknown) {
     try {

@@ -58,6 +58,19 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
   private static readonly PRESERVE_REAP_DELAY_MS = 60_000;
   private static readonly CHAT_SENDER_PROFILE_TTL_MS = 5 * 60 * 1000;
   private readonly testMode: boolean;
+  /**
+   * Viewer-safe live scene. Late joiners get whatever is on the call screen
+   * that viewers are allowed to see. Omitted: dare proposal, dice, next,
+   * tab-hidden, other people's mine toasts, call chrome.
+   */
+  private roomViewerScenes = new Map<string, {
+    overlays: Array<Record<string, unknown>>;
+    camOffUserIds: string[];
+    unavailableUserIds: string[];
+    summoningUserId: string | null;
+    icebreaker: string | null;
+  }>();
+  private static readonly MAX_ROOM_OVERLAYS = 8;
 
   constructor(
     private roomService: RoomService,
@@ -174,6 +187,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
         type: "room-ended",
         data: { roomId, reason, message, endedBy: meta?.endedBy }
       });
+      this.roomViewerScenes.delete(roomId);
     } catch (error: any) {
       this.logger.warn(`[RoomEnded] Failed to notify room ${roomId}: ${error?.message || error}`);
     }
@@ -736,7 +750,8 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
           rtpCapabilities,
           myRole,
           participantRoles,
-          producers
+          producers,
+          ...this.viewerScenePayload(roomId)
         }
       });
     } catch (error: any) {
@@ -749,6 +764,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
    * Kicks already use participant-kicked; do not duplicate for the same event.
    */
   private async broadcastParticipantLeft(roomId: string, leftUserId: string): Promise<void> {
+    this.pruneViewerSceneUser(roomId, leftUserId);
     await this.broadcastToRoom(
       roomId,
       {
@@ -1395,7 +1411,8 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
         type: "viewer-joined",
         data: {
           roomId,
-          rtpCapabilities
+          rtpCapabilities,
+          ...this.viewerScenePayload(roomId)
         }
       });
     } catch (error: any) {
@@ -1566,6 +1583,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
 
       // Get random icebreaker (now async)
       const icebreaker = await this.icebreakerService.getRandomIcebreaker();
+      this.setViewerIcebreaker(roomId, icebreaker);
 
       // Broadcast to all participants in the room (so everyone sees the same icebreaker)
       await this.broadcastToRoom(roomId, {
@@ -1775,6 +1793,141 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  private emptyViewerScene() {
+    return {
+      overlays: [] as Array<Record<string, unknown>>,
+      camOffUserIds: [] as string[],
+      unavailableUserIds: [] as string[],
+      summoningUserId: null as string | null,
+      icebreaker: null as string | null
+    };
+  }
+
+  private cloneViewerScene(roomId: string) {
+    const cur = this.roomViewerScenes.get(String(roomId));
+    if (!cur) return this.emptyViewerScene();
+    return {
+      overlays: [...cur.overlays],
+      camOffUserIds: [...cur.camOffUserIds],
+      unavailableUserIds: [...cur.unavailableUserIds],
+      summoningUserId: cur.summoningUserId,
+      icebreaker: cur.icebreaker
+    };
+  }
+
+  private saveViewerScene(roomId: string, scene: ReturnType<StreamingGateway["emptyViewerScene"]>): void {
+    const rid = String(roomId || "");
+    if (!rid) return;
+    const empty =
+      scene.overlays.length === 0 &&
+      scene.camOffUserIds.length === 0 &&
+      scene.unavailableUserIds.length === 0 &&
+      !scene.summoningUserId &&
+      !scene.icebreaker;
+    if (empty) {
+      this.roomViewerScenes.delete(rid);
+      return;
+    }
+    this.roomViewerScenes.set(rid, scene);
+  }
+
+  private viewerScenePayload(roomId: string) {
+    const viewerScene = this.cloneViewerScene(roomId);
+    return {
+      viewerScene,
+      activeOverlays: viewerScene.overlays
+    };
+  }
+
+  private toggleSceneUserId(list: string[], userId: string, on: boolean): string[] {
+    const id = String(userId || "");
+    if (!id) return list;
+    const next = list.filter((item) => item !== id);
+    if (on) next.push(id);
+    return next;
+  }
+
+  private setViewerIcebreaker(roomId: string, question: string | null): void {
+    const scene = this.cloneViewerScene(roomId);
+    scene.icebreaker = question ? String(question) : null;
+    this.saveViewerScene(roomId, scene);
+  }
+
+  private pruneViewerSceneUser(roomId: string, userId: string): void {
+    const id = String(userId || "");
+    if (!id) return;
+    const scene = this.cloneViewerScene(roomId);
+    scene.camOffUserIds = scene.camOffUserIds.filter((item) => item !== id);
+    scene.unavailableUserIds = scene.unavailableUserIds.filter((item) => item !== id);
+    if (scene.summoningUserId === id) scene.summoningUserId = null;
+    scene.overlays = scene.overlays.filter((item) => String(item.targetUserId) !== id);
+    this.saveViewerScene(roomId, scene);
+  }
+
+  private applyControlToViewerScene(
+    roomId: string,
+    control: Record<string, unknown>,
+    senderId: string
+  ): void {
+    const rid = String(roomId || "");
+    if (!rid) return;
+    const scene = this.cloneViewerScene(rid);
+    const uid = String(control.senderId || senderId || "");
+
+    if (control.isGift) {
+      const messageId = String(control.messageId || `gift-${Date.now()}`);
+      const isDare = Boolean(control.isDare);
+      const targetUserId = String(control.targetUserId || "");
+      const next = {
+        isGift: true,
+        isDare,
+        messageId,
+        gift: control.gift && typeof control.gift === "object" ? control.gift : {},
+        targetUserId,
+        senderId: String(control.senderId || senderId || ""),
+        dareText: typeof control.dareText === "string" ? control.dareText : undefined,
+        marqueeStartAt:
+          typeof control.marqueeStartAt === "number" ? control.marqueeStartAt : Date.now()
+      };
+      scene.overlays = scene.overlays.filter((item) => {
+        if (String(item.messageId) === messageId) return false;
+        if (isDare && item.isDare && String(item.targetUserId) === targetUserId) return false;
+        return true;
+      });
+      scene.overlays.push(next);
+      scene.overlays = scene.overlays.slice(-StreamingGateway.MAX_ROOM_OVERLAYS);
+    } else if (control.isGiftDismissed) {
+      const mid = String(control.messageId || "");
+      if (mid) {
+        scene.overlays = scene.overlays.filter((item) => String(item.messageId) !== mid);
+      }
+    } else if (control.isDareClose) {
+      const tid = String(control.targetUserId || "");
+      scene.overlays = scene.overlays.filter(
+        (item) => !(item.isDare && (!tid || String(item.targetUserId) === tid))
+      );
+    }
+
+    if (control.isCamOffChanged !== undefined) {
+      scene.camOffUserIds = this.toggleSceneUserId(scene.camOffUserIds, uid, Boolean(control.isCamOff));
+    }
+    if (control.isUserUnavailable !== undefined) {
+      scene.unavailableUserIds = this.toggleSceneUserId(
+        scene.unavailableUserIds,
+        uid,
+        Boolean(control.isUserUnavailable)
+      );
+    }
+    if (control.isSummoningActive !== undefined) {
+      scene.summoningUserId = control.isSummoningActive ? uid || null : null;
+    }
+    if (control.isIcebreakerTrigger === false) {
+      scene.icebreaker = null;
+    }
+
+    this.saveViewerScene(rid, scene);
+  }
+
   private async handleChatMessage(
     _connectionId: string,
     userId: string,
@@ -1791,6 +1944,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     const trimmed = text.trim();
     const control = this.parseCallControlMessage(trimmed);
     if (control) {
+      this.applyControlToViewerScene(roomId, control, String(userId));
       const payload = {
         id: `ctrl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         roomId,
@@ -2184,6 +2338,73 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       }
     }
     return { notified, leftRoomId };
+  }
+
+  private findParticipantRoomId(userId: string): string | null {
+    for (const connectionId of this.userConnections.get(userId) || []) {
+      const conn = this.connections.get(connectionId);
+      if (conn?.connectionKind === "participant" && conn.roomId) {
+        return conn.roomId;
+      }
+    }
+    return null;
+  }
+
+  /** Viewers only — participants do not see each other's mine toasts. */
+  private notifyViewersParticipantMined(roomId: string, participantUserId: string): void {
+    const connectionIds = this.roomConnections.get(roomId);
+    if (!connectionIds || connectionIds.size === 0) return;
+    const message = {
+      type: "participant-mining-credited",
+      data: { userId: participantUserId }
+    };
+    for (const connId of connectionIds) {
+      const conn = this.connections.get(connId);
+      if (!conn?.ws || conn.connectionKind !== "viewer") continue;
+      if (String(conn.userId) === String(participantUserId)) continue;
+      try {
+        this.send(conn.ws, message);
+      } catch (error: any) {
+        this.logger.warn(
+          `[participant-mining-credited] notify failed ${connId}: ${error?.message || error}`
+        );
+      }
+    }
+  }
+
+  /** Wallet credited this user — send only to their sockets, never the room. */
+  notifyMiningCredited(userId: string, coins: number): { notified: number } {
+    const amount = Number(coins) || 0;
+    if (!userId || amount <= 0) return { notified: 0 };
+    const connIds = Array.from(this.userConnections.get(userId) || []);
+    let notified = 0;
+    for (const connectionId of connIds) {
+      const conn = this.connections.get(connectionId);
+      if (!conn?.ws) continue;
+      try {
+        this.send(conn.ws, {
+          type: "mining-credited",
+          data: { coins: amount }
+        });
+        notified += 1;
+      } catch (error: any) {
+        this.logger.warn(
+          `[mining-credited] notify failed ${connectionId}: ${error?.message || error}`
+        );
+      }
+    }
+    const roomId = this.findParticipantRoomId(userId);
+    if (roomId) {
+      this.notifyViewersParticipantMined(roomId, userId);
+    } else {
+      void this.roomService
+        .getUserActiveRoom(userId)
+        .then((active) => {
+          if (active?.roomId) this.notifyViewersParticipantMined(active.roomId, userId);
+        })
+        .catch(() => undefined);
+    }
+    return { notified };
   }
 
   /**

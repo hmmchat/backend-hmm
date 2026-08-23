@@ -25,6 +25,9 @@ export class MiningService implements OnModuleInit, OnModuleDestroy {
   private tickTimer: ReturnType<typeof setInterval> | null = null;
   private ticking = false;
   private readonly settleChainByUser = new Map<string, Promise<unknown>>();
+  /** Tick can credit before a client poll; keep the amount until GET /me/balance reads it. */
+  private readonly recentCreditByUser = new Map<string, { coins: number; at: number }>();
+  private static readonly RECENT_CREDIT_MS = 60_000;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -304,6 +307,9 @@ export class MiningService implements OnModuleInit, OnModuleDestroy {
         session.bucket as CoinMiningBucket,
         elapsedSeconds
       );
+      if (coinsCredited > 0) {
+        this.notifyUserCredited(userId, coinsCredited);
+      }
       return {
         settled: true,
         coinsCredited,
@@ -329,7 +335,13 @@ export class MiningService implements OnModuleInit, OnModuleDestroy {
       });
       for (const s of sessions) {
         try {
-          await this.settleActive(s.userId);
+          const settle = await this.settleActive(s.userId);
+          if (settle.coinsCredited > 0) {
+            this.recentCreditByUser.set(s.userId, {
+              coins: settle.coinsCredited,
+              at: Date.now()
+            });
+          }
         } catch (err) {
           this.logger.warn(
             `Settle active mining failed for ${s.userId}: ${err instanceof Error ? err.message : err}`
@@ -339,6 +351,35 @@ export class MiningService implements OnModuleInit, OnModuleDestroy {
     } finally {
       this.ticking = false;
     }
+  }
+
+  /** Tell that user only — never the room — so each actor toasts their own mine. */
+  private notifyUserCredited(userId: string, coins: number): void {
+    if (!userId || coins <= 0) return;
+    const base = (process.env.STREAMING_SERVICE_URL || "http://localhost:3006").replace(/\/$/, "");
+    const token = process.env.INTERNAL_SERVICE_TOKEN;
+    if (!token) return;
+    fetch(`${base}/streaming/internal/mining-credited`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-internal-token": token
+      },
+      body: JSON.stringify({ userId, coins })
+    }).catch((err) => {
+      this.logger.warn(
+        `Mining credit notify failed for ${userId}: ${err instanceof Error ? err.message : err}`
+      );
+    });
+  }
+
+  /** Consume a tick credit so the next balance poll can still toast it. */
+  takeRecentCredit(userId: string): number {
+    const rec = this.recentCreditByUser.get(userId);
+    if (!rec) return 0;
+    this.recentCreditByUser.delete(userId);
+    if (Date.now() - rec.at > MiningService.RECENT_CREDIT_MS) return 0;
+    return rec.coins || 0;
   }
 
   /**

@@ -225,6 +225,7 @@ services:
       - PORT=3005
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/wallet-service?schema=public
       - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN}
+      - STREAMING_SERVICE_URL=http://streaming-service:3006
     ports:
       - "3005:3005"
     depends_on:

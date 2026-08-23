@@ -799,6 +799,10 @@ export class RoomService {
       }
     }
 
+    const waitlistCount = await this.prisma.callWaitlist.count({
+      where: { sessionId: session.id, status: "pending" }
+    });
+
     const details = {
       id: session.id,
       roomId: session.roomId,
@@ -808,6 +812,7 @@ export class RoomService {
       pullStrangerRemainingSec,
       participantCount: session.participants.length,
       viewerCount: session.viewers.length,
+      waitlistCount,
       participants: session.participants,
       viewers: session.viewers,
       createdAt: session.createdAt,
@@ -3488,6 +3493,7 @@ export class RoomService {
       roomId: string;
       participantCount: number;
       viewerCount: number;
+      waitlistCount: number;
       participants: Array<{
         userId: string;
         role: string;
@@ -3576,7 +3582,8 @@ export class RoomService {
           },
           _count: {
             select: {
-              viewers: { where: { leftAt: null } }
+              viewers: { where: { leftAt: null } },
+              waitlist: { where: { status: "pending" } }
             }
           }
         },
@@ -3656,6 +3663,7 @@ export class RoomService {
         roomId: session.roomId,
         participantCount: session.participants.length,
         viewerCount: session._count.viewers,
+        waitlistCount: session._count.waitlist,
         participants,
         startedAt: session.startedAt,
         createdAt: session.createdAt,

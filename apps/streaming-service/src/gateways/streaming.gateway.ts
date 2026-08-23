@@ -798,12 +798,23 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
         waitlistCount: payload.waitlistCount
       }
     };
+    const viewerMessage = {
+      type: "waitlist-updated",
+      data: {
+        roomId: payload.roomId,
+        action: payload.action,
+        waitlistCount: payload.waitlistCount
+      }
+    };
     const connectionIds = this.roomConnections.get(payload.roomId);
     for (const connId of connectionIds ?? []) {
       const conn = this.connections.get(connId);
-      if (!conn?.ws || conn.connectionKind === "viewer") continue;
+      if (!conn?.ws) continue;
       try {
-        this.send(conn.ws, message);
+        this.send(
+          conn.ws,
+          conn.connectionKind === "viewer" ? viewerMessage : message
+        );
       } catch (error) {
         this.logger.error(`Error sending waitlist-updated to ${connId}:`, error);
       }

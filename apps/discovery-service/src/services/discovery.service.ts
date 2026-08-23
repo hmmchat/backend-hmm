@@ -3955,6 +3955,7 @@ export class DiscoveryService implements OnModuleInit {
     roomId: string;
     participantCount: number;
     viewerCount: number;
+    waitlistCount: number;
     participants: Array<{
       userId: string;
       role: string;
@@ -4043,6 +4044,7 @@ export class DiscoveryService implements OnModuleInit {
         roomId: broadcast.roomId,
         participantCount: broadcast.participantCount || 0,
         viewerCount: broadcast.viewerCount || 0,
+        waitlistCount: Number(broadcast.waitlistCount) || 0,
         participants: (broadcast.participants || []).map((p: any) => {
           // Use existing profile data if available, otherwise fetch
           if (p.username !== undefined) {

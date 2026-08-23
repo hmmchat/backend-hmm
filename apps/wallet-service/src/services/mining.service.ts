@@ -24,6 +24,7 @@ export class MiningService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(MiningService.name);
   private tickTimer: ReturnType<typeof setInterval> | null = null;
   private ticking = false;
+  private readonly settleChainByUser = new Map<string, Promise<unknown>>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -246,6 +247,29 @@ export class MiningService implements OnModuleInit, OnModuleDestroy {
     coinsCredited: number;
     bucket?: CoinMiningBucket;
   }> {
+    const previous = this.settleChainByUser.get(userId) ?? Promise.resolve();
+    let release!: (value?: unknown) => void;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const chained = previous.then(() => gate, () => gate);
+    this.settleChainByUser.set(userId, chained);
+    await previous.catch(() => undefined);
+    try {
+      return await this.settleActiveUnlocked(userId);
+    } finally {
+      release();
+      if (this.settleChainByUser.get(userId) === chained) {
+        this.settleChainByUser.delete(userId);
+      }
+    }
+  }
+
+  private async settleActiveUnlocked(userId: string): Promise<{
+    settled: boolean;
+    coinsCredited: number;
+    bucket?: CoinMiningBucket;
+  }> {
     const session = await this.prisma.coinMiningActiveSession.findUnique({
       where: { userId }
     });
@@ -260,22 +284,40 @@ export class MiningService implements OnModuleInit, OnModuleDestroy {
       return { settled: true, coinsCredited: 0, bucket: session.bucket as CoinMiningBucket };
     }
 
-    const { coinsCredited } = await this.applyElapsedSeconds(
-      userId,
-      session.bucket as CoinMiningBucket,
-      elapsedSeconds
-    );
-
-    await this.prisma.coinMiningActiveSession.update({
-      where: { userId },
+    // Claim this window first so the 30s tick and on-demand settle
+    // (balance fetch / diamond purchase mid-call) cannot double-credit.
+    const claimed = await this.prisma.coinMiningActiveSession.updateMany({
+      where: { userId, lastSettledAt: session.lastSettledAt },
       data: { lastSettledAt: now }
     });
+    if (claimed.count === 0) {
+      return {
+        settled: true,
+        coinsCredited: 0,
+        bucket: session.bucket as CoinMiningBucket
+      };
+    }
 
-    return {
-      settled: true,
-      coinsCredited,
-      bucket: session.bucket as CoinMiningBucket
-    };
+    try {
+      const { coinsCredited } = await this.applyElapsedSeconds(
+        userId,
+        session.bucket as CoinMiningBucket,
+        elapsedSeconds
+      );
+      return {
+        settled: true,
+        coinsCredited,
+        bucket: session.bucket as CoinMiningBucket
+      };
+    } catch (err) {
+      await this.prisma.coinMiningActiveSession
+        .updateMany({
+          where: { userId, lastSettledAt: now },
+          data: { lastSettledAt: session.lastSettledAt }
+        })
+        .catch(() => undefined);
+      throw err;
+    }
   }
 
   async settleAllActive(): Promise<void> {

@@ -9,6 +9,7 @@ import {
   Query
 } from "@nestjs/common";
 import { WalletService } from "../services/wallet.service.js";
+import { MiningService } from "../services/mining.service.js";
 import { z } from "zod";
 
 const GenderFilterTransactionSchema = z.object({
@@ -18,7 +19,20 @@ const GenderFilterTransactionSchema = z.object({
 
 @Controller()
 export class WalletController {
-  constructor(private readonly walletService: WalletService) {}
+  constructor(
+    private readonly walletService: WalletService,
+    private readonly miningService: MiningService
+  ) {}
+
+  /** Bank any elapsed call/broadcast time so mid-call spends see freshly mined coins. */
+  private async settleMiningQuietly(userId: string): Promise<number> {
+    try {
+      const mined = await this.miningService.settleActive(userId);
+      return mined.coinsCredited || 0;
+    } catch {
+      return 0;
+    }
+  }
 
   private getTokenFromHeader(h?: string) {
     if (!h) return null;
@@ -61,7 +75,9 @@ export class WalletController {
     }
 
     const userId = await this.verifyTokenAndGetUserId(token);
-    return this.walletService.getBalance(userId);
+    const minedCoins = await this.settleMiningQuietly(userId);
+    const balance = await this.walletService.getBalance(userId);
+    return { ...balance, minedCoins };
   }
 
   /**
@@ -82,6 +98,7 @@ export class WalletController {
     const dto = schema.parse(body);
 
     const userId = await this.verifyTokenAndGetUserId(token);
+    await this.settleMiningQuietly(userId);
     try {
       return await this.walletService.purchaseDiamondsFromCoins(userId, dto.diamondAmount);
     } catch (error) {

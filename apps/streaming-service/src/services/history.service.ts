@@ -22,6 +22,7 @@ export interface HistoryParticipant {
   durationSeconds: number;
   videoOn: boolean | null;
   isFriend: boolean;
+  friendRequestSent: boolean;
   conversationId: string | null;
   messageCost: number | null;
 }
@@ -227,7 +228,7 @@ export class HistoryService {
 
     type RelMap = Record<
       string,
-      { isFriend: boolean; conversationId: string; messageCost: number }
+      { isFriend: boolean; friendRequestSent: boolean; conversationId: string; messageCost: number }
     >;
     const [profiles, relationships] = await Promise.all([
       this.discoveryClient.getUserProfilesBatch([...participantUserIds]),
@@ -281,6 +282,7 @@ export class HistoryService {
           durationSeconds,
           videoOn: null,
           isFriend: rel?.isFriend ?? false,
+          friendRequestSent: rel?.friendRequestSent ?? false,
           conversationId: rel?.conversationId ?? null,
           messageCost: rel != null ? rel.messageCost : null
         };
@@ -356,7 +358,7 @@ export class HistoryService {
 
     type RelMap = Record<
       string,
-      { isFriend: boolean; conversationId: string; messageCost: number }
+      { isFriend: boolean; friendRequestSent: boolean; conversationId: string; messageCost: number }
     >;
     const [profiles, relationships] = await Promise.all([
       this.discoveryClient.getUserProfilesBatch(participantUserIds),
@@ -403,6 +405,7 @@ export class HistoryService {
         durationSeconds,
         videoOn: null,
         isFriend: rel?.isFriend ?? false,
+        friendRequestSent: rel?.friendRequestSent ?? false,
         conversationId: rel?.conversationId ?? null,
         messageCost: rel != null ? rel.messageCost : null
       };

@@ -65,12 +65,17 @@ export class FriendClientService {
 
   /**
    * Get relationship info batch for History Hotline (internal)
-   * Returns { [otherUserId]: { isFriend, conversationId, messageCost } }
+   * Returns { [otherUserId]: { isFriend, friendRequestSent, conversationId, messageCost } }
    */
   async getRelationshipsBatch(
     userId: string,
     otherUserIds: string[]
-  ): Promise<Record<string, { isFriend: boolean; conversationId: string; messageCost: number }>> {
+  ): Promise<
+    Record<
+      string,
+      { isFriend: boolean; friendRequestSent: boolean; conversationId: string; messageCost: number }
+    >
+  > {
     if (otherUserIds.length === 0) {
       return {};
     }
@@ -98,7 +103,12 @@ export class FriendClientService {
       }
       return (await response.json()) as Record<
         string,
-        { isFriend: boolean; conversationId: string; messageCost: number }
+        {
+          isFriend: boolean;
+          friendRequestSent: boolean;
+          conversationId: string;
+          messageCost: number;
+        }
       >;
     } catch (error: any) {
       this.logger.warn(`Error fetching relationships batch: ${error.message}`);

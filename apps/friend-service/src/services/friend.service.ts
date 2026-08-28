@@ -1816,19 +1816,37 @@ export class FriendService {
 
   /**
    * Get relationship info for History Hotline (internal)
-   * Returns isFriend, conversationId, messageCost for messaging from history.
+   * Returns isFriend, friendRequestSent, conversationId, messageCost for messaging from history.
    */
   async getRelationship(
     userId: string,
     otherUserId: string
-  ): Promise<{ isFriend: boolean; conversationId: string; messageCost: number }> {
+  ): Promise<{
+    isFriend: boolean;
+    friendRequestSent: boolean;
+    conversationId: string;
+    messageCost: number;
+  }> {
     const isFriend = await this.areFriends(userId, otherUserId);
     const { id: conversationId } = await this.conversationService.getOrCreateConversation(
       userId,
       otherUserId
     );
     const messageCost = isFriend ? 0 : this.HOTLINE_MESSAGE_COST;
-    return { isFriend, conversationId, messageCost };
+    let friendRequestSent = false;
+    if (!isFriend) {
+      const pending = await this.prisma.friendRequest.findFirst({
+        where: {
+          fromUserId: userId,
+          toUserId: otherUserId,
+          status: "PENDING",
+          OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }]
+        },
+        select: { id: true }
+      });
+      friendRequestSent = Boolean(pending);
+    }
+    return { isFriend, friendRequestSent, conversationId, messageCost };
   }
 
   /**
@@ -1837,10 +1855,25 @@ export class FriendService {
   async getRelationshipsBatch(
     userId: string,
     otherUserIds: string[]
-  ): Promise<Map<string, { isFriend: boolean; conversationId: string; messageCost: number }>> {
+  ): Promise<
+    Map<
+      string,
+      {
+        isFriend: boolean;
+        friendRequestSent: boolean;
+        conversationId: string;
+        messageCost: number;
+      }
+    >
+  > {
     const result = new Map<
       string,
-      { isFriend: boolean; conversationId: string; messageCost: number }
+      {
+        isFriend: boolean;
+        friendRequestSent: boolean;
+        conversationId: string;
+        messageCost: number;
+      }
     >();
     const unique = [...new Set(otherUserIds)];
     await Promise.all(

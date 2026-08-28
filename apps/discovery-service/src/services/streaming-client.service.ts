@@ -14,6 +14,7 @@ export class StreamingClientService {
       roomId: string;
       participantCount: number;
       viewerCount: number;
+      waitlistCount: number;
       participants: Array<{
         userId: string;
         role: string;
@@ -122,6 +123,7 @@ export class StreamingClientService {
     roomId: string;
     participantCount: number;
     viewerCount: number;
+    waitlistCount: number;
     participants: Array<{
       userId: string;
       role: string;

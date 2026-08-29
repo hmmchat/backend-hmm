@@ -786,9 +786,42 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       },
       leftUserId
     );
+    await this.broadcastRolesUpdated(roomId);
   }
 
-  /** Tell the removed user to leave the call UI (remaining peers already got participant-left). */
+  /** Push current HOST/PARTICIPANT roles so a newly promoted host unlocks host controls. */
+  private async broadcastRolesUpdated(roomId: string): Promise<void> {
+    try {
+      const details = await this.roomService.getRoomDetails(roomId);
+      const participants = details?.participants || [];
+      if (!participants.length) return;
+      await this.broadcastToRoom(roomId, {
+        type: "roles-updated",
+        data: {
+          roomId,
+          participantRoles: participants.map((p: { userId: string; role: string }) => ({
+            userId: p.userId,
+            role: p.role
+          }))
+        }
+      });
+    } catch (err: any) {
+      this.logger.warn(
+        `[RolesUpdated] Failed to broadcast roles for room ${roomId}: ${err?.message || err}`
+      );
+    }
+  }
+
+  /** HTTP leave / other non-WS paths: tell peers someone left and refresh host roles. */
+  async notifyParticipantLeft(
+    roomId: string,
+    leftUserId: string,
+    reason: "left" | "disconnected" | "reaped" = "left"
+  ): Promise<void> {
+    this.notifyUserRemovedFromRoom(leftUserId, roomId, reason);
+    await this.broadcastParticipantLeft(roomId, leftUserId);
+  }
+
   private notifyWaitlistUpdated(payload: {
     roomId: string;
     action: "joined" | "cancelled" | "accepted";

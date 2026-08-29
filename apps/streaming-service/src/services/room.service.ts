@@ -1158,6 +1158,8 @@ export class RoomService {
       return;
     }
 
+    await this.ensureRoomHasHost(session.id, roomId);
+
     // Room continues (single user or multiple users) - only update leaving user's status.
     // Preserve AVAILABLE when another flow (e.g. raincheck) already moved user to discovery pool.
     let statusAfterLeave = "ONLINE";
@@ -1294,6 +1296,8 @@ export class RoomService {
       await this.endRoom(roomId);
       return true; // endRoom will handle status updates and report-streak notifications
     }
+
+    await this.ensureRoomHasHost(session.id, roomId);
 
     this.notifyParticipantCallEndedForReportStreak(userId, session.id);
 
@@ -3243,6 +3247,53 @@ export class RoomService {
     const isParticipant = !!(session?.participants && session.participants.length > 0);
     this.setCached(this.participantMembershipCache, cacheKey, this.membershipCacheTtlMs, isParticipant);
     return isParticipant;
+  }
+
+  /**
+   * A live call must always have at least one HOST. If the last host left,
+   * promote the earliest remaining joiner (joinedAt, then id).
+   */
+  private async ensureRoomHasHost(sessionId: string, roomId: string): Promise<string | null> {
+    const remaining = await this.prisma.callParticipant.findMany({
+      where: {
+        sessionId,
+        status: "active",
+        leftAt: null
+      },
+      select: {
+        id: true,
+        userId: true,
+        role: true,
+        joinedAt: true
+      },
+      orderBy: [{ joinedAt: "asc" }, { id: "asc" }]
+    });
+
+    if (remaining.length === 0) {
+      return null;
+    }
+    if (remaining.some((p) => p.role === "HOST")) {
+      return null;
+    }
+
+    const successor = remaining[0];
+    await this.prisma.callParticipant.update({
+      where: { id: successor.id },
+      data: { role: "HOST" }
+    });
+    await this.prisma.callEvent.create({
+      data: {
+        sessionId,
+        eventType: "host_promoted",
+        userId: successor.userId,
+        metadata: JSON.stringify({ roomId, reason: "last_host_left" })
+      }
+    });
+    this.clearHotReadCaches(roomId, remaining.map((p) => p.userId));
+    this.logger.log(
+      `Promoted user ${successor.userId} to HOST in room ${roomId} after last host left`
+    );
+    return successor.userId;
   }
 
   /**

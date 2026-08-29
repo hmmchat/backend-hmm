@@ -674,7 +674,10 @@ export class StreamingController {
     if (!userId) {
       throw new HttpException("Missing x-user-id", HttpStatus.UNAUTHORIZED);
     }
-    await this.roomService.removeParticipant(roomId, userId);
+    const removed = await this.roomService.removeParticipant(roomId, userId);
+    if (removed) {
+      await this.streamingGateway.notifyParticipantLeft(roomId, userId);
+    }
     return { success: true, message: `User ${userId} left room ${roomId}` };
   }
 
@@ -690,7 +693,10 @@ export class StreamingController {
     if (!body.userId) {
       throw new BadRequestException("userId is required");
     }
-    await this.roomService.removeParticipant(roomId, body.userId);
+    const removed = await this.roomService.removeParticipant(roomId, body.userId);
+    if (removed) {
+      await this.streamingGateway.notifyParticipantLeft(roomId, body.userId);
+    }
     return { success: true, message: `User ${body.userId} left room ${roomId}` };
   }
 

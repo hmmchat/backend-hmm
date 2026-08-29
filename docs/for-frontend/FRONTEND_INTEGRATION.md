@@ -563,7 +563,11 @@ Spotify’s Recommendations / featured / editorial playlist APIs are unavailable
 
 **Endpoint:** `PATCH /me/music-preference`
 
-**Request:** Same as create
+**Request:**
+```json
+{ "musicPreferenceId": "song-id" }
+```
+Pass `"musicPreferenceId": null` to clear the user's song.
 
 ### 7. Brand Preferences
 

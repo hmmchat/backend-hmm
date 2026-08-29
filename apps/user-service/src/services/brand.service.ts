@@ -353,28 +353,270 @@ export class BrandService {
 
   /**
    * Brandfetch browse categories (website taxonomy). "Featured" is intentionally omitted.
-   * `query` is the Brand Search term used to load brands inside the set.
+   * Brand Search has no industry filter — each set uses several well-known brand seeds
+   * so we get real category brands (Netflix, Disney, …) instead of name-matches for
+   * the word "entertainment".
    */
-  private brandfetchBrowseSets(): { name: string; query: string }[] {
+  private brandfetchBrowseSets(): { name: string; query: string; seeds: string[] }[] {
     return [
-      { name: "Technology", query: "technology" },
-      { name: "Arts and Entertainment", query: "entertainment" },
-      { name: "Finance", query: "finance" },
-      { name: "Food and Drink", query: "food" },
-      { name: "Vehicles", query: "automotive" },
-      { name: "Travel and tourism", query: "travel" },
-      { name: "Shopping", query: "retail" },
-      { name: "Fashion", query: "fashion" },
-      { name: "Sports", query: "sports" },
-      { name: "Beauty", query: "beauty" },
-      { name: "Media", query: "media" },
-      { name: "Healthcare", query: "healthcare" },
-      { name: "Gaming", query: "gaming" },
-      { name: "Education", query: "education" }
+      {
+        name: "Technology",
+        query: "technology",
+        seeds: [
+          "apple",
+          "google",
+          "microsoft",
+          "amazon",
+          "samsung",
+          "meta",
+          "nvidia",
+          "intel",
+          "ibm",
+          "oracle",
+          "adobe",
+          "salesforce"
+        ]
+      },
+      {
+        name: "Arts and Entertainment",
+        query: "entertainment",
+        seeds: [
+          "netflix",
+          "disney",
+          "spotify",
+          "youtube",
+          "hbo",
+          "pixar",
+          "marvel",
+          "universal",
+          "warner",
+          "paramount",
+          "sony pictures",
+          "prime video"
+        ]
+      },
+      {
+        name: "Finance",
+        query: "finance",
+        seeds: [
+          "visa",
+          "mastercard",
+          "paypal",
+          "stripe",
+          "chase",
+          "amex",
+          "hsbc",
+          "goldman",
+          "revolut",
+          "wise",
+          "razorpay",
+          "paytm"
+        ]
+      },
+      {
+        name: "Food and Drink",
+        query: "food",
+        seeds: [
+          "starbucks",
+          "mcdonalds",
+          "coca cola",
+          "pepsi",
+          "nestle",
+          "kfc",
+          "dominos",
+          "subway",
+          "red bull",
+          "heineken",
+          "chipotle",
+          "dunkin"
+        ]
+      },
+      {
+        name: "Vehicles",
+        query: "automotive",
+        seeds: [
+          "tesla",
+          "toyota",
+          "bmw",
+          "mercedes",
+          "ford",
+          "honda",
+          "audi",
+          "porsche",
+          "hyundai",
+          "volkswagen",
+          "ferrari",
+          "tata motors"
+        ]
+      },
+      {
+        name: "Travel and tourism",
+        query: "travel",
+        seeds: [
+          "airbnb",
+          "booking",
+          "expedia",
+          "uber",
+          "marriott",
+          "hilton",
+          "emirates",
+          "delta",
+          "tripadvisor",
+          "makemytrip",
+          "indigo",
+          "qatar airways"
+        ]
+      },
+      {
+        name: "Shopping",
+        query: "retail",
+        seeds: [
+          "amazon",
+          "walmart",
+          "target",
+          "ikea",
+          "costco",
+          "ebay",
+          "etsy",
+          "flipkart",
+          "myntra",
+          "shopify",
+          "best buy",
+          "alibaba"
+        ]
+      },
+      {
+        name: "Fashion",
+        query: "fashion",
+        seeds: [
+          "nike",
+          "adidas",
+          "zara",
+          "gucci",
+          "h&m",
+          "uniqlo",
+          "louis vuitton",
+          "prada",
+          "puma",
+          "levi",
+          "chanel",
+          "shein"
+        ]
+      },
+      {
+        name: "Sports",
+        query: "sports",
+        seeds: [
+          "nike",
+          "adidas",
+          "puma",
+          "under armour",
+          "reebok",
+          "nba",
+          "fifa",
+          "espn",
+          "decathlon",
+          "wilson",
+          "new balance",
+          "asics"
+        ]
+      },
+      {
+        name: "Beauty",
+        query: "beauty",
+        seeds: [
+          "sephora",
+          "loreal",
+          "mac",
+          "nykaa",
+          "estee lauder",
+          "maybelline",
+          "clinique",
+          "ulta",
+          "the ordinary",
+          "fenty",
+          "nivea",
+          "dove"
+        ]
+      },
+      {
+        name: "Media",
+        query: "media",
+        seeds: [
+          "nyt",
+          "bbc",
+          "cnn",
+          "forbes",
+          "bloomberg",
+          "reuters",
+          "times of india",
+          "the guardian",
+          "wsj",
+          "buzzfeed",
+          "vice",
+          "spotify"
+        ]
+      },
+      {
+        name: "Healthcare",
+        query: "healthcare",
+        seeds: [
+          "pfizer",
+          "johnson",
+          "cvs",
+          "unitedhealth",
+          "apollo",
+          "pharmeasy",
+          "1mg",
+          "abbott",
+          "novartis",
+          "roche",
+          "mayo clinic",
+          "practo"
+        ]
+      },
+      {
+        name: "Gaming",
+        query: "gaming",
+        seeds: [
+          "playstation",
+          "xbox",
+          "nintendo",
+          "steam",
+          "epic games",
+          "roblox",
+          "riot",
+          "activision",
+          "ubisoft",
+          "ea",
+          "blizzard",
+          "twitch"
+        ]
+      },
+      {
+        name: "Education",
+        query: "education",
+        seeds: [
+          "coursera",
+          "duolingo",
+          "khan academy",
+          "udemy",
+          "byju",
+          "unacademy",
+          "chegg",
+          "quizlet",
+          "edx",
+          "skillshare",
+          "linkedin learning",
+          "pearson"
+        ]
+      }
     ];
   }
 
-  private resolveBrowseSet(category: string): { name: string; query: string } | null {
+  private resolveBrowseSet(
+    category: string
+  ): { name: string; query: string; seeds: string[] } | null {
     const needle = category.trim().toLowerCase();
     if (!needle) return null;
     return (
@@ -395,7 +637,7 @@ export class BrandService {
         .map(s => s.trim())
         .filter(Boolean);
     }
-    return this.brandfetchBrowseSets().map((set) => set.query);
+    return this.brandfetchBrowseSets().flatMap((set) => set.seeds.slice(0, 2));
   }
 
   /** Distinct Brandfetch category sets for the brands picker (no Featured). */
@@ -405,6 +647,8 @@ export class BrandService {
 
   /**
    * Brands inside a Brandfetch category set. Brandfetch-only (dashboard catalog is search-only).
+   * Runs several Brand Search seeds per set and merges/dedupes — Brandfetch has no
+   * “list by industry” endpoint, so a single category-word search is too thin.
    */
   async getBrandsByCategory(category: string, limit: number = 50): Promise<SearchBrandResult[]> {
     if (limit < 1 || limit > 50) {
@@ -420,18 +664,46 @@ export class BrandService {
       return [];
     }
 
-    try {
-      const results = await this.searchBrandfetch(set.query, limit);
-      if (results.length === 0) return [];
-      return this.persistBrandfetchResultsToCatalog(results);
-    } catch (error) {
-      console.warn(
-        `[BrandService] getBrandsByCategory "${set.name}" failed: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
-      return [];
+    const seeds = this.shuffle([...set.seeds]);
+    const seen = new Set<string>();
+    const out: SearchBrandResult[] = [];
+    const maxCalls = Math.min(seeds.length, 10);
+
+    for (let i = 0; i < maxCalls && out.length < limit; i++) {
+      try {
+        const chunk = await this.searchBrandfetch(seeds[i], Math.min(20, limit));
+        for (const brand of chunk) {
+          const key = this.domainKey(brand.domain) || brand.name.toLowerCase();
+          if (!key || seen.has(key)) continue;
+          seen.add(key);
+          out.push(brand);
+          if (out.length >= limit) break;
+        }
+      } catch (error) {
+        console.warn(
+          `[BrandService] getBrandsByCategory seed "${seeds[i]}" failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+      }
     }
+
+    if (out.length === 0) {
+      try {
+        const fallback = await this.searchBrandfetch(set.query, limit);
+        if (fallback.length === 0) return [];
+        return this.persistBrandfetchResultsToCatalog(fallback);
+      } catch (error) {
+        console.warn(
+          `[BrandService] getBrandsByCategory "${set.name}" failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+        return [];
+      }
+    }
+
+    return this.persistBrandfetchResultsToCatalog(out.slice(0, limit));
   }
 
   /**

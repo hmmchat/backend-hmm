@@ -14,7 +14,7 @@ const RequiredIntent = z
   .min(1, "Intent is required")
   .max(255);
 
-export const USERNAME_MAX_LEN = 8;
+export const USERNAME_MAX_LEN = 20;
 
 /** NBSP, figure/thin/en spaces, ideographic space → ASCII space (does not collapse runs of spaces). */
 function normalizeDisplayNameWhitespace(input: string): string {

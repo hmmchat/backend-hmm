@@ -2095,17 +2095,30 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
           : undefined
       });
 
-      const senderProfile = await this.getChatSenderProfile(String(chatMessage.userId || userId));
+      const senderId = String(chatMessage.userId || userId);
+      const [senderProfile, senderIsParticipant] = await Promise.all([
+        this.getChatSenderProfile(senderId),
+        this.roomService.isParticipant(roomId, senderId)
+      ]);
+      let isBroadcasting = false;
+      try {
+        isBroadcasting = Boolean(this.roomService.getRoom(roomId).isBroadcasting);
+      } catch {
+        const details = await this.roomService.getRoomDetails(roomId).catch(() => null);
+        isBroadcasting = Boolean(details?.isBroadcasting);
+      }
       const payload = {
         id: chatMessage.id,
         roomId: chatMessage.roomId,
-        userId: String(chatMessage.userId || userId),
+        userId: senderId,
         message: chatMessage.message,
         messageType: chatMessage.messageType,
         gif: chatMessage.gif,
         createdAt: chatMessage.createdAt,
         username: senderProfile.username || undefined,
-        displayPictureUrl: senderProfile.displayPictureUrl || undefined
+        displayPictureUrl: senderProfile.displayPictureUrl || undefined,
+        isParticipant: senderIsParticipant,
+        isBroadcasting
       };
 
       // Send confirmation back to client

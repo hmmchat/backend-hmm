@@ -148,6 +148,57 @@ export class BrandService {
     return this.normalizeDomain(domain ?? undefined);
   }
 
+  private brandNameKey(name: string | null | undefined): string | null {
+    const n = (name || "").trim().toLowerCase().replace(/\s+/g, " ");
+    return n || null;
+  }
+
+  /** Dedupe keys for a brand row (domain, normalized name, brandfetchId, id). */
+  private brandDedupeKeys(brand: SearchBrandResult): string[] {
+    const keys: string[] = [];
+    const domain = this.domainKey(brand.domain);
+    const name = this.brandNameKey(brand.name);
+    const bfid = brand.brandfetchId?.trim();
+    if (domain) keys.push(`d:${domain}`);
+    if (name) keys.push(`n:${name}`);
+    if (bfid) keys.push(`b:${bfid}`);
+    if (brand.id) keys.push(`i:${brand.id}`);
+    return keys;
+  }
+
+  private dedupeBrandResults(brands: SearchBrandResult[]): SearchBrandResult[] {
+    const seen = new Set<string>();
+    const out: SearchBrandResult[] = [];
+    for (const brand of brands) {
+      if (!brand?.name) continue;
+      const keys = this.brandDedupeKeys(brand);
+      if (keys.some((key) => seen.has(key))) continue;
+      for (const key of keys) seen.add(key);
+      out.push(brand);
+    }
+    return out;
+  }
+
+  /**
+   * Prefer the Brandfetch hit that best matches the seed name, then a few neighbors.
+   * Avoids stuffing every seed’s full noisy result list (duplicates + off-category brands).
+   */
+  private pickBrandsForSeed(seed: string, chunk: SearchBrandResult[], maxPerSeed = 3): SearchBrandResult[] {
+    if (chunk.length === 0) return [];
+    const seedKey = this.brandNameKey(seed) || seed.toLowerCase();
+    const scored = chunk.map((brand, index) => {
+      const name = this.brandNameKey(brand.name) || "";
+      let score = 0;
+      if (name === seedKey) score += 100;
+      else if (name.startsWith(seedKey) || seedKey.startsWith(name)) score += 60;
+      else if (name.includes(seedKey) || seedKey.includes(name)) score += 30;
+      score -= index; // preserve Brandfetch rank as a light tiebreaker
+      return { brand, score };
+    });
+    scored.sort((a, b) => b.score - a.score);
+    return scored.slice(0, maxPerSeed).map((row) => row.brand);
+  }
+
   /**
    * Fuzzy search on content-managed brands only (dashboard catalog).
    */
@@ -647,8 +698,9 @@ export class BrandService {
 
   /**
    * Brands inside a Brandfetch category set. Brandfetch-only (dashboard catalog is search-only).
-   * Runs several Brand Search seeds per set and merges/dedupes — Brandfetch has no
-   * “list by industry” endpoint, so a single category-word search is too thin.
+   * Fans out seed searches in parallel (Brandfetch has no list-by-industry API), keeps the
+   * best hits per seed, and dedupes by domain/name/brandfetchId so the same brand cannot
+   * stick across pages.
    */
   async getBrandsByCategory(category: string, limit: number = 50): Promise<SearchBrandResult[]> {
     if (limit < 1 || limit > 50) {
@@ -664,35 +716,28 @@ export class BrandService {
       return [];
     }
 
-    const seeds = this.shuffle([...set.seeds]);
-    const seen = new Set<string>();
-    const out: SearchBrandResult[] = [];
-    const maxCalls = Math.min(seeds.length, 10);
-
-    for (let i = 0; i < maxCalls && out.length < limit; i++) {
-      try {
-        const chunk = await this.searchBrandfetch(seeds[i], Math.min(20, limit));
-        for (const brand of chunk) {
-          const key = this.domainKey(brand.domain) || brand.name.toLowerCase();
-          if (!key || seen.has(key)) continue;
-          seen.add(key);
-          out.push(brand);
-          if (out.length >= limit) break;
+    const seeds = this.shuffle([...set.seeds]).slice(0, 8);
+    const chunks = await Promise.all(
+      seeds.map(async (seed) => {
+        try {
+          const chunk = await this.searchBrandfetch(seed, 8);
+          return this.pickBrandsForSeed(seed, chunk, 3);
+        } catch (error) {
+          console.warn(
+            `[BrandService] getBrandsByCategory seed "${seed}" failed: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+          return [] as SearchBrandResult[];
         }
-      } catch (error) {
-        console.warn(
-          `[BrandService] getBrandsByCategory seed "${seeds[i]}" failed: ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        );
-      }
-    }
+      })
+    );
 
-    if (out.length === 0) {
+    let merged = this.dedupeBrandResults(chunks.flat());
+
+    if (merged.length === 0) {
       try {
-        const fallback = await this.searchBrandfetch(set.query, limit);
-        if (fallback.length === 0) return [];
-        return this.persistBrandfetchResultsToCatalog(fallback);
+        merged = await this.searchBrandfetch(set.query, limit);
       } catch (error) {
         console.warn(
           `[BrandService] getBrandsByCategory "${set.name}" failed: ${
@@ -703,7 +748,10 @@ export class BrandService {
       }
     }
 
-    return this.persistBrandfetchResultsToCatalog(out.slice(0, limit));
+    if (merged.length === 0) return [];
+
+    const persisted = await this.persistBrandfetchResultsToCatalog(merged.slice(0, limit));
+    return this.dedupeBrandResults(persisted).slice(0, limit);
   }
 
   /**

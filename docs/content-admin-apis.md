@@ -156,7 +156,7 @@ These feed discovery/matching and profile UI.
     }
     ```
     - `name` (string, required, unique)
-    - `genre` (string, optional; umbrella category used for matching)
+    - `genre` (string, required; umbrella set shown in the interests picker)
   - **Response:** `{ ok: true, interest: { ... } }`
 
 - **Update an interest**

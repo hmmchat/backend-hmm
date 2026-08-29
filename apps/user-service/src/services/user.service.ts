@@ -37,7 +37,8 @@ import {
   NEARBY_DEFAULT_LIMIT,
   CITIES_MAX_USERS_DEFAULT_LIMIT,
   DISCOVERY_USERS_DEFAULT_LIMIT,
-  SEARCH_DEFAULT_LIMIT
+  SEARCH_DEFAULT_LIMIT,
+  INTEREST_SET_LIST_LIMIT
 } from "../config/limits.config.js";
 import {
   getReportWeight,
@@ -1474,16 +1475,24 @@ export class UserService implements OnModuleInit {
     };
   }
 
-  async getInterests(limit: number = 8, excludeIds: string[] = []) {
-    const effectiveLimit = limit ?? 8;
-    if (effectiveLimit < 1 || effectiveLimit > 50) {
-      throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);
+  async getInterestSets() {
+    const rows = await this.prisma.$queryRaw<{ name: string }[]>`
+      SELECT DISTINCT btrim(genre) AS name
+      FROM "interests"
+      WHERE genre IS NOT NULL AND btrim(genre) <> ''
+    `;
+    return { sets: rows.filter((row) => row.name) };
+  }
+
+  async getInterestsByGenre(genre: string, limit: number = INTEREST_SET_LIST_LIMIT) {
+    const trimmedGenre = genre?.trim();
+    if (!trimmedGenre) {
+      throw new HttpException("Genre is required", HttpStatus.BAD_REQUEST);
+    }
+    if (limit < 1 || limit > INTEREST_SET_LIST_LIMIT) {
+      throw new HttpException(`Limit must be between 1 and ${INTEREST_SET_LIST_LIMIT}`, HttpStatus.BAD_REQUEST);
     }
 
-    const excludeFilter = excludeWhere(excludeIds);
-
-    // Only return sub-genres (name) to users, not genre
-    // Genre is used internally for matching but not shown to users
     const interests = await this.prisma.$queryRaw<
       { id: string; name: string; createdAt: Date }[]
     >`
@@ -1492,7 +1501,34 @@ export class UserService implements OnModuleInit {
         name,
         "createdAt"
       FROM "interests"
-      ${excludeFilter}
+      WHERE genre IS NOT NULL
+        AND btrim(genre) <> ''
+        AND lower(btrim(genre)) = lower(${trimmedGenre})
+      ORDER BY random()
+      LIMIT ${limit};
+    `;
+
+    return { interests };
+  }
+
+  async getInterests(limit: number = 8, excludeIds: string[] = []) {
+    const effectiveLimit = limit ?? 8;
+    if (effectiveLimit < 1 || effectiveLimit > 50) {
+      throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);
+    }
+
+    const extraExclude = excludeAnd(excludeIds);
+
+    const interests = await this.prisma.$queryRaw<
+      { id: string; name: string; createdAt: Date }[]
+    >`
+      SELECT
+        id,
+        name,
+        "createdAt"
+      FROM "interests"
+      WHERE genre IS NOT NULL AND btrim(genre) <> ''
+      ${extraExclude}
       ORDER BY random()
       LIMIT ${effectiveLimit};
     `;
@@ -1511,37 +1547,68 @@ export class UserService implements OnModuleInit {
       throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);
     }
 
-    let interests = await this.prisma.$queryRaw<
-      { id: string; name: string; createdAt: Date }[]
-    >`
+    const hasGenre = Prisma.sql`genre IS NOT NULL AND btrim(genre) <> ''`;
+
+    type InterestHit = { id: string; name: string; genre: string | null; createdAt: Date };
+
+    let matches = await this.prisma.$queryRaw<InterestHit[]>`
       SELECT
         id,
         name,
+        genre,
         "createdAt"
       FROM "interests"
-      WHERE ${catalogFuzzyWhere(trimmedQuery)}
+      WHERE (${catalogFuzzyWhere(trimmedQuery)}) AND ${hasGenre}
       ORDER BY ${catalogFuzzyOrderBy(trimmedQuery)}
       LIMIT ${limit};
     `;
 
-    if (interests.length === 0) {
-      interests = await this.prisma.$queryRaw<
-        { id: string; name: string; createdAt: Date }[]
-      >`
+    if (matches.length === 0) {
+      matches = await this.prisma.$queryRaw<InterestHit[]>`
         SELECT
           id,
           name,
+          genre,
           "createdAt"
         FROM "interests"
-        WHERE GREATEST(
-          similarity(lower(name), lower(${trimmedQuery})),
-          word_similarity(lower(${trimmedQuery}), lower(name))
-        ) >= 0.12
+        WHERE ${hasGenre}
+          AND GREATEST(
+            similarity(lower(name), lower(${trimmedQuery})),
+            word_similarity(lower(${trimmedQuery}), lower(name))
+          ) >= 0.12
         ORDER BY ${catalogFuzzyFallbackOrderBy(trimmedQuery)}
         LIMIT ${limit};
       `;
     }
 
+    let similar: InterestHit[] = [];
+    if (matches.length < limit) {
+      const genres = [
+        ...new Set(matches.map((row) => row.genre?.trim()).filter((name): name is string => Boolean(name)))
+      ];
+      if (genres.length > 0) {
+        const excludeIds = matches.map((row) => row.id);
+        similar = await this.prisma.$queryRaw<InterestHit[]>`
+          SELECT
+            id,
+            name,
+            genre,
+            "createdAt"
+          FROM "interests"
+          WHERE ${hasGenre}
+            AND lower(btrim(genre)) IN (${Prisma.join(genres.map((name) => Prisma.sql`lower(${name})`))})
+            AND id NOT IN (${Prisma.join(excludeIds.map((id) => Prisma.sql`${id}`))})
+          ORDER BY random()
+          LIMIT ${limit - matches.length};
+        `;
+      }
+    }
+
+    const interests = [...matches, ...similar].map((row) => ({
+      id: row.id,
+      name: row.name,
+      createdAt: row.createdAt
+    }));
     return { interests };
   }
 

@@ -637,25 +637,31 @@ Search uses **Brandfetch** first. If Brandfetch is unavailable or returns nothin
 
 #### Get All Interests
 
-**Endpoint:** `GET /interests?q={query}&limit={limit}`
+**Endpoints**
 
-- Without `q`:
-  - Returns a **random selection** of interests to show on the \"Add Interests\" screen.
-  - `limit` (optional, number): how many interests to return (default: `8`, min: `1`, max: `50`).
-- With `q`:
-  - `GET /interests?q={query}&limit={limit}` performs fuzzy search.
-  - `q` (string, required when used): search term typed by the user
-  - `limit` (number, optional): max results (default: 20, min: 1, max: 50)
-  - Uses the same fuzzy search logic as brands (case-insensitive, typo-tolerant, nearest matches first).
+- `GET /interests/sets` — distinct set names (`Interest.genre`). Omits interests with no genre.
+- `GET /interests?genre={set}` — interests in that set (random order). `limit` optional, default/max `200`.
+- `GET /interests` (no `q`, no `genre`) — random interests that have a genre. `limit` default `8`, max `50`.
+- `GET /interests?q={query}&limit={limit}` — fuzzy name search, then fills remaining slots with other interests from the same set(s) as the matches. `limit` default `20`, max `50`. Interests with no genre are omitted.
 
-**Response:**
+Suggested picker: show 10 sets (or 10 interests) plus See more; page locally from these payloads.
+
+**Set list response:**
+```json
+{
+  "sets": [
+    { "name": "Sports" }
+  ]
+}
+```
+
+**Interest list / search response:**
 ```json
 {
   "interests": [
     {
       "id": "string",
-      "name": "string",
-      "category": "string"
+      "name": "string"
     }
   ]
 }

@@ -31,3 +31,6 @@ export const DISCOVERY_USERS_DEFAULT_LIMIT = intEnv("DISCOVERY_USERS_DEFAULT_LIM
 
 /** Default limit for GET /brands/search and GET /music/search */
 export const SEARCH_DEFAULT_LIMIT = intEnv("SEARCH_DEFAULT_LIMIT", 20);
+
+/** Max interests returned for GET /interests?genre= (client pages locally) */
+export const INTEREST_SET_LIST_LIMIT = intEnv("INTEREST_SET_LIST_LIMIT", 200);

@@ -82,7 +82,10 @@ This service manages user profiles after authentication. Users authenticate via 
 ### Catalog Data (Public - No Auth Required)
 
 - `GET /brands` - Get list of all available brands
-- `GET /interests` - Get list of all available interests
+- `GET /interests` - Random interests that have a genre
+- `GET /interests/sets` - Distinct interest set names
+- `GET /interests?genre=` - Interests in a set
+- `GET /interests?q=` - Search interests, then same-set similar
 - `GET /values` - Get list of all available values
 
 ### Preferences

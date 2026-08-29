@@ -35,7 +35,8 @@ import {
   NEARBY_DEFAULT_LIMIT,
   CITIES_MAX_USERS_DEFAULT_LIMIT,
   DISCOVERY_USERS_DEFAULT_LIMIT,
-  SEARCH_DEFAULT_LIMIT
+  SEARCH_DEFAULT_LIMIT,
+  INTEREST_SET_LIST_LIMIT
 } from "../config/limits.config.js";
 
 const CUID_LIKE_ID = /^[A-Za-z0-9_-]{8,64}$/;
@@ -240,31 +241,50 @@ export class UserController {
     return this.userService.fetchBrandLogo(brandId);
   }
 
+  @Get("interests/sets")
+  async getInterestSets() {
+    return this.userService.getInterestSets();
+  }
+
   @Get("interests")
   async getInterests(
     @Query("q") query?: string,
     @Query("limit") limit?: string,
-    @Query("exclude") exclude?: string | string[]
+    @Query("exclude") exclude?: string | string[],
+    @Query("genre") genre?: string
   ) {
-    if (query === undefined || query === null || query === "") {
-      const limitNum = limit !== undefined && limit !== "" ? parseInt(limit, 10) : 8;
+    if (query !== undefined && query !== null && query !== "") {
+      const trimmedQuery = query.trim();
+      if (trimmedQuery.length === 0) {
+        throw new HttpException("Search query (q) is required", HttpStatus.BAD_REQUEST);
+      }
+
+      const limitNum = limit !== undefined && limit !== "" ? parseInt(limit, 10) : SEARCH_DEFAULT_LIMIT;
       if (isNaN(limitNum) || limitNum < 1 || limitNum > 50) {
         throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);
       }
-      return this.userService.getInterests(limitNum, parseExcludeIds(exclude));
+
+      return this.userService.searchInterests(trimmedQuery, limitNum);
     }
 
-    const trimmedQuery = query.trim();
-    if (trimmedQuery.length === 0) {
-      throw new HttpException("Search query (q) is required", HttpStatus.BAD_REQUEST);
+    const trimmedGenre = genre?.trim();
+    if (trimmedGenre) {
+      const limitNum =
+        limit !== undefined && limit !== "" ? parseInt(limit, 10) : INTEREST_SET_LIST_LIMIT;
+      if (isNaN(limitNum) || limitNum < 1 || limitNum > INTEREST_SET_LIST_LIMIT) {
+        throw new HttpException(
+          `Limit must be between 1 and ${INTEREST_SET_LIST_LIMIT}`,
+          HttpStatus.BAD_REQUEST
+        );
+      }
+      return this.userService.getInterestsByGenre(trimmedGenre, limitNum);
     }
 
-    const limitNum = limit !== undefined && limit !== "" ? parseInt(limit, 10) : SEARCH_DEFAULT_LIMIT;
+    const limitNum = limit !== undefined && limit !== "" ? parseInt(limit, 10) : 8;
     if (isNaN(limitNum) || limitNum < 1 || limitNum > 50) {
       throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);
     }
-
-    return this.userService.searchInterests(trimmedQuery, limitNum);
+    return this.userService.getInterests(limitNum, parseExcludeIds(exclude));
   }
 
   @Get("values")

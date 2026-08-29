@@ -7,12 +7,12 @@ import { UserService } from "../services/user.service.js";
 
 const createInterestSchema = z.object({
   name: z.string().min(1).max(100),
-  genre: z.string().max(100).optional()
+  genre: z.string().trim().min(1).max(100)
 });
 
 const updateInterestSchema = z.object({
   name: z.string().min(1).max(100).optional(),
-  genre: z.string().max(100).optional()
+  genre: z.string().trim().min(1).max(100).optional()
 });
 
 const createValueSchema = z.object({
@@ -174,7 +174,7 @@ export class CatalogAdminController {
     const interest = await this.prisma.interest.create({
       data: {
         name: data.name,
-        genre: data.genre || null
+        genre: data.genre
       }
     });
     return { ok: true, interest };
@@ -187,7 +187,7 @@ export class CatalogAdminController {
       where: { id },
       data: {
         name: data.name,
-        genre: data.genre !== undefined ? data.genre || null : undefined
+        genre: data.genre
       }
     });
     return { ok: true, interest };

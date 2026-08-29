@@ -104,6 +104,7 @@ For flows and examples see **[FRONTEND_INTEGRATION.md](./FRONTEND_INTEGRATION.md
 | Method | Gateway path | Service path |
 |--------|--------------|-------------|
 | `GET` | `/v1/interests` | `/interests` |
+| `GET` | `/v1/interests/sets` | `/interests/sets` |
 
 ## values
 

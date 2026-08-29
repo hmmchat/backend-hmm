@@ -135,7 +135,7 @@ All endpoints below are **admin/internal** and should be protected by whatever a
 
 ### 3. Interests (user-service)
 
-**Purpose:** Manage the catalog of interests users can pick from (max 4 per user).  
+**Purpose:** Manage the catalog of interests users can pick from (max 5 per user).  
 These feed discovery/matching and profile UI.
 
 **Base path:** `USER_SERVICE_URL/admin/interests`

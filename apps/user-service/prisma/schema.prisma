@@ -65,7 +65,7 @@ model User {
   // Brand References (4-5 brands from provided list)
   brandPreferences UserBrand[]
   
-  // Interests (max 4 from provided list)
+  // Interests (max 5 from provided list)
   interests     UserInterest[]
   
   // Values (max 4 from provided list)
@@ -273,7 +273,7 @@ model UserBrand {
   @@map("user_brands")
 }
 
-// Interests (max 4 from provided list)
+// Interests (max 5 from provided list)
 // name = sub-genre (what users see/choose), genre = umbrella category
 model Interest {
   id        String   @id @default(cuid())
@@ -297,7 +297,7 @@ model UserInterest {
   createdAt DateTime @default(now())
   
   @@unique([userId, interestId])
-  @@unique([userId, order]) // Enforce max 4 interests per user
+  @@unique([userId, order]) // Enforce unique display order per user
   @@index([userId])
   @@map("user_interests")
 }

@@ -12,7 +12,7 @@ This service manages user profiles after authentication. Users authenticate via 
 - Photo management (up to 4 photos + display picture)
 - Music preferences (song + artist)
 - Brand preferences (4-5 brands)
-- Interests (max 4)
+- Interests (max 5)
 - Values (max 4)
 - Location tracking for discovery
 - User status management
@@ -91,7 +91,7 @@ This service manages user profiles after authentication. Users authenticate via 
 ### Preferences
 
 - `PATCH /me/brand-preferences` - Update brand preferences (max 5)
-- `PATCH /me/interests` - Update interests (max 4)
+- `PATCH /me/interests` - Update interests (max 5)
 - `PATCH /me/values` - Update values (max 4)
 - `PATCH /me/music-preference` - Update music preference
 
@@ -134,7 +134,7 @@ This service manages user profiles after authentication. Users authenticate via 
 
 - **Photos**: Maximum 4 additional photos (excluding display picture)
 - **Brands**: Maximum 5 brands
-- **Interests**: Maximum 4 interests
+- **Interests**: Maximum 5 interests
 - **Values**: Maximum 4 values
 - **Intent**: Maximum 50 characters
 

@@ -92,7 +92,7 @@ export const UpdateBrandPreferencesSchema = z.object({
 });
 
 export const UpdateInterestsSchema = z.object({
-  interestIds: z.array(z.string()).min(0).max(4)
+  interestIds: z.array(z.string()).min(0).max(5)
 });
 
 export const UpdateValuesSchema = z.object({

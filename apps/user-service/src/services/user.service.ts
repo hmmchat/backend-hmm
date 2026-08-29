@@ -1255,8 +1255,8 @@ export class UserService implements OnModuleInit {
   async updateInterests(accessToken: string, data: UpdateInterestsDto) {
     const userId = await this.verifyAccessToken(accessToken);
 
-    if (data.interestIds.length > 4) {
-      throw new HttpException("Maximum 4 interests allowed", HttpStatus.BAD_REQUEST);
+    if (data.interestIds.length > 5) {
+      throw new HttpException("Maximum 5 interests allowed", HttpStatus.BAD_REQUEST);
     }
 
     // Verify all interests exist
@@ -2883,8 +2883,8 @@ export class UserService implements OnModuleInit {
    * Update interests for user by ID (test endpoint, bypasses auth)
    */
   async updateInterestsForUser(userId: string, data: UpdateInterestsDto) {
-    if (data.interestIds.length > 4) {
-      throw new HttpException("Maximum 4 interests allowed", HttpStatus.BAD_REQUEST);
+    if (data.interestIds.length > 5) {
+      throw new HttpException("Maximum 5 interests allowed", HttpStatus.BAD_REQUEST);
     }
 
     // Verify all interests exist

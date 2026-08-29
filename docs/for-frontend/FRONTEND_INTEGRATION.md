@@ -561,49 +561,21 @@ GET /users/{userId}?fields=username,photos,brandPreferences
 
 #### Get All Brands
 
-**Endpoint:** `GET /brands?limit={limit}`
+**Endpoints (set browse + search)**
 
-- Returns **Brandfetch-backed suggestions** (seeded category searches, shuffled) for the \"Add Brands\" screen. If Brandfetch is unavailable or returns nothing, falls back to a **random selection** from the self-hosted DB catalog.
-- `limit` (optional, number): how many **suggestion** rows to return (not counting the user's current selections).
-  - Default: `8`
-  - Min: `1`
-  - Max: `50`
-- **Optional auth:** send `Authorization: Bearer <access_token>`. When present and valid, the response includes **`selectedBrands`**: brands the user has already saved, in display order. Those ids are **excluded** from `brands` so the same brand does not appear twice. The UI should show `selectedBrands` in a dedicated section (e.g. \"Your brands\") so users can remove them without searching.
+- `GET /brands/sets` — Brandfetch category names for the picker (**Featured omitted**). Dashboard brands are not listed here.
+- `GET /brands?category={set}&limit={limit}` — Brandfetch-only brands in that category (persisted to catalog for saveable ids). `limit` default/max `50`.
+- `GET /brands?limit={limit}` — legacy flat suggestions (seeded Brandfetch + optional dashboard filler). Prefer sets for the picker.
+- `GET /brands/search?q={query}&limit={limit}` — flat search (no sets): Brandfetch + dashboard gap-fill, then same-category similar brands. Optional auth adds `selected` per hit.
 
-**Response (anonymous or no token):**
+**Set list response:**
 ```json
 {
-  "brands": [
-    {
-      "id": "string",
-      "name": "string",
-      "logoUrl": "string | null"
-    }
-  ]
+  "sets": [{ "name": "Technology" }]
 }
 ```
 
-**Response (authenticated):**
-```json
-{
-  "brands": [ ... ],
-  "selectedBrands": [
-    {
-      "id": "string",
-      "name": "string",
-      "logoUrl": "string | null"
-    }
-  ]
-}
-```
-
-#### Search Brands
-
-**Endpoint:** `GET /brands/search?q={query}&limit={limit}`
-
-- **Optional auth:** with `Authorization: Bearer <access_token>`, each item in `brands` includes **`selected`**: `true` when that brand is already in the user's saved preferences (so the UI can show a remove/deselect state without an extra round trip).
-
-**Response:**
+**Brand list / search response:**
 ```json
 {
   "brands": [
@@ -611,16 +583,13 @@ GET /users/{userId}?fields=username,photos,brandPreferences
       "id": "string",
       "name": "string",
       "domain": "string | null",
-      "logoUrl": "string | null",
-      "selected": true
+      "logoUrl": "string | null"
     }
   ]
 }
 ```
 
-(`selected` is only included when the request is authenticated; omit or `false` for brands the user has not selected.)
-
-Search uses **Brandfetch** first. If Brandfetch is unavailable or returns nothing, falls back to the self-hosted DB catalog with **fuzzy matching** on the brand name (case-insensitive, typo-tolerant).
+Suggested picker: same as interests — pinned selected, 10 + see more (replace + wrap), open set with back; typed search is a flat list.
 
 #### Update Brand Preferences
 

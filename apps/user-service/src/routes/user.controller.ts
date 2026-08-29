@@ -204,12 +204,27 @@ export class UserController {
 
   /* ---------- Catalog Data (Public Endpoints) ---------- */
 
+  @Get("brands/sets")
+  async getBrandSets() {
+    return this.userService.getBrandSets();
+  }
+
   @Get("brands")
   async getBrands(
     @Query("limit") limit?: string,
     @Query("exclude") exclude?: string | string[],
+    @Query("category") category?: string,
     @Headers("authorization") authz?: string
   ) {
+    const trimmedCategory = category?.trim();
+    if (trimmedCategory) {
+      const limitNum = limit !== undefined && limit !== "" ? parseInt(limit, 10) : 50;
+      if (isNaN(limitNum) || limitNum < 1 || limitNum > 50) {
+        throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);
+      }
+      return this.userService.getBrandsByCategory(trimmedCategory, limitNum);
+    }
+
     const limitNum = limit !== undefined && limit !== "" ? parseInt(limit, 10) : 8;
     if (isNaN(limitNum) || limitNum < 1 || limitNum > 50) {
       throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);

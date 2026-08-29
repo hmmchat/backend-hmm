@@ -352,6 +352,39 @@ export class BrandService {
   }
 
   /**
+   * Brandfetch browse categories (website taxonomy). "Featured" is intentionally omitted.
+   * `query` is the Brand Search term used to load brands inside the set.
+   */
+  private brandfetchBrowseSets(): { name: string; query: string }[] {
+    return [
+      { name: "Technology", query: "technology" },
+      { name: "Arts and Entertainment", query: "entertainment" },
+      { name: "Finance", query: "finance" },
+      { name: "Food and Drink", query: "food" },
+      { name: "Vehicles", query: "automotive" },
+      { name: "Travel and tourism", query: "travel" },
+      { name: "Shopping", query: "retail" },
+      { name: "Fashion", query: "fashion" },
+      { name: "Sports", query: "sports" },
+      { name: "Beauty", query: "beauty" },
+      { name: "Media", query: "media" },
+      { name: "Healthcare", query: "healthcare" },
+      { name: "Gaming", query: "gaming" },
+      { name: "Education", query: "education" }
+    ];
+  }
+
+  private resolveBrowseSet(category: string): { name: string; query: string } | null {
+    const needle = category.trim().toLowerCase();
+    if (!needle) return null;
+    return (
+      this.brandfetchBrowseSets().find(
+        (set) => set.name.toLowerCase() === needle || set.query.toLowerCase() === needle
+      ) || null
+    );
+  }
+
+  /**
    * Seed queries for GET /brands (no user search term). Comma-separated in env, or built-in list.
    */
   private defaultSuggestionSeeds(): string[] {
@@ -362,18 +395,107 @@ export class BrandService {
         .map(s => s.trim())
         .filter(Boolean);
     }
-    return [
-      "tech",
-      "retail",
-      "fashion",
-      "food",
-      "sport",
-      "finance",
-      "auto",
-      "beauty",
-      "travel",
-      "media"
-    ];
+    return this.brandfetchBrowseSets().map((set) => set.query);
+  }
+
+  /** Distinct Brandfetch category sets for the brands picker (no Featured). */
+  getBrandSets(): { sets: { name: string }[] } {
+    return { sets: this.brandfetchBrowseSets().map((set) => ({ name: set.name })) };
+  }
+
+  /**
+   * Brands inside a Brandfetch category set. Brandfetch-only (dashboard catalog is search-only).
+   */
+  async getBrandsByCategory(category: string, limit: number = 50): Promise<SearchBrandResult[]> {
+    if (limit < 1 || limit > 50) {
+      throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);
+    }
+
+    const set = this.resolveBrowseSet(category);
+    if (!set) {
+      throw new HttpException("Unknown brand category", HttpStatus.BAD_REQUEST);
+    }
+
+    if (!this.brandfetchEnabled) {
+      return [];
+    }
+
+    try {
+      const results = await this.searchBrandfetch(set.query, limit);
+      if (results.length === 0) return [];
+      return this.persistBrandfetchResultsToCatalog(results);
+    } catch (error) {
+      console.warn(
+        `[BrandService] getBrandsByCategory "${set.name}" failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+      return [];
+    }
+  }
+
+  /**
+   * Resolve a Brandfetch category query for “similar” fill from top matches.
+   */
+  private async resolveSimilarCategoryQuery(
+    matches: SearchBrandResult[],
+    originalQuery: string
+  ): Promise<string | null> {
+    const sets = this.brandfetchBrowseSets();
+
+    for (const match of matches) {
+      const domain = this.normalizeDomain(match.domain ?? undefined);
+      if (!domain) continue;
+      try {
+        const url = `https://api.brandfetch.io/v2/brands/domain/${encodeURIComponent(
+          domain
+        )}/company/industries`;
+        const response = await fetch(url, {
+          headers: { Authorization: `Bearer ${this.brandfetchClientId}` }
+        });
+        if (!response.ok) continue;
+        const payload = (await response.json()) as {
+          industries?: Array<{
+            name?: string;
+            slug?: string;
+            parent?: { name?: string; slug?: string } | string | null;
+          }>;
+        };
+        const industries = Array.isArray(payload?.industries) ? payload.industries : [];
+        const labels: string[] = [];
+        for (const industry of industries) {
+          if (industry?.name) labels.push(industry.name);
+          if (industry?.slug) labels.push(industry.slug.replace(/-/g, " "));
+          const parent = industry?.parent;
+          if (typeof parent === "string") labels.push(parent);
+          else if (parent?.name) labels.push(parent.name);
+          else if (parent?.slug) labels.push(parent.slug.replace(/-/g, " "));
+        }
+        for (const label of labels) {
+          const lower = label.toLowerCase();
+          const hit = sets.find(
+            (set) =>
+              lower.includes(set.query) ||
+              lower.includes(set.name.toLowerCase()) ||
+              set.name.toLowerCase().includes(lower) ||
+              set.query.includes(lower)
+          );
+          if (hit) return hit.query;
+        }
+      } catch (error) {
+        console.warn(
+          `[BrandService] industries lookup failed for ${domain}: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+      }
+    }
+
+    const q = originalQuery.toLowerCase();
+    const byQuery = sets.find(
+      (set) => q.includes(set.query) || set.query.includes(q) || q.includes(set.name.toLowerCase())
+    );
+    return byQuery?.query ?? null;
   }
 
   /**
@@ -619,10 +741,8 @@ export class BrandService {
           for (const b of bfPersisted) pushRow(b);
           for (const c of customFiltered) pushRow(c);
 
-          return this.rankBrandSearchResults(trimmedQuery, merged, customIds).slice(
-            0,
-            effectiveLimit
-          );
+          const ranked = this.rankBrandSearchResults(trimmedQuery, merged, customIds);
+          return this.appendSameCategorySimilar(trimmedQuery, ranked, effectiveLimit);
         }
       } catch (error) {
         // Fall back to DB search so existing flows continue to work.
@@ -689,6 +809,52 @@ export class BrandService {
       ).map((r) => r.id)
     );
 
-    return this.rankBrandSearchResults(trimmedQuery, mapped, customIds).slice(0, effectiveLimit);
+    const ranked = this.rankBrandSearchResults(trimmedQuery, mapped, customIds);
+    return this.appendSameCategorySimilar(trimmedQuery, ranked, effectiveLimit);
+  }
+
+  /**
+   * After ranked matches, fill remaining slots with Brandfetch brands from the same category.
+   */
+  private async appendSameCategorySimilar(
+    query: string,
+    ranked: SearchBrandResult[],
+    limit: number
+  ): Promise<SearchBrandResult[]> {
+    if (!this.brandfetchEnabled || ranked.length >= limit) {
+      return ranked.slice(0, limit);
+    }
+
+    const similarQuery = await this.resolveSimilarCategoryQuery(ranked, query);
+    if (!similarQuery) {
+      return ranked.slice(0, limit);
+    }
+
+    try {
+      const similarRaw = await this.searchBrandfetch(similarQuery, limit);
+      if (similarRaw.length === 0) {
+        return ranked.slice(0, limit);
+      }
+      const similar = await this.persistBrandfetchResultsToCatalog(similarRaw);
+      const seen = new Set(ranked.map((b) => b.id));
+      const out = [...ranked];
+      for (const brand of similar) {
+        if (!brand?.id || seen.has(brand.id)) continue;
+        seen.add(brand.id);
+        out.push({
+          ...brand,
+          logoUrl: this.resolvePublicLogoUrl(brand.domain, brand.logoUrl, brand.brandfetchId)
+        });
+        if (out.length >= limit) break;
+      }
+      return out.slice(0, limit);
+    } catch (error) {
+      console.warn(
+        `[BrandService] similar category fill failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+      return ranked.slice(0, limit);
+    }
   }
 }

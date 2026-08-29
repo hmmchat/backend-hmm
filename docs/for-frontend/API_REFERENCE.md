@@ -96,6 +96,7 @@ For flows and examples see **[FRONTEND_INTEGRATION.md](./FRONTEND_INTEGRATION.md
 | Method | Gateway path | Service path |
 |--------|--------------|-------------|
 | `GET` | `/v1/brands` | `/brands` |
+| `GET` | `/v1/brands/sets` | `/brands/sets` |
 | `POST` | `/v1/brands/:brandId/fetch-logo` | `/brands/:brandId/fetch-logo` |
 | `GET` | `/v1/brands/search` | `/brands/search` |
 

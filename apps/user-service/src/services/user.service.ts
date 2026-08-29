@@ -1346,6 +1346,15 @@ export class UserService implements OnModuleInit {
 
   /* ---------- Catalog Data (Public) ---------- */
 
+  getBrandSets() {
+    return this.brandService.getBrandSets();
+  }
+
+  async getBrandsByCategory(category: string, limit: number = 50) {
+    const brands = await this.brandService.getBrandsByCategory(category, limit);
+    return { brands };
+  }
+
   async getBrands(limit: number = 8, userId?: string | null, excludeIds: string[] = []) {
     const effectiveLimit = limit ?? 8;
     if (effectiveLimit < 1 || effectiveLimit > 50) {

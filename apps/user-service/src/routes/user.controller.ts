@@ -331,6 +331,28 @@ export class UserController {
 
   /* ---------- Music Preference ---------- */
 
+  @Get("music/sets")
+  async getMusicSets() {
+    return this.musicService.getMusicSets();
+  }
+
+  @Get("music/suggestions")
+  async getMusicSuggestions(
+    @Query("set") setName?: string,
+    @Query("limit") limit?: string
+  ) {
+    const trimmed = setName?.trim();
+    if (!trimmed) {
+      throw new HttpException("Set name (set) is required", HttpStatus.BAD_REQUEST);
+    }
+    const limitNum = limit !== undefined && limit !== "" ? parseInt(limit, 10) : 50;
+    if (isNaN(limitNum) || limitNum < 1 || limitNum > 50) {
+      throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);
+    }
+    const songs = await this.musicService.getSongsBySet(trimmed, limitNum);
+    return { songs };
+  }
+
   @Get("music/search")
   async searchSongs(@Query("q") query?: string, @Query("limit") limit?: string) {
     if (!query || query.trim().length === 0) {

@@ -88,7 +88,7 @@ export const CreatePhotoSchema = z.object({
 
 // Preferences DTOs
 export const UpdateBrandPreferencesSchema = z.object({
-  brandIds: z.array(z.string()).min(1).max(5)
+  brandIds: z.array(z.string()).min(0).max(5)
 });
 
 export const UpdateInterestsSchema = z.object({

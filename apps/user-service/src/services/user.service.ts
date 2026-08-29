@@ -1226,14 +1226,16 @@ export class UserService implements OnModuleInit {
       where: { userId }
     });
 
-    // Create new preferences
-    await this.prisma.userBrand.createMany({
-      data: data.brandIds.map((brandId, index) => ({
-        userId,
-        brandId,
-        order: index
-      }))
-    });
+    // Create new preferences (empty list = cleared)
+    if (data.brandIds.length > 0) {
+      await this.prisma.userBrand.createMany({
+        data: data.brandIds.map((brandId, index) => ({
+          userId,
+          brandId,
+          order: index
+        }))
+      });
+    }
 
     const preferences = await this.prisma.userBrand.findMany({
       where: { userId },
@@ -1273,14 +1275,16 @@ export class UserService implements OnModuleInit {
       where: { userId }
     });
 
-    // Create new preferences
-    await this.prisma.userInterest.createMany({
-      data: data.interestIds.map((interestId, index) => ({
-        userId,
-        interestId,
-        order: index
-      }))
-    });
+    // Create new preferences (empty list = cleared)
+    if (data.interestIds.length > 0) {
+      await this.prisma.userInterest.createMany({
+        data: data.interestIds.map((interestId, index) => ({
+          userId,
+          interestId,
+          order: index
+        }))
+      });
+    }
 
     const userInterests = await this.prisma.userInterest.findMany({
       where: { userId },
@@ -1320,14 +1324,16 @@ export class UserService implements OnModuleInit {
       where: { userId }
     });
 
-    // Create new preferences
-    await this.prisma.userValue.createMany({
-      data: data.valueIds.map((valueId, index) => ({
-        userId,
-        valueId,
-        order: index
-      }))
-    });
+    // Create new preferences (empty list = cleared)
+    if (data.valueIds.length > 0) {
+      await this.prisma.userValue.createMany({
+        data: data.valueIds.map((valueId, index) => ({
+          userId,
+          valueId,
+          order: index
+        }))
+      });
+    }
 
     const userValues = await this.prisma.userValue.findMany({
       where: { userId },

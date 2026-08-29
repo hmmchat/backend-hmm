@@ -901,13 +901,14 @@ export class BrandService {
   }
 
   /**
-   * Fast category guess for typed-search fill — DB + seed/name match only.
-   * Skips Brand API /company/industries (slow and not needed for autocomplete).
+   * Resolve a single Brandfetch search term for light “similar” fill after typed search.
+   * Uses dashboard category / seed / query heuristics only — no Brand API industry calls
+   * (those made autocomplete slow).
    */
-  private async resolveSimilarBrowseSetFast(
+  private async resolveSimilarCategoryQuery(
     matches: SearchBrandResult[],
     originalQuery: string
-  ): Promise<{ name: string; query: string; seeds: string[] } | null> {
+  ): Promise<string | null> {
     const matchIds = matches.map((m) => m.id).filter(Boolean);
     if (matchIds.length > 0) {
       const customRows = await this.prisma.brand.findMany({
@@ -916,7 +917,7 @@ export class BrandService {
       });
       for (const row of customRows) {
         const set = this.resolveBrowseSet(row.category || "");
-        if (set) return set;
+        if (set) return set.query;
       }
     }
 
@@ -935,16 +936,15 @@ export class BrandService {
             this.domainSuggestsSeed(match.domain, seed)
           );
         });
-        if (seedHit) return set;
+        if (seedHit) return set.query;
       }
     }
 
     const q = originalQuery.toLowerCase();
-    return (
-      sets.find(
-        (set) => q.includes(set.query) || set.query.includes(q) || q.includes(set.name.toLowerCase())
-      ) ?? null
+    const byQuery = sets.find(
+      (set) => q.includes(set.query) || set.query.includes(q) || q.includes(set.name.toLowerCase())
     );
+    return byQuery?.query ?? null;
   }
 
   /**
@@ -1263,45 +1263,35 @@ export class BrandService {
   }
 
   /**
-   * After ranked matches, lightly fill remaining slots from the same category.
-   * Must stay fast: typed search should not fan out into a full category crawl.
+   * After ranked matches, fill remaining slots with one Brandfetch “similar” search
+   * (category query). Same shape as the original fast typed-search path — not a
+   * full category seed crawl.
    */
   private async appendSameCategorySimilar(
     query: string,
     ranked: SearchBrandResult[],
     limit: number
   ): Promise<SearchBrandResult[]> {
-    if (ranked.length >= limit) {
+    if (!this.brandfetchEnabled || ranked.length >= limit) {
       return ranked.slice(0, limit);
     }
 
-    const set = await this.resolveSimilarBrowseSetFast(ranked, query);
-    if (!set) {
+    const similarQuery = await this.resolveSimilarCategoryQuery(ranked, query);
+    if (!similarQuery) {
       return ranked.slice(0, limit);
     }
 
     try {
-      const remaining = limit - ranked.length;
+      const similarRaw = await this.searchBrandfetch(similarQuery, limit);
+      if (similarRaw.length === 0) {
+        return ranked.slice(0, limit);
+      }
+      const similar = await this.persistBrandfetchResultsToCatalog(similarRaw);
       const seen = new Set(ranked.map((b) => b.id));
       const out = [...ranked];
-
-      // Prefer in-memory category pool / dashboard rows — no new Brandfetch fan-out.
-      const cached = this.categoryPoolCache.get(set.name);
-      const pool =
-        cached && cached.expiresAt > Date.now()
-          ? cached.brands
-          : await this.getCustomBrandsByCategory(set.name, Math.max(remaining * 3, 12));
-
-      const fill = this.shuffle(
-        pool.filter(
-          (brand) =>
-            brand?.id &&
-            !seen.has(brand.id) &&
-            !this.isNoisyBrandName(brand.name, set.name)
-        )
-      );
-
-      for (const brand of fill) {
+      for (const brand of similar) {
+        if (!brand?.id || seen.has(brand.id)) continue;
+        if (this.isNoisyBrandName(brand.name)) continue;
         seen.add(brand.id);
         out.push({
           ...brand,
@@ -1309,32 +1299,6 @@ export class BrandService {
         });
         if (out.length >= limit) break;
       }
-
-      // At most one extra Brandfetch seed if still short (keeps autocomplete snappy).
-      if (out.length < limit && this.brandfetchEnabled) {
-        const seed = this.shuffle([...set.seeds])[0];
-        if (seed) {
-          try {
-            const chunk = await this.searchBrandfetch(seed, 12);
-            const picked = this.pickBrandsForSeed(seed, chunk, Math.min(4, remaining), set.name);
-            const persisted =
-              picked.length > 0 ? await this.persistBrandfetchResultsToCatalog(picked) : [];
-            for (const brand of persisted) {
-              if (!brand?.id || seen.has(brand.id)) continue;
-              seen.add(brand.id);
-              out.push(brand);
-              if (out.length >= limit) break;
-            }
-          } catch (error) {
-            console.warn(
-              `[BrandService] light similar seed "${seed}" failed: ${
-                error instanceof Error ? error.message : String(error)
-              }`
-            );
-          }
-        }
-      }
-
       return out.slice(0, limit);
     } catch (error) {
       console.warn(

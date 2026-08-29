@@ -1176,16 +1176,16 @@ export class UserService implements OnModuleInit {
     return { song };
   }
 
-  async updateMusicPreference(accessToken: string, musicPreferenceId: string) {
+  async updateMusicPreference(accessToken: string, musicPreferenceId: string | null) {
     const userId = await this.verifyAccessToken(accessToken);
 
-    // Verify song exists
-    const song = await this.prisma.song.findUnique({
-      where: { id: musicPreferenceId }
-    });
-
-    if (!song) {
-      throw new HttpException("Music preference not found", HttpStatus.NOT_FOUND);
+    if (musicPreferenceId !== null) {
+      const song = await this.prisma.song.findUnique({
+        where: { id: musicPreferenceId }
+      });
+      if (!song) {
+        throw new HttpException("Music preference not found", HttpStatus.NOT_FOUND);
+      }
     }
 
     const user = await this.prisma.user.update({

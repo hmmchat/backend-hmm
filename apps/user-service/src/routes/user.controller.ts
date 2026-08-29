@@ -381,8 +381,12 @@ export class UserController {
     if (!token) throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
 
     const { musicPreferenceId } = body;
-    if (!musicPreferenceId || typeof musicPreferenceId !== "string") {
-      throw new HttpException("musicPreferenceId is required", HttpStatus.BAD_REQUEST);
+    // null clears the user's song; a string id sets it.
+    if (musicPreferenceId !== null && (typeof musicPreferenceId !== "string" || !musicPreferenceId)) {
+      throw new HttpException(
+        "musicPreferenceId must be a song id or null to clear",
+        HttpStatus.BAD_REQUEST
+      );
     }
 
     return this.userService.updateMusicPreference(token, musicPreferenceId);

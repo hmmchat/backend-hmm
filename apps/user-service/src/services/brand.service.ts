@@ -59,6 +59,12 @@ function levenshtein(a: string, b: string): number {
 export class BrandService {
   private readonly brandfetchClientId: string;
   private readonly brandfetchEnabled: boolean;
+  /** Pre-shuffle category pools (dashboard ∪ Brandfetch). Avoids re-hitting Search on every open. */
+  private readonly categoryPoolCache = new Map<
+    string,
+    { expiresAt: number; brands: SearchBrandResult[] }
+  >();
+  private readonly categoryPoolTtlMs = 5 * 60 * 1000;
 
   constructor(private readonly prisma: PrismaService) {
     this.brandfetchClientId = process.env.BRANDFETCH_CLIENT_ID || "";
@@ -181,10 +187,35 @@ export class BrandService {
   }
 
   /**
-   * Prefer the Brandfetch hit that best matches the seed name, then a few neighbors.
-   * Avoids stuffing every seed’s full noisy result list (duplicates + off-category brands).
+   * Names that often appear as weak Brandfetch neighbors (e.g. "Delta College", "Booking Experts").
+   * Skipped outside Education.
    */
-  private pickBrandsForSeed(seed: string, chunk: SearchBrandResult[], maxPerSeed = 3): SearchBrandResult[] {
+  private isNoisyBrandName(name: string, categoryName?: string): boolean {
+    if (categoryName === "Education") return false;
+    return /\b(college|university|school|academy|polytechnic|experts?|consultant|consulting)\b/i.test(
+      name || ""
+    );
+  }
+
+  private domainSuggestsSeed(domain: string | null | undefined, seed: string): boolean {
+    const d = this.domainKey(domain);
+    if (!d) return false;
+    const tokens = (this.brandNameKey(seed) || seed.toLowerCase())
+      .split(/[^a-z0-9]+/)
+      .filter((t) => t.length >= 3);
+    return tokens.some((token) => d.includes(token));
+  }
+
+  /**
+   * Prefer the Brandfetch hit that best matches the seed name, then a few close neighbors.
+   * Drops weak / educational / "experts" noise that name-search often returns.
+   */
+  private pickBrandsForSeed(
+    seed: string,
+    chunk: SearchBrandResult[],
+    maxPerSeed = 3,
+    categoryName?: string
+  ): SearchBrandResult[] {
     if (chunk.length === 0) return [];
     const seedKey = this.brandNameKey(seed) || seed.toLowerCase();
     const scored = chunk.map((brand, index) => {
@@ -193,11 +224,25 @@ export class BrandService {
       if (name === seedKey) score += 100;
       else if (name.startsWith(seedKey) || seedKey.startsWith(name)) score += 60;
       else if (name.includes(seedKey) || seedKey.includes(name)) score += 30;
+      if (this.domainSuggestsSeed(brand.domain, seed)) score += 25;
       score -= index; // preserve Brandfetch rank as a light tiebreaker
       return { brand, score };
     });
     scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, maxPerSeed).map((row) => row.brand);
+
+    const strong = 55; // exact / prefix (minus rank tiebreak)
+    const soft = 40; // name overlap + domain hint
+
+    return scored
+      .filter(({ brand, score }) => {
+        if (!brand?.name || !brand.domain) return false;
+        if (this.isNoisyBrandName(brand.name, categoryName)) return false;
+        if (score >= strong) return true;
+        if (score >= soft && this.domainSuggestsSeed(brand.domain, seed)) return true;
+        return false;
+      })
+      .slice(0, maxPerSeed)
+      .map((row) => row.brand);
   }
 
   /**
@@ -293,113 +338,120 @@ export class BrandService {
    * Upsert Brandfetch rows into the local catalog so GET /brands returns real DB ids
    * (PATCH /me/brand-preferences expects brandIds from `brands`).
    */
+  private async persistOneBrandfetchResult(r: SearchBrandResult): Promise<SearchBrandResult> {
+    try {
+      let row =
+        r.domain != null
+          ? await this.prisma.brand.findFirst({ where: { domain: r.domain } })
+          : null;
+
+      if (!row) {
+        row = await this.prisma.brand.findFirst({
+          where: { name: { equals: r.name, mode: "insensitive" } }
+        });
+      }
+
+      if (row) {
+        if (row.isCustom) {
+          return {
+            id: row.id,
+            name: row.name,
+            domain: row.domain,
+            brandfetchId: row.brandfetchId,
+            logoUrl: this.resolvePublicLogoUrl(row.domain, row.logoUrl, row.brandfetchId)
+          };
+        }
+
+        const nextLogo =
+          r.logoUrl ??
+          (row.logoUrl?.includes("asset.brandfetch.io") ? null : row.logoUrl);
+        const updated = await this.prisma.brand.update({
+          where: { id: row.id },
+          data: {
+            logoUrl: nextLogo,
+            domain: r.domain ?? row.domain,
+            brandfetchId: r.brandfetchId ?? row.brandfetchId
+          }
+        });
+        return {
+          id: updated.id,
+          name: updated.name,
+          domain: updated.domain,
+          brandfetchId: updated.brandfetchId,
+          logoUrl: this.resolvePublicLogoUrl(updated.domain, updated.logoUrl, updated.brandfetchId)
+        };
+      }
+
+      const created = await this.prisma.brand.create({
+        data: {
+          name: r.name,
+          domain: r.domain,
+          logoUrl: r.logoUrl,
+          isCustom: false,
+          brandfetchId: r.brandfetchId ?? null
+        }
+      });
+      return {
+        id: created.id,
+        name: created.name,
+        domain: created.domain,
+        brandfetchId: created.brandfetchId,
+        logoUrl: this.resolvePublicLogoUrl(created.domain, created.logoUrl, created.brandfetchId)
+      };
+    } catch (err: unknown) {
+      const code = (err as { code?: string })?.code;
+      if (code === "P2002") {
+        const fallback = await this.prisma.brand.findFirst({
+          where: { name: { equals: r.name, mode: "insensitive" } }
+        });
+        if (fallback) {
+          if (fallback.isCustom) {
+            return {
+              id: fallback.id,
+              name: fallback.name,
+              domain: fallback.domain,
+              brandfetchId: fallback.brandfetchId,
+              logoUrl: this.resolvePublicLogoUrl(
+                fallback.domain,
+                fallback.logoUrl,
+                fallback.brandfetchId
+              )
+            };
+          }
+          return {
+            id: fallback.id,
+            name: fallback.name,
+            domain: fallback.domain,
+            brandfetchId: r.brandfetchId ?? fallback.brandfetchId,
+            logoUrl: this.resolvePublicLogoUrl(
+              fallback.domain,
+              r.logoUrl ?? fallback.logoUrl,
+              r.brandfetchId ?? fallback.brandfetchId
+            )
+          };
+        }
+      }
+      console.warn(
+        `[BrandService] persistBrandfetchResultsToCatalog failed for "${r.name}": ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+      return r;
+    }
+  }
+
   private async persistBrandfetchResultsToCatalog(
     results: SearchBrandResult[]
   ): Promise<SearchBrandResult[]> {
+    if (results.length === 0) return [];
+    // Parallel upserts — sequential persist was a major latency cost on dense category loads.
+    const concurrency = 8;
     const out: SearchBrandResult[] = [];
-
-    for (const r of results) {
-      try {
-        let row =
-          r.domain != null
-            ? await this.prisma.brand.findFirst({ where: { domain: r.domain } })
-            : null;
-
-        if (!row) {
-          row = await this.prisma.brand.findFirst({
-            where: { name: { equals: r.name, mode: "insensitive" } }
-          });
-        }
-
-        if (row) {
-          if (row.isCustom) {
-            out.push({
-              id: row.id,
-              name: row.name,
-              domain: row.domain,
-              brandfetchId: row.brandfetchId,
-              logoUrl: this.resolvePublicLogoUrl(row.domain, row.logoUrl, row.brandfetchId)
-            });
-            continue;
-          }
-
-          const nextLogo =
-            r.logoUrl ??
-            (row.logoUrl?.includes("asset.brandfetch.io") ? null : row.logoUrl);
-          const updated = await this.prisma.brand.update({
-            where: { id: row.id },
-            data: {
-              logoUrl: nextLogo,
-              domain: r.domain ?? row.domain,
-              brandfetchId: r.brandfetchId ?? row.brandfetchId
-            }
-          });
-          out.push({
-            id: updated.id,
-            name: updated.name,
-            domain: updated.domain,
-            brandfetchId: updated.brandfetchId,
-            logoUrl: this.resolvePublicLogoUrl(updated.domain, updated.logoUrl, updated.brandfetchId)
-          });
-          continue;
-        }
-
-        const created = await this.prisma.brand.create({
-          data: {
-            name: r.name,
-            domain: r.domain,
-            logoUrl: r.logoUrl,
-            isCustom: false,
-            brandfetchId: r.brandfetchId ?? null
-          }
-        });
-        out.push({
-          id: created.id,
-          name: created.name,
-          domain: created.domain,
-          brandfetchId: created.brandfetchId,
-          logoUrl: this.resolvePublicLogoUrl(created.domain, created.logoUrl, created.brandfetchId)
-        });
-      } catch (err: unknown) {
-        const code = (err as { code?: string })?.code;
-        if (code === "P2002") {
-          const fallback = await this.prisma.brand.findFirst({
-            where: { name: { equals: r.name, mode: "insensitive" } }
-          });
-          if (fallback) {
-            if (fallback.isCustom) {
-              out.push({
-                id: fallback.id,
-                name: fallback.name,
-                domain: fallback.domain,
-                brandfetchId: fallback.brandfetchId,
-                logoUrl: this.resolvePublicLogoUrl(fallback.domain, fallback.logoUrl, fallback.brandfetchId)
-              });
-            } else {
-              out.push({
-                id: fallback.id,
-                name: fallback.name,
-                domain: fallback.domain,
-                brandfetchId: r.brandfetchId ?? fallback.brandfetchId,
-                logoUrl: this.resolvePublicLogoUrl(
-                  fallback.domain,
-                  r.logoUrl ?? fallback.logoUrl,
-                  r.brandfetchId ?? fallback.brandfetchId
-                )
-              });
-            }
-            continue;
-          }
-        }
-        console.warn(
-          `[BrandService] persistBrandfetchResultsToCatalog failed for "${r.name}": ${
-            err instanceof Error ? err.message : String(err)
-          }`
-        );
-        out.push(r);
-      }
+    for (let i = 0; i < results.length; i += concurrency) {
+      const batch = results.slice(i, i + concurrency);
+      const persisted = await Promise.all(batch.map((r) => this.persistOneBrandfetchResult(r)));
+      out.push(...persisted);
     }
-
     return out;
   }
 
@@ -784,9 +836,14 @@ export class BrandService {
       throw new HttpException("Unknown brand category", HttpStatus.BAD_REQUEST);
     }
 
-    // Moderate density: every curated seed × ~6 picks → aim for ~40–50 uniques after dedupe.
-    const picksPerSeed = 6;
-    const searchLimitPerSeed = 20;
+    const cached = this.categoryPoolCache.get(set.name);
+    if (cached && cached.expiresAt > Date.now() && cached.brands.length > 0) {
+      return this.shuffle(cached.brands).slice(0, limit);
+    }
+
+    // Density via many seeds; quality via stricter pick (not weak name neighbors).
+    const picksPerSeed = 4;
+    const searchLimitPerSeed = 16;
 
     const custom = await this.getCustomBrandsByCategory(set.name, limit);
     let brandfetchHits: SearchBrandResult[] = [];
@@ -797,7 +854,7 @@ export class BrandService {
         seeds.map(async (seed) => {
           try {
             const chunk = await this.searchBrandfetch(seed, searchLimitPerSeed);
-            return this.pickBrandsForSeed(seed, chunk, picksPerSeed);
+            return this.pickBrandsForSeed(seed, chunk, picksPerSeed, set.name);
           } catch (error) {
             console.warn(
               `[BrandService] getBrandsByCategory seed "${seed}" failed: ${
@@ -809,11 +866,16 @@ export class BrandService {
         })
       );
 
-      brandfetchHits = this.dedupeBrandResults(chunks.flat());
+      brandfetchHits = this.dedupeBrandResults(chunks.flat()).filter(
+        (b) => b.domain && !this.isNoisyBrandName(b.name, set.name)
+      );
 
       if (brandfetchHits.length === 0) {
         try {
-          brandfetchHits = await this.searchBrandfetch(set.query, limit);
+          const fallback = await this.searchBrandfetch(set.query, limit);
+          brandfetchHits = fallback.filter(
+            (b) => b.domain && !this.isNoisyBrandName(b.name, set.name)
+          );
         } catch (error) {
           console.warn(
             `[BrandService] getBrandsByCategory "${set.name}" failed: ${
@@ -824,7 +886,6 @@ export class BrandService {
       }
 
       if (brandfetchHits.length > 0) {
-        // Persist enough to cover the full merge pool before shuffle/slice.
         brandfetchHits = await this.persistBrandfetchResultsToCatalog(
           brandfetchHits.slice(0, Math.max(limit * 2, 60))
         );
@@ -832,13 +893,18 @@ export class BrandService {
     }
 
     const merged = this.dedupeBrandResults([...custom, ...brandfetchHits]);
+    this.categoryPoolCache.set(set.name, {
+      expiresAt: Date.now() + this.categoryPoolTtlMs,
+      brands: merged
+    });
     return this.shuffle(merged).slice(0, limit);
   }
 
   /**
-   * Resolve a browse set for “similar” fill from ranked hits (dashboard category first).
+   * Fast category guess for typed-search fill — DB + seed/name match only.
+   * Skips Brand API /company/industries (slow and not needed for autocomplete).
    */
-  private async resolveSimilarBrowseSet(
+  private async resolveSimilarBrowseSetFast(
     matches: SearchBrandResult[],
     originalQuery: string
   ): Promise<{ name: string; query: string; seeds: string[] } | null> {
@@ -856,51 +922,20 @@ export class BrandService {
 
     const sets = this.brandfetchBrowseSets();
 
-    for (const match of matches) {
-      const domain = this.normalizeDomain(match.domain ?? undefined);
-      if (!domain) continue;
-      try {
-        const url = `https://api.brandfetch.io/v2/brands/domain/${encodeURIComponent(
-          domain
-        )}/company/industries`;
-        const response = await fetch(url, {
-          headers: { Authorization: `Bearer ${this.brandfetchClientId}` }
-        });
-        if (!response.ok) continue;
-        const payload = (await response.json()) as {
-          industries?: Array<{
-            name?: string;
-            slug?: string;
-            parent?: { name?: string; slug?: string } | string | null;
-          }>;
-        };
-        const industries = Array.isArray(payload?.industries) ? payload.industries : [];
-        const labels: string[] = [];
-        for (const industry of industries) {
-          if (industry?.name) labels.push(industry.name);
-          if (industry?.slug) labels.push(industry.slug.replace(/-/g, " "));
-          const parent = industry?.parent;
-          if (typeof parent === "string") labels.push(parent);
-          else if (parent?.name) labels.push(parent.name);
-          else if (parent?.slug) labels.push(parent.slug.replace(/-/g, " "));
-        }
-        for (const label of labels) {
-          const lower = label.toLowerCase();
-          const hit = sets.find(
-            (set) =>
-              lower.includes(set.query) ||
-              lower.includes(set.name.toLowerCase()) ||
-              set.name.toLowerCase().includes(lower) ||
-              set.query.includes(lower)
+    for (const match of matches.slice(0, 5)) {
+      const nameKey = this.brandNameKey(match.name) || "";
+      if (!nameKey) continue;
+      for (const set of sets) {
+        const seedHit = set.seeds.some((seed) => {
+          const seedKey = this.brandNameKey(seed) || "";
+          return (
+            seedKey === nameKey ||
+            nameKey.startsWith(seedKey) ||
+            seedKey.startsWith(nameKey) ||
+            this.domainSuggestsSeed(match.domain, seed)
           );
-          if (hit) return hit;
-        }
-      } catch (error) {
-        console.warn(
-          `[BrandService] industries lookup failed for ${domain}: ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        );
+        });
+        if (seedHit) return set;
       }
     }
 
@@ -1228,8 +1263,8 @@ export class BrandService {
   }
 
   /**
-   * After ranked matches, fill remaining slots from the same category sample space
-   * (dashboard internals ∪ Brandfetch), shuffled so internals are not always first.
+   * After ranked matches, lightly fill remaining slots from the same category.
+   * Must stay fast: typed search should not fan out into a full category crawl.
    */
   private async appendSameCategorySimilar(
     query: string,
@@ -1240,21 +1275,66 @@ export class BrandService {
       return ranked.slice(0, limit);
     }
 
-    const set = await this.resolveSimilarBrowseSet(ranked, query);
+    const set = await this.resolveSimilarBrowseSetFast(ranked, query);
     if (!set) {
       return ranked.slice(0, limit);
     }
 
     try {
-      const pool = await this.getBrandsByCategory(set.name, limit);
+      const remaining = limit - ranked.length;
       const seen = new Set(ranked.map((b) => b.id));
-      const fill = this.shuffle(pool.filter((brand) => brand?.id && !seen.has(brand.id)));
       const out = [...ranked];
+
+      // Prefer in-memory category pool / dashboard rows — no new Brandfetch fan-out.
+      const cached = this.categoryPoolCache.get(set.name);
+      const pool =
+        cached && cached.expiresAt > Date.now()
+          ? cached.brands
+          : await this.getCustomBrandsByCategory(set.name, Math.max(remaining * 3, 12));
+
+      const fill = this.shuffle(
+        pool.filter(
+          (brand) =>
+            brand?.id &&
+            !seen.has(brand.id) &&
+            !this.isNoisyBrandName(brand.name, set.name)
+        )
+      );
+
       for (const brand of fill) {
         seen.add(brand.id);
-        out.push(brand);
+        out.push({
+          ...brand,
+          logoUrl: this.resolvePublicLogoUrl(brand.domain, brand.logoUrl, brand.brandfetchId)
+        });
         if (out.length >= limit) break;
       }
+
+      // At most one extra Brandfetch seed if still short (keeps autocomplete snappy).
+      if (out.length < limit && this.brandfetchEnabled) {
+        const seed = this.shuffle([...set.seeds])[0];
+        if (seed) {
+          try {
+            const chunk = await this.searchBrandfetch(seed, 12);
+            const picked = this.pickBrandsForSeed(seed, chunk, Math.min(4, remaining), set.name);
+            const persisted =
+              picked.length > 0 ? await this.persistBrandfetchResultsToCatalog(picked) : [];
+            for (const brand of persisted) {
+              if (!brand?.id || seen.has(brand.id)) continue;
+              seen.add(brand.id);
+              out.push(brand);
+              if (out.length >= limit) break;
+            }
+          } catch (error) {
+            console.warn(
+              `[BrandService] light similar seed "${seed}" failed: ${
+                error instanceof Error ? error.message : String(error)
+              }`
+            );
+          }
+        }
+      }
+
       return out.slice(0, limit);
     } catch (error) {
       console.warn(

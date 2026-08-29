@@ -1543,21 +1543,54 @@ export class RoomService {
       }
     });
 
-    // Notify discovery-service that broadcasting started
     const participants = await this.prisma.callParticipant.findMany({
-      where: { sessionId: session.id },
-      select: { userId: true }
+      where: { sessionId: session.id, status: "active", leftAt: null },
+      select: { userId: true, role: true }
     });
     const participantUserIds = participants.map((p) => p.userId);
-    this.discoveryClient.notifyBroadcastStarted(roomId, participantUserIds).catch((err) => {
-      this.logger.error(`Failed to notify discovery-service: ${err.message}`);
-    });
 
-    // BUSINESS RULE: When broadcast starts, participant status changes to IN_BROADCAST
-    // Update user statuses from IN_SQUAD → IN_BROADCAST
-    this.discoveryClient.updateUserStatuses(participantUserIds, "IN_BROADCAST").catch((err) => {
-      this.logger.error(`Failed to update user statuses: ${err.message}`);
-    });
+    // Await status sync so a later pull-stranger promote cannot be overwritten by a
+    // delayed fire-and-forget IN_BROADCAST write.
+    try {
+      await this.discoveryClient.notifyBroadcastStarted(roomId, participantUserIds);
+    } catch (err: any) {
+      this.logger.error(`Failed to notify discovery-service: ${err?.message || err}`);
+    }
+
+    if (session.pullStrangerEnabled) {
+      // Pull-stranger is already live: keep the visible host discoverable as
+      // IN_BROADCAST_AVAILABLE instead of wiping everyone to IN_BROADCAST.
+      const activeHostIds = participants
+        .filter((p) => p.role === "HOST")
+        .map((p) => p.userId);
+      const visibleHostId = await this.getPullStrangerLoopVisibleHost(
+        session.id,
+        activeHostIds,
+        userId
+      );
+      try {
+        await this.syncPullStrangerVisibilityStatuses(
+          participantUserIds,
+          visibleHostId,
+          true
+        );
+      } catch (err: any) {
+        this.logger.error(
+          `Failed to preserve pull-stranger visibility after broadcast start: ${err?.message || err}`
+        );
+      }
+      this.logger.log(
+        `Broadcasting enabled for room ${roomId} by HOST ${userId} ` +
+          `(pull-stranger active; visibleHost=${visibleHostId}->IN_BROADCAST_AVAILABLE)`
+      );
+    } else {
+      try {
+        await this.discoveryClient.updateUserStatuses(participantUserIds, "IN_BROADCAST");
+      } catch (err: any) {
+        this.logger.error(`Failed to update user statuses: ${err?.message || err}`);
+      }
+      this.logger.log(`Broadcasting enabled for room ${roomId} by HOST ${userId}`);
+    }
 
     // Coin mining: switch participants from video-call → broadcast bucket
     this.coinMining.startMany(participantUserIds, "BROADCAST", {
@@ -1566,7 +1599,6 @@ export class RoomService {
     });
 
     this.clearHotReadCaches(roomId, participantUserIds);
-    this.logger.log(`Broadcasting enabled for room ${roomId} by HOST ${userId}`);
   }
 
   /**
@@ -1719,29 +1751,25 @@ export class RoomService {
       );
     }
 
-    // Idempotent: already enabled (e.g. squad auto-enable race) — no-op success
-    if (session.pullStrangerEnabled) {
-      this.logger.log(
-        `Pull stranger mode already enabled for room ${roomId}; treating as success (requested by ${userId})`
-      );
-      return;
-    }
-
-    // Update database: enable pull stranger mode
-    await this.prisma.callSession.update({
-      where: { id: session.id },
-      data: { pullStrangerEnabled: true }
-    });
-
     // Product rule: only the HOST who clicked "pull stranger" should appear in discovery.
     // Preserve broadcast awareness so strangers see both squad + broadcast on the card.
     const isBroadcasting = Boolean(session.isBroadcasting);
     const visibleStatus = isBroadcasting ? "IN_BROADCAST_AVAILABLE" : "IN_SQUAD_AVAILABLE";
     const otherStatus = isBroadcasting ? "IN_BROADCAST" : "IN_SQUAD";
     const participantUserIds = session.participants.map((p) => p.userId);
+    const alreadyEnabled = Boolean(session.pullStrangerEnabled);
+
+    // Already enabled (squad auto-enable, or re-click after broadcast): still re-sync
+    // statuses and refresh the summoning window. Broadcast start can wipe *_AVAILABLE.
+    if (!alreadyEnabled) {
+      await this.prisma.callSession.update({
+        where: { id: session.id },
+        data: { pullStrangerEnabled: true }
+      });
+    }
+
     await this.syncPullStrangerVisibilityStatuses(participantUserIds, userId, isBroadcasting);
 
-    // Log event
     await this.prisma.callEvent.create({
       data: {
         sessionId: session.id,
@@ -1754,7 +1782,8 @@ export class RoomService {
           windowMs: this.pullStrangerWindowMs,
           isBroadcasting,
           visibleStatus,
-          otherStatus
+          otherStatus,
+          reenabled: alreadyEnabled
         })
       }
     });
@@ -1764,7 +1793,7 @@ export class RoomService {
 
     this.clearHotReadCaches(roomId, participantUserIds);
     this.logger.log(
-      `Pull stranger mode enabled for room ${roomId} by HOST ${userId}. ` +
+      `Pull stranger mode ${alreadyEnabled ? "re-synced" : "enabled"} for room ${roomId} by HOST ${userId}. ` +
       `Status sync complete: host=${userId}->${visibleStatus}, others->${otherStatus}`
     );
   }

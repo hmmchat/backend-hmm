@@ -482,6 +482,14 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
           await this.handleCloseProducer(connectionId, userId, data, ws);
           break;
 
+        case "stop-screen-share":
+          if (this.isAnonymousUser(userId)) {
+            this.sendError(ws, "Authentication required. Please sign up to participate in calls.");
+            return;
+          }
+          await this.handleStopScreenShare(connectionId, userId, data, ws);
+          break;
+
         case "consume":
           if (this.isAnonymousUser(userId)) {
             this.sendError(ws, "Authentication required. Please sign up to participate in calls.");
@@ -624,6 +632,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       "connect-transport",
       "produce",
       "close-producer",
+      "stop-screen-share",
       "consume",
       "get-producers",
       "start-broadcast",
@@ -1171,6 +1180,75 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       );
     } catch (error: any) {
       this.sendError(ws, error.message || "Failed to close producer");
+    }
+  }
+
+  /**
+   * Stop screen share for self, or (HOST only) for another participant.
+   */
+  private async handleStopScreenShare(
+    _connectionId: string,
+    userId: string,
+    data: any,
+    ws: any
+  ) {
+    const { roomId, targetUserId } = data ?? {};
+    if (!roomId) {
+      this.sendError(ws, "roomId is required");
+      return;
+    }
+
+    const target = targetUserId != null && targetUserId !== ""
+      ? String(targetUserId)
+      : String(userId);
+
+    try {
+      if (String(target) !== String(userId)) {
+        const isHost = await this.roomService.isHost(roomId, userId);
+        if (!isHost) {
+          this.sendError(ws, "Only the host can stop another participant's screen share");
+          return;
+        }
+      }
+
+      const producerId = await this.callService.closeScreenShare(roomId, target);
+      if (!producerId) {
+        this.sendError(ws, "No active screen share to stop");
+        return;
+      }
+
+      const payload = {
+        type: "producer-closed",
+        data: {
+          roomId,
+          producerId: String(producerId),
+          closedBy: userId,
+          source: "screen"
+        }
+      };
+
+      // Notify everyone in the room (including requester + target).
+      await this.broadcastToRoom(roomId, payload);
+
+      // Tell the sharer to tear down local getDisplayMedia tracks.
+      if (String(target) !== String(userId)) {
+        const targetConnections = this.userConnections.get(target);
+        for (const connId of targetConnections ?? []) {
+          const conn = this.connections.get(connId);
+          if (!conn?.ws) continue;
+          this.send(conn.ws, {
+            type: "screen-share-stopped",
+            data: { roomId, stoppedBy: userId, targetUserId: target }
+          });
+        }
+      } else {
+        this.send(ws, {
+          type: "screen-share-stopped",
+          data: { roomId, stoppedBy: userId, targetUserId: target }
+        });
+      }
+    } catch (error: any) {
+      this.sendError(ws, error.message || "Failed to stop screen share");
     }
   }
 

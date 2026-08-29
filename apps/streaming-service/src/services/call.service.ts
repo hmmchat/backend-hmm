@@ -142,6 +142,14 @@ export class CallService {
       throw new Error("source is only valid when kind is video");
     }
 
+    // Only one screen share at a time per room.
+    if (kind === "video" && videoSource === "screen") {
+      const existingSharer = this.findActiveScreenSharer(roomId, userId);
+      if (existingSharer) {
+        throw new Error("Another participant is already sharing their screen");
+      }
+    }
+
     const appData: Record<string, unknown> | undefined =
       kind === "video" ? { source: videoSource } : undefined;
 
@@ -184,6 +192,34 @@ export class CallService {
     );
 
     return producer;
+  }
+
+  /** Returns userId of another participant currently sharing screen, if any. */
+  findActiveScreenSharer(roomId: string, exceptUserId?: string): string | null {
+    try {
+      const room = this.roomService.getRoom(roomId);
+      for (const [pid, participant] of room.participants.entries()) {
+        if (exceptUserId && String(pid) === String(exceptUserId)) continue;
+        if (participant?.producer?.screen && !participant.producer.screen.closed) {
+          return String(pid);
+        }
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+
+  /**
+   * Close the screen-share producer for a participant. Returns producerId if closed.
+   */
+  async closeScreenShare(roomId: string, targetUserId: string): Promise<string | null> {
+    const participant = this.roomService.getParticipant(roomId, targetUserId);
+    const producer = participant?.producer?.screen;
+    if (!producer || producer.closed) return null;
+    const producerId = producer.id;
+    await this.closeProducer(roomId, targetUserId, producerId);
+    return producerId;
   }
 
   /**

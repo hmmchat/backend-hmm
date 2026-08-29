@@ -90,9 +90,23 @@ export class MusicService implements OnModuleInit {
           "year:2025 genre:pop",
           "year:2025 genre:dance"
         ]
+      },
+      {
+        name: "Meme and viral",
+        market: "US",
+        seeds: [
+          "tiktok viral songs",
+          "meme songs",
+          "viral tiktok 2025",
+          "internet viral hits",
+          "phonk viral",
+          "reel viral songs"
+        ]
       }
     ];
   }
+
+  private static readonly IDLE_POOL_CACHE_KEY = "__idle_all__";
 
   getMusicSets(): { sets: { name: string }[] } {
     return { sets: this.musicBrowseSets().map((set) => ({ name: set.name })) };
@@ -275,8 +289,42 @@ export class MusicService implements OnModuleInit {
     }
   }
 
+  private async loadSetPool(set: MusicBrowseSet): Promise<SearchSongResult[]> {
+    const cached = this.suggestionCache.get(set.name);
+    if (cached && cached.expiresAt > Date.now() && cached.songs.length > 0) {
+      return cached.songs;
+    }
+
+    const seeds = this.shuffle([...set.seeds]);
+    const chunks = await Promise.all(
+      seeds.flatMap((seed) =>
+        [0, 10].map((offset) =>
+          this.searchSpotifyTracks(seed, {
+            limit: 10,
+            offset,
+            market: set.market
+          }).catch((error) => {
+            console.warn(
+              `[MusicService] suggestion seed "${seed}" offset=${offset} failed: ${
+                error instanceof Error ? error.message : String(error)
+              }`
+            );
+            return [] as SearchSongResult[];
+          })
+        )
+      )
+    );
+
+    const merged = this.dedupeSongs(chunks.flat());
+    this.suggestionCache.set(set.name, {
+      expiresAt: Date.now() + this.suggestionTtlMs,
+      songs: merged
+    });
+    return merged;
+  }
+
   /**
-   * Idle suggestions for a browse set (India / Worldwide). Search-seeded + cached.
+   * Idle suggestions for one browse set. Search-seeded + cached.
    */
   async getSongsBySet(setName: string, limit: number = 50): Promise<SearchSongResult[]> {
     if (limit < 1 || limit > 50) {
@@ -295,40 +343,52 @@ export class MusicService implements OnModuleInit {
       );
     }
 
-    const cached = this.suggestionCache.get(set.name);
+    try {
+      const pool = await this.loadSetPool(set);
+      return this.shuffle(pool).slice(0, limit);
+    } catch (error) {
+      console.error("Error loading music suggestions:", error);
+      if (error instanceof HttpException) throw error;
+      throw new HttpException(
+        "Failed to load music suggestions. Please try again later.",
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  /**
+   * Flat idle feed: India + Worldwide + meme/viral Search seeds, shuffled.
+   * Used when the song picker is empty (no category chips).
+   */
+  async getIdleSuggestions(limit: number = 50): Promise<SearchSongResult[]> {
+    if (limit < 1 || limit > 50) {
+      throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);
+    }
+
+    if (!this.clientId || !this.clientSecret) {
+      throw new HttpException(
+        "Music suggestions are not available. Spotify API credentials not configured.",
+        HttpStatus.SERVICE_UNAVAILABLE
+      );
+    }
+
+    const cached = this.suggestionCache.get(MusicService.IDLE_POOL_CACHE_KEY);
     if (cached && cached.expiresAt > Date.now() && cached.songs.length > 0) {
       return this.shuffle(cached.songs).slice(0, limit);
     }
 
     try {
-      const seeds = this.shuffle([...set.seeds]);
-      const chunks = await Promise.all(
-        seeds.flatMap((seed) =>
-          [0, 10].map((offset) =>
-            this.searchSpotifyTracks(seed, {
-              limit: 10,
-              offset,
-              market: set.market
-            }).catch((error) => {
-              console.warn(
-                `[MusicService] suggestion seed "${seed}" offset=${offset} failed: ${
-                  error instanceof Error ? error.message : String(error)
-                }`
-              );
-              return [] as SearchSongResult[];
-            })
-          )
-        )
+      const pools = await Promise.all(
+        this.musicBrowseSets().map((set) => this.loadSetPool(set))
       );
-
-      const merged = this.dedupeSongs(chunks.flat());
-      this.suggestionCache.set(set.name, {
+      const merged = this.dedupeSongs(pools.flat());
+      this.suggestionCache.set(MusicService.IDLE_POOL_CACHE_KEY, {
         expiresAt: Date.now() + this.suggestionTtlMs,
         songs: merged
       });
       return this.shuffle(merged).slice(0, limit);
     } catch (error) {
-      console.error("Error loading music suggestions:", error);
+      console.error("Error loading idle music suggestions:", error);
       if (error instanceof HttpException) throw error;
       throw new HttpException(
         "Failed to load music suggestions. Please try again later.",

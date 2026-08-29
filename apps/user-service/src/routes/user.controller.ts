@@ -341,15 +341,15 @@ export class UserController {
     @Query("set") setName?: string,
     @Query("limit") limit?: string
   ) {
-    const trimmed = setName?.trim();
-    if (!trimmed) {
-      throw new HttpException("Set name (set) is required", HttpStatus.BAD_REQUEST);
-    }
     const limitNum = limit !== undefined && limit !== "" ? parseInt(limit, 10) : 50;
     if (isNaN(limitNum) || limitNum < 1 || limitNum > 50) {
       throw new HttpException("Limit must be between 1 and 50", HttpStatus.BAD_REQUEST);
     }
-    const songs = await this.musicService.getSongsBySet(trimmed, limitNum);
+    const trimmed = setName?.trim();
+    // No set → flat idle feed (India + Worldwide + meme/viral). Optional set kept for debugging.
+    const songs = trimmed
+      ? await this.musicService.getSongsBySet(trimmed, limitNum)
+      : await this.musicService.getIdleSuggestions(limitNum);
     return { songs };
   }
 

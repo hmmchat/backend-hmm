@@ -507,12 +507,13 @@ GET /users/{userId}?fields=username,photos,brandPreferences
 
 ### 6. Music Preference
 
-#### Idle recommendation sets (Search-seeded)
+#### Idle recommendations (Search-seeded flat feed)
 
-Spotify’s Recommendations / featured / editorial playlist APIs are unavailable for our client-credentials app. Idle rails use curated Spotify **Search** queries instead.
+Spotify’s Recommendations / featured / editorial playlist APIs are unavailable for our client-credentials app. Idle suggestions use curated Spotify **Search** queries (India + Worldwide + meme/viral), merged and shuffled.
 
-- `GET /music/sets` — `{ "sets": [{ "name": "Trending in India" }, { "name": "Worldwide hits" }] }`
-- `GET /music/suggestions?set={name}&limit={limit}` — shuffled track pool for that set (`limit` default/max `50`). Cached ~30 minutes server-side.
+- `GET /music/suggestions?limit={limit}` — flat idle feed (`limit` default/max `50`). Cached ~30 minutes server-side.
+- `GET /music/suggestions?set={name}&limit={limit}` — optional single-rail debug (`Trending in India`, `Worldwide hits`, `Meme and viral`).
+- `GET /music/sets` — names of those rails (not required for the default picker UX).
 
 #### Search Songs
 

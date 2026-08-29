@@ -406,6 +406,8 @@ export class StreamingController {
       success: true,
       roomId: result.roomId,
       sessionId: result.sessionId,
+      isBroadcasting: Boolean(result.isBroadcasting),
+      callType: result.isBroadcasting ? "broadcast" : "video",
       message: "Successfully joined room via pull stranger"
     };
   }
@@ -787,6 +789,8 @@ export class StreamingController {
       success: true,
       roomId: result.roomId,
       sessionId: result.sessionId,
+      isBroadcasting: Boolean(result.isBroadcasting),
+      callType: result.isBroadcasting ? "broadcast" : "video",
       message: "Successfully joined room via pull stranger"
     };
   }

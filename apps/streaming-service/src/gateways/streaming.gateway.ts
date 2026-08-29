@@ -733,8 +733,10 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
 
       let myRole: "HOST" | "PARTICIPANT" = "PARTICIPANT";
       const participantRoles: { userId: string; role: string }[] = [];
+      let isBroadcasting = false;
       try {
         const details = await this.roomService.getRoomDetails(roomId);
+        isBroadcasting = Boolean(details?.isBroadcasting);
         if (details?.participants?.length) {
           for (const p of details.participants) {
             participantRoles.push({ userId: p.userId, role: p.role });
@@ -760,6 +762,8 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
           myRole,
           participantRoles,
           producers,
+          isBroadcasting,
+          callType: isBroadcasting ? "broadcast" : "video",
           ...this.viewerScenePayload(roomId)
         }
       });

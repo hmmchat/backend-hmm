@@ -738,7 +738,10 @@ export class DiscoveryService implements OnModuleInit {
 
     const eligibility = await Promise.all(
       sessionEligibleUsers.map(async (candidate) => {
-        if (candidate.status !== "IN_SQUAD_AVAILABLE") {
+        if (
+          candidate.status !== "IN_SQUAD_AVAILABLE" &&
+          candidate.status !== "IN_BROADCAST_AVAILABLE"
+        ) {
           return true;
         }
         return this.streamingClient.canViewPullStrangerCard(candidate.id, userId);
@@ -930,7 +933,10 @@ export class DiscoveryService implements OnModuleInit {
    */
   private async createMatchForCard(userId: string, matchedUserId: string, currentUser: UserProfile, matchedUser: DiscoveryUser): Promise<void> {
     try {
-      if (matchedUser.status === "IN_SQUAD_AVAILABLE") {
+      if (
+        matchedUser.status === "IN_SQUAD_AVAILABLE" ||
+        matchedUser.status === "IN_BROADCAST_AVAILABLE"
+      ) {
         const eligible = await this.streamingClient.canViewPullStrangerCard(matchedUserId, userId);
         if (!eligible) {
           throw new Error(`Pull-stranger card ${matchedUserId} is not eligible for viewer ${userId}`);
@@ -2340,7 +2346,10 @@ export class DiscoveryService implements OnModuleInit {
     if (matchedUser) {
       this.logShadowAgreement(userId, matchedUser.id);
       // Pull-stranger cards skip active_matches / MATCHED — don't require a match row.
-      if (matchedUser.status !== "IN_SQUAD_AVAILABLE") {
+      if (
+        matchedUser.status !== "IN_SQUAD_AVAILABLE" &&
+        matchedUser.status !== "IN_BROADCAST_AVAILABLE"
+      ) {
         // findMatchForUser already creates the match, but let's verify it exists
         // This ensures the match is definitely in the database before returning the card
         try {
@@ -2665,7 +2674,10 @@ export class DiscoveryService implements OnModuleInit {
     // count cities the viewer cannot actually see.
     const eligibility = await Promise.all(
       sessionEligibleUsers.map(async (candidate) => {
-        if (candidate.status !== "IN_SQUAD_AVAILABLE") {
+        if (
+          candidate.status !== "IN_SQUAD_AVAILABLE" &&
+          candidate.status !== "IN_BROADCAST_AVAILABLE"
+        ) {
           return true;
         }
         return this.streamingClient.canViewPullStrangerCard(candidate.id, userId);

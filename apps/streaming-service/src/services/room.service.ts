@@ -211,9 +211,13 @@ export class RoomService {
           data: { pullStrangerEnabled: false }
         });
 
-        // Product rule: if nobody joined within the pull window, restore initiator to IN_SQUAD.
-        await this.discoveryClient.updateUserStatus(enabledByUserId, "IN_SQUAD").catch((err) => {
-          this.logger.error(`Failed to restore pull-stranger host ${enabledByUserId} to IN_SQUAD: ${err.message}`);
+        // Product rule: if nobody joined within the pull window, restore initiator to the
+        // in-call status that matches the room's current broadcast state.
+        const statusToRestore = session.isBroadcasting ? "IN_BROADCAST" : "IN_SQUAD";
+        await this.discoveryClient.updateUserStatus(enabledByUserId, statusToRestore).catch((err) => {
+          this.logger.error(
+            `Failed to restore pull-stranger host ${enabledByUserId} to ${statusToRestore}: ${err.message}`
+          );
         });
 
         await this.prisma.callEvent.create({
@@ -221,11 +225,18 @@ export class RoomService {
             sessionId: session.id,
             eventType: "pull_stranger_expired",
             userId: enabledByUserId,
-            metadata: JSON.stringify({ roomId, enabledBy: enabledByUserId, windowMs: this.pullStrangerWindowMs })
+            metadata: JSON.stringify({
+              roomId,
+              enabledBy: enabledByUserId,
+              windowMs: this.pullStrangerWindowMs,
+              restoredStatus: statusToRestore
+            })
           }
         });
 
-        this.logger.log(`Pull stranger expired for room ${roomId}. Host ${enabledByUserId} restored to IN_SQUAD.`);
+        this.logger.log(
+          `Pull stranger expired for room ${roomId}. Host ${enabledByUserId} restored to ${statusToRestore}.`
+        );
       } catch (error: any) {
         this.logger.error(`Failed to expire pull stranger for room ${roomId}: ${error?.message || error}`);
       } finally {
@@ -1447,15 +1458,19 @@ export class RoomService {
 
   private async syncPullStrangerVisibilityStatuses(
     participantUserIds: string[],
-    visibleInDiscoveryUserId: string
+    visibleInDiscoveryUserId: string,
+    isBroadcasting = false
   ): Promise<void> {
     const maxAttempts = 4;
     const baseDelayMs = 200;
+    const visibleStatus = isBroadcasting ? "IN_BROADCAST_AVAILABLE" : "IN_SQUAD_AVAILABLE";
+    const otherStatus = isBroadcasting ? "IN_BROADCAST" : "IN_SQUAD";
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         for (const participantId of participantUserIds) {
-          const targetStatus = participantId === visibleInDiscoveryUserId ? "IN_SQUAD_AVAILABLE" : "IN_SQUAD";
+          const targetStatus =
+            participantId === visibleInDiscoveryUserId ? visibleStatus : otherStatus;
           await this.discoveryClient.updateUserStatus(participantId, targetStatus);
         }
         return;
@@ -1670,8 +1685,8 @@ export class RoomService {
 
   /**
    * Enable pull stranger mode for a room (HOST only)
-   * Updates all participants to IN_SQUAD_AVAILABLE status
-   * Only users with _AVAILABLE statuses can be shown in face cards and matched
+   * Visible host => IN_SQUAD_AVAILABLE or IN_BROADCAST_AVAILABLE (if already broadcasting)
+   * Other participants => IN_SQUAD or IN_BROADCAST
    */
   async enablePullStranger(roomId: string, userId: string): Promise<void> {
     // Verify room exists
@@ -1719,11 +1734,12 @@ export class RoomService {
     });
 
     // Product rule: only the HOST who clicked "pull stranger" should appear in discovery.
-    // Force-sync all active participants to avoid stale statuses:
-    // - enabled host => IN_SQUAD_AVAILABLE
-    // - everyone else => IN_SQUAD
+    // Preserve broadcast awareness so strangers see both squad + broadcast on the card.
+    const isBroadcasting = Boolean(session.isBroadcasting);
+    const visibleStatus = isBroadcasting ? "IN_BROADCAST_AVAILABLE" : "IN_SQUAD_AVAILABLE";
+    const otherStatus = isBroadcasting ? "IN_BROADCAST" : "IN_SQUAD";
     const participantUserIds = session.participants.map((p) => p.userId);
-    await this.syncPullStrangerVisibilityStatuses(participantUserIds, userId);
+    await this.syncPullStrangerVisibilityStatuses(participantUserIds, userId, isBroadcasting);
 
     // Log event
     await this.prisma.callEvent.create({
@@ -1735,7 +1751,10 @@ export class RoomService {
           enabledBy: userId,
           participantCount: session.participants.length,
           visibleInDiscoveryUserId: userId,
-          windowMs: this.pullStrangerWindowMs
+          windowMs: this.pullStrangerWindowMs,
+          isBroadcasting,
+          visibleStatus,
+          otherStatus
         })
       }
     });
@@ -1746,7 +1765,7 @@ export class RoomService {
     this.clearHotReadCaches(roomId, participantUserIds);
     this.logger.log(
       `Pull stranger mode enabled for room ${roomId} by HOST ${userId}. ` +
-      `Status sync complete: host=${userId}->IN_SQUAD_AVAILABLE, others->IN_SQUAD`
+      `Status sync complete: host=${userId}->${visibleStatus}, others->${otherStatus}`
     );
   }
 
@@ -1848,7 +1867,7 @@ export class RoomService {
     roomId: string,
     joiningUserId: string,
     targetUserId: string
-  ): Promise<{ roomId: string; sessionId: string }> {
+  ): Promise<{ roomId: string; sessionId: string; isBroadcasting: boolean }> {
     const result = await this.prisma.$transaction(async (tx) => {
       // Get room with lock to prevent concurrent joins
       const session = await tx.callSession.findUnique({
@@ -1935,17 +1954,20 @@ export class RoomService {
 
       // Verify target user has pull-stranger compatible status.
       // MATCHED can appear transiently when discovery card rendering creates/refreshes matches.
+      // IN_BROADCAST(_AVAILABLE) covers pull-stranger while the room is already broadcasting.
       if (process.env.TEST_MODE !== "true") {
         try {
           const targetUserStatus = await this.discoveryClient.getUserStatus(targetUserId);
-          // Allow IN_SQUAD as a transient fallback if user-service update is slightly delayed.
-          if (
-            targetUserStatus !== "IN_SQUAD_AVAILABLE" &&
-            targetUserStatus !== "IN_SQUAD" &&
-            targetUserStatus !== "MATCHED"
-          ) {
+          const pullStrangerTargetStatuses = new Set([
+            "IN_SQUAD_AVAILABLE",
+            "IN_BROADCAST_AVAILABLE",
+            "IN_SQUAD",
+            "IN_BROADCAST",
+            "MATCHED"
+          ]);
+          if (!pullStrangerTargetStatuses.has(targetUserStatus)) {
             throw new BadRequestException(
-              `Target user ${targetUserId} does not have IN_SQUAD_AVAILABLE/IN_SQUAD/MATCHED status (current: ${targetUserStatus}). ` +
+              `Target user ${targetUserId} does not have pull-stranger compatible status (current: ${targetUserStatus}). ` +
               `They may have already been matched or their status changed.`
             );
           }
@@ -2105,13 +2127,14 @@ export class RoomService {
       where: { id: result.sessionId },
       select: { isBroadcasting: true }
     });
+    const isBroadcasting = Boolean(pullSession?.isBroadcasting);
     this.coinMining.start(
       result.joiningUserId,
-      this.coinMining.participantBucket(!!pullSession?.isBroadcasting),
+      this.coinMining.participantBucket(isBroadcasting),
       { roomId: result.roomId, sessionId: result.sessionId }
     );
 
-    return { roomId: result.roomId, sessionId: result.sessionId };
+    return { roomId: result.roomId, sessionId: result.sessionId, isBroadcasting };
   }
 
   /**

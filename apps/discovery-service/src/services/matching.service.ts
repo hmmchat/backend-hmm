@@ -354,7 +354,9 @@ export class MatchingService {
 
     const eligibility = await Promise.all(
       filteredUsers.map(async (user) => {
-        if (user.status !== "IN_SQUAD_AVAILABLE" || !requestingUser?.id) {
+        const isPullStrangerHost =
+          user.status === "IN_SQUAD_AVAILABLE" || user.status === "IN_BROADCAST_AVAILABLE";
+        if (!isPullStrangerHost || !requestingUser?.id) {
           return true;
         }
         return this.streamingClient.canViewPullStrangerCard(user.id, requestingUser.id);
@@ -501,7 +503,10 @@ export class MatchingService {
     for (const pair of scoredPairs) {
       // Pull-stranger hosts are one-way joins — never create active_matches or flip
       // them to MATCHED (that kills the summoning window / replacement loop).
-      if (pair.user.status === "IN_SQUAD_AVAILABLE") {
+      if (
+        pair.user.status === "IN_SQUAD_AVAILABLE" ||
+        pair.user.status === "IN_BROADCAST_AVAILABLE"
+      ) {
         return pair.user;
       }
 

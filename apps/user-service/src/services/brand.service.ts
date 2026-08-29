@@ -3,6 +3,7 @@ import fetch from "node-fetch";
 import { rewriteExpiredStorageUrl } from "@hmm/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { SEARCH_DEFAULT_LIMIT } from "../config/limits.config.js";
+import { BRAND_CATEGORY_NAMES } from "../config/brand-categories.config.js";
 import {
   catalogFuzzyFallbackOrderBy,
   catalogFuzzyOrderBy,
@@ -661,6 +662,42 @@ export class BrandService {
           "linkedin learning",
           "pearson"
         ]
+      },
+      {
+        name: "Music",
+        query: "music",
+        seeds: [
+          "spotify",
+          "apple music",
+          "youtube music",
+          "soundcloud",
+          "gaana",
+          "jiosaavn",
+          "amazon music",
+          "tidal",
+          "deezer",
+          "pandora",
+          "bandcamp",
+          "shazam"
+        ]
+      },
+      {
+        name: "Telecom",
+        query: "telecom",
+        seeds: [
+          "airtel",
+          "jio",
+          "vodafone",
+          "bsnl",
+          "verizon",
+          "at&t",
+          "t-mobile",
+          "orange",
+          "telefonica",
+          "reliance jio",
+          "vi india",
+          "mtn"
+        ]
       }
     ];
   }
@@ -691,16 +728,41 @@ export class BrandService {
     return this.brandfetchBrowseSets().flatMap((set) => set.seeds.slice(0, 2));
   }
 
-  /** Distinct Brandfetch category sets for the brands picker (no Featured). */
+  /** Distinct category sets for the brands picker (no Featured). */
   getBrandSets(): { sets: { name: string }[] } {
-    return { sets: this.brandfetchBrowseSets().map((set) => ({ name: set.name })) };
+    return { sets: BRAND_CATEGORY_NAMES.map((name) => ({ name })) };
+  }
+
+  private async getCustomBrandsByCategory(
+    category: string,
+    limit: number
+  ): Promise<SearchBrandResult[]> {
+    const rows = await this.prisma.brand.findMany({
+      where: {
+        isCustom: true,
+        category: { equals: category, mode: "insensitive" }
+      },
+      select: {
+        id: true,
+        name: true,
+        domain: true,
+        logoUrl: true,
+        brandfetchId: true
+      },
+      take: Math.min(100, Math.max(limit * 2, 20))
+    });
+    return rows.map((b) => ({
+      id: b.id,
+      name: b.name,
+      domain: b.domain,
+      brandfetchId: b.brandfetchId,
+      logoUrl: this.resolvePublicLogoUrl(b.domain, b.logoUrl, b.brandfetchId)
+    }));
   }
 
   /**
-   * Brands inside a Brandfetch category set. Brandfetch-only (dashboard catalog is search-only).
-   * Fans out seed searches in parallel (Brandfetch has no list-by-industry API), keeps the
-   * best hits per seed, and dedupes by domain/name/brandfetchId so the same brand cannot
-   * stick across pages.
+   * Brands inside a category. Sample space = dashboard (isCustom + category) ∪ Brandfetch
+   * seed hits; shuffled and capped so internal brands appear in the mix, not always first.
    */
   async getBrandsByCategory(category: string, limit: number = 50): Promise<SearchBrandResult[]> {
     if (limit < 1 || limit > 50) {
@@ -712,55 +774,71 @@ export class BrandService {
       throw new HttpException("Unknown brand category", HttpStatus.BAD_REQUEST);
     }
 
-    if (!this.brandfetchEnabled) {
-      return [];
-    }
+    const custom = await this.getCustomBrandsByCategory(set.name, limit);
+    let brandfetchHits: SearchBrandResult[] = [];
 
-    const seeds = this.shuffle([...set.seeds]).slice(0, 8);
-    const chunks = await Promise.all(
-      seeds.map(async (seed) => {
+    if (this.brandfetchEnabled) {
+      const seeds = this.shuffle([...set.seeds]).slice(0, 8);
+      const chunks = await Promise.all(
+        seeds.map(async (seed) => {
+          try {
+            const chunk = await this.searchBrandfetch(seed, 8);
+            return this.pickBrandsForSeed(seed, chunk, 3);
+          } catch (error) {
+            console.warn(
+              `[BrandService] getBrandsByCategory seed "${seed}" failed: ${
+                error instanceof Error ? error.message : String(error)
+              }`
+            );
+            return [] as SearchBrandResult[];
+          }
+        })
+      );
+
+      brandfetchHits = this.dedupeBrandResults(chunks.flat());
+
+      if (brandfetchHits.length === 0) {
         try {
-          const chunk = await this.searchBrandfetch(seed, 8);
-          return this.pickBrandsForSeed(seed, chunk, 3);
+          brandfetchHits = await this.searchBrandfetch(set.query, limit);
         } catch (error) {
           console.warn(
-            `[BrandService] getBrandsByCategory seed "${seed}" failed: ${
+            `[BrandService] getBrandsByCategory "${set.name}" failed: ${
               error instanceof Error ? error.message : String(error)
             }`
           );
-          return [] as SearchBrandResult[];
         }
-      })
-    );
+      }
 
-    let merged = this.dedupeBrandResults(chunks.flat());
-
-    if (merged.length === 0) {
-      try {
-        merged = await this.searchBrandfetch(set.query, limit);
-      } catch (error) {
-        console.warn(
-          `[BrandService] getBrandsByCategory "${set.name}" failed: ${
-            error instanceof Error ? error.message : String(error)
-          }`
+      if (brandfetchHits.length > 0) {
+        brandfetchHits = await this.persistBrandfetchResultsToCatalog(
+          brandfetchHits.slice(0, limit)
         );
-        return [];
       }
     }
 
-    if (merged.length === 0) return [];
-
-    const persisted = await this.persistBrandfetchResultsToCatalog(merged.slice(0, limit));
-    return this.dedupeBrandResults(persisted).slice(0, limit);
+    const merged = this.dedupeBrandResults([...custom, ...brandfetchHits]);
+    return this.shuffle(merged).slice(0, limit);
   }
 
   /**
-   * Resolve a Brandfetch category query for “similar” fill from top matches.
+   * Resolve a browse set for “similar” fill from ranked hits (dashboard category first).
    */
-  private async resolveSimilarCategoryQuery(
+  private async resolveSimilarBrowseSet(
     matches: SearchBrandResult[],
     originalQuery: string
-  ): Promise<string | null> {
+  ): Promise<{ name: string; query: string; seeds: string[] } | null> {
+    const matchIds = matches.map((m) => m.id).filter(Boolean);
+    if (matchIds.length > 0) {
+      const customRows = await this.prisma.brand.findMany({
+        where: { id: { in: matchIds }, isCustom: true, category: { not: null } },
+        select: { category: true }
+      });
+      for (const row of customRows) {
+        const set = this.resolveBrowseSet(row.category || "");
+        if (set) return set;
+      }
+    }
+
     const sets = this.brandfetchBrowseSets();
 
     for (const match of matches) {
@@ -800,7 +878,7 @@ export class BrandService {
               set.name.toLowerCase().includes(lower) ||
               set.query.includes(lower)
           );
-          if (hit) return hit.query;
+          if (hit) return hit;
         }
       } catch (error) {
         console.warn(
@@ -812,10 +890,11 @@ export class BrandService {
     }
 
     const q = originalQuery.toLowerCase();
-    const byQuery = sets.find(
-      (set) => q.includes(set.query) || set.query.includes(q) || q.includes(set.name.toLowerCase())
+    return (
+      sets.find(
+        (set) => q.includes(set.query) || set.query.includes(q) || q.includes(set.name.toLowerCase())
+      ) ?? null
     );
-    return byQuery?.query ?? null;
   }
 
   /**
@@ -1134,37 +1213,31 @@ export class BrandService {
   }
 
   /**
-   * After ranked matches, fill remaining slots with Brandfetch brands from the same category.
+   * After ranked matches, fill remaining slots from the same category sample space
+   * (dashboard internals ∪ Brandfetch), shuffled so internals are not always first.
    */
   private async appendSameCategorySimilar(
     query: string,
     ranked: SearchBrandResult[],
     limit: number
   ): Promise<SearchBrandResult[]> {
-    if (!this.brandfetchEnabled || ranked.length >= limit) {
+    if (ranked.length >= limit) {
       return ranked.slice(0, limit);
     }
 
-    const similarQuery = await this.resolveSimilarCategoryQuery(ranked, query);
-    if (!similarQuery) {
+    const set = await this.resolveSimilarBrowseSet(ranked, query);
+    if (!set) {
       return ranked.slice(0, limit);
     }
 
     try {
-      const similarRaw = await this.searchBrandfetch(similarQuery, limit);
-      if (similarRaw.length === 0) {
-        return ranked.slice(0, limit);
-      }
-      const similar = await this.persistBrandfetchResultsToCatalog(similarRaw);
+      const pool = await this.getBrandsByCategory(set.name, limit);
       const seen = new Set(ranked.map((b) => b.id));
+      const fill = this.shuffle(pool.filter((brand) => brand?.id && !seen.has(brand.id)));
       const out = [...ranked];
-      for (const brand of similar) {
-        if (!brand?.id || seen.has(brand.id)) continue;
+      for (const brand of fill) {
         seen.add(brand.id);
-        out.push({
-          ...brand,
-          logoUrl: this.resolvePublicLogoUrl(brand.domain, brand.logoUrl, brand.brandfetchId)
-        });
+        out.push(brand);
         if (out.length >= limit) break;
       }
       return out.slice(0, limit);

@@ -248,13 +248,16 @@ model Brand {
   logoUrl     String?  // Optional: Brand logo URL (self-hosted via BRAND_LOGO_BASE_URL)
   /// true = content-team catalog (dashboard); false = imported from Brandfetch search
   isCustom    Boolean  @default(true)
+  /// Required for dashboard (isCustom) brands; one of BRAND_CATEGORY_NAMES
+  category    String?
   brandfetchId String? // Deprecated: kept for backward compat, no longer used
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
-  
+
   userPreferences UserBrand[]
   discoveryCities DiscoveryCityBrand[]
-  
+
+  @@index([category])
   @@map("brands")
 }
 

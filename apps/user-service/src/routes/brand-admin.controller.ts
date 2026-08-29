@@ -12,9 +12,23 @@ import {
 } from "@nestjs/common";
 import { z } from "zod";
 import { PrismaService } from "../prisma/prisma.service.js";
+import {
+  BRAND_CATEGORY_NAMES,
+  normalizeBrandCategory
+} from "../config/brand-categories.config.js";
+
+const brandCategorySchema = z
+  .string()
+  .trim()
+  .min(1)
+  .refine((value) => normalizeBrandCategory(value) != null, {
+    message: `Category must be one of: ${BRAND_CATEGORY_NAMES.join(", ")}`
+  })
+  .transform((value) => normalizeBrandCategory(value)!);
 
 const createBrandSchema = z.object({
   name: z.string().min(1).max(100),
+  category: brandCategorySchema,
   domain: z.string().min(1).max(255).optional(),
   // Signed B2/S3 URLs are long; don't cap at default URL heuristics beyond zod url().
   logoUrl: z.string().url().max(4096).optional().nullable()
@@ -22,6 +36,7 @@ const createBrandSchema = z.object({
 
 const updateBrandSchema = z.object({
   name: z.string().min(1).max(100).optional(),
+  category: brandCategorySchema.optional(),
   domain: z.string().min(1).max(255).optional(),
   logoUrl: z
     .string()
@@ -37,6 +52,18 @@ export class BrandAdminController {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
+   * Category options for the dashboard brand form.
+   * GET /admin/brands/categories
+   */
+  @Get("categories")
+  async getCategories() {
+    return {
+      ok: true,
+      categories: BRAND_CATEGORY_NAMES.map((name) => ({ name }))
+    };
+  }
+
+  /**
    * List content-managed brands (plus Brandfetch rows promoted via admin create).
    * GET /admin/brands
    */
@@ -44,7 +71,7 @@ export class BrandAdminController {
   async getAll() {
     const brands = await this.prisma.brand.findMany({
       where: { isCustom: true },
-      orderBy: { name: "asc" }
+      orderBy: [{ category: "asc" }, { name: "asc" }]
     });
     return { ok: true, brands };
   }
@@ -54,7 +81,7 @@ export class BrandAdminController {
    * POST /admin/brands
    *
    * Brand names are globally unique (incl. Brandfetch imports). If the name already
-   * exists, update that row's logo/domain and promote it into the dashboard catalog
+   * exists, update that row's logo/domain/category and promote it into the dashboard catalog
    * instead of returning an opaque 500.
    */
   @Post()
@@ -62,6 +89,7 @@ export class BrandAdminController {
   async create(@Body() body: unknown) {
     const data = createBrandSchema.parse(body);
     const name = data.name.trim();
+    const category = data.category;
 
     const existing = await this.prisma.brand.findFirst({
       where: { name: { equals: name, mode: "insensitive" } }
@@ -72,6 +100,7 @@ export class BrandAdminController {
         where: { id: existing.id },
         data: {
           name,
+          category,
           domain: data.domain !== undefined ? data.domain || null : existing.domain,
           logoUrl: data.logoUrl !== undefined ? data.logoUrl || null : existing.logoUrl,
           isCustom: true
@@ -84,6 +113,7 @@ export class BrandAdminController {
       const brand = await this.prisma.brand.create({
         data: {
           name,
+          category,
           domain: data.domain || null,
           logoUrl: data.logoUrl || null,
           isCustom: true
@@ -109,10 +139,22 @@ export class BrandAdminController {
   @Patch(":id")
   async update(@Param("id") id: string, @Body() body: unknown) {
     const data = updateBrandSchema.parse(body);
+
+    if (data.category === undefined) {
+      const existing = await this.prisma.brand.findUnique({ where: { id } });
+      if (existing?.isCustom && !existing.category) {
+        throw new HttpException(
+          "Category is required for dashboard brands",
+          HttpStatus.BAD_REQUEST
+        );
+      }
+    }
+
     const brand = await this.prisma.brand.update({
       where: { id },
       data: {
         name: data.name,
+        category: data.category,
         domain: data.domain !== undefined ? data.domain || null : undefined,
         logoUrl: data.logoUrl !== undefined ? (data.logoUrl as any) : undefined
       }
@@ -127,10 +169,7 @@ export class BrandAdminController {
   @Delete(":id")
   @HttpCode(HttpStatus.NO_CONTENT)
   async delete(@Param("id") id: string) {
-    await this.prisma.brand.delete({
-      where: { id }
-    });
+    await this.prisma.brand.delete({ where: { id } });
     return { ok: true };
   }
 }
-

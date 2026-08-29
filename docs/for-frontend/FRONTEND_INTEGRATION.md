@@ -563,10 +563,10 @@ GET /users/{userId}?fields=username,photos,brandPreferences
 
 **Endpoints (set browse + search)**
 
-- `GET /brands/sets` — Brandfetch category names for the picker (**Featured omitted**). Dashboard brands are not listed here.
-- `GET /brands?category={set}&limit={limit}` — Brandfetch-only brands in that category (persisted to catalog for saveable ids). `limit` default/max `50`.
+- `GET /brands/sets` — Category names for the picker (**Featured omitted**). Includes Music and Telecom.
+- `GET /brands?category={set}&limit={limit}` — Shuffled mix of dashboard brands (`isCustom` + that category) ∪ Brandfetch seed hits. Internals are in the sample space, not pinned first. `limit` default/max `50`.
 - `GET /brands?limit={limit}` — legacy flat suggestions (seeded Brandfetch + optional dashboard filler). Prefer sets for the picker.
-- `GET /brands/search?q={query}&limit={limit}` — flat search (no sets): Brandfetch + dashboard gap-fill, then same-category similar brands. Optional auth adds `selected` per hit.
+- `GET /brands/search?q={query}&limit={limit}` — flat search (no sets): Brandfetch + dashboard gap-fill, then same-category similar brands from the same mixed sample space. Optional auth adds `selected` per hit.
 
 **Set list response:**
 ```json

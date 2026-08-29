@@ -320,8 +320,14 @@ These are short \"Here to meet new people\"-style prompts that users can tap ins
 
 **Base path:** `USER_SERVICE_URL/admin/brands`
 
+- **List category options**
+  - **GET** `/admin/brands/categories`
+  - **Response:** `{ "ok": true, "categories": [{ "name": "Technology" }, …] }`
+  - Same names as `GET /brands/sets` (required on create).
+
 - **List all brands**
   - **GET** `/admin/brands`
+  - Content-managed (`isCustom`) rows only.
 
 - **Create a new brand**
   - **POST** `/admin/brands`
@@ -329,10 +335,12 @@ These are short \"Here to meet new people\"-style prompts that users can tap ins
     ```json
     {
       "name": "Spotify",
+      "category": "Music",
       "domain": "spotify.com",
       "logoUrl": "https://cdn.example.com/brand-logos/spotify.png"
     }
     ```
+  - `category` is required and must match a name from `GET /admin/brands/categories`.
 
 - **Update a brand**
   - **PATCH** `/admin/brands/:id`
@@ -340,6 +348,7 @@ These are short \"Here to meet new people\"-style prompts that users can tap ins
     ```json
     {
       "name": "Spotify",
+      "category": "Music",
       "domain": "spotify.com",
       "logoUrl": "https://cdn.example.com/brand-logos/spotify-v2.png"
     }

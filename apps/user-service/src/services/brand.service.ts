@@ -512,11 +512,17 @@ export class BrandService {
           "marriott",
           "hilton",
           "emirates",
-          "delta",
+          "delta airlines",
           "tripadvisor",
           "makemytrip",
           "indigo",
-          "qatar airways"
+          "qatar airways",
+          "kayak",
+          "southwest",
+          "united airlines",
+          "air india",
+          "hostelworld",
+          "getyourguide"
         ]
       },
       {
@@ -763,6 +769,10 @@ export class BrandService {
   /**
    * Brands inside a category. Sample space = dashboard (isCustom + category) ∪ Brandfetch
    * seed hits; shuffled and capped so internal brands appear in the mix, not always first.
+   *
+   * Brandfetch Search has no industry list API (Enterprise GraphQL would). We approximate by
+   * searching every curated seed and keeping several neighbors per seed so “see more” can
+   * page through ~40–50 uniques instead of a tiny ~10–15 pool.
    */
   async getBrandsByCategory(category: string, limit: number = 50): Promise<SearchBrandResult[]> {
     if (limit < 1 || limit > 50) {
@@ -774,16 +784,20 @@ export class BrandService {
       throw new HttpException("Unknown brand category", HttpStatus.BAD_REQUEST);
     }
 
+    // Moderate density: every curated seed × ~6 picks → aim for ~40–50 uniques after dedupe.
+    const picksPerSeed = 6;
+    const searchLimitPerSeed = 20;
+
     const custom = await this.getCustomBrandsByCategory(set.name, limit);
     let brandfetchHits: SearchBrandResult[] = [];
 
     if (this.brandfetchEnabled) {
-      const seeds = this.shuffle([...set.seeds]).slice(0, 8);
+      const seeds = this.shuffle([...set.seeds]);
       const chunks = await Promise.all(
         seeds.map(async (seed) => {
           try {
-            const chunk = await this.searchBrandfetch(seed, 8);
-            return this.pickBrandsForSeed(seed, chunk, 3);
+            const chunk = await this.searchBrandfetch(seed, searchLimitPerSeed);
+            return this.pickBrandsForSeed(seed, chunk, picksPerSeed);
           } catch (error) {
             console.warn(
               `[BrandService] getBrandsByCategory seed "${seed}" failed: ${
@@ -810,8 +824,9 @@ export class BrandService {
       }
 
       if (brandfetchHits.length > 0) {
+        // Persist enough to cover the full merge pool before shuffle/slice.
         brandfetchHits = await this.persistBrandfetchResultsToCatalog(
-          brandfetchHits.slice(0, limit)
+          brandfetchHits.slice(0, Math.max(limit * 2, 60))
         );
       }
     }

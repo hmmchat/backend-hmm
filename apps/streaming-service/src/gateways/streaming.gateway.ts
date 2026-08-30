@@ -1532,12 +1532,19 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
 
       // Get router RTP capabilities
       const rtpCapabilities = this.mediasoup.getRtpCapabilities(room.router);
+      const chatHistory = await this.buildViewerChatHistory(roomId).catch((err) => {
+        this.logger.warn(
+          `Chat history for viewer join in ${roomId} failed: ${err?.message || err}`
+        );
+        return [];
+      });
 
       this.send(ws, {
         type: "viewer-joined",
         data: {
           roomId,
           rtpCapabilities,
+          chatHistory,
           ...this.viewerScenePayload(roomId)
         }
       });
@@ -1889,6 +1896,56 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       this.logger.warn(`Chat sender profile lookup failed for ${id}: ${error?.message || error}`);
       return { username: null, displayPictureUrl: null };
     }
+  }
+
+  private async buildViewerChatHistory(
+    roomId: string
+  ): Promise<Array<Record<string, unknown>>> {
+    const messages = await this.chatService.getChatHistory(roomId, 50);
+    const visible = messages.filter((m) => {
+      const text = String(m.message || "").trim();
+      if (!text) return false;
+      return !this.parseCallControlMessage(text);
+    });
+    const uniqueIds = [
+      ...new Set(visible.map((m) => String(m.userId || "")).filter(Boolean))
+    ];
+    const profiles = new Map<
+      string,
+      { username: string | null; displayPictureUrl: string | null }
+    >();
+    await Promise.all(
+      uniqueIds.map(async (id) => {
+        profiles.set(id, await this.getChatSenderProfile(id));
+      })
+    );
+    let participantIds = new Set<string>();
+    try {
+      participantIds = new Set(
+        Array.from(this.roomService.getRoom(roomId).participants.keys()).map(String)
+      );
+    } catch {
+      /* room may only exist in db */
+    }
+    return visible.map((m) => {
+      const senderId = String(m.userId || "");
+      const profile = profiles.get(senderId) || {
+        username: null,
+        displayPictureUrl: null
+      };
+      return {
+        id: m.id,
+        roomId: m.roomId,
+        userId: senderId,
+        message: m.message,
+        messageType: m.messageType,
+        gif: m.gif,
+        createdAt: m.createdAt,
+        username: profile.username || undefined,
+        displayPictureUrl: profile.displayPictureUrl || undefined,
+        isParticipant: participantIds.has(senderId)
+      };
+    });
   }
 
   private parseCallControlMessage(text: string): Record<string, unknown> | null {

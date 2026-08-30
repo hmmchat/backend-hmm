@@ -313,9 +313,14 @@ export class StreamingController {
    * GET /streaming/rooms/:roomId/chat
    */
   @Get("rooms/:roomId/chat")
-  async getChatHistory(@Param("roomId") roomId: string) {
+  async getChatHistory(
+    @Param("roomId") roomId: string,
+    @Query("limit") limitStr?: string
+  ) {
     try {
-      return await this.chatService.getChatHistory(roomId);
+      const parsed = parseInt(limitStr ?? "50", 10);
+      const limit = Math.min(Math.max(Number.isFinite(parsed) ? parsed : 50, 1), 50);
+      return await this.chatService.getChatHistory(roomId, limit);
     } catch (error: any) {
       if (error.message?.includes("not found")) {
         throw new BadRequestException(`Room ${roomId} not found`);

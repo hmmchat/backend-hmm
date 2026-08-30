@@ -28,7 +28,7 @@ export class ChatService {
 
   constructor(private readonly prisma: PrismaService) {
     this.maxMessageLength = parseInt(process.env.CHAT_MAX_MESSAGE_LENGTH || "1000", 10);
-    this.historyMemoryLimit = parseInt(process.env.CHAT_HISTORY_MEMORY_LIMIT || "100", 10);
+    this.historyMemoryLimit = parseInt(process.env.CHAT_HISTORY_MEMORY_LIMIT || "50", 10);
     this.historyDefaultLimit = parseInt(process.env.CHAT_HISTORY_DEFAULT_LIMIT || "50", 10);
   }
 
@@ -140,31 +140,27 @@ export class ChatService {
    * Get chat history for a room
    */
   async getChatHistory(roomId: string, limit?: number): Promise<ChatMessage[]> {
-    const takeLimit = limit ?? this.historyDefaultLimit;
+    const cap = this.historyDefaultLimit;
+    const takeLimit = Math.min(Math.max(limit ?? cap, 1), cap);
     const room = await this.prisma.callSession.findUnique({
       where: { roomId },
     });
 
     if (!room) {
-      return []; // Return empty array instead of throwing error
+      return [];
     }
 
-    // Try to get from memory first
-    const cachedMessages = this.messageHistory.get(roomId);
-    if (cachedMessages && cachedMessages.length >= takeLimit) {
-      return cachedMessages.slice(-takeLimit);
-    }
-
-    // Otherwise, fetch from database
+    // Room-level last-N from DB so history exists even with no current viewers.
     const messageRecords = await this.prisma.callMessage.findMany({
       where: {
         sessionId: room.id,
       },
       orderBy: {
-        createdAt: "asc",
+        createdAt: "desc",
       },
       take: takeLimit,
     });
+    messageRecords.reverse();
 
     const messages: ChatMessage[] = messageRecords.map((msg) => ({
       id: msg.id,
@@ -185,7 +181,6 @@ export class ChatService {
       createdAt: msg.createdAt,
     }));
 
-    // Cache in memory
     this.messageHistory.set(roomId, messages);
 
     return messages;

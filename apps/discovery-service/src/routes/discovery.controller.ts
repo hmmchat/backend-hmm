@@ -287,7 +287,7 @@ export class DiscoveryController {
 
   /**
    * Env-driven discovery UI knobs (handoff countdown, available-cities poll,
-   * matchmaking raincheck unlock seconds).
+   * matchmaking raincheck unlock, Meet rn waiting cancel unlock).
    * GET /discovery/ui-config
    */
   @Get("ui-config")

@@ -165,6 +165,11 @@ export type DiscoveryUiConfig = {
    * (grey wipe unlock). Offline cards are unaffected. 0 = unlocked immediately.
    */
   raincheckUnlockSeconds: number;
+  /**
+   * Seconds before the Meet rn "Waiting for response" cancel (X) appears.
+   * 0 = visible immediately.
+   */
+  meetRnCancelUnlockSeconds: number;
 };
 
 interface CardResponse {
@@ -1757,6 +1762,7 @@ export class DiscoveryService implements OnModuleInit {
       10
     );
     const raincheckUnlock = parseInt(process.env.RAINCHECK_UNLOCK_SECONDS || "3", 10);
+    const meetRnCancelUnlock = parseInt(process.env.MEET_RN_CANCEL_UNLOCK_SECONDS || "10", 10);
     return {
       cityHandoffCountdownSeconds: Number.isFinite(countdown) && countdown > 0 ? countdown : 10,
       cityHandoffValidityPollMs:
@@ -1764,7 +1770,9 @@ export class DiscoveryService implements OnModuleInit {
       availableCitiesPollMs:
         Number.isFinite(boxesEmptyMs) && boxesEmptyMs >= 1000 ? boxesEmptyMs : 5000,
       raincheckUnlockSeconds:
-        Number.isFinite(raincheckUnlock) && raincheckUnlock >= 0 ? raincheckUnlock : 3
+        Number.isFinite(raincheckUnlock) && raincheckUnlock >= 0 ? raincheckUnlock : 3,
+      meetRnCancelUnlockSeconds:
+        Number.isFinite(meetRnCancelUnlock) && meetRnCancelUnlock >= 0 ? meetRnCancelUnlock : 10
     };
   }
 

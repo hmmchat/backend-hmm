@@ -160,6 +160,11 @@ export type DiscoveryUiConfig = {
   cityHandoffValidityPollMs: number;
   /** Poll on city boxes / empty orbit screens. */
   availableCitiesPollMs: number;
+  /**
+   * Seconds a matchmaking face-card Raincheck button stays locked
+   * (grey wipe unlock). Offline cards are unaffected. 0 = unlocked immediately.
+   */
+  raincheckUnlockSeconds: number;
 };
 
 interface CardResponse {
@@ -1751,12 +1756,15 @@ export class DiscoveryService implements OnModuleInit {
       process.env.DISCOVERY_AVAILABLE_CITIES_POLL_MS || "5000",
       10
     );
+    const raincheckUnlock = parseInt(process.env.RAINCHECK_UNLOCK_SECONDS || "3", 10);
     return {
       cityHandoffCountdownSeconds: Number.isFinite(countdown) && countdown > 0 ? countdown : 10,
       cityHandoffValidityPollMs:
         Number.isFinite(handoffValidityMs) && handoffValidityMs >= 1000 ? handoffValidityMs : 3000,
       availableCitiesPollMs:
-        Number.isFinite(boxesEmptyMs) && boxesEmptyMs >= 1000 ? boxesEmptyMs : 5000
+        Number.isFinite(boxesEmptyMs) && boxesEmptyMs >= 1000 ? boxesEmptyMs : 5000,
+      raincheckUnlockSeconds:
+        Number.isFinite(raincheckUnlock) && raincheckUnlock >= 0 ? raincheckUnlock : 3
     };
   }
 

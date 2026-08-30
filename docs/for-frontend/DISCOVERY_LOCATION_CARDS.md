@@ -36,7 +36,7 @@ A city is **showable** only if someone would actually appear on *your* discovery
 | `cityBoxes` | Handoff cancelled or handoff city went invalid | 0–3 name-only city boxes (tap → session hop) |
 | `emptyOrbit` | Nowhere showable | `Empty orbit. Hang here; someone always beams in.` + quiet poll |
 
-Countdown default **10s** (`CITY_HANDOFF_COUNTDOWN_SECONDS`). Empty/boxes poll default **5s** (`DISCOVERY_AVAILABLE_CITIES_POLL_MS`). Both also exposed via `GET /v1/discovery/ui-config` and embedded on `available-cities`.
+Countdown default **10s** (`CITY_HANDOFF_COUNTDOWN_SECONDS`). Empty/boxes poll default **5s** (`DISCOVERY_AVAILABLE_CITIES_POLL_MS`). Matchmaking Raincheck unlock default **3s** (`RAINCHECK_UNLOCK_SECONDS`). All exposed via `GET /v1/discovery/ui-config` and embedded on `available-cities`.
 
 ### 1.4 `persistPreference` on location accept
 
@@ -83,8 +83,8 @@ Used only on **`POST /v1/discovery/select-location`**:
 | --- | --- | --- |
 | GET | `/v1/discovery/my-room` | Auth required. Redis room assignment after mutual Meet rn (`roomId`, `sessionId`, `hasRoom`). Waiting clients should poll this first. |
 | GET | `/v1/discovery/card` | Query: `sessionId`, `soloOnly`. User card, LOCATION handoff, or `{ card: null, exhausted: true }`. |
-| GET | `/v1/discovery/available-cities` | Query: `sessionId`, `limit` (1–50, default 3), `soloOnly`, optional `excludeCity`. Returns `{ cities: [{ city, label, intent, faceCardImageUrl, availableCount }], ui: { cityHandoffCountdownSeconds, availableCitiesPollMs } }`. Cities are showable-for-you, intent required, ordered by count desc. |
-| GET | `/v1/discovery/ui-config` | `{ ok, cityHandoffCountdownSeconds, availableCitiesPollMs }` from env. |
+| GET | `/v1/discovery/available-cities` | Query: `sessionId`, `limit` (1–50, default 3), `soloOnly`, optional `excludeCity`. Returns `{ cities: [{ city, label, intent, faceCardImageUrl, availableCount }], ui: { cityHandoffCountdownSeconds, availableCitiesPollMs, raincheckUnlockSeconds } }`. Cities are showable-for-you, intent required, ordered by count desc. |
+| GET | `/v1/discovery/ui-config` | `{ ok, cityHandoffCountdownSeconds, availableCitiesPollMs, raincheckUnlockSeconds }` from env. |
 | POST | `/v1/discovery/raincheck` | User pass only. |
 | POST | `/v1/discovery/select-location` | Session (or profile) city hop. Prefer `persistPreference: false` for handoff/boxes. |
 | POST | `/v1/discovery/proceed` | Meet rn (user cards). |
@@ -125,6 +125,7 @@ Used only on **`POST /v1/discovery/select-location`**:
 | `CITY_HANDOFF_COUNTDOWN_SECONDS` | `10` | Auto-advance into next city |
 | `CITY_HANDOFF_VALIDITY_POLL_MS` | `3000` | Poll while countdown is active (abort if city empties) |
 | `DISCOVERY_AVAILABLE_CITIES_POLL_MS` | `5000` | Poll on city boxes / empty orbit |
+| `RAINCHECK_UNLOCK_SECONDS` | `3` | Matchmaking face-card Raincheck lock (grey wipe). Offline cards unaffected. `0` = immediate |
 
 **Stability rules**
 

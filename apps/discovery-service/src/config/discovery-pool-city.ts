@@ -67,3 +67,22 @@ export function shouldOfferAutoCityHandoff(
   if (!destNorm || destNorm === home) return false;
   return home.localeCompare(destNorm) > 0;
 }
+
+/**
+ * Rank cities for empty-pool LOCATION handoff / available-city boxes.
+ * Immobile pull-stranger / beamcast hosts are the reason to hop — they
+ * outrank raw population so an empty home city lands on that host (C sees A).
+ */
+export function rankShowableCities<T extends { availableCount: number; immobileCount?: number; label?: string; city?: string }>(
+  cities: T[]
+): T[] {
+  return [...cities].sort((a, b) => {
+    const aImm = (a.immobileCount ?? 0) > 0 ? 1 : 0;
+    const bImm = (b.immobileCount ?? 0) > 0 ? 1 : 0;
+    if (bImm !== aImm) return bImm - aImm;
+    if (b.availableCount !== a.availableCount) return b.availableCount - a.availableCount;
+    const aLabel = a.label || a.city || "";
+    const bLabel = b.label || b.city || "";
+    return aLabel.localeCompare(bLabel);
+  });
+}

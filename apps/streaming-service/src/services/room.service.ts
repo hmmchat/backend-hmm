@@ -1460,6 +1460,77 @@ export class RoomService {
     return activeHostIds.includes(visibleHostId) ? visibleHostId : fallbackUserId;
   }
 
+  /**
+   * Write in-call discovery statuses from the *current* session row.
+   * Re-reads pullStrangerEnabled / isBroadcasting so an in-flight broadcast
+   * start or stop cannot wipe a pull-stranger promote (or the reverse).
+   *
+   * Pull-stranger host: IN_BROADCAST_AVAILABLE while casting, IN_SQUAD_AVAILABLE
+   * after beamcast stops — both stay in the matchmaking pool.
+   * Everyone else: IN_BROADCAST / IN_SQUAD to match the room.
+   */
+  private async applyCallVisibilityStatuses(
+    args: {
+      sessionId: string;
+      roomId: string;
+      fallbackHostUserId: string;
+      participants: Array<{ userId: string; role: string }>;
+    },
+    depth = 0
+  ): Promise<void> {
+    const latest = await this.prisma.callSession.findUnique({
+      where: { id: args.sessionId },
+      select: { pullStrangerEnabled: true, isBroadcasting: true }
+    });
+    if (!latest) {
+      return;
+    }
+
+    const participantUserIds = args.participants.map((p) => p.userId);
+    if (participantUserIds.length === 0) {
+      return;
+    }
+
+    if (latest.pullStrangerEnabled) {
+      const activeHostIds = args.participants
+        .filter((p) => p.role === "HOST")
+        .map((p) => p.userId);
+      const visibleHostId = await this.getPullStrangerLoopVisibleHost(
+        args.sessionId,
+        activeHostIds,
+        args.fallbackHostUserId
+      );
+      await this.syncPullStrangerVisibilityStatuses(
+        participantUserIds,
+        visibleHostId,
+        Boolean(latest.isBroadcasting)
+      );
+      this.logger.log(
+        `Call visibility for ${args.roomId}: pull-stranger live, ` +
+          `visibleHost=${visibleHostId}->${
+            latest.isBroadcasting ? "IN_BROADCAST_AVAILABLE" : "IN_SQUAD_AVAILABLE"
+          }`
+      );
+    } else {
+      const rest = latest.isBroadcasting ? "IN_BROADCAST" : "IN_SQUAD";
+      await this.discoveryClient.updateUserStatuses(participantUserIds, rest);
+      this.logger.log(`Call visibility for ${args.roomId}: all -> ${rest}`);
+    }
+
+    const after = await this.prisma.callSession.findUnique({
+      where: { id: args.sessionId },
+      select: { pullStrangerEnabled: true, isBroadcasting: true }
+    });
+    if (
+      depth < 1 &&
+      after &&
+      (after.pullStrangerEnabled !== latest.pullStrangerEnabled ||
+        after.isBroadcasting !== latest.isBroadcasting)
+    ) {
+      await this.applyCallVisibilityStatuses(args, depth + 1);
+    }
+  }
+
   private async syncPullStrangerVisibilityStatuses(
     participantUserIds: string[],
     visibleInDiscoveryUserId: string,
@@ -1553,48 +1624,27 @@ export class RoomService {
     });
     const participantUserIds = participants.map((p) => p.userId);
 
-    // Await status sync so a later pull-stranger promote cannot be overwritten by a
-    // delayed fire-and-forget IN_BROADCAST write.
+    // Everyone goes IN_BROADCAST first (discovery notify). Then re-read the
+    // session: pull-stranger may have been enabled while this call was in flight.
     try {
       await this.discoveryClient.notifyBroadcastStarted(roomId, participantUserIds);
     } catch (err: any) {
       this.logger.error(`Failed to notify discovery-service: ${err?.message || err}`);
     }
 
-    if (session.pullStrangerEnabled) {
-      // Pull-stranger is already live: keep the visible host discoverable as
-      // IN_BROADCAST_AVAILABLE instead of wiping everyone to IN_BROADCAST.
-      const activeHostIds = participants
-        .filter((p) => p.role === "HOST")
-        .map((p) => p.userId);
-      const visibleHostId = await this.getPullStrangerLoopVisibleHost(
-        session.id,
-        activeHostIds,
-        userId
+    try {
+      await this.applyCallVisibilityStatuses({
+        sessionId: session.id,
+        roomId,
+        fallbackHostUserId: userId,
+        participants
+      });
+    } catch (err: any) {
+      this.logger.error(
+        `Failed to apply call visibility after broadcast start: ${err?.message || err}`
       );
-      try {
-        await this.syncPullStrangerVisibilityStatuses(
-          participantUserIds,
-          visibleHostId,
-          true
-        );
-      } catch (err: any) {
-        this.logger.error(
-          `Failed to preserve pull-stranger visibility after broadcast start: ${err?.message || err}`
-        );
-      }
-      this.logger.log(
-        `Broadcasting enabled for room ${roomId} by HOST ${userId} ` +
-          `(pull-stranger active; visibleHost=${visibleHostId}->IN_BROADCAST_AVAILABLE)`
-      );
-    } else {
-      try {
-        await this.discoveryClient.updateUserStatuses(participantUserIds, "IN_BROADCAST");
-      } catch (err: any) {
-        this.logger.error(`Failed to update user statuses: ${err?.message || err}`);
-      }
-      this.logger.log(`Broadcasting enabled for room ${roomId} by HOST ${userId}`);
     }
+    this.logger.log(`Broadcasting enabled for room ${roomId} by HOST ${userId}`);
 
     // Coin mining: switch participants from video-call → broadcast bucket
     this.coinMining.startMany(participantUserIds, "BROADCAST", {
@@ -1649,7 +1699,7 @@ export class RoomService {
         status: "active",
         leftAt: null
       },
-      select: { userId: true }
+      select: { userId: true, role: true }
     });
     const participantUserIds = participants.map((p) => p.userId);
 
@@ -1672,11 +1722,20 @@ export class RoomService {
       }
     });
 
-    // BUSINESS RULE: When broadcast stops, participant status changes back to IN_SQUAD
-    // Update user statuses from IN_BROADCAST → IN_SQUAD
-    this.discoveryClient.updateUserStatuses(participantUserIds, "IN_SQUAD").catch((err) => {
-      this.logger.error(`Failed to update user statuses: ${err.message}`);
-    });
+    // Beamcast off: IN_SQUAD, unless pull-stranger is still live — then the
+    // visible host stays in the deck as IN_SQUAD_AVAILABLE.
+    try {
+      await this.applyCallVisibilityStatuses({
+        sessionId: session.id,
+        roomId,
+        fallbackHostUserId: userId,
+        participants
+      });
+    } catch (err: any) {
+      this.logger.error(
+        `Failed to apply call visibility after broadcast stop: ${err?.message || err}`
+      );
+    }
 
     // Capture active viewers before marking them left (for mining stop + status)
     const activeViewers = await this.prisma.callViewer.findMany({

@@ -5,6 +5,7 @@ import {
   sameDiscoveryPoolCity,
   shouldOfferAutoCityHandoff,
   countImmobileDiscoveryUsers,
+  rankShowableCities,
   SESSION_DISCOVERY_POOL_ANYWHERE
 } from "../src/config/discovery-pool-city.js";
 
@@ -96,4 +97,15 @@ test("shouldOfferAutoCityHandoff - immobile pull-stranger host is always visitab
     }),
     false,
   );
+});
+
+test("rankShowableCities - immobile host city outranks a fuller solo city", () => {
+  const ranked = rankShowableCities([
+    { city: "Bangalore", label: "Bangalore", availableCount: 5, immobileCount: 0 },
+    { city: "Mumbai", label: "Mumbai", availableCount: 1, immobileCount: 1 },
+    { city: "Pune", label: "Pune", availableCount: 3, immobileCount: 0 },
+  ]);
+  assert.equal(ranked[0].city, "Mumbai");
+  assert.equal(ranked[1].city, "Bangalore");
+  assert.equal(ranked[2].city, "Pune");
 });

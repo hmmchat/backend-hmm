@@ -17,6 +17,7 @@ import {
 } from "../config/scoring.config.js";
 import { DISCOVERY_POOL_LIMIT } from "../config/limits.config.js";
 import { DISCOVERY_MATCHMAKING_STATUSES } from "../config/discovery-pool-filters.js";
+import { IMMOBILE_DISCOVERY_STATUSES } from "../config/discovery-pool-city.js";
 import fetch from "node-fetch";
 import { isPreferredCityAnywhere } from "@hmm/common";
 import { resolveAcceptanceTimeoutStatus } from "../status/status-rules.js";
@@ -494,8 +495,14 @@ export class MatchingService {
     const scoredPairs = await Promise.all(scorePromises);
     console.log(`[DEBUG] findMatchForUser for ${userId} - calculated ${scoredPairs.length} scored pairs`);
 
-    // Sort by score (descending)
-    scoredPairs.sort((a, b) => b.score - a.score);
+    // Immobile pull-stranger / beamcast hosts first, then score.
+    // Empty-city handoff exists so C lands on A, not a higher-scoring solo in that city.
+    scoredPairs.sort((a, b) => {
+      const aImm = IMMOBILE_DISCOVERY_STATUSES.has(String(a.user.status || "")) ? 1 : 0;
+      const bImm = IMMOBILE_DISCOVERY_STATUSES.has(String(b.user.status || "")) ? 1 : 0;
+      if (bImm !== aImm) return bImm - aImm;
+      return b.score - a.score;
+    });
 
     // Find best available match.
     // Use atomic createMatch() to enforce one-active-match-per-user at write time,

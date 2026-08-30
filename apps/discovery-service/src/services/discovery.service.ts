@@ -46,7 +46,8 @@ import { getMatchmakingProfileGap, isPreferredCityAnywhere, PREFERRED_CITY_ANYWH
 import {
   SESSION_DISCOVERY_POOL_ANYWHERE as SESSION_POOL_ANYWHERE,
   countImmobileDiscoveryUsers,
-  shouldOfferAutoCityHandoff
+  shouldOfferAutoCityHandoff,
+  rankShowableCities
 } from "../config/discovery-pool-city.js";
 import { HostedEmbeddingAdapter } from "./embedding-adapters/hosted.adapter.js";
 import {
@@ -1050,7 +1051,16 @@ export class DiscoveryService implements OnModuleInit {
       score: this.calculateMatchScore(currentUser, user)
     }));
 
-    // Sort by score (descending)
+    const immobile = scored.filter(
+      (item) =>
+        item.user.status === "IN_SQUAD_AVAILABLE" ||
+        item.user.status === "IN_BROADCAST_AVAILABLE"
+    );
+    if (immobile.length > 0) {
+      immobile.sort((a, b) => b.score - a.score);
+      return immobile[0].user;
+    }
+
     scored.sort((a, b) => b.score - a.score);
 
     // Group by score and randomize within same score groups
@@ -1084,7 +1094,20 @@ export class DiscoveryService implements OnModuleInit {
     const scoredCandidates = candidates.map(candidate => ({
       candidate,
       score: this.calculateMatchScore(currentUser, candidate)
-    })).sort((a, b) => b.score - a.score);
+    })).sort((a, b) => {
+      const aImm =
+        a.candidate.status === "IN_SQUAD_AVAILABLE" ||
+        a.candidate.status === "IN_BROADCAST_AVAILABLE"
+          ? 1
+          : 0;
+      const bImm =
+        b.candidate.status === "IN_SQUAD_AVAILABLE" ||
+        b.candidate.status === "IN_BROADCAST_AVAILABLE"
+          ? 1
+          : 0;
+      if (bImm !== aImm) return bImm - aImm;
+      return b.score - a.score;
+    });
 
     const errors: any[] = [];
 
@@ -1907,10 +1930,7 @@ export class DiscoveryService implements OnModuleInit {
       })
     );
 
-    return scored
-      .filter((c) => c.availableCount > 0)
-      .sort((a, b) => b.availableCount - a.availableCount || a.label.localeCompare(b.label))
-      .slice(0, args.limit);
+    return rankShowableCities(scored.filter((c) => c.availableCount > 0)).slice(0, args.limit);
   }
 
   /**

@@ -126,7 +126,7 @@ interface Card {
 
 interface LocationCard {
   type: "LOCATION";
-  city: string | null; // null means "Anywhere" (legacy; handoff uses specific cities only)
+  city: string | null; // specific city or ANYWHERE_IN_INDIA (treated as a handoff dest)
   country?: string;
   state?: string;
   availableCount: number;
@@ -1888,14 +1888,34 @@ export class DiscoveryService implements OnModuleInit {
         .map((c) => String(c).toLowerCase())
     );
     const statuses = this.discoveryPoolStatuses();
+    const anywhereExcluded =
+      excludeLower.has(PREFERRED_CITY_ANYWHERE_IN_INDIA.toLowerCase()) ||
+      excludeLower.has("*");
 
     const candidates = catalog.filter((row) => {
+      const isAnywhere = row.value === PREFERRED_CITY_ANYWHERE_IN_INDIA;
       const intent = (row.intent || "").trim();
-      if (!intent) return false;
-      if (row.value === PREFERRED_CITY_ANYWHERE_IN_INDIA) return false;
+      // Anywhere is a handoff dest even without catalog intent (built-in option).
+      if (!isAnywhere && !intent) return false;
       if (excludeLower.has(row.value.toLowerCase())) return false;
+      if (isAnywhere && anywhereExcluded) return false;
       return true;
     });
+
+    if (
+      !anywhereExcluded &&
+      !candidates.some((row) => row.value === PREFERRED_CITY_ANYWHERE_IN_INDIA)
+    ) {
+      const catalogAnywhere = catalog.find((row) => row.value === PREFERRED_CITY_ANYWHERE_IN_INDIA);
+      candidates.push({
+        value: PREFERRED_CITY_ANYWHERE_IN_INDIA,
+        label: catalogAnywhere?.label || "Anywhere in India",
+        intent: (catalogAnywhere?.intent || "").trim() || "Anywhere in India",
+        faceCardImageUrl: catalogAnywhere?.faceCardImageUrl ?? null,
+        brands: catalogAnywhere?.brands || [],
+        musicPreference: catalogAnywhere?.musicPreference || null
+      });
+    }
 
     const scored = await Promise.all(
       candidates.map(async (row) => {
@@ -1920,7 +1940,9 @@ export class DiscoveryService implements OnModuleInit {
         return {
           city: row.value,
           label: row.label || row.value,
-          intent: (row.intent || "").trim(),
+          intent:
+            (row.intent || "").trim() ||
+            (row.value === PREFERRED_CITY_ANYWHERE_IN_INDIA ? "Anywhere in India" : ""),
           faceCardImageUrl: row.faceCardImageUrl ?? null,
           availableCount: users.length,
           immobileCount: countImmobileDiscoveryUsers(users),

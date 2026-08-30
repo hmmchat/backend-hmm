@@ -49,6 +49,8 @@ export function countImmobileDiscoveryUsers(
  *
  * - Destination with immobile hosts: always allow.
  * - Destination with >1 showable users: always allow (stable pool).
+ * - Anywhere dest (ANYWHERE_IN_INDIA): treat as a real city — city-scoped
+ *   visitors hop; already-Anywhere searchers do not re-hop here.
  * - Singleton mobile destination: allow only if homeCity > destCity.
  * - Anywhere / null home: always allow.
  *
@@ -64,7 +66,9 @@ export function shouldOfferAutoCityHandoff(
   if ((dest.immobileCount ?? 0) > 0) return true;
   if (dest.availableCount > 1) return true;
   const destNorm = normalizeDiscoveryPoolCity(dest.city);
-  if (!destNorm || destNorm === home) return false;
+  // Anywhere is a real handoff destination (Delhi empty + Anywhere pull-stranger host).
+  if (!destNorm) return destNorm !== home;
+  if (destNorm === home) return false;
   return home.localeCompare(destNorm) > 0;
 }
 

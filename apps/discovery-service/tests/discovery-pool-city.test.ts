@@ -99,6 +99,33 @@ test("shouldOfferAutoCityHandoff - immobile pull-stranger host is always visitab
   );
 });
 
+test("shouldOfferAutoCityHandoff - Anywhere dest is a real city hop", () => {
+  assert.equal(
+    shouldOfferAutoCityHandoff("Jamshedpur", {
+      city: "ANYWHERE_IN_INDIA",
+      availableCount: 1,
+      immobileCount: 1,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldOfferAutoCityHandoff("Delhi", {
+      city: "ANYWHERE_IN_INDIA",
+      availableCount: 1,
+      immobileCount: 0,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldOfferAutoCityHandoff("ANYWHERE_IN_INDIA", {
+      city: "ANYWHERE_IN_INDIA",
+      availableCount: 1,
+      immobileCount: 1,
+    }),
+    true,
+  );
+});
+
 test("rankShowableCities - immobile host city outranks a fuller solo city", () => {
   const ranked = rankShowableCities([
     { city: "Bangalore", label: "Bangalore", availableCount: 5, immobileCount: 0 },

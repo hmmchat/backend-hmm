@@ -22,6 +22,7 @@ import {
   CreateProfileDto,
   UpdateProfileDto,
   CreatePhotoDto,
+  SwapPhotosDto,
   UpdateBrandPreferencesDto,
   UpdateInterestsDto,
   UpdateValuesDto,
@@ -1151,11 +1152,11 @@ export class UserService implements OnModuleInit {
   }
 
   /**
-   * Swap two facecard photo slots (0 = DP, 1–2 = gallery).
+   * Swap two facecard photo slots (0 = DP / photo 1, 1–2 = gallery photos 2–3).
    * Any URL moving into the display-picture slot is re-checked with purpose=display
    * so gallery object photos cannot become the DP via rearrange.
    */
-  async swapPhotos(accessToken: string, data: { slotA: number; slotB: number }) {
+  async swapPhotos(accessToken: string, data: SwapPhotosDto) {
     const userId = await this.verifyAccessToken(accessToken);
     const { slotA, slotB } = data;
 
@@ -1186,8 +1187,30 @@ export class UserService implements OnModuleInit {
 
     const newDpUrl =
       slotA === 0 ? urlB : slotB === 0 ? urlA : null;
+    const incomingDpFromSlot = slotA === 0 ? slotB : slotB === 0 ? slotA : null;
     if (newDpUrl && newDpUrl !== user.displayPictureUrl) {
-      await this.moderationClient.checkImage(newDpUrl, "display");
+      try {
+        await this.moderationClient.checkImage(newDpUrl, "display");
+      } catch (error) {
+        if (error instanceof HttpException && error.getStatus() === HttpStatus.BAD_REQUEST) {
+          const response = error.getResponse();
+          const detail =
+            typeof response === "string"
+              ? response
+              : Array.isArray((response as any)?.message)
+                ? (response as any).message.filter(Boolean).join(" ")
+                : typeof (response as any)?.message === "string"
+                  ? (response as any).message
+                  : "This photo does not meet main photo requirements.";
+          const fromLabel =
+            incomingDpFromSlot != null ? `photo ${incomingDpFromSlot + 1}` : "that photo";
+          throw new HttpException(
+            `Can't move ${fromLabel} to photo 1 (main photo): ${detail}`,
+            HttpStatus.BAD_REQUEST
+          );
+        }
+        throw error;
+      }
     }
 
     await this.prisma.$transaction(async (tx) => {

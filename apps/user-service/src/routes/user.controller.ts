@@ -19,6 +19,7 @@ import {
   UpdateProfileSchema,
   CreatePhotoSchema,
   SwapPhotosSchema,
+  type SwapPhotosDto,
   UpdateBrandPreferencesSchema,
   UpdateInterestsSchema,
   UpdateValuesSchema,
@@ -204,7 +205,7 @@ export class UserController {
   async swapPhotos(@Headers("authorization") authz: string, @Body() body: any) {
     const token = this.getTokenFromHeader(authz);
     if (!token) throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
-    const dto = SwapPhotosSchema.parse(body);
+    const dto = SwapPhotosSchema.parse(body) as SwapPhotosDto;
     return this.userService.swapPhotos(token, dto);
   }
 

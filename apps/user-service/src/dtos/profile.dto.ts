@@ -87,12 +87,16 @@ export const CreatePhotoSchema = z.object({
 });
 
 /** Facecard slots: 0 = display picture, 1–2 = gallery orders 0–1. */
-export const SwapPhotosSchema = z.object({
+const SwapPhotosObjectSchema = z.object({
   slotA: z.number().int().min(0).max(2),
   slotB: z.number().int().min(0).max(2)
-}).refine((v) => v.slotA !== v.slotB, {
-  message: "slotA and slotB must be different"
 });
+export const SwapPhotosSchema = SwapPhotosObjectSchema.refine(
+  (v) => v.slotA !== v.slotB,
+  { message: "slotA and slotB must be different" }
+);
+/** Infer from the object schema — `.refine()` ZodEffects can widen fields to optional. */
+export type SwapPhotosDto = z.infer<typeof SwapPhotosObjectSchema>;
 
 // Preferences DTOs
 export const UpdateBrandPreferencesSchema = z.object({
@@ -149,7 +153,6 @@ export const CreateMusicPreferenceSchema = z.object({
 export type CreateProfileDto = z.infer<typeof CreateProfileSchema>;
 export type UpdateProfileDto = z.infer<typeof UpdateProfileSchema>;
 export type CreatePhotoDto = z.infer<typeof CreatePhotoSchema>;
-export type SwapPhotosDto = z.infer<typeof SwapPhotosSchema>;
 export type UpdateBrandPreferencesDto = z.infer<typeof UpdateBrandPreferencesSchema>;
 export type UpdateInterestsDto = z.infer<typeof UpdateInterestsSchema>;
 export type UpdateValuesDto = z.infer<typeof UpdateValuesSchema>;

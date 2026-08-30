@@ -1188,6 +1188,8 @@ export class UserService implements OnModuleInit {
     const newDpUrl =
       slotA === 0 ? urlB : slotB === 0 ? urlA : null;
     const incomingDpFromSlot = slotA === 0 ? slotB : slotB === 0 ? slotA : null;
+    // Always re-moderate when a gallery URL becomes the DP. Upload of that URL
+    // used gallery rules (objects OK); slot 1 requires display rules.
     if (newDpUrl && newDpUrl !== user.displayPictureUrl) {
       try {
         await this.moderationClient.checkImage(newDpUrl, "display");

@@ -220,10 +220,13 @@ export class ModerationService {
           : (data.faces?.length ?? 0);
 
     const faces: any[] = Array.isArray(data.faces) ? data.faces : [];
-    const isHuman = peopleCount >= 1 || faces.length >= 1;
+    // Prefer face detections over people_count. Product / object shots (e.g. a cap)
+    // often get a noisy people_count argmax of "1" with zero faces, which previously
+    // let them pass display (DP) moderation when swapped into slot 1.
+    const isHuman = faces.length >= 1;
 
     if (purpose === "display") {
-      if (!isHuman || peopleCountLabel === "0" || (peopleCount === 0 && faces.length === 0)) {
+      if (!isHuman) {
         failureReasons.push("Photo must clearly show a person. Objects-only images are not allowed.");
       } else {
         const prominentFaces = this.countProminentFaces(faces);

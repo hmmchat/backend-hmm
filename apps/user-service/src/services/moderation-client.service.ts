@@ -47,14 +47,25 @@ export class ModerationClientService {
    * Throws HttpException(400) with a frontend-ready message on rejection.
    *
    * @param purpose display = DP (person as main subject); gallery = groups/objects OK
+   *
+   * Display checks are never skipped: facecard slot 1 / swap-into-DP / profile DP
+   * must hit moderation-service even if SKIP_MODERATION_CHECK or non-production
+   * NODE_ENV would otherwise no-op. Gallery may still skip outside production.
+   * (Upload-time DP rejection lives in files-service; swap only goes through here —
+   * skipping display here is how object gallery photos used to become the DP.)
    */
   async checkImage(
     imageUrl: string,
     purpose: ModerationPurpose = "display"
   ): Promise<boolean> {
-    if (this.skipModeration) {
+    if (this.skipModeration && purpose !== "display") {
       console.log("Moderation check skipped (non-production or SKIP_MODERATION_CHECK)");
       return true;
+    }
+    if (this.skipModeration && purpose === "display") {
+      console.warn(
+        "Display moderation enforced despite SKIP_MODERATION_CHECK / non-production NODE_ENV"
+      );
     }
 
     try {

@@ -1049,6 +1049,12 @@ export class RoomService {
       }
     });
 
+    if (existingAnyParticipant && await this.wasForceRemovedFromSession(session.id, userId)) {
+      throw new BadRequestException(
+        `User ${userId} was removed from this room and cannot rejoin.`
+      );
+    }
+
     if (existingAnyParticipant) {
       await this.prisma.callParticipant.update({
         where: { id: existingAnyParticipant.id },
@@ -1197,9 +1203,54 @@ export class RoomService {
   }
 
   /**
+   * True when this user was kicked/removed from the session and must not rejoin
+   * via pull-stranger, waitlist, or addParticipant. Voluntary leavers are allowed back.
+   * Uses participant.status === "kicked" plus historical participant_kicked events
+   * (older kicks were stored as status "left").
+   */
+  private async wasForceRemovedFromSession(sessionId: string, userId: string): Promise<boolean> {
+    const participant = await this.prisma.callParticipant.findUnique({
+      where: {
+        sessionId_userId: {
+          sessionId,
+          userId
+        }
+      },
+      select: { status: true }
+    });
+    if (participant?.status === "kicked") {
+      return true;
+    }
+
+    const kickEvents = await this.prisma.callEvent.findMany({
+      where: {
+        sessionId,
+        eventType: "participant_kicked"
+      },
+      select: { metadata: true }
+    });
+    for (const event of kickEvents) {
+      if (!event.metadata) continue;
+      try {
+        const meta = JSON.parse(event.metadata) as { kickedUserId?: string };
+        if (meta.kickedUserId != null && String(meta.kickedUserId) === String(userId)) {
+          return true;
+        }
+      } catch {
+        // ignore malformed metadata
+      }
+    }
+    return false;
+  }
+
+  /**
    * @returns true if this user was an active call participant and was marked left (DB row updated).
    */
-  async removeParticipant(roomId: string, userId: string): Promise<boolean> {
+  async removeParticipant(
+    roomId: string,
+    userId: string,
+    options?: { status?: "left" | "kicked" }
+  ): Promise<boolean> {
     // Try to get room from memory, but continue even if not found (will update DB)
     let room: RoomState | null = null;
     let participant: ParticipantState | undefined;
@@ -1255,7 +1306,7 @@ export class RoomService {
       },
       data: {
         leftAt: new Date(),
-        status: "left"
+        status: options?.status === "kicked" ? "kicked" : "left"
       }
     });
 
@@ -1377,8 +1428,8 @@ export class RoomService {
       });
     }
 
-    // Remove the participant (this handles all cleanup)
-    await this.removeParticipant(roomId, targetUserId);
+    // Remove the participant (this handles all cleanup). Status "kicked" blocks rejoin.
+    await this.removeParticipant(roomId, targetUserId, { status: "kicked" });
 
     let pullStrangerReenabled = false;
     if (shouldReenablePullStranger) {
@@ -1987,9 +2038,9 @@ export class RoomService {
           id: true
         }
       });
-      if (previousParticipant) {
+      if (previousParticipant && await this.wasForceRemovedFromSession(session.id, joiningUserId)) {
         throw new BadRequestException(
-          `User ${joiningUserId} has already participated in this pull-stranger room and cannot rejoin as a replacement.`
+          `User ${joiningUserId} was removed from this room and cannot rejoin as a replacement.`
         );
       }
 
@@ -2138,16 +2189,28 @@ export class RoomService {
         previousStatus = "AVAILABLE";
       }
 
-      // Add joining user to room
-      await tx.callParticipant.create({
-        data: {
-          sessionId: session.id,
-          userId: joiningUserId,
-          role: "PARTICIPANT",
-          status: "active",
-          previousStatus
-        }
-      });
+      // Add joining user to room (reactivate a voluntary-leave row if one exists)
+      if (previousParticipant) {
+        await tx.callParticipant.update({
+          where: { id: previousParticipant.id },
+          data: {
+            role: "PARTICIPANT",
+            status: "active",
+            leftAt: null,
+            previousStatus
+          }
+        });
+      } else {
+        await tx.callParticipant.create({
+          data: {
+            sessionId: session.id,
+            userId: joiningUserId,
+            role: "PARTICIPANT",
+            status: "active",
+            previousStatus
+          }
+        });
+      }
 
       // Disable pull stranger mode (only 1 person can join per enable)
       await tx.callSession.update({
@@ -2284,10 +2347,13 @@ export class RoomService {
       return { eligible: false };
     }
 
-    // A user who already joined this session, even if kicked/left, must not see or rejoin
-    // the same pull-stranger call again. Replacement should come from a new stranger.
+    // Kicked/removed users must not see or rejoin this same pull-stranger call.
+    // Voluntary leavers (and accidental drops) remain eligible so they can find it again.
     if (session.participants.length > 0) {
-      return { eligible: false, roomId: session.roomId };
+      const blocked = await this.wasForceRemovedFromSession(session.id, joiningUserId);
+      if (blocked) {
+        return { eligible: false, roomId: session.roomId };
+      }
     }
 
     return { eligible: true, roomId: session.roomId };
@@ -2318,18 +2384,13 @@ export class RoomService {
       throw new BadRequestException("Room is not broadcasting");
     }
 
-    const priorParticipant = await this.prisma.callParticipant.findUnique({
-      where: {
-        sessionId_userId: {
-          sessionId: session.id,
-          userId
-        }
-      },
-      select: { id: true }
-    });
-    if (priorParticipant) {
+    if (session.participants.some((p) => String(p.userId) === String(userId))) {
+      throw new BadRequestException(`User ${userId} is already a participant in this room`);
+    }
+
+    if (await this.wasForceRemovedFromSession(session.id, userId)) {
       throw new BadRequestException(
-        `User ${userId} has already participated in this room and cannot rejoin the waitlist.`
+        `User ${userId} was removed from this room and cannot rejoin the waitlist.`
       );
     }
 
@@ -2341,12 +2402,6 @@ export class RoomService {
         }
       }
     });
-
-    if (existingWaitlist?.status === "accepted") {
-      throw new BadRequestException(
-        `User ${userId} has already been accepted from the waitlist for this room.`
-      );
-    }
 
     if (session.participants.length >= this.maxParticipants) {
       throw new BadRequestException(
@@ -2572,9 +2627,13 @@ export class RoomService {
         }
       }
     });
-    if (existingAnyParticipant && existingAnyParticipant.status !== "active") {
+    if (
+      existingAnyParticipant &&
+      existingAnyParticipant.status !== "active" &&
+      await this.wasForceRemovedFromSession(session.id, targetUserId)
+    ) {
       throw new BadRequestException(
-        `User ${targetUserId} has already participated in this room and cannot rejoin.`
+        `User ${targetUserId} was removed from this room and cannot rejoin.`
       );
     }
 

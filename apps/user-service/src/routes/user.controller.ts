@@ -18,6 +18,7 @@ import {
   CreateProfileSchema,
   UpdateProfileSchema,
   CreatePhotoSchema,
+  SwapPhotosSchema,
   UpdateBrandPreferencesSchema,
   UpdateInterestsSchema,
   UpdateValuesSchema,
@@ -193,6 +194,18 @@ export class UserController {
     if (!token) throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
     const dto = CreatePhotoSchema.parse(body);
     return this.userService.addPhoto(token, dto);
+  }
+
+  /**
+   * Swap two facecard photo slots (0 = DP, 1–2 = gallery).
+   * Re-runs display moderation when a gallery photo moves into the DP slot.
+   */
+  @Post("me/photos/swap")
+  async swapPhotos(@Headers("authorization") authz: string, @Body() body: any) {
+    const token = this.getTokenFromHeader(authz);
+    if (!token) throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
+    const dto = SwapPhotosSchema.parse(body);
+    return this.userService.swapPhotos(token, dto);
   }
 
   @Delete("me/photos/:photoId")

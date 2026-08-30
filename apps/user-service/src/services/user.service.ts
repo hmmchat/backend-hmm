@@ -14,7 +14,8 @@ import {
   canTransitionToOffline,
   canTransitionToOnline,
   rewriteExpiredStorageUrl,
-  isMatchmakingProfileComplete
+  isMatchmakingProfileComplete,
+  isPlaceholderDisplayPicture
 } from "@hmm/common";
 import { JWK } from "jose";
 import {
@@ -1147,6 +1148,100 @@ export class UserService implements OnModuleInit {
 
     this.triggerFaceCardMiningCheck(userId);
     return { ok: true };
+  }
+
+  /**
+   * Swap two facecard photo slots (0 = DP, 1–2 = gallery).
+   * Any URL moving into the display-picture slot is re-checked with purpose=display
+   * so gallery object photos cannot become the DP via rearrange.
+   */
+  async swapPhotos(accessToken: string, data: { slotA: number; slotB: number }) {
+    const userId = await this.verifyAccessToken(accessToken);
+    const { slotA, slotB } = data;
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { photos: { orderBy: { order: "asc" } } }
+    });
+    if (!user) {
+      throw new HttpException("User profile not found", HttpStatus.NOT_FOUND);
+    }
+
+    const slotUrl = (slot: number): string | null => {
+      if (slot === 0) {
+        const url = user.displayPictureUrl;
+        return url && !isPlaceholderDisplayPicture(url) ? url : null;
+      }
+      return user.photos.find((p) => p.order === slot - 1)?.url ?? null;
+    };
+
+    const urlA = slotUrl(slotA);
+    const urlB = slotUrl(slotB);
+    if (!urlA || !urlB) {
+      throw new HttpException(
+        "Photos can only be swapped with another photo.",
+        HttpStatus.BAD_REQUEST
+      );
+    }
+
+    const newDpUrl =
+      slotA === 0 ? urlB : slotB === 0 ? urlA : null;
+    if (newDpUrl && newDpUrl !== user.displayPictureUrl) {
+      await this.moderationClient.checkImage(newDpUrl, "display");
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      if (slotA === 0 || slotB === 0) {
+        const gallerySlot = slotA === 0 ? slotB : slotA;
+        const galleryOrder = gallerySlot - 1;
+        const oldDpUrl = slotA === 0 ? urlA : urlB;
+        const incomingDpUrl = slotA === 0 ? urlB : urlA;
+
+        await tx.user.update({
+          where: { id: userId },
+          data: { displayPictureUrl: incomingDpUrl }
+        });
+
+        await tx.userPhoto.upsert({
+          where: {
+            userId_order: {
+              userId,
+              order: galleryOrder
+            }
+          },
+          update: { url: oldDpUrl },
+          create: {
+            userId,
+            url: oldDpUrl,
+            order: galleryOrder
+          }
+        });
+        return;
+      }
+
+      const orderA = slotA - 1;
+      const orderB = slotB - 1;
+      await tx.userPhoto.update({
+        where: { userId_order: { userId, order: orderA } },
+        data: { url: urlB }
+      });
+      await tx.userPhoto.update({
+        where: { userId_order: { userId, order: orderB } },
+        data: { url: urlA }
+      });
+    });
+
+    this.triggerFaceCardMiningCheck(userId);
+
+    const updated = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { photos: { orderBy: { order: "asc" } } }
+    });
+
+    return {
+      displayPictureUrl: updated?.displayPictureUrl ?? null,
+      photos: updated?.photos ?? []
+    };
   }
 
   /* ---------- Music Preference ---------- */

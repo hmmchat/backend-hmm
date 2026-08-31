@@ -695,14 +695,16 @@ export class FriendService {
 
   /**
    * Non-friend messaging rules:
-   * - free_reply: other user messaged first and sender has not replied yet
+   * - inbox_free: both sides have messaged (two-sided → Inbox) — free text until friends
+   * - free_reply: other user messaged first and sender has not replied yet (promotes to Inbox)
    * - first_outbound_paid: sender's first outbound (10 coins or gift)
-   * - gift_required: sender already messaged this peer while not friends
+   * - gift_required: sender already messaged, peer has not replied yet (one-sided Sent)
    */
   private async getNonFriendMessagePolicy(
     fromUserId: string,
     toUserId: string
   ): Promise<
+    | { kind: "inbox_free" }
     | { kind: "free_reply" }
     | { kind: "first_outbound_paid"; cost: number }
     | { kind: "gift_required" }
@@ -717,6 +719,10 @@ export class FriendService {
       })
     ]);
 
+    // Two-sided non-friend thread lives in Inbox — free messaging; add-friend remains available.
+    if (outboundCount > 0 && inboundFromOther) {
+      return { kind: "inbox_free" };
+    }
     if (outboundCount > 0) {
       return { kind: "gift_required" };
     }
@@ -827,7 +833,7 @@ export class FriendService {
       await this.giftCatalog.validateGift(giftId, giftAmount);
     }
 
-    if (policy.kind === "free_reply") {
+    if (policy.kind === "free_reply" || policy.kind === "inbox_free") {
       return await this.sendMessageToInboxPeer(
         fromUserId,
         toUserId,
@@ -2206,11 +2212,20 @@ export class FriendService {
 
     const policy = await this.getNonFriendMessagePolicy(userId, otherUserId);
 
-    if (policy.kind === "free_reply") {
-      return await this.sendMessageToInboxPeer(userId, otherUserId, message, giftId, giftAmount, gif);
+    // Free reply (promotes to Inbox) or already two-sided Inbox — free text, not friends yet
+    if (policy.kind === "free_reply" || policy.kind === "inbox_free") {
+      return await this.sendMessageToInboxPeer(
+        userId,
+        otherUserId,
+        message,
+        giftId,
+        giftAmount,
+        gif,
+        policy.kind === "free_reply"
+      );
     }
 
-    // Paid first outbound or subsequent messages require the pending-request flow
+    // Paid first outbound or one-sided follow-ups require the pending-request flow
     const request = await this.prisma.friendRequest.findFirst({
       where: {
         OR: [

@@ -39,7 +39,10 @@ export class ConversationService {
       },
       select: { userId1: true, userId2: true }
     });
-    return rows.map((f) => (f.userId1 === userId ? f.userId2 : f.userId1));
+    const ids = rows.map((f) => (f.userId1 === userId ? f.userId2 : f.userId1));
+    if (ids.length === 0) return [];
+    const { validIds } = await this.userClient.validateUserIds(ids);
+    return validIds;
   }
 
   /**
@@ -562,62 +565,78 @@ export class ConversationService {
       unreadCounts.map(uc => [uc.conversationId, uc.count])
     );
 
+    // Drop hard-deleted / missing peers (dashboard purge) so they never show as "Unknown User".
+    const { validIds } = await this.userClient.validateUserIds(uniqueOtherUserIds);
+    const validPeerSet = new Set(validIds);
+    const livePeerIds = uniqueOtherUserIds.filter((id) => validPeerSet.has(id));
+
     const [userStatusMap, fullProfiles] = await Promise.all([
-      this.streamingClient.getUserStatuses(uniqueOtherUserIds),
-      Promise.all(uniqueOtherUserIds.map((id) => this.userClient.getUserProfile(id)))
+      this.streamingClient.getUserStatuses(livePeerIds),
+      Promise.all(livePeerIds.map((id) => this.userClient.getUserProfile(id)))
     ]);
     const profileMap = new Map(
-      uniqueOtherUserIds.map((id, i) => [id, fullProfiles[i]])
+      livePeerIds.map((id, i) => [id, fullProfiles[i]])
+    );
+    const missingPeerSet = new Set(
+      livePeerIds.filter((id, i) => fullProfiles[i]?.missing)
     );
 
-    // Build response
-    return conversations.map((conv) => {
-      const otherUserId = conv.userId1 === userId ? conv.userId2 : conv.userId1;
-      const [id1, id2] = [userId, otherUserId].sort();
-      const isFriend = friendshipSet.has(`${id1}_${id2}`);
-      const lastMessage = conv.lastMessageId
-        ? lastMessageMap.get(conv.lastMessageId)
-        : null;
-      const userStatus = userStatusMap.get(otherUserId) || {
-        status: "offline",
-        isBroadcasting: false,
-        roomId: null,
-        broadcastUrl: null
-      };
-      const profile = profileMap.get(otherUserId) || { username: "Unknown User", displayPictureUrl: null };
+    // Build response — skip conversations whose other user no longer exists
+    return conversations
+      .filter((conv) => {
+        const otherUserId = conv.userId1 === userId ? conv.userId2 : conv.userId1;
+        return validPeerSet.has(otherUserId) && !missingPeerSet.has(otherUserId);
+      })
+      .map((conv) => {
+        const otherUserId = conv.userId1 === userId ? conv.userId2 : conv.userId1;
+        const [id1, id2] = [userId, otherUserId].sort();
+        const isFriend = friendshipSet.has(`${id1}_${id2}`);
+        const lastMessage = conv.lastMessageId
+          ? lastMessageMap.get(conv.lastMessageId)
+          : null;
+        const userStatus = userStatusMap.get(otherUserId) || {
+          status: "offline",
+          isBroadcasting: false,
+          roomId: null,
+          broadcastUrl: null
+        };
+        const profile = profileMap.get(otherUserId) || {
+          username: null,
+          displayPictureUrl: null
+        };
 
-      return {
-        id: conv.id,
-        conversationId: conv.id, // Support both formats
-        otherUserId,
-        otherUser: {
-          id: otherUserId,
-          username: profile.username || "Unknown User",
-          displayPictureUrl: profile.displayPictureUrl || null
-        },
-        section: conv.section,
-        lastMessage: lastMessage
-          ? {
-            id: lastMessage.id,
-            fromUserId: lastMessage.fromUserId,
-            message: lastMessage.message,
-            messageType: lastMessage.messageType,
-            giftId: lastMessage.giftId,
-            giftAmount: lastMessage.giftAmount,
-            squadMeta: lastMessage.squadMeta ?? null,
-            createdAt: lastMessage.createdAt
-          }
-          : null,
-        unreadCount: unreadCountMap.get(conv.id) || 0,
-        isFriend,
-        userStatus: userStatus.status,
-        isBroadcasting: userStatus.isBroadcasting,
-        broadcastRoomId: userStatus.roomId,
-        broadcastUrl: userStatus.broadcastUrl,
-        lastMessageAt: conv.lastMessageAt,
-        createdAt: conv.createdAt
-      };
-    });
+        return {
+          id: conv.id,
+          conversationId: conv.id, // Support both formats
+          otherUserId,
+          otherUser: {
+            id: otherUserId,
+            username: profile.username || "User",
+            displayPictureUrl: profile.displayPictureUrl || null
+          },
+          section: conv.section,
+          lastMessage: lastMessage
+            ? {
+              id: lastMessage.id,
+              fromUserId: lastMessage.fromUserId,
+              message: lastMessage.message,
+              messageType: lastMessage.messageType,
+              giftId: lastMessage.giftId,
+              giftAmount: lastMessage.giftAmount,
+              squadMeta: lastMessage.squadMeta ?? null,
+              createdAt: lastMessage.createdAt
+            }
+            : null,
+          unreadCount: unreadCountMap.get(conv.id) || 0,
+          isFriend,
+          userStatus: userStatus.status,
+          isBroadcasting: userStatus.isBroadcasting,
+          broadcastRoomId: userStatus.roomId,
+          broadcastUrl: userStatus.broadcastUrl,
+          lastMessageAt: conv.lastMessageAt,
+          createdAt: conv.createdAt
+        };
+      });
   }
 
   /**
@@ -751,11 +770,26 @@ export class ConversationService {
       };
     }
 
-    // Get unique other user IDs
+    // Get unique other user IDs — omit hard-deleted peers
     const uniqueOtherUserIds = [...new Set(requestsWithoutMessages.map(r => r.otherUserId))];
+    const { validIds: validFollowPeerIds } =
+      await this.userClient.validateUserIds(uniqueOtherUserIds);
+    const validFollowPeerSet = new Set(validFollowPeerIds);
+    const liveFollowRequests = requestsWithoutMessages.filter((r) =>
+      validFollowPeerSet.has(r.otherUserId)
+    );
+    const liveFollowPeerIds = [...new Set(liveFollowRequests.map((r) => r.otherUserId))];
+
+    if (liveFollowRequests.length === 0) {
+      return {
+        conversations: [],
+        nextCursor: hasMore ? `follow_${resultRequests[resultRequests.length - 1].id}` : undefined,
+        hasMore
+      };
+    }
 
     // Batch fetch friendships - use a single query with OR conditions
-    const friendshipPairs = requestsWithoutMessages.map(({ id1, id2 }) => ({ id1, id2 }));
+    const friendshipPairs = liveFollowRequests.map(({ id1, id2 }) => ({ id1, id2 }));
     const uniquePairs = Array.from(
       new Map(friendshipPairs.map(p => [`${p.id1}_${p.id2}`, p])).values()
     );
@@ -780,11 +814,11 @@ export class ConversationService {
     );
 
     const userStatusMap = await this.streamingClient
-      .getUserStatuses(uniqueOtherUserIds)
+      .getUserStatuses(liveFollowPeerIds)
       .catch(() => new Map());
 
     // Build conversation-like objects with consistent structure
-    const conversations = requestsWithoutMessages.map(({ request, otherUserId, id1, id2 }) => {
+    const conversations = liveFollowRequests.map(({ request, otherUserId, id1, id2 }) => {
       const userStatus = userStatusMap.get(otherUserId) || {
         status: "offline" as const,
         isBroadcasting: false,
@@ -1234,36 +1268,51 @@ export class ConversationService {
     const detailById = new Map(detailed.map((d) => [d.id, d]));
 
     const syntheticPeers = page.filter((h) => !h.conversation).map((h) => h.peerId);
+    const pagePeerIds = [...new Set(page.map((h) => h.peerId).filter(Boolean))];
+    const { validIds: validSearchPeerIds } =
+      await this.userClient.validateUserIds(pagePeerIds);
+    const validSearchPeerSet = new Set(validSearchPeerIds);
+
+    const liveSyntheticPeers = syntheticPeers.filter((id) => validSearchPeerSet.has(id));
     const syntheticStatusMap =
-      syntheticPeers.length > 0
-        ? await this.streamingClient.getUserStatuses(syntheticPeers).catch(() => new Map())
+      liveSyntheticPeers.length > 0
+        ? await this.streamingClient.getUserStatuses(liveSyntheticPeers).catch(() => new Map())
         : new Map();
-    const missingProfiles = syntheticPeers.filter((id) => !profileFromName.has(id));
+    const missingProfiles = liveSyntheticPeers.filter((id) => !profileFromName.has(id));
     const fetchedProfiles = await Promise.all(
       missingProfiles.map((id) => this.userClient.getUserProfile(id))
     );
+    const missingSearchPeerSet = new Set<string>();
     for (let i = 0; i < missingProfiles.length; i++) {
+      if (fetchedProfiles[i]?.missing) {
+        missingSearchPeerSet.add(missingProfiles[i]);
+        continue;
+      }
       profileFromName.set(missingProfiles[i], {
         id: missingProfiles[i],
         ...fetchedProfiles[i]
       });
     }
 
-    const conversations = page.map((h) => {
-      if (h.conversation) {
-        const base = detailById.get(h.conversation.id);
-        if (base) {
-          return {
-            ...base,
-            matchKind: h.matchKind,
-            matchSnippet: h.matchKind === "message" ? h.matchSnippet : undefined
-          };
+    const conversations = page
+      .filter((h) => validSearchPeerSet.has(h.peerId) && !missingSearchPeerSet.has(h.peerId))
+      .map((h) => {
+        if (h.conversation) {
+          const base = detailById.get(h.conversation.id);
+          if (base) {
+            return {
+              ...base,
+              matchKind: h.matchKind,
+              matchSnippet: h.matchKind === "message" ? h.matchSnippet : undefined
+            };
+          }
+          // Peer was dropped in getConversationDetails (hard-deleted). Don't synthesize a ghost row.
+          return null;
         }
-      }
 
       const req = h.pendingRequest;
       const profile = profileFromName.get(h.peerId) || {
-        username: "Unknown User",
+        username: null,
         displayPictureUrl: null
       };
       const userStatus = syntheticStatusMap.get(h.peerId) || {
@@ -1283,7 +1332,7 @@ export class ConversationService {
         otherUserId: h.peerId,
         otherUser: {
           id: h.peerId,
-          username: profile?.username || "Unknown User",
+          username: profile?.username || "User",
           displayPictureUrl: profile?.displayPictureUrl || null
         },
         section: h.viewerSection,
@@ -1303,7 +1352,8 @@ export class ConversationService {
         matchKind: h.matchKind,
         matchSnippet: undefined
       };
-    });
+    })
+    .filter((c): c is NonNullable<typeof c> => c != null);
 
     return {
       conversations,

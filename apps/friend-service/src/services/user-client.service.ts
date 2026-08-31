@@ -161,7 +161,11 @@ export class UserClientService {
    * Get user profile (username and display picture)
    * Returns username and displayPictureUrl for a single user
    */
-  async getUserProfile(userId: string): Promise<{ username: string | null; displayPictureUrl: string | null }> {
+  async getUserProfile(userId: string): Promise<{
+    username: string | null;
+    displayPictureUrl: string | null;
+    missing?: boolean;
+  }> {
     try {
       // Use the existing user endpoint with fields filter
       const response = await fetch(`${this.userServiceUrl}/users/${userId}?fields=username,displayPictureUrl`, {
@@ -172,6 +176,10 @@ export class UserClientService {
         },
         signal: AbortSignal.timeout(5000) // 5 second timeout
       });
+
+      if (response.status === 404) {
+        return { username: null, displayPictureUrl: null, missing: true };
+      }
 
       if (!response.ok) {
         this.logger.warn(`Failed to fetch user profile from user-service: ${response.status}`);

@@ -367,7 +367,8 @@ export class FriendService {
   }
 
   /**
-   * Get pending requests (incoming)
+   * Get pending requests (incoming).
+   * Hard-deleted peers (no user-service profile) are omitted.
    */
   async getPendingRequests(userId: string): Promise<any[]> {
     const requests = await this.prisma.friendRequest.findMany({
@@ -384,17 +385,25 @@ export class FriendService {
       }
     });
 
-    return requests.map(req => ({
-      id: req.id,
-      fromUserId: req.fromUserId,
-      message: req.message,
-      createdAt: req.createdAt,
-      expiresAt: req.expiresAt
-    }));
+    const { validIds } = await this.userClient.validateUserIds(
+      requests.map((r) => r.fromUserId)
+    );
+    const valid = new Set(validIds);
+
+    return requests
+      .filter((req) => valid.has(req.fromUserId))
+      .map((req) => ({
+        id: req.id,
+        fromUserId: req.fromUserId,
+        message: req.message,
+        createdAt: req.createdAt,
+        expiresAt: req.expiresAt
+      }));
   }
 
   /**
-   * Get sent requests (outgoing)
+   * Get sent requests (outgoing).
+   * Hard-deleted peers (no user-service profile) are omitted.
    */
   async getSentRequests(userId: string): Promise<any[]> {
     const requests = await this.prisma.friendRequest.findMany({
@@ -411,13 +420,20 @@ export class FriendService {
       }
     });
 
-    return requests.map(req => ({
-      id: req.id,
-      toUserId: req.toUserId,
-      message: req.message,
-      createdAt: req.createdAt,
-      expiresAt: req.expiresAt
-    }));
+    const { validIds } = await this.userClient.validateUserIds(
+      requests.map((r) => r.toUserId)
+    );
+    const valid = new Set(validIds);
+
+    return requests
+      .filter((req) => valid.has(req.toUserId))
+      .map((req) => ({
+        id: req.id,
+        toUserId: req.toUserId,
+        message: req.message,
+        createdAt: req.createdAt,
+        expiresAt: req.expiresAt
+      }));
   }
 
   /**

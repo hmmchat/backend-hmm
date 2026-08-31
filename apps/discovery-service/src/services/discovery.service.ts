@@ -4717,5 +4717,50 @@ export class DiscoveryService implements OnModuleInit {
 
     this.logger.debug(`Generated feature for ${userId} provider=${provider}`);
   }
+
+  /** Discovery has no monitoring state to keep — self and hard wipe the same rows. */
+  async purgeUser(userId: string): Promise<void> {
+    await this.prisma.genderFilterPreference.deleteMany({ where: { userId } });
+    await this.prisma.raincheckSession.deleteMany({
+      where: { OR: [{ userId }, { raincheckedUserId: userId }] }
+    });
+    await this.prisma.activeMatch.deleteMany({
+      where: { OR: [{ user1Id: userId }, { user2Id: userId }] }
+    });
+    await this.prisma.matchAcceptance.deleteMany({
+      where: { OR: [{ user1Id: userId }, { user2Id: userId }, { acceptedBy: userId }] }
+    });
+    await this.prisma.squadInvitation.deleteMany({
+      where: { OR: [{ inviterId: userId }, { inviteeId: userId }] }
+    });
+    await this.prisma.squadLobby.deleteMany({ where: { inviterId: userId } });
+    const lobbies = await this.prisma.squadLobby.findMany({
+      select: { id: true, memberIds: true }
+    });
+    for (const lobby of lobbies) {
+      const ids = Array.isArray(lobby.memberIds) ? (lobby.memberIds as string[]) : [];
+      if (!ids.includes(userId)) continue;
+      const next = ids.filter((id) => id !== userId);
+      if (next.length < 2) {
+        await this.prisma.squadLobby.delete({ where: { id: lobby.id } }).catch(() => undefined);
+      } else {
+        await this.prisma.squadLobby.update({
+          where: { id: lobby.id },
+          data: { memberIds: next }
+        });
+      }
+    }
+    await this.prisma.squadQuickInviteHistory.deleteMany({ where: { userId } }).catch(() => undefined);
+    await this.prisma.broadcastViewHistory.deleteMany({ where: { userId } });
+    await this.prisma.broadcastComment.deleteMany({ where: { userId } });
+    await this.prisma.broadcastShare.deleteMany({ where: { userId } });
+    await this.prisma.broadcastFollow.deleteMany({
+      where: { OR: [{ followerId: userId }, { followedUserId: userId }] }
+    });
+    await this.prisma.sessionDiscoveryCityOverride.deleteMany({ where: { userId } });
+    await this.prisma.discoverySession.deleteMany({ where: { userId } });
+    await this.prisma.userFeature.deleteMany({ where: { userId } }).catch(() => undefined);
+    await this.prisma.featureGenerationJob.deleteMany({ where: { userId } }).catch(() => undefined);
+  }
 }
 

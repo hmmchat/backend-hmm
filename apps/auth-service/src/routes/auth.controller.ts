@@ -192,7 +192,7 @@ export class AuthController {
     const userId = await this.verifyTokenAndGetUserId(token!, { requireExistingUser: false });
     
     await this.auth.deleteAccount(userId);
-    return { ok: true, message: "Account deletion initiated. Your data will be permanently deleted within 30 days." };
+    return { ok: true, message: "Account deleted. Sign in again to start from onboarding; coins and diamonds are kept." };
   }
 
   /**

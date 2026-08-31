@@ -107,6 +107,29 @@ export class StreamingController {
   }
 
   /**
+   * Internal: kick the user out of live rooms and wipe their streaming history/favourites/dares.
+   * DELETE /streaming/internal/users/:userId
+   */
+  @Delete("internal/users/:userId")
+  async purgeUser(
+    @Param("userId") userId: string,
+    @Headers("x-internal-token") internalToken: string | undefined,
+    @Headers("x-service-token") serviceToken: string | undefined
+  ) {
+    const expected = process.env.INTERNAL_SERVICE_TOKEN;
+    const token = internalToken || serviceToken;
+    if (expected && token !== expected) {
+      throw new UnauthorizedException("Invalid service token");
+    }
+    await this.streamingGateway.forceLogoutUser(userId, {
+      message: "Account deleted",
+      code: "ACCOUNT_DELETED"
+    }).catch(() => undefined);
+    await this.historyService.purgeUser(userId);
+    return { ok: true };
+  }
+
+  /**
    * Wallet tick/settle credited this user. Push only to their sockets.
    * POST /streaming/internal/mining-credited
    */

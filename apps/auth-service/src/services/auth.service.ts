@@ -964,6 +964,11 @@ export class AuthService implements OnModuleInit {
     if (!exists) {
       throw new HttpException("User not found", HttpStatus.NOT_FOUND);
     }
+    await this.prisma.referral.deleteMany({
+      where: {
+        OR: [{ referrerId: userId }, { referredUserId: userId }]
+      }
+    }).catch(() => undefined);
     await this.prisma.user.delete({ where: { id: userId } });
   }
 
@@ -1053,13 +1058,9 @@ export class AuthService implements OnModuleInit {
   }
 
   /**
-   * Delete user account (user-initiated, soft delete).
-   * Marks the auth row deletedAt so leftover JWTs die, drops sessions, and
-   * removes the user-service profile. The same phone/email can sign in again
-   * as a fresh account (see reopenSoftDeletedAccount).
-   *
-   * Idempotent: if the auth row was already hard-deleted (dashboard Delete),
-   * treat as success so clients can clear their session instead of getting 500.
+   * Delete user account (user-initiated).
+   * Soft-deletes auth (same user id), resets FaceCard, wipes social/season/files.
+   * Keeps wallet coins/diamonds, FaceCard/referral payout flags, and report/critical-review.
    */
   async deleteAccount(userId: string): Promise<void> {
     const existing = await this.prisma.user.findUnique({
@@ -1084,13 +1085,13 @@ export class AuthService implements OnModuleInit {
       where: { userId }
     });
 
-    // Drop the FaceCard/profile now so the identity is not still discoverable.
-    await this.deleteUserServiceProfile(userId);
+    // Wipe FaceCard + social/season data; keep wallet + report/critical flags on this user id.
+    await this.deleteUserServiceProfile(userId, "self");
   }
 
   /**
-   * Verified sign-in after self-delete: restore auth and wipe the old profile
-   * so the same phone/email can onboard as a new user.
+   * Verified sign-in after self-delete: restore auth. Profile was already reset;
+   * reset again so leftover FaceCard fields cannot skip onboarding. Monitoring flags stay.
    */
   private async reopenSoftDeletedAccount(userId: string, termsVer: string) {
     const user = await this.prisma.user.update({
@@ -1106,7 +1107,7 @@ export class AuthService implements OnModuleInit {
     });
 
     await this.prisma.session.deleteMany({ where: { userId } });
-    await this.deleteUserServiceProfile(userId);
+    await this.deleteUserServiceProfile(userId, "self");
 
     console.log(JSON.stringify({
       event: "soft_deleted_account_reopened",
@@ -1117,17 +1118,20 @@ export class AuthService implements OnModuleInit {
     return user;
   }
 
-  private async deleteUserServiceProfile(userId: string): Promise<void> {
+  private async deleteUserServiceProfile(userId: string, mode: "self" | "hard" = "self"): Promise<void> {
     const userServiceUrl = (process.env.USER_SERVICE_URL || "http://localhost:3002").replace(/\/$/, "");
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (process.env.INTERNAL_SERVICE_TOKEN) {
       headers["x-internal-token"] = process.env.INTERNAL_SERVICE_TOKEN;
     }
     try {
-      const response = await fetch(`${userServiceUrl}/users/internal/${encodeURIComponent(userId)}`, {
-        method: "DELETE",
-        headers
-      });
+      const response = await fetch(
+        `${userServiceUrl}/users/internal/${encodeURIComponent(userId)}?mode=${encodeURIComponent(mode)}`,
+        {
+          method: "DELETE",
+          headers
+        }
+      );
       if (!response.ok && response.status !== 404) {
         const body = await response.text();
         console.warn(

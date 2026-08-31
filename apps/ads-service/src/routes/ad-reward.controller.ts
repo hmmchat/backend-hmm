@@ -2,11 +2,14 @@ import {
   Controller,
   Post,
   Get,
+  Delete,
   Body,
   Headers,
   Query,
+  Param,
   HttpException,
-  HttpStatus
+  HttpStatus,
+  HttpCode
 } from "@nestjs/common";
 import { AdRewardService } from "../services/ad-reward.service.js";
 import { AdRewardConfigService } from "../config/ad-reward.config.js";
@@ -224,5 +227,19 @@ export class AdRewardController {
     }
 
     return this.adRewardService.getRewardHistory(userId, limitNum, offsetNum);
+  }
+
+  /**
+   * DELETE /internal/users/:userId
+   */
+  @Delete("internal/users/:userId")
+  @HttpCode(HttpStatus.OK)
+  async purgeUser(
+    @Param("userId") userId: string,
+    @Headers("x-internal-token") internalToken?: string
+  ) {
+    this.assertInternalRequest(internalToken);
+    await this.adRewardService.purgeUser(userId);
+    return { ok: true };
   }
 }

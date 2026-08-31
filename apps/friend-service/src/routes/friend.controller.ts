@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Delete,
   Body,
   Headers,
   HttpException,
@@ -1407,5 +1408,19 @@ export class FriendController {
     const limit = query.limit ? Math.min(parseInt(query.limit, 10), 100) : 50;
     const cursor = query.cursor;
     return this.friendService.getConversationMessages(userId, conversationId, limit, cursor);
+  }
+
+  /**
+   * DELETE /internal/users/:userId
+   */
+  @Delete("internal/users/:userId")
+  async purgeUser(
+    @Param("userId") userId: string,
+    @Headers("x-internal-token") internalToken?: string,
+    @Headers("x-service-token") serviceToken?: string
+  ) {
+    this.verifyInternalServiceToken(internalToken || serviceToken);
+    await this.friendService.purgeUser(userId);
+    return { ok: true };
   }
 }

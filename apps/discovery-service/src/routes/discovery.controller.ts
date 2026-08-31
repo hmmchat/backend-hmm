@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Delete,
   Query,
   Body,
   Headers,
@@ -711,6 +712,23 @@ export class DiscoveryController {
       code: body?.code || "ACCOUNT_BANNED",
       reason: body?.reason
     });
+    return { ok: true };
+  }
+
+  /**
+   * Internal: wipe this user's discovery/match/squad/broadcast rows.
+   * DELETE /discovery/internal/users/:userId
+   */
+  @Delete("internal/users/:userId")
+  async purgeUser(
+    @Param("userId") userId: string,
+    @Headers("x-internal-token") internalToken: string | undefined
+  ) {
+    const expected = process.env.INTERNAL_SERVICE_TOKEN;
+    if (expected && internalToken !== expected) {
+      throw new HttpException("Invalid service token", HttpStatus.UNAUTHORIZED);
+    }
+    await this.discoveryService.purgeUser(userId);
     return { ok: true };
   }
 

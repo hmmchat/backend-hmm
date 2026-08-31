@@ -290,4 +290,20 @@ export class FilesService implements OnModuleInit {
 
     return files.map((file) => this.toFileInfo(file));
   }
+
+  async deleteAllForUser(userId: string): Promise<number> {
+    const files = await this.prisma.file.findMany({
+      where: { userId },
+      select: { id: true, key: true }
+    });
+    for (const file of files) {
+      try {
+        await this.r2Service.deleteFile(file.key);
+      } catch (error) {
+        console.error(`Failed to delete R2 object ${file.key}: ${error}`);
+      }
+    }
+    const result = await this.prisma.file.deleteMany({ where: { userId } });
+    return result.count;
+  }
 }

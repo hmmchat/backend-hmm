@@ -296,4 +296,8 @@ export class AdRewardService {
       maxAdsPerDay: config.maxAdsPerDay
     };
   }
+
+  async purgeUser(userId: string): Promise<void> {
+    await this.prisma.adReward.deleteMany({ where: { userId } });
+  }
 }

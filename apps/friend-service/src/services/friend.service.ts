@@ -2534,4 +2534,28 @@ export class FriendService {
     // Placeholder for now
     throw new Error("This method should be implemented using FriendsWallImageService");
   }
+
+  /** self and hard are the same here: no friends, inbox, or requests should survive. */
+  async purgeUser(userId: string): Promise<void> {
+    await this.prisma.friendRequest.deleteMany({
+      where: { OR: [{ fromUserId: userId }, { toUserId: userId }] }
+    });
+    await this.prisma.friend.deleteMany({
+      where: { OR: [{ userId1: userId }, { userId2: userId }] }
+    });
+    await this.prisma.friendMessage.deleteMany({
+      where: { OR: [{ fromUserId: userId }, { toUserId: userId }] }
+    });
+    await this.prisma.conversation.deleteMany({
+      where: { OR: [{ userId1: userId }, { userId2: userId }] }
+    });
+    await this.prisma.sectionLastSeen.deleteMany({ where: { userId } });
+    const p = this.prisma as any;
+    if (p.notificationCampaignRecipient?.deleteMany) {
+      await p.notificationCampaignRecipient.deleteMany({ where: { userId } }).catch(() => undefined);
+    }
+    if (p.notificationCampaignDelivery?.deleteMany) {
+      await p.notificationCampaignDelivery.deleteMany({ where: { userId } }).catch(() => undefined);
+    }
+  }
 }

@@ -61,6 +61,17 @@ export class FilesController {
     return payload.sub;
   }
 
+  private assertInternalRequest(internalToken?: string, serviceToken?: string): void {
+    const expected = process.env.INTERNAL_SERVICE_TOKEN;
+    if (!expected) {
+      throw new HttpException("INTERNAL_SERVICE_TOKEN is not configured", HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+    const provided = internalToken || serviceToken;
+    if (!provided || provided !== expected) {
+      throw new HttpException("Unauthorized internal request", HttpStatus.UNAUTHORIZED);
+    }
+  }
+
   /**
    * Upload a file
    * POST /files/upload
@@ -342,6 +353,21 @@ export class FilesController {
       undefined,
       process.env.npm_package_version || "0.0.1"
     );
+  }
+
+  /**
+   * DELETE /internal/users/:userId
+   */
+  @Delete("internal/users/:userId")
+  @HttpCode(HttpStatus.OK)
+  async purgeUser(
+    @Param("userId") userId: string,
+    @Headers("x-internal-token") internalToken?: string,
+    @Headers("x-service-token") serviceToken?: string
+  ) {
+    this.assertInternalRequest(internalToken, serviceToken);
+    const deleted = await this.filesService.deleteAllForUser(userId);
+    return { ok: true, deleted };
   }
 
   /* ---------- Test Endpoints (No Auth Required) ---------- */

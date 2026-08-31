@@ -822,5 +822,45 @@ export class WalletService {
       };
     });
   }
+
+  /**
+   * self: keep coins/diamonds + FaceCard/referral payout flags; wipe history, season, mining remainder.
+   * hard: delete the wallet and every user-keyed wallet-service row.
+   */
+  async purgeUser(userId: string, mode: "self" | "hard"): Promise<void> {
+    await this.prisma.coinMiningActiveSession.deleteMany({ where: { userId } }).catch(() => undefined);
+    await this.prisma.userSeasonProgress.deleteMany({ where: { userId } }).catch(() => undefined);
+    await this.prisma.userCallPeer.deleteMany({ where: { userId } }).catch(() => undefined);
+    await this.prisma.seasonClaim.deleteMany({ where: { userId } }).catch(() => undefined);
+    await this.prisma.seasonProgressEvent.deleteMany({ where: { userId } }).catch(() => undefined);
+
+    if (mode === "hard") {
+      await this.prisma.coinMiningReferralPayout.deleteMany({
+        where: { OR: [{ referredUserId: userId }, { referrerId: userId }] }
+      }).catch(() => undefined);
+      await this.prisma.userCoinMiningProgress.deleteMany({ where: { userId } }).catch(() => undefined);
+      await this.prisma.$executeRaw`
+        DELETE FROM referral_reward_payouts
+        WHERE "referredUserId" = ${userId} OR "referrerId" = ${userId}
+      `.catch(() => undefined);
+      await this.prisma.wallet.delete({ where: { id: userId } }).catch(() => undefined);
+      return;
+    }
+
+    await this.prisma.transaction.deleteMany({ where: { walletId: userId } }).catch(() => undefined);
+    const progress = await this.prisma.userCoinMiningProgress.findUnique({
+      where: { userId }
+    }).catch(() => null);
+    if (progress) {
+      await this.prisma.userCoinMiningProgress.update({
+        where: { userId },
+        data: {
+          broadcastRemainderSeconds: 0,
+          videoCallRemainderSeconds: 0,
+          viewerRemainderSeconds: 0
+        }
+      });
+    }
+  }
 }
 

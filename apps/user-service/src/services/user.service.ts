@@ -7,6 +7,7 @@ import { BrandService } from "./brand.service.js";
 import { WalletClientService } from "./wallet-client.service.js";
 import { AuthClientService } from "./auth-client.service.js";
 import { DiscoveryClientService } from "./discovery-client.service.js";
+import { AccountPurgeClientService } from "./account-purge-client.service.js";
 import {
   verifyToken,
   AccessPayload,
@@ -172,7 +173,8 @@ export class UserService implements OnModuleInit {
     private readonly brandService: BrandService,
     private readonly walletClient: WalletClientService,
     private readonly authClient: AuthClientService,
-    private readonly discoveryClient: DiscoveryClientService
+    private readonly discoveryClient: DiscoveryClientService,
+    private readonly accountPurgeClient: AccountPurgeClientService
   ) { }
 
   private async resolveActiveBadgeForUser(userId: string, activeBadgeId: string | null) {
@@ -683,12 +685,19 @@ export class UserService implements OnModuleInit {
         );
       }
 
-      // Check if profile already exists
       const existing = await this.prisma.user.findUnique({
         where: { id: userId }
       });
 
-      if (existing) {
+      const canReOnboard = existing
+        ? !existing.profileCompleted
+          || !existing.username
+          || !existing.dateOfBirth
+          || !existing.gender
+          || !existing.displayPictureUrl
+        : false;
+
+      if (existing && !canReOnboard) {
         throw new HttpException("Profile already exists", HttpStatus.BAD_REQUEST);
       }
 
@@ -707,30 +716,48 @@ export class UserService implements OnModuleInit {
 
       await this.ensureActiveDiscoveryCityValue(data.preferredCity);
 
-      // Create user profile
-      const user = await this.prisma.user.create({
-        data: {
-          id: userId, // Use the same ID from auth-service
-          username: data.username,
-          dateOfBirth: data.dateOfBirth,
-          gender: data.gender as Gender,
-          displayPictureUrl: data.displayPictureUrl,
-          preferredCity: data.preferredCity,
-          intent: data.intent,
-          profileCompleted: true,
-          genderChanged: data.gender === "PREFER_NOT_TO_SAY" ? false : true,
-          zodiacId: zodiac?.id || null,
-          zodiacOverridden: false
-        },
-        include: {
-          photos: true,
-          musicPreference: true,
-          brandPreferences: { include: { brand: true } },
-          interests: { include: { interest: true } },
-          values: { include: { value: true } },
-          zodiac: true
-        }
-      });
+      const profileData = {
+        username: data.username,
+        dateOfBirth: data.dateOfBirth,
+        gender: data.gender as Gender,
+        displayPictureUrl: data.displayPictureUrl,
+        preferredCity: data.preferredCity,
+        intent: data.intent,
+        profileCompleted: true,
+        genderChanged: data.gender === "PREFER_NOT_TO_SAY" ? false : true,
+        zodiacId: zodiac?.id || null,
+        zodiacOverridden: false
+      };
+      const profileInclude = {
+        photos: true,
+        musicPreference: true,
+        brandPreferences: { include: { brand: true } },
+        interests: { include: { interest: true } },
+        values: { include: { value: true } },
+        zodiac: true
+      } as const;
+
+      // Self-delete leaves the row so report/KYC flags survive. Re-onboarding fills FaceCard fields only.
+      if (existing) {
+        await this.prisma.userPhoto.deleteMany({ where: { userId } });
+        await this.prisma.userBrand.deleteMany({ where: { userId } });
+        await this.prisma.userInterest.deleteMany({ where: { userId } });
+        await this.prisma.userValue.deleteMany({ where: { userId } });
+      }
+
+      const user = existing
+        ? await this.prisma.user.update({
+            where: { id: userId },
+            data: profileData,
+            include: profileInclude
+          })
+        : await this.prisma.user.create({
+            data: {
+              id: userId,
+              ...profileData
+            },
+            include: profileInclude
+          });
 
       // Calculate profile completion percentage
       const completion = await this.profileCompletion.calculateCompletion(userId);
@@ -3244,11 +3271,61 @@ export class UserService implements OnModuleInit {
   }
 
   /**
-   * Delete user account and all associated data
-   * This is called when account deletion is confirmed
-   * Note: This should be called after auth-service marks account as deleted
+   * User self-delete: wipe FaceCard and user-facing data, keep the row so
+   * reportCount / critical-review / KYC risk / moderator flags stay attached to the same id.
    */
-  async deleteUserAccount(userId: string): Promise<void> {
+  async resetProfileForSelfDelete(userId: string): Promise<void> {
+    const existing = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true }
+    });
+    if (existing) {
+      await this.prisma.userPhoto.deleteMany({ where: { userId } });
+      await this.prisma.userBrand.deleteMany({ where: { userId } });
+      await this.prisma.userInterest.deleteMany({ where: { userId } });
+      await this.prisma.userValue.deleteMany({ where: { userId } });
+      try {
+        await this.prisma.userBadge.deleteMany({ where: { userId } });
+      } catch (error: any) {
+        if (error?.code !== "P2021") {
+          throw error;
+        }
+      }
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: {
+          username: null,
+          dateOfBirth: null,
+          zodiacId: null,
+          zodiacOverridden: false,
+          gender: null,
+          genderChanged: false,
+          displayPictureUrl: null,
+          musicPreferenceId: null,
+          status: "OFFLINE",
+          lastActiveAt: null,
+          badgeMember: false,
+          kycStatus: "UNVERIFIED",
+          kycExpiresAt: null,
+          intent: null,
+          latitude: null,
+          longitude: null,
+          locationUpdatedAt: null,
+          preferredCity: null,
+          videoEnabled: true,
+          profileCompleted: false,
+          activeBadgeId: null
+        }
+      });
+    }
+    await this.accountPurgeClient.purge(userId, "self");
+  }
+
+  /**
+   * Dashboard hard delete: remove the profile row and all other services' user data.
+   */
+  async purgeHardDelete(userId: string): Promise<void> {
+    await this.accountPurgeClient.purge(userId, "hard");
     try {
       await this.prisma.user.delete({
         where: { id: userId }
@@ -3259,14 +3336,13 @@ export class UserService implements OnModuleInit {
       }
       throw error;
     }
+  }
 
-    // Note: Related data (photos, preferences, etc.) will be cascade deleted
-    // Additional cleanup may be needed for:
-    // - Files in Cloudflare R2 (via files-service)
-    // - Wallet data (via wallet-service)
-    // - Friend relationships (via friend-service)
-    // - Streaming sessions (via streaming-service)
-    // - Discovery matches (via discovery-service)
+  /**
+   * Delete user account and all associated data (hard). Used by test + internal callers.
+   */
+  async deleteUserAccount(userId: string): Promise<void> {
+    await this.purgeHardDelete(userId);
   }
 
   /**

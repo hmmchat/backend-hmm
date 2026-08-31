@@ -1172,21 +1172,47 @@ export class UserController {
   }
 
   /**
-   * Delete user account (internal endpoint, called by auth-service)
-   * DELETE /users/internal/:userId
-   * Note: This should be protected by internal service authentication
+   * Delete / reset user account (internal, called by auth-service and tests).
+   * DELETE /users/internal/:userId?mode=self|hard
+   * mode=self (default for auth self-delete): keep the user row + monitoring flags, wipe FaceCard.
+   * mode=hard: delete the row and fan-out a full purge.
    */
   @Delete("users/internal/:userId")
-  async deleteUserAccountInternal(@Param("userId") userId: string) {
+  async deleteUserAccountInternal(
+    @Param("userId") userId: string,
+    @Query("mode") mode: string | undefined,
+    @Headers("x-internal-token") internalToken?: string,
+    @Headers("x-service-token") serviceToken?: string
+  ) {
+    const isTestMode = process.env.NODE_ENV === "test" || process.env.TEST_MODE === "true";
+    const expectedToken = process.env.INTERNAL_SERVICE_TOKEN;
+    if (!isTestMode) {
+      if (!expectedToken) {
+        throw new HttpException(
+          "Internal service token not configured",
+          HttpStatus.INTERNAL_SERVER_ERROR
+        );
+      }
+      const provided = internalToken || serviceToken;
+      if (provided !== expectedToken) {
+        throw new HttpException("Invalid service token", HttpStatus.UNAUTHORIZED);
+      }
+    }
+
+    const purgeMode = mode === "hard" ? "hard" : "self";
     try {
-      await this.userService.deleteUserAccount(userId);
+      if (purgeMode === "hard") {
+        await this.userService.purgeHardDelete(userId);
+      } else {
+        await this.userService.resetProfileForSelfDelete(userId);
+      }
     } catch (error: any) {
       if (error?.status === 404 || error?.code === "P2025") {
         return { ok: true, message: `User account ${userId} already absent` };
       }
       throw error;
     }
-    return { ok: true, message: `User account ${userId} deleted` };
+    return { ok: true, mode: purgeMode, message: `User account ${userId} ${purgeMode === "hard" ? "deleted" : "reset"}` };
   }
 }
 

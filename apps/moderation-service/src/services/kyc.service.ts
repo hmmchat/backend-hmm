@@ -253,4 +253,11 @@ export class KycService {
       rewardedCoins
     };
   }
+
+  /** self: keep KYC sessions/feedback (monitoring). hard: delete them. */
+  async purgeUser(userId: string, mode: "self" | "hard"): Promise<void> {
+    if (mode !== "hard") return;
+    await (this.prisma as any).kycFeedback.deleteMany({ where: { userId } });
+    await (this.prisma as any).kycSession.deleteMany({ where: { userId } });
+  }
 }

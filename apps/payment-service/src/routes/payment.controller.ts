@@ -2,6 +2,7 @@ import {
   Controller,
   Post,
   Get,
+  Delete,
   Body,
   Headers,
   Param,
@@ -686,5 +687,41 @@ export class PaymentController {
     } catch {
       return null;
     }
+  }
+
+  private assertInternalRequest(internalToken?: string, serviceToken?: string): void {
+    const expected = process.env.INTERNAL_SERVICE_TOKEN;
+    if (!expected) {
+      throw new HttpException(
+        "INTERNAL_SERVICE_TOKEN is not configured",
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+    const provided = internalToken || serviceToken;
+    if (!provided || provided !== expected) {
+      throw new HttpException("Unauthorized internal request", HttpStatus.UNAUTHORIZED);
+    }
+  }
+
+  /**
+   * DELETE /v1/payments/internal/users/:userId?mode=self|hard
+   * self: keep payment orders so in-flight Razorpay webhooks can still credit the kept wallet.
+   * hard: delete orders and redemption requests.
+   */
+  @Delete("internal/users/:userId")
+  @HttpCode(HttpStatus.OK)
+  async purgeUser(
+    @Param("userId") userId: string,
+    @Query("mode") mode: string | undefined,
+    @Headers("x-internal-token") internalToken?: string,
+    @Headers("x-service-token") serviceToken?: string
+  ) {
+    this.assertInternalRequest(internalToken, serviceToken);
+    if (mode !== "hard") {
+      return { ok: true, mode: "self" };
+    }
+    await this.prisma.redemptionRequest.deleteMany({ where: { userId } }).catch(() => undefined);
+    await this.prisma.paymentOrder.deleteMany({ where: { userId } }).catch(() => undefined);
+    return { ok: true, mode: "hard" };
   }
 }

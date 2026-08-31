@@ -536,4 +536,25 @@ export class HistoryService {
       update: {}
     });
   }
+
+  /** Hide call history and drop user-owned streaming rows so a returning user sees a blank slate. */
+  async purgeUser(userId: string): Promise<void> {
+    const parts = await this.prisma.callParticipant.findMany({
+      where: { userId },
+      select: { sessionId: true },
+      distinct: ["sessionId"]
+    });
+    if (parts.length > 0) {
+      await this.prisma.userHiddenCallHistory.createMany({
+        data: parts.map((p) => ({ userId, sessionId: p.sessionId })),
+        skipDuplicates: true
+      });
+    }
+    await this.prisma.userCustomDare.deleteMany({ where: { userId } }).catch(() => undefined);
+    await this.prisma.userFavouriteBroadcaster.deleteMany({
+      where: { OR: [{ userId }, { targetUserId: userId }] }
+    }).catch(() => undefined);
+    await this.prisma.callWaitlist.deleteMany({ where: { userId } }).catch(() => undefined);
+    await this.prisma.callViewer.deleteMany({ where: { userId } }).catch(() => undefined);
+  }
 }

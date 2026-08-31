@@ -2,11 +2,14 @@ import {
   Controller,
   Get,
   Post,
+  Delete,
   Body,
   Headers,
   HttpException,
   HttpStatus,
-  Query
+  Query,
+  Param,
+  HttpCode
 } from "@nestjs/common";
 import { WalletService } from "../services/wallet.service.js";
 import { MiningService } from "../services/mining.service.js";
@@ -445,6 +448,22 @@ export class WalletController {
         HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
+  }
+
+  /**
+   * DELETE /internal/users/:userId?mode=self|hard
+   */
+  @Delete("internal/users/:userId")
+  @HttpCode(HttpStatus.OK)
+  async purgeUser(
+    @Param("userId") userId: string,
+    @Query("mode") mode: string | undefined,
+    @Headers("x-internal-token") internalToken?: string
+  ) {
+    this.assertInternalRequest(internalToken);
+    const purgeMode = mode === "hard" ? "hard" : "self";
+    await this.walletService.purgeUser(userId, purgeMode);
+    return { ok: true, mode: purgeMode };
   }
 }
 

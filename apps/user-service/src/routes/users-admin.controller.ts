@@ -756,13 +756,13 @@ export class UsersAdminController {
   }
 
   /**
-   * Hard delete — removes user-service profile row then auth user row (dashboard only).
+   * Hard delete — wipe every service's user data, then remove the auth row.
    */
   @Delete(":id/hard")
   @HttpCode(HttpStatus.OK)
   async hardDelete(@Param("id") id: string) {
     try {
-      await this.prisma.user.delete({ where: { id } });
+      await this.userService.purgeHardDelete(id);
     } catch (err) {
       this.logger.warn(`hardDelete ${id}: user-service profile missing or delete failed: ${String(err)}`);
     }

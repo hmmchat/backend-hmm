@@ -103,4 +103,8 @@ export class DareSubmissionService {
     
     this.logger.log(`Submission ${submissionId} ${status.toLowerCase()} by ${reviewerId}`);
   }
+
+  async purgeUser(userId: string): Promise<void> {
+    await this.prisma.dareSubmission.deleteMany({ where: { userId } });
+  }
 }

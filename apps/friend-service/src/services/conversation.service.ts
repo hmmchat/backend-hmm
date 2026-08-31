@@ -578,7 +578,7 @@ export class ConversationService {
       livePeerIds.map((id, i) => [id, fullProfiles[i]])
     );
     const missingPeerSet = new Set(
-      livePeerIds.filter((id, i) => fullProfiles[i]?.missing)
+      livePeerIds.filter((_, i) => fullProfiles[i]?.missing)
     );
 
     // Build response — skip conversations whose other user no longer exists

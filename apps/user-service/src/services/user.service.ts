@@ -2406,6 +2406,40 @@ export class UserService implements OnModuleInit {
     return { validIds, invalidIds };
   }
 
+  /**
+   * Internal: among the given userIds, return those whose display name (username)
+   * contains `query` (case-insensitive). Used by friend-service conversation search.
+   */
+  async matchUsernamesAmongIds(
+    userIds: string[],
+    query: string
+  ): Promise<Array<{ id: string; username: string | null; displayPictureUrl: string | null }>> {
+    const unique = [...new Set(userIds.filter(Boolean))];
+    const q = (query || "").trim();
+    if (unique.length === 0 || q.length < 1) {
+      return [];
+    }
+
+    const CHUNK = 1000;
+    const matches: Array<{ id: string; username: string | null; displayPictureUrl: string | null }> = [];
+    for (let i = 0; i < unique.length; i += CHUNK) {
+      const chunk = unique.slice(i, i + CHUNK);
+      const rows = await this.prisma.user.findMany({
+        where: {
+          id: { in: chunk },
+          username: { contains: q, mode: "insensitive" }
+        },
+        select: {
+          id: true,
+          username: true,
+          displayPictureUrl: true
+        }
+      });
+      matches.push(...rows);
+    }
+    return matches;
+  }
+
   async getUsersByIds(userIds: string[]) {
     const users = await this.prisma.user.findMany({
       where: { id: { in: userIds } },

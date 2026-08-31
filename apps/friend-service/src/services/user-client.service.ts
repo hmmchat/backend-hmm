@@ -118,6 +118,46 @@ export class UserClientService {
   }
 
   /**
+   * Among the given userIds, return those whose display name (username) contains query.
+   * POST /users/internal/match-usernames
+   */
+  async matchUsernamesAmongIds(
+    userIds: string[],
+    query: string
+  ): Promise<Array<{ id: string; username: string | null; displayPictureUrl: string | null }>> {
+    const unique = [...new Set(userIds.filter(Boolean))];
+    const q = (query || "").trim();
+    if (unique.length === 0 || q.length < 1) {
+      return [];
+    }
+
+    try {
+      const response = await fetch(`${this.userServiceUrl}/users/internal/match-usernames`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-service-token": process.env.INTERNAL_SERVICE_TOKEN || ""
+        },
+        body: JSON.stringify({ userIds: unique, query: q }),
+        signal: AbortSignal.timeout(8000)
+      });
+
+      if (!response.ok) {
+        this.logger.warn(`match-usernames failed: ${response.status}`);
+        return [];
+      }
+
+      const data = (await response.json()) as {
+        users?: Array<{ id: string; username: string | null; displayPictureUrl: string | null }>;
+      };
+      return Array.isArray(data.users) ? data.users : [];
+    } catch (error: any) {
+      this.logger.warn(`Error matching usernames: ${error.message}`);
+      return [];
+    }
+  }
+
+  /**
    * Get user profile (username and display picture)
    * Returns username and displayPictureUrl for a single user
    */

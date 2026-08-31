@@ -2146,6 +2146,27 @@ export class FriendService {
   }
 
   /**
+   * Search conversations by display name + message text across all sections.
+   */
+  async searchConversations(
+    userId: string,
+    query: string,
+    section: ConversationSection,
+    limit: number = 20,
+    cursor?: string,
+    filter?: "text_only" | "with_gift" | "only_follows"
+  ) {
+    return this.conversationService.searchConversations(
+      userId,
+      query,
+      section,
+      limit,
+      cursor,
+      filter
+    );
+  }
+
+  /**
    * Send message to conversation (unified endpoint)
    */
   async sendMessageToConversation(

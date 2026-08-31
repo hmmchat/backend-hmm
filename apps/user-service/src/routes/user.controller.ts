@@ -829,6 +829,41 @@ export class UserController {
     return this.userService.validateUserIds(userIds);
   }
 
+  /**
+   * Internal: filter userIds whose display name (username) contains query.
+   * POST /users/internal/match-usernames
+   */
+  @Post("users/internal/match-usernames")
+  async matchUsernames(
+    @Headers("x-service-token") serviceToken: string | undefined,
+    @Body() body: unknown
+  ) {
+    const isTestMode = process.env.NODE_ENV === "test" || process.env.TEST_MODE === "true";
+    const expectedToken = process.env.INTERNAL_SERVICE_TOKEN;
+
+    if (!isTestMode) {
+      if (!expectedToken) {
+        throw new HttpException(
+          "Internal service token not configured",
+          HttpStatus.INTERNAL_SERVER_ERROR
+        );
+      }
+      if (serviceToken !== expectedToken) {
+        throw new HttpException("Invalid service token", HttpStatus.UNAUTHORIZED);
+      }
+    }
+
+    const { userIds, query } = z
+      .object({
+        userIds: z.array(z.string()).max(5000),
+        query: z.string().trim().min(1).max(100)
+      })
+      .parse(body ?? {});
+
+    const users = await this.userService.matchUsernamesAmongIds(userIds, query);
+    return { users };
+  }
+
   @Get("users/internal/:userId/kyc")
   async getKycSnapshot(@Param("userId") userId: string) {
     return this.userService.getKycSnapshot(userId);

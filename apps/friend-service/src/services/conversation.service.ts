@@ -843,4 +843,473 @@ export class ConversationService {
 
     this.logger.log(`Conversation between ${userId1} and ${userId2} promoted to INBOX`);
   }
+
+  /** Viewer-facing section for a stored conversation row. Friends always map to INBOX. */
+  private viewerSectionForConversation(
+    userId: string,
+    conv: { userId1: string; userId2: string; section: ConversationSection },
+    isFriend: boolean
+  ): ConversationSection {
+    if (isFriend) return ConversationSection.INBOX;
+    if (conv.userId1 === userId) return conv.section;
+    if (conv.section === ConversationSection.RECEIVED_REQUESTS) {
+      return ConversationSection.SENT_REQUESTS;
+    }
+    if (conv.section === ConversationSection.SENT_REQUESTS) {
+      return ConversationSection.RECEIVED_REQUESTS;
+    }
+    return ConversationSection.INBOX;
+  }
+
+  private buildMatchSnippet(text: string, query: string, radius = 40): string {
+    const raw = String(text || "");
+    const lower = raw.toLowerCase();
+    const q = query.toLowerCase();
+    const idx = lower.indexOf(q);
+    if (idx < 0) {
+      return raw.length > 80 ? `${raw.slice(0, 80)}…` : raw;
+    }
+    const start = Math.max(0, idx - radius);
+    const end = Math.min(raw.length, idx + q.length + radius);
+    return `${start > 0 ? "…" : ""}${raw.slice(start, end)}${end < raw.length ? "…" : ""}`;
+  }
+
+  /**
+   * Search conversations across inbox / received / sent by display name and message text.
+   * Returns one row per conversation for the requested section, plus match counts for all sections.
+   */
+  async searchConversations(
+    userId: string,
+    query: string,
+    section: ConversationSection,
+    limit: number = 20,
+    cursor?: string,
+    filter?: "text_only" | "with_gift" | "only_follows"
+  ): Promise<{
+    conversations: any[];
+    nextCursor?: string;
+    hasMore: boolean;
+    sectionCounts: {
+      inbox: number;
+      received: number;
+      sent: number;
+    };
+  }> {
+    const q = (query || "").trim();
+    const emptyCounts = { inbox: 0, received: 0, sent: 0 };
+    if (q.length < 3) {
+      return { conversations: [], nextCursor: undefined, hasMore: false, sectionCounts: emptyCounts };
+    }
+
+    const offset = Math.max(0, parseInt(cursor || "0", 10) || 0);
+    const MESSAGE_MATCH_CAP = 500;
+
+    // Peers from conversations + pending friend requests
+    const [allConversations, friendIds, pendingReceived, pendingSent] = await Promise.all([
+      this.prisma.conversation.findMany({
+        where: {
+          OR: [{ userId1: userId }, { userId2: userId }]
+        },
+        select: {
+          id: true,
+          userId1: true,
+          userId2: true,
+          section: true,
+          lastMessageAt: true,
+          lastMessageId: true,
+          createdAt: true
+        }
+      }),
+      this.getFriendPeerIds(userId),
+      this.prisma.friendRequest.findMany({
+        where: {
+          toUserId: userId,
+          status: "PENDING",
+          OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }]
+        },
+        select: { id: true, fromUserId: true, createdAt: true }
+      }),
+      this.prisma.friendRequest.findMany({
+        where: {
+          fromUserId: userId,
+          status: "PENDING",
+          OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }]
+        },
+        select: { id: true, toUserId: true, createdAt: true }
+      })
+    ]);
+
+    const friendSet = new Set(friendIds);
+    const peerIdSet = new Set<string>();
+    for (const conv of allConversations) {
+      peerIdSet.add(conv.userId1 === userId ? conv.userId2 : conv.userId1);
+    }
+    for (const r of pendingReceived) peerIdSet.add(r.fromUserId);
+    for (const r of pendingSent) peerIdSet.add(r.toUserId);
+
+    const [nameMatches, messageHits] = await Promise.all([
+      this.userClient.matchUsernamesAmongIds([...peerIdSet], q),
+      this.prisma.friendMessage.findMany({
+        where: {
+          AND: [
+            { OR: [{ fromUserId: userId }, { toUserId: userId }] },
+            { message: { contains: q, mode: "insensitive" } }
+          ]
+        },
+        orderBy: { createdAt: "desc" },
+        take: MESSAGE_MATCH_CAP,
+        select: {
+          id: true,
+          fromUserId: true,
+          toUserId: true,
+          message: true,
+          messageType: true,
+          giftId: true,
+          giftAmount: true,
+          squadMeta: true,
+          createdAt: true
+        }
+      })
+    ]);
+
+    const nameMatchIds = new Set(nameMatches.map((u) => u.id));
+    const profileFromName = new Map<
+      string,
+      { id?: string; username: string | null; displayPictureUrl: string | null }
+    >(nameMatches.map((u) => [u.id, u]));
+
+    // Latest matching message per peer
+    const messageMatchByPeer = new Map<
+      string,
+      {
+        id: string;
+        fromUserId: string;
+        toUserId: string;
+        message: string | null;
+        messageType: MessageType;
+        giftId: string | null;
+        giftAmount: number | null;
+        squadMeta: string | null;
+        createdAt: Date;
+      }
+    >();
+    for (const msg of messageHits) {
+      const peer = msg.fromUserId === userId ? msg.toUserId : msg.fromUserId;
+      if (!messageMatchByPeer.has(peer)) {
+        messageMatchByPeer.set(peer, msg);
+      }
+    }
+
+    type Hit = {
+      peerId: string;
+      viewerSection: ConversationSection;
+      matchKind: "name" | "message";
+      matchSnippet?: string;
+      conversation?: (typeof allConversations)[number];
+      pendingRequest?: {
+        id: string;
+        createdAt: Date;
+        direction: "received" | "sent";
+      };
+      activityAt: number;
+    };
+
+    const hitsByPeer = new Map<string, Hit>();
+
+    const upsertHit = (hit: Hit) => {
+      const existing = hitsByPeer.get(hit.peerId);
+      if (!existing) {
+        hitsByPeer.set(hit.peerId, hit);
+        return;
+      }
+      // Prefer name match; keep richer conversation row over synthetic FR
+      const preferName =
+        hit.matchKind === "name" && existing.matchKind === "message";
+      const preferConv =
+        hit.conversation && !existing.conversation;
+      if (preferName || preferConv) {
+        hitsByPeer.set(hit.peerId, {
+          ...hit,
+          matchKind: preferName || existing.matchKind === "name" ? "name" : hit.matchKind,
+          matchSnippet:
+            hit.matchKind === "name"
+              ? existing.matchSnippet
+              : hit.matchSnippet || existing.matchSnippet,
+          activityAt: Math.max(hit.activityAt, existing.activityAt)
+        });
+        if (preferName && existing.matchSnippet && hit.matchKind === "name") {
+          // keep message snippet if we also had a message match, for preview? Spec: name first; preview can stay last message from details
+        }
+        return;
+      }
+      if (hit.activityAt > existing.activityAt) {
+        hitsByPeer.set(hit.peerId, {
+          ...existing,
+          activityAt: hit.activityAt,
+          matchSnippet: existing.matchSnippet || hit.matchSnippet
+        });
+      }
+    };
+
+    const convByPeer = new Map<string, (typeof allConversations)[number]>();
+    for (const conv of allConversations) {
+      const peer = conv.userId1 === userId ? conv.userId2 : conv.userId1;
+      convByPeer.set(peer, conv);
+    }
+
+    const pendingRecvByPeer = new Map(pendingReceived.map((r) => [r.fromUserId, r]));
+    const pendingSentByPeer = new Map(pendingSent.map((r) => [r.toUserId, r]));
+
+    // Name matches → conversation row when listable; else pending FR synthetic
+    for (const peerId of nameMatchIds) {
+      const conv = convByPeer.get(peerId);
+      const isFriend = friendSet.has(peerId);
+
+      if (conv) {
+        const viewerSection = this.viewerSectionForConversation(userId, conv, isFriend);
+        const listableInbox =
+          viewerSection === ConversationSection.INBOX &&
+          (isFriend || Boolean(conv.lastMessageId));
+        const listableRequest =
+          (viewerSection === ConversationSection.RECEIVED_REQUESTS ||
+            viewerSection === ConversationSection.SENT_REQUESTS) &&
+          Boolean(conv.lastMessageId);
+
+        if (listableInbox || listableRequest) {
+          upsertHit({
+            peerId,
+            viewerSection: listableInbox ? ConversationSection.INBOX : viewerSection,
+            matchKind: "name",
+            conversation: conv,
+            activityAt: (conv.lastMessageAt || conv.createdAt).getTime()
+          });
+          continue;
+        }
+      }
+
+      const recv = pendingRecvByPeer.get(peerId);
+      if (recv) {
+        upsertHit({
+          peerId,
+          viewerSection: ConversationSection.RECEIVED_REQUESTS,
+          matchKind: "name",
+          pendingRequest: { id: recv.id, createdAt: recv.createdAt, direction: "received" },
+          activityAt: recv.createdAt.getTime()
+        });
+        continue;
+      }
+      const sent = pendingSentByPeer.get(peerId);
+      if (sent) {
+        upsertHit({
+          peerId,
+          viewerSection: ConversationSection.SENT_REQUESTS,
+          matchKind: "name",
+          pendingRequest: { id: sent.id, createdAt: sent.createdAt, direction: "sent" },
+          activityAt: sent.createdAt.getTime()
+        });
+      }
+    }
+
+    // Message matches
+    for (const [peerId, msg] of messageMatchByPeer) {
+      const conv = convByPeer.get(peerId);
+      if (!conv) continue;
+      const isFriend = friendSet.has(peerId);
+      const viewerSection = this.viewerSectionForConversation(userId, conv, isFriend);
+      const snippet = msg.message ? this.buildMatchSnippet(msg.message, q) : undefined;
+      const existing = hitsByPeer.get(peerId);
+      if (existing) {
+        // Upgrade activity / attach snippet; keep name matchKind if already name
+        hitsByPeer.set(peerId, {
+          ...existing,
+          conversation: existing.conversation || conv,
+          matchSnippet: existing.matchKind === "message" ? snippet : existing.matchSnippet || snippet,
+          activityAt: Math.max(existing.activityAt, msg.createdAt.getTime(), (conv.lastMessageAt || conv.createdAt).getTime())
+        });
+      } else {
+        upsertHit({
+          peerId,
+          viewerSection,
+          matchKind: "message",
+          matchSnippet: snippet,
+          conversation: conv,
+          activityAt: Math.max(msg.createdAt.getTime(), (conv.lastMessageAt || conv.createdAt).getTime())
+        });
+      }
+    }
+
+    // Apply message-type / only_follows filters
+    let hits = [...hitsByPeer.values()];
+
+    if (filter === "only_follows") {
+      hits = hits.filter(
+        (h) =>
+          h.pendingRequest ||
+          (h.conversation && !h.conversation.lastMessageId && !friendSet.has(h.peerId))
+      );
+    } else if (filter === "text_only" || filter === "with_gift") {
+      // Need last message types — fetch for candidates with conversation
+      const lastIds = hits
+        .map((h) => h.conversation?.lastMessageId)
+        .filter((id): id is string => Boolean(id));
+      const lastMessages =
+        lastIds.length > 0
+          ? await this.prisma.friendMessage.findMany({
+              where: { id: { in: lastIds } },
+              select: { id: true, messageType: true }
+            })
+          : [];
+      const typeMap = new Map(lastMessages.map((m) => [m.id, m.messageType]));
+      hits = hits.filter((h) => {
+        const lid = h.conversation?.lastMessageId;
+        if (!lid) return false;
+        const t = typeMap.get(lid);
+        if (!t) return false;
+        if (filter === "text_only") return t === MessageType.TEXT;
+        return t === MessageType.GIFT || t === MessageType.GIFT_WITH_MESSAGE;
+      });
+    } else {
+      // Default listing rules for request sections: need last message OR pending FR
+      hits = hits.filter((h) => {
+        if (h.viewerSection === ConversationSection.INBOX) {
+          return friendSet.has(h.peerId) || Boolean(h.conversation?.lastMessageId);
+        }
+        return Boolean(h.conversation?.lastMessageId) || Boolean(h.pendingRequest);
+      });
+    }
+
+    const sectionCounts = {
+      inbox: hits.filter((h) => h.viewerSection === ConversationSection.INBOX).length,
+      received: hits.filter((h) => h.viewerSection === ConversationSection.RECEIVED_REQUESTS).length,
+      sent: hits.filter((h) => h.viewerSection === ConversationSection.SENT_REQUESTS).length
+    };
+
+    const sectionHits = hits
+      .filter((h) => h.viewerSection === section)
+      .sort((a, b) => {
+        if (a.matchKind !== b.matchKind) {
+          return a.matchKind === "name" ? -1 : 1;
+        }
+        return b.activityAt - a.activityAt;
+      });
+
+    const hasMore = sectionHits.length > offset + limit;
+    const page = sectionHits.slice(offset, offset + limit);
+
+    // Build response rows
+    const convRows = page.filter((h) => h.conversation).map((h) => h.conversation!);
+    const lastMessageIds = convRows
+      .map((c) => c.lastMessageId)
+      .filter((id): id is string => Boolean(id));
+
+    // Include matched messages that might not be lastMessage
+    for (const h of page) {
+      const matched = messageMatchByPeer.get(h.peerId);
+      if (matched) lastMessageIds.push(matched.id);
+    }
+
+    const lastMessages =
+      lastMessageIds.length > 0
+        ? await this.prisma.friendMessage.findMany({
+            where: { id: { in: [...new Set(lastMessageIds)] } },
+            select: {
+              id: true,
+              fromUserId: true,
+              toUserId: true,
+              message: true,
+              messageType: true,
+              giftId: true,
+              giftAmount: true,
+              squadMeta: true,
+              createdAt: true
+            }
+          })
+        : [];
+    const lastMessageMap = new Map(lastMessages.map((m) => [m.id, m]));
+
+    const detailed =
+      convRows.length > 0
+        ? await this.getConversationDetails(userId, convRows, lastMessageMap)
+        : [];
+    const detailById = new Map(detailed.map((d) => [d.id, d]));
+
+    const syntheticPeers = page.filter((h) => !h.conversation).map((h) => h.peerId);
+    const syntheticStatusMap =
+      syntheticPeers.length > 0
+        ? await this.streamingClient.getUserStatuses(syntheticPeers).catch(() => new Map())
+        : new Map();
+    const missingProfiles = syntheticPeers.filter((id) => !profileFromName.has(id));
+    const fetchedProfiles = await Promise.all(
+      missingProfiles.map((id) => this.userClient.getUserProfile(id))
+    );
+    for (let i = 0; i < missingProfiles.length; i++) {
+      profileFromName.set(missingProfiles[i], {
+        id: missingProfiles[i],
+        ...fetchedProfiles[i]
+      });
+    }
+
+    const conversations = page.map((h) => {
+      if (h.conversation) {
+        const base = detailById.get(h.conversation.id);
+        if (base) {
+          return {
+            ...base,
+            matchKind: h.matchKind,
+            matchSnippet: h.matchKind === "message" ? h.matchSnippet : undefined
+          };
+        }
+      }
+
+      const req = h.pendingRequest;
+      const profile = profileFromName.get(h.peerId) || {
+        username: "Unknown User",
+        displayPictureUrl: null
+      };
+      const userStatus = syntheticStatusMap.get(h.peerId) || {
+        status: "offline",
+        isBroadcasting: false,
+        roomId: null,
+        broadcastUrl: null
+      };
+      const syntheticId =
+        req?.direction === "sent"
+          ? `outgoing_fr_${req.id}`
+          : `pending_fr_${req?.id || h.peerId}`;
+
+      return {
+        id: syntheticId,
+        conversationId: syntheticId,
+        otherUserId: h.peerId,
+        otherUser: {
+          id: h.peerId,
+          username: profile?.username || "Unknown User",
+          displayPictureUrl: profile?.displayPictureUrl || null
+        },
+        section: h.viewerSection,
+        lastMessage: null,
+        unreadCount: 0,
+        isFriend: false,
+        isFollowRequest: req?.direction === "received",
+        isOutgoingFriendRequest: req?.direction === "sent",
+        followRequestId: req?.direction === "received" ? req.id : null,
+        outgoingFriendRequestId: req?.direction === "sent" ? req.id : null,
+        userStatus: userStatus.status,
+        isBroadcasting: userStatus.isBroadcasting,
+        broadcastRoomId: userStatus.roomId,
+        broadcastUrl: userStatus.broadcastUrl,
+        lastMessageAt: req?.createdAt || new Date(h.activityAt),
+        createdAt: req?.createdAt || new Date(h.activityAt),
+        matchKind: h.matchKind,
+        matchSnippet: undefined
+      };
+    });
+
+    return {
+      conversations,
+      nextCursor: hasMore ? String(offset + limit) : undefined,
+      hasMore,
+      sectionCounts
+    };
+  }
 }

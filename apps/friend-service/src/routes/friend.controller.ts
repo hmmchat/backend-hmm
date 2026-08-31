@@ -20,6 +20,7 @@ import { FilesClientService } from "../services/files-client.service.js";
 import { MetricsService } from "../services/metrics.service.js";
 import { GiftCatalogService, resolveGiftStickerUrl } from "../services/gift-catalog.service.js";
 import { GiphyService } from "../services/giphy.service.js";
+import { ConversationSection } from "../../node_modules/.prisma/client/index.js";
 import { z } from "zod";
 import { verifyToken, AccessPayload } from "@hmm/common";
 import { JWK } from "jose";
@@ -139,6 +140,19 @@ const ConversationFilterSchema = z.enum(["text_only", "with_gift", "only_follows
 });
 
 const ConversationQuerySchema = PaginationSchema.extend({
+  filter: ConversationFilterSchema.optional()
+});
+
+const ConversationSearchSectionSchema = z.enum(["inbox", "received-requests", "sent-requests"]);
+
+const ConversationSearchQuerySchema = z.object({
+  q: z.string().trim().min(3).max(100),
+  section: ConversationSearchSectionSchema.default("inbox"),
+  limit: z
+    .string()
+    .optional()
+    .transform((val) => (val ? Math.min(Math.max(parseInt(val, 10) || 20, 1), 50) : 20)),
+  cursor: z.string().optional(),
   filter: ConversationFilterSchema.optional()
 });
 
@@ -631,6 +645,35 @@ export class FriendController {
     const parsed = ConversationQuerySchema.parse(query);
     return this.friendService.getSentRequestsConversations(
       userId,
+      parsed.limit,
+      parsed.cursor,
+      parsed.filter
+    );
+  }
+
+  /**
+   * Search conversations by display name + message body across all sections.
+   * GET /me/conversations/search?q=arya&section=inbox|received-requests|sent-requests&limit=20&cursor=0&filter=
+   * Does not mark sections as seen.
+   */
+  @UseGuards(ConversationRateLimitGuard)
+  @Get("me/conversations/search")
+  async searchConversations(
+    @Headers("authorization") authz: string,
+    @Query() query: any
+  ) {
+    const token = this.getTokenFromHeader(authz);
+    const userId = await this.verifyTokenAndGetUserId(token!);
+    const parsed = ConversationSearchQuerySchema.parse(query);
+    const sectionMap = {
+      inbox: ConversationSection.INBOX,
+      "received-requests": ConversationSection.RECEIVED_REQUESTS,
+      "sent-requests": ConversationSection.SENT_REQUESTS
+    };
+    return this.friendService.searchConversations(
+      userId,
+      parsed.q,
+      sectionMap[parsed.section],
       parsed.limit,
       parsed.cursor,
       parsed.filter

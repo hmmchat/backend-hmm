@@ -69,3 +69,7 @@ tests/**/.test-token
 
 # Test tokens (contains sensitive JWT tokens)
 tests/discovery-service/.test-tokens
+
+# Dozzle login file (bcrypt hashes — generate locally)
+deploy/dozzle/data/users.yml
+deploy/dozzle/data/users.yaml

@@ -1,0 +1,11 @@
+# Copy to data/users.yml via: bash scripts/dozzle-generate-user.sh
+# Never commit data/users.yml (it contains password hashes).
+users:
+  admin:
+    email: ops@localhost
+    name: Admin
+    # bcrypt hash from: docker run -it --rm amir20/dozzle:v10.8.0 generate ...
+    password: REPLACE_WITH_BCRYPT_HASH
+    filter:
+    # logs only — shell / start-stop / cloud stay off
+    roles: none

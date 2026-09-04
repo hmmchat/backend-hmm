@@ -391,5 +391,33 @@ services:
       timeout: 3s
       retries: 3
 
+  # Live Docker log UI (localhost only — SSH tunnel in; do not publish 9999 publicly).
+  # Generate deploy/dozzle/data/users.yml first: bash scripts/dozzle-generate-user.sh
+  # Streaming droplet: deploy/dozzle/docker-compose.agent.yml + DOZZLE_REMOTE_AGENT
+  dozzle:
+    image: amir20/dozzle:v10.8.0
+    container_name: hmm-dozzle
+    restart: unless-stopped
+    environment:
+      DOZZLE_AUTH_PROVIDER: simple
+      DOZZLE_AUTH_TTL: 48h
+      DOZZLE_NO_ANALYTICS: "true"
+      DOZZLE_HOSTNAME: ${DOZZLE_HOSTNAME:-beam-backend}
+      # After the streaming agent is up, add to the host .env:
+      # DOZZLE_REMOTE_AGENT=STREAMING_IP:7007|beam-streaming|Production
+      # and uncomment the next line.
+      # DOZZLE_REMOTE_AGENT: ${DOZZLE_REMOTE_AGENT}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./deploy/dozzle/data:/data
+    ports:
+      - "127.0.0.1:9999:8080"
+    healthcheck:
+      test: ["CMD", "/dozzle", "healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
 volumes:
   postgres_data:

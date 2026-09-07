@@ -952,6 +952,82 @@ export class UserService implements OnModuleInit {
   }
 
   /**
+   * Public FaceCard payload for a referral invite. No user id, DOB, or contact fields.
+   */
+  async getPublicInviteFacecard(referralCode: string): Promise<{
+    referralCode: string;
+    facecard: {
+      username: string;
+      age: number | null;
+      preferredCity: string | null;
+      intent: string | null;
+      displayPictureUrl: string | null;
+      photos: Array<{ url: string; order: number }>;
+      brandPreferences: unknown[];
+      zodiac: { name: string | null; imageUrl: string | null } | null;
+      musicPreference: { name: string; artist: string; albumArtUrl: string | null } | null;
+      kycStatus: string | null;
+    };
+  }> {
+    const resolved = await this.authClient.resolveReferralCode(referralCode);
+    if (!resolved?.userId) {
+      throw new HttpException("Invite not found", HttpStatus.NOT_FOUND);
+    }
+
+    const active = await this.authClient.isAccountActive(resolved.userId);
+    if (!active) {
+      throw new HttpException("Invite not found", HttpStatus.NOT_FOUND);
+    }
+
+    const { user } = await this.getProfile(resolved.userId);
+    if (!user?.username || !user.profileCompleted) {
+      throw new HttpException("Invite not found", HttpStatus.NOT_FOUND);
+    }
+
+    const photos = Array.isArray(user.photos)
+      ? user.photos
+          .map((photo: { url?: string; order?: number }, index: number) => ({
+            url: String(photo?.url || ""),
+            order: Number.isFinite(photo?.order) ? Number(photo.order) : index
+          }))
+          .filter((photo: { url: string }) => Boolean(photo.url))
+      : [];
+
+    return {
+      referralCode: String(referralCode).trim(),
+      facecard: {
+        username: user.username,
+        age: this.ageFromDob(user.dateOfBirth),
+        preferredCity: user.preferredCity || null,
+        intent: user.intent || null,
+        displayPictureUrl: user.displayPictureUrl || null,
+        photos,
+        brandPreferences: user.brandPreferences || [],
+        zodiac: user.zodiac
+          ? { name: user.zodiac.name || null, imageUrl: user.zodiac.imageUrl || null }
+          : null,
+        musicPreference: user.musicPreference
+          ? {
+              name: user.musicPreference.name,
+              artist: user.musicPreference.artist,
+              albumArtUrl: user.musicPreference.albumArtUrl || null
+            }
+          : null,
+        kycStatus: user.kycStatus || null
+      }
+    };
+  }
+
+  private ageFromDob(dateOfBirth: Date | string | null | undefined): number | null {
+    if (!dateOfBirth) return null;
+    const dob = new Date(dateOfBirth);
+    if (Number.isNaN(dob.getTime())) return null;
+    const age = Math.floor((Date.now() - dob.getTime()) / (1000 * 60 * 60 * 24 * 365.25));
+    if (!Number.isFinite(age) || age < 0 || age > 120) return null;
+    return age;
+  }
+
+  /**
    * Filter user object to include only specified fields
    * Supports nested fields like "photos.url", "musicPreference.name"
    */

@@ -24,6 +24,32 @@ export class AuthClientService {
   }
 
   /**
+   * Resolve a public referral code to an active user id.
+   * Returns null if the code is unknown or the account is not shareable.
+   */
+  async resolveReferralCode(referralCode: string): Promise<{ userId: string } | null> {
+    try {
+      const encoded = encodeURIComponent(String(referralCode || "").trim());
+      if (!encoded) return null;
+      const response = await fetch(
+        `${this.authServiceUrl}/auth/internal/referrals/${encoded}`,
+        {
+          method: "GET",
+          headers: this.getInternalHeaders()
+        }
+      );
+      if (!response.ok) {
+        return null;
+      }
+      const data = (await response.json()) as { userId?: string };
+      return data?.userId ? { userId: data.userId } : null;
+    } catch (error: any) {
+      this.logger.warn(`Error resolving referral code: ${error.message}`);
+      return null;
+    }
+  }
+
+  /**
    * Get referral status for a user
    * Returns null if user has no referral or if service is unavailable
    */

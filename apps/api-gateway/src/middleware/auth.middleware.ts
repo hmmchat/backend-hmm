@@ -86,6 +86,14 @@ export class AuthMiddleware {
       return false;
     }
 
+    // Public FaceCard invite + referral short links
+    if (
+      /^\/users\/invite\/[^/]+$/.test(normalized) ||
+      /^\/r\/[A-Za-z0-9]+$/.test(normalized)
+    ) {
+      return false;
+    }
+
     // Public endpoints
     const publicPaths = [
       "/auth/",

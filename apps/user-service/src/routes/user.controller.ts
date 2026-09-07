@@ -111,6 +111,21 @@ export class UserController {
     return this.userService.createProfile(userId, dto);
   }
 
+  @Get("users/invite/:referralCode")
+  async getPublicInviteFacecard(@Param("referralCode") referralCode: string) {
+    const parsed = z
+      .string()
+      .trim()
+      .min(4)
+      .max(80)
+      .regex(/^[A-Za-z0-9]+$/, "Invalid referral code format")
+      .safeParse(referralCode);
+    if (!parsed.success) {
+      throw new HttpException("Invite not found", HttpStatus.NOT_FOUND);
+    }
+    return this.userService.getPublicInviteFacecard(parsed.data);
+  }
+
   @Get("users/:userId")
   async getProfile(@Param("userId") userId: string, @Query("fields") fields?: string) {
     const fieldArray = fields ? fields.split(",").map(f => f.trim()).filter(Boolean) : undefined;

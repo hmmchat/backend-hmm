@@ -352,6 +352,23 @@ export class AuthController {
   /* ---------- Referral Endpoints ---------- */
 
   /**
+   * Resolve a referral code to an active user (internal — user-service public invite).
+   * GET /auth/internal/referrals/:referralCode
+   */
+  @Get("internal/referrals/:referralCode")
+  async resolveReferralCode(
+    @Param("referralCode") referralCode: string,
+    @Headers("x-internal-token") internalToken?: string
+  ) {
+    this.assertInternalRequest(internalToken);
+    const resolved = await this.auth.resolveReferralCode(referralCode);
+    if (!resolved) {
+      throw new HttpException("Referral code not found", HttpStatus.NOT_FOUND);
+    }
+    return resolved;
+  }
+
+  /**
    * Get referral status for a user (internal endpoint for user-service)
    * GET /auth/users/:userId/referral-status
    */

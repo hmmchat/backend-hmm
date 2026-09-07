@@ -86,6 +86,12 @@ export class RoutingService implements OnModuleInit {
       requiresAuth: true
     });
 
+    this.routes.set("/r", {
+      path: "/r",
+      serviceUrl: authServiceUrl,
+      requiresAuth: false
+    });
+
     this.routes.set("/moderation", {
       path: "/moderation",
       serviceUrl: moderationServiceUrl,
@@ -520,7 +526,10 @@ export class RoutingService implements OnModuleInit {
           circuitBreaker.lastFailure = 0;
         }
 
-        const responseData = await response.json().catch(() => ({}));
+        const contentType = (response.headers.get("content-type") || "").toLowerCase();
+        const responseData = contentType.includes("text/html") || contentType.includes("text/plain")
+          ? await response.text()
+          : await response.json().catch(() => ({}));
         const responseHeaders: Record<string, string> = {};
 
         // Copy relevant headers

@@ -494,6 +494,26 @@ export class AuthService implements OnModuleInit {
   }
 
   /**
+   * Resolve a public referral code to an active auth user.
+   * Returns null for unknown, deleted, or non-active accounts (no userId leak).
+   */
+  async resolveReferralCode(referralCode: string): Promise<{ userId: string } | null> {
+    const code = String(referralCode || "").trim();
+    if (!code) return null;
+
+    const user = await this.prisma.user.findUnique({
+      where: { referralCode: code },
+      select: { id: true, accountStatus: true, deletedAt: true }
+    });
+
+    if (!user || user.deletedAt || user.accountStatus !== "ACTIVE") {
+      return null;
+    }
+
+    return { userId: user.id };
+  }
+
+  /**
    * Get user's referral code
    */
   async getReferralCode(userId: string): Promise<string> {
@@ -603,7 +623,7 @@ export class AuthService implements OnModuleInit {
       process.env.REFERRAL_SUCCESS_CRITERIA_LABEL || "FaceCard completed to 100%";
     const deepLink = this.buildReferralShareDeepLink(referralCode);
     const rawTemplate = process.env.REFERRAL_SHARE_TEMPLATE
-      || "Join me on Beam! Use my referral code {code}: {link}";
+      || "Join me on Beam: {link}";
 
     const messageTemplate = rawTemplate
       .replaceAll("{code}", referralCode)
@@ -643,8 +663,17 @@ export class AuthService implements OnModuleInit {
 
   private buildReferralLandingLink(referralCode: string): string {
     // Production should set REFERRAL_SHARE_BASE_URL explicitly if this default is wrong.
-    const baseUrl =
+    const rawBase =
       process.env.REFERRAL_SHARE_BASE_URL || "https://sandbox.rbshstudio.com";
+    // Optional until the FaceCard invite page is live. Empty keeps `BASE?ref=CODE`.
+    const landingPath = (process.env.REFERRAL_SHARE_LANDING_PATH || "").trim();
+    const origin = rawBase.replace(/\/+$/, "");
+    const path = landingPath
+      ? (landingPath.startsWith("/") ? landingPath : `/${landingPath}`)
+      : "";
+    const baseUrl = !path || /\/invite\/?$/i.test(origin)
+      ? origin
+      : `${origin}${path}`;
     const paramName = process.env.REFERRAL_SHARE_QUERY_PARAM || "ref";
     const separator = baseUrl.includes("?") ? "&" : "?";
     return `${baseUrl}${separator}${encodeURIComponent(paramName)}=${encodeURIComponent(referralCode)}`;

@@ -10,6 +10,7 @@ import { ProviderGoogle } from "../services/providers/google.provider.js";
 import { ProviderApple } from "../services/providers/apple.provider.js";
 import { ProviderFacebook } from "../services/providers/facebook.provider.js";
 import { ProviderPhone } from "../services/providers/phone.provider.js";
+import { RedisService } from "../services/redis.service.js";
 
 @Module({
   imports: [ConfigModule.forRoot()],
@@ -21,6 +22,7 @@ import { ProviderPhone } from "../services/providers/phone.provider.js";
   ],
   providers: [
     PrismaService,
+    RedisService,
     AuthService,
     ProviderGoogle,
     ProviderApple,

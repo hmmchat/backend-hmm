@@ -58,7 +58,7 @@ services:
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/auth-service?schema=public
       - REDIS_URL=redis://redis:6379
       - MSG91_AUTH_KEY=${MSG91_AUTH_KEY}
-      - MSG91_TEMPLATE_ID=${MSG91_TEMPLATE_ID}
+      - MSG91_TEMPLATE_ID=${MSG91_TEMPLATE_ID:-6a99ba9eed4ba341110e8892}
       - MSG91_SENDER_ID=${MSG91_SENDER_ID:-}
       - OTP_LENGTH=${OTP_LENGTH:-6}
       - OTP_TTL_SECONDS=${OTP_TTL_SECONDS:-300}

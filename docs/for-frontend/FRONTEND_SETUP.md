@@ -38,7 +38,7 @@ Each service requires environment variables. Copy the example files and configur
 - `DATABASE_URL` - PostgreSQL connection string
 - `REDIS_URL` - Redis connection string (optional)
 - `JWT_SECRET` / `JWT_PUBLIC_JWK` - JWT signing keys
-- `TWILIO_*` - For phone OTP (auth-service)
+- `MSG91_*` / `REDIS_URL` - For phone OTP via MSG91 SMS (auth-service)
 - `CLOUDFLARE_R2_*` - For file storage (files-service)
 - `RAZORPAY_*` - For payments (payment-service)
 
@@ -233,7 +233,7 @@ For local development, you'll need:
 1. **Google OAuth** - Get Google OAuth client ID
 2. **Apple Sign-In** - Configure Apple Developer account
 3. **Facebook Login** - Get Facebook App ID
-4. **Twilio** - For phone OTP (optional for local dev)
+4. **MSG91** - For phone OTP SMS (requires Redis + `MSG91_AUTH_KEY` / `MSG91_TEMPLATE_ID`)
 
 See `FRONTEND_INTEGRATION.md` for detailed authentication flows.
 

@@ -119,7 +119,7 @@ export class AuthService implements OnModuleInit {
   async sendPhoneOtp(phone: string) {
     try {
       await this.phone.send(phone);
-      return { ok: true };
+      return { ok: true, message: "OTP sent successfully" };
     } catch (err) {
       if (err instanceof HttpException) throw err;
       throw new HttpException(

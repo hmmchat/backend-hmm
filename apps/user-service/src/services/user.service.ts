@@ -2493,6 +2493,15 @@ export class UserService implements OnModuleInit {
     return user?.createdAt ?? null;
   }
 
+  /** Missing user-service row counts as not completed (auth shell never onboarded). */
+  async getProfileCompleted(userId: string): Promise<boolean> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { profileCompleted: true }
+    });
+    return Boolean(user?.profileCompleted);
+  }
+
   async validateUserIds(userIds: string[]): Promise<{ validIds: string[]; invalidIds: string[] }> {
     const unique = [...new Set(userIds.filter(Boolean))];
     if (unique.length === 0) {

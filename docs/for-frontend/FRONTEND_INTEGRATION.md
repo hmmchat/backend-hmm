@@ -262,6 +262,63 @@ All require `Authorization: Bearer {accessToken}`. After delete/deactivate, clea
 
 **Profile & preferences** (username, `videoEnabled`, location, etc.) live on **user-service** — use `GET /v1/me`, `PATCH /v1/me/profile`, `PATCH /v1/me/location` (see [User Profile Management](#user-profile-management)).
 
+### 8.1 Login methods (link Google ↔ phone)
+
+Optional backup login. After a successful link, Google or phone signs into the **same** user. Unlinked methods stay separate accounts. Do **not** call `POST /v1/auth/phone/verify` or `POST /v1/auth/google` while logged in — those mint tokens for a different user.
+
+All routes require `Authorization: Bearer {accessToken}`. Phone format is the same as signup: `+91[6-9]XXXXXXXXX`.
+
+**List linked methods**
+
+`GET /v1/auth/me/login-methods`
+
+```json
+{
+  "phone": "+919876543210",
+  "googleEmail": "user@gmail.com",
+  "hasGoogle": true,
+  "hasPhone": true,
+  "canUnlinkPhone": true,
+  "canUnlinkGoogle": true
+}
+```
+
+`phone` / `googleEmail` are `null` when that method is not linked. `canUnlink*` is false when that method is the last remaining login (including Apple/Facebook). Unlinking Google also clears `email` so Google sign-in cannot still match this user.
+
+**Link phone (OTP)**
+
+1. `POST /v1/auth/me/link/phone/send-otp` `{ "phone": "+916123456789" }`
+2. `POST /v1/auth/me/link/phone/verify` `{ "phone": "+916123456789", "code": "123456" }`
+
+Verify returns the same body as `GET /v1/auth/me/login-methods`. Send-otp rejects with `METHOD_ALREADY_LINKED` or `IDENTIFIER_IN_USE` **before** SMS when the number cannot be attached.
+
+**Link Google**
+
+`POST /v1/auth/me/link/google` `{ "idToken": "string (ID token or access token)" }`
+
+Looks up conflicts by Google `sub` or email. Response: login-methods object.
+
+**Unlink**
+
+- `DELETE /v1/auth/me/link/phone`
+- `DELETE /v1/auth/me/link/google`
+
+Both return the updated login-methods object. Fails with `LAST_LOGIN_METHOD` if it would leave the account with no login.
+
+**Conflict rules**
+
+| Situation | Result |
+|-----------|--------|
+| Identifier unused | Attach to the current user |
+| Other account has `profileCompleted: false` (or no profile) and current profile is complete | Claim: move identifier here, retire the empty shell |
+| Other account is a completed profile | `409` `IDENTIFIER_IN_USE` |
+| Current profile incomplete, other is completed | `409` `PROFILE_NOT_COMPLETED` |
+| Current user already has that method type | `409` `METHOD_ALREADY_LINKED` |
+
+Client copy for `IDENTIFIER_IN_USE` / `PROFILE_NOT_COMPLETED`: “This Google / number is already used on another account.”
+
+Apple/Facebook linking is out of scope; those identifiers still count toward “at least one login method.”
+
 ### 9. Referral Overview (Referral Screen)
 
 **Endpoint:** `GET /v1/referrals/me/overview`
@@ -3283,7 +3340,7 @@ All paths below use the **API Gateway** prefix `/v1/`. Friend-related endpoints 
 
 ## Complete API Index
 
-Every frontend-facing route is listed in **[API_REFERENCE.md](./API_REFERENCE.md)** (209 endpoints, audited against `apps/*/src/**/*.controller.ts`). Excluded from that table: `/test/*`, `/internal/*`, admin dashboards, health checks, metrics, and payment webhooks.
+Every frontend-facing route is listed in **[API_REFERENCE.md](./API_REFERENCE.md)** (audited against `apps/*/src/**/*.controller.ts`). Excluded from that table: `/test/*`, `/internal/*`, admin dashboards, health checks, metrics, and payment webhooks.
 
 **Quick service map (gateway prefix `/v1`):**
 

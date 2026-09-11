@@ -29,6 +29,12 @@ For flows and examples see **[FRONTEND_INTEGRATION.md](./FRONTEND_INTEGRATION.md
 | `GET` | `/v1/auth/me/referral-stats` | `/auth/me/referral-stats` |
 | `GET` | `/v1/auth/me/referrals` | `/auth/me/referrals` |
 | `GET` | `/v1/auth/me/status` | `/auth/me/status` |
+| `GET` | `/v1/auth/me/login-methods` | `/auth/me/login-methods` |
+| `POST` | `/v1/auth/me/link/google` | `/auth/me/link/google` |
+| `POST` | `/v1/auth/me/link/phone/send-otp` | `/auth/me/link/phone/send-otp` |
+| `POST` | `/v1/auth/me/link/phone/verify` | `/auth/me/link/phone/verify` |
+| `DELETE` | `/v1/auth/me/link/google` | `/auth/me/link/google` |
+| `DELETE` | `/v1/auth/me/link/phone` | `/auth/me/link/phone` |
 | `POST` | `/v1/auth/phone/send-otp` | `/auth/phone/send-otp` |
 | `POST` | `/v1/auth/phone/verify` | `/auth/phone/verify` |
 | `POST` | `/v1/auth/refresh` | `/auth/refresh` |

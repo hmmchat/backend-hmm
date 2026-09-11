@@ -1244,4 +1244,363 @@ export class AuthService implements OnModuleInit {
       banReason: user.banReason
     };
   }
+
+  /* ---------- Login method linking (Google ↔ phone) ---------- */
+
+  private coded(status: number, code: string, message: string): never {
+    throw new HttpException({ statusCode: status, message, code }, status);
+  }
+
+  private rethrowUniqueConflict(err: unknown): never {
+    if (err instanceof HttpException) throw err;
+    const code = err && typeof err === "object" && "code" in err ? (err as { code?: string }).code : undefined;
+    if (code === "P2002") {
+      this.coded(
+        HttpStatus.CONFLICT,
+        "IDENTIFIER_IN_USE",
+        "This Google / number is already used on another account."
+      );
+    }
+    throw err;
+  }
+
+  private loginMethodCount(user: {
+    phone?: string | null;
+    googleSub?: string | null;
+    appleSub?: string | null;
+    facebookId?: string | null;
+  }): number {
+    return [user.phone, user.googleSub, user.appleSub, user.facebookId].filter(Boolean).length;
+  }
+
+  private loginMethodSelect = {
+    id: true,
+    phone: true,
+    email: true,
+    googleSub: true,
+    appleSub: true,
+    facebookId: true,
+    accountStatus: true,
+    deletedAt: true
+  } as const;
+
+  async getLoginMethods(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: this.loginMethodSelect
+    });
+    if (!user) {
+      throw new HttpException("User not found", HttpStatus.NOT_FOUND);
+    }
+    const hasPhone = Boolean(user.phone);
+    const hasGoogle = Boolean(user.googleSub);
+    const methods = this.loginMethodCount(user);
+    return {
+      phone: user.phone ?? null,
+      googleEmail: hasGoogle ? user.email ?? null : null,
+      hasGoogle,
+      hasPhone,
+      canUnlinkPhone: hasPhone && methods > 1,
+      canUnlinkGoogle: hasGoogle && methods > 1
+    };
+  }
+
+  async sendLinkPhoneOtp(userId: string, phone: string) {
+    const current = await this.requireUserForLink(userId);
+    if (current.phone) {
+      this.coded(
+        HttpStatus.CONFLICT,
+        "METHOD_ALREADY_LINKED",
+        "A mobile number is already linked. Unlink it first."
+      );
+    }
+    const other = await this.prisma.user.findFirst({
+      where: { phone },
+      select: this.loginMethodSelect
+    });
+    await this.resolveIdentifierLink(current, other && other.id !== userId ? other : null);
+    try {
+      await this.phone.send(phone);
+      return { ok: true, message: "OTP sent successfully" };
+    } catch (err) {
+      if (err instanceof HttpException) throw err;
+      throw new HttpException(
+        err instanceof Error ? err.message : "Failed to send OTP",
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  async verifyLinkPhone(userId: string, phone: string, code: string) {
+    const current = await this.requireUserForLink(userId);
+    if (current.phone) {
+      this.coded(
+        HttpStatus.CONFLICT,
+        "METHOD_ALREADY_LINKED",
+        "A mobile number is already linked. Unlink it first."
+      );
+    }
+    try {
+      await this.phone.verify(phone, code);
+    } catch (err) {
+      if (err instanceof HttpException) throw err;
+      throw new HttpException(
+        err instanceof Error ? err.message : "OTP verification failed",
+        HttpStatus.UNAUTHORIZED
+      );
+    }
+    const other = await this.prisma.user.findFirst({
+      where: { phone },
+      select: this.loginMethodSelect
+    });
+    const resolution = await this.resolveIdentifierLink(
+      current,
+      other && other.id !== userId ? other : null
+    );
+    try {
+      if (resolution.action === "claim") {
+        await this.claimEmptyShell(userId, resolution.otherId, { phone });
+      } else {
+        await this.prisma.user.update({
+          where: { id: userId },
+          data: { phone }
+        });
+      }
+    } catch (err) {
+      this.rethrowUniqueConflict(err);
+    }
+    return this.getLoginMethods(userId);
+  }
+
+  async linkGoogle(userId: string, idToken: string) {
+    const current = await this.requireUserForLink(userId);
+    if (current.googleSub) {
+      this.coded(
+        HttpStatus.CONFLICT,
+        "METHOD_ALREADY_LINKED",
+        "A Google account is already linked. Unlink it first."
+      );
+    }
+    const g = await this.google.verify(idToken);
+    const googleSub = g.sub;
+    const email = g.email ?? null;
+    if (!googleSub) {
+      throw new HttpException("Google verification failed", HttpStatus.UNAUTHORIZED);
+    }
+
+    const matches = await this.prisma.user.findMany({
+      where: {
+        OR: [{ googleSub }, email ? { email } : undefined].filter(Boolean) as any
+      },
+      select: this.loginMethodSelect
+    });
+    const bySub = matches.find((u) => u.googleSub === googleSub);
+    const byEmail = email ? matches.find((u) => u.email === email) : undefined;
+    if (
+      bySub &&
+      byEmail &&
+      bySub.id !== byEmail.id &&
+      bySub.id !== userId &&
+      byEmail.id !== userId
+    ) {
+      this.coded(
+        HttpStatus.CONFLICT,
+        "IDENTIFIER_IN_USE",
+        "This Google / number is already used on another account."
+      );
+    }
+    const other = [bySub, byEmail].find((u) => u && u.id !== userId) ?? null;
+    const resolution = await this.resolveIdentifierLink(current, other);
+    const attach = { googleSub, ...(email ? { email } : {}) };
+    try {
+      if (resolution.action === "claim") {
+        await this.claimEmptyShell(userId, resolution.otherId, attach);
+      } else {
+        await this.prisma.user.update({
+          where: { id: userId },
+          data: attach
+        });
+      }
+    } catch (err) {
+      this.rethrowUniqueConflict(err);
+    }
+    return this.getLoginMethods(userId);
+  }
+
+  async unlinkPhone(userId: string) {
+    const current = await this.requireUserForLink(userId);
+    if (!current.phone) {
+      throw new HttpException("No mobile number is linked.", HttpStatus.BAD_REQUEST);
+    }
+    if (this.loginMethodCount(current) <= 1) {
+      this.coded(
+        HttpStatus.CONFLICT,
+        "LAST_LOGIN_METHOD",
+        "Keep at least one login method on this account."
+      );
+    }
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { phone: null }
+    });
+    return this.getLoginMethods(userId);
+  }
+
+  async unlinkGoogle(userId: string) {
+    const current = await this.requireUserForLink(userId);
+    if (!current.googleSub) {
+      throw new HttpException("No Google account is linked.", HttpStatus.BAD_REQUEST);
+    }
+    if (this.loginMethodCount(current) <= 1) {
+      this.coded(
+        HttpStatus.CONFLICT,
+        "LAST_LOGIN_METHOD",
+        "Keep at least one login method on this account."
+      );
+    }
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { googleSub: null, email: null }
+    });
+    return this.getLoginMethods(userId);
+  }
+
+  private async requireUserForLink(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: this.loginMethodSelect
+    });
+    if (!user || user.deletedAt) {
+      throw new HttpException(
+        "Account no longer exists. Please sign in again.",
+        HttpStatus.UNAUTHORIZED
+      );
+    }
+    return user;
+  }
+
+  /**
+   * unused → attach; empty shell + current completed → claim; completed other → reject.
+   */
+  private async resolveIdentifierLink(
+    current: { id: string; deletedAt: Date | null; accountStatus: string },
+    other: {
+      id: string;
+      accountStatus: string;
+      deletedAt: Date | null;
+    } | null
+  ): Promise<{ action: "attach" } | { action: "claim"; otherId: string }> {
+    if (!other) return { action: "attach" };
+
+    if (other.deletedAt) {
+      return { action: "claim", otherId: other.id };
+    }
+
+    if (other.accountStatus === "BANNED" || other.accountStatus === "SUSPENDED") {
+      this.coded(
+        HttpStatus.CONFLICT,
+        "IDENTIFIER_IN_USE",
+        "This Google / number is already used on another account."
+      );
+    }
+
+    const [currentCompleted, otherCompleted] = await Promise.all([
+      this.isProfileCompleted(current.id),
+      this.isProfileCompleted(other.id)
+    ]);
+
+    if (otherCompleted) {
+      if (!currentCompleted) {
+        this.coded(
+          HttpStatus.CONFLICT,
+          "PROFILE_NOT_COMPLETED",
+          "This Google / number is already used on another account. Sign in to that account to add this method."
+        );
+      }
+      this.coded(
+        HttpStatus.CONFLICT,
+        "IDENTIFIER_IN_USE",
+        "This Google / number is already used on another account."
+      );
+    }
+
+    if (!currentCompleted) {
+      this.coded(
+        HttpStatus.CONFLICT,
+        "IDENTIFIER_IN_USE",
+        "This Google / number is already used on another account."
+      );
+    }
+
+    return { action: "claim", otherId: other.id };
+  }
+
+  private async isProfileCompleted(userId: string): Promise<boolean> {
+    const userServiceUrl = (process.env.USER_SERVICE_URL || "http://localhost:3002").replace(
+      /\/$/,
+      ""
+    );
+    const headers: Record<string, string> = {};
+    if (process.env.INTERNAL_SERVICE_TOKEN) {
+      headers["x-internal-token"] = process.env.INTERNAL_SERVICE_TOKEN;
+    }
+    try {
+      const response = await fetch(
+        `${userServiceUrl}/users/internal/${encodeURIComponent(userId)}/profile-completed`,
+        { method: "GET", headers }
+      );
+      if (response.status === 404) return false;
+      if (!response.ok) {
+        throw new HttpException(
+          "Could not verify profile status. Try again.",
+          HttpStatus.SERVICE_UNAVAILABLE
+        );
+      }
+      const data = (await response.json()) as { profileCompleted?: boolean };
+      return Boolean(data.profileCompleted);
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      throw new HttpException(
+        "Could not verify profile status. Try again.",
+        HttpStatus.SERVICE_UNAVAILABLE
+      );
+    }
+  }
+
+  private async claimEmptyShell(
+    currentUserId: string,
+    emptyUserId: string,
+    attach: { phone?: string; googleSub?: string; email?: string }
+  ): Promise<void> {
+    if (currentUserId === emptyUserId) {
+      await this.prisma.user.update({
+        where: { id: currentUserId },
+        data: attach
+      });
+      return;
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: emptyUserId },
+        data: {
+          phone: null,
+          googleSub: null,
+          email: null,
+          appleSub: null,
+          facebookId: null,
+          accountStatus: "DEACTIVATED",
+          deletedAt: new Date(),
+          deactivatedAt: new Date()
+        }
+      });
+      await tx.session.deleteMany({ where: { userId: emptyUserId } });
+      await tx.user.update({
+        where: { id: currentUserId },
+        data: attach
+      });
+    });
+
+    await this.deleteUserServiceProfile(emptyUserId, "self");
+  }
 }

@@ -815,6 +815,37 @@ export class UserController {
   }
 
   /**
+   * Internal: whether this user finished FaceCard onboarding.
+   * Missing row → profileCompleted false (auth account never created a profile).
+   * GET /users/internal/:userId/profile-completed
+   */
+  @Get("users/internal/:userId/profile-completed")
+  async getProfileCompleted(
+    @Headers("x-internal-token") internalToken: string | undefined,
+    @Headers("x-service-token") serviceToken: string | undefined,
+    @Param("userId") userId: string
+  ) {
+    const isTestMode = process.env.NODE_ENV === "test" || process.env.TEST_MODE === "true";
+    const expectedToken = process.env.INTERNAL_SERVICE_TOKEN;
+
+    if (!isTestMode) {
+      if (!expectedToken) {
+        throw new HttpException(
+          "Internal service token not configured",
+          HttpStatus.INTERNAL_SERVER_ERROR
+        );
+      }
+      const provided = internalToken || serviceToken;
+      if (provided !== expectedToken) {
+        throw new HttpException("Invalid service token", HttpStatus.UNAUTHORIZED);
+      }
+    }
+
+    const profileCompleted = await this.userService.getProfileCompleted(userId);
+    return { userId, profileCompleted };
+  }
+
+  /**
    * Internal: validate which user IDs exist.
    * POST /users/internal/validate-ids
    */

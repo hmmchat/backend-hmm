@@ -27,6 +27,15 @@ const referralShareEventSchema = z.object({
   metadata: z.record(z.any()).optional()
 });
 
+const indianPhoneSchema = z
+  .string()
+  .min(10)
+  .refine((val) => val.startsWith("+91"), "Phone number must be from India (+91)")
+  .refine(
+    (val) => /^\+91[6-9]\d{9}$/.test(val),
+    "Invalid Indian phone number format. Must be +91 followed by 10 digits starting with 6-9"
+  );
+
 @Controller("auth")
 export class AuthController {
   private verifyAccess!: (token: string) => Promise<AccessPayload>;
@@ -114,11 +123,8 @@ export class AuthController {
 
   @Post("phone/send-otp")
   async sendOtp(@Body() body: any) {
-    const { phone } = z.object({ 
-      phone: z.string()
-        .min(10)
-        .refine((val) => val.startsWith("+91"), "Phone number must be from India (+91)")
-        .refine((val) => /^\+91[6-9]\d{9}$/.test(val), "Invalid Indian phone number format. Must be +91 followed by 10 digits starting with 6-9")
+    const { phone } = z.object({
+      phone: indianPhoneSchema
     }).parse(body);
     return this.auth.sendPhoneOtp(phone);
   }
@@ -126,10 +132,7 @@ export class AuthController {
   @Post("phone/verify")
   async verifyOtp(@Body() body: any) {
     const schema = z.object({
-      phone: z.string()
-        .min(10)
-        .refine((val) => val.startsWith("+91"), "Phone number must be from India (+91)")
-        .refine((val) => /^\+91[6-9]\d{9}$/.test(val), "Invalid Indian phone number format. Must be +91 followed by 10 digits starting with 6-9"),
+      phone: indianPhoneSchema,
       code: z.string().min(4).max(8),
       referralCode: z.string().optional()
     }).and(termsSchema);
@@ -205,6 +208,80 @@ export class AuthController {
     const userId = await this.verifyTokenAndGetUserId(token!);
     
     return this.auth.getAccountStatus(userId);
+  }
+
+  /**
+   * Linked Google / phone login methods for Settings.
+   * GET /auth/me/login-methods
+   */
+  @Get("me/login-methods")
+  async getLoginMethods(@Headers("authorization") authz: string) {
+    const token = this.getTokenFromHeader(authz);
+    const userId = await this.verifyTokenAndGetUserId(token!);
+    return this.auth.getLoginMethods(userId);
+  }
+
+  /**
+   * Send OTP to attach a phone. Does not sign in as that number.
+   * POST /auth/me/link/phone/send-otp
+   */
+  @Post("me/link/phone/send-otp")
+  async sendLinkPhoneOtp(@Headers("authorization") authz: string, @Body() body: any) {
+    const token = this.getTokenFromHeader(authz);
+    const userId = await this.verifyTokenAndGetUserId(token!);
+    const { phone } = z.object({ phone: indianPhoneSchema }).parse(body);
+    return this.auth.sendLinkPhoneOtp(userId, phone);
+  }
+
+  /**
+   * Verify OTP and attach / claim-empty the phone onto the current account.
+   * POST /auth/me/link/phone/verify
+   */
+  @Post("me/link/phone/verify")
+  async verifyLinkPhone(@Headers("authorization") authz: string, @Body() body: any) {
+    const token = this.getTokenFromHeader(authz);
+    const userId = await this.verifyTokenAndGetUserId(token!);
+    const { phone, code } = z
+      .object({
+        phone: indianPhoneSchema,
+        code: z.string().min(4).max(8)
+      })
+      .parse(body);
+    return this.auth.verifyLinkPhone(userId, phone, code);
+  }
+
+  /**
+   * Attach / claim-empty a Google account onto the current user.
+   * POST /auth/me/link/google
+   */
+  @Post("me/link/google")
+  async linkGoogle(@Headers("authorization") authz: string, @Body() body: any) {
+    const token = this.getTokenFromHeader(authz);
+    const userId = await this.verifyTokenAndGetUserId(token!);
+    const { idToken } = z.object({ idToken: z.string().min(10) }).parse(body);
+    return this.auth.linkGoogle(userId, idToken);
+  }
+
+  /**
+   * Remove phone login. Fails if it is the last method.
+   * DELETE /auth/me/link/phone
+   */
+  @Delete("me/link/phone")
+  async unlinkPhone(@Headers("authorization") authz: string) {
+    const token = this.getTokenFromHeader(authz);
+    const userId = await this.verifyTokenAndGetUserId(token!);
+    return this.auth.unlinkPhone(userId);
+  }
+
+  /**
+   * Remove Google login (also clears email so sign-in cannot match it).
+   * DELETE /auth/me/link/google
+   */
+  @Delete("me/link/google")
+  async unlinkGoogle(@Headers("authorization") authz: string) {
+    const token = this.getTokenFromHeader(authz);
+    const userId = await this.verifyTokenAndGetUserId(token!);
+    return this.auth.unlinkGoogle(userId);
   }
 
   /* ---------- Admin Endpoints (for moderation/admin use) ---------- */

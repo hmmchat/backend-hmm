@@ -72,12 +72,22 @@ export class BrandService {
       process.env.BRANDFETCH_ENABLED !== "false" && !!this.brandfetchClientId;
   }
 
+  private isBrandfetchHosted(url: string | null | undefined): boolean {
+    const stored = url?.trim();
+    if (!stored) return false;
+    return stored.includes("asset.brandfetch.io") || stored.includes("cdn.brandfetch.io");
+  }
+
   /**
    * Public logo URL for clients.
    * - Dashboard / uploaded logos (B2/S3, etc.) always win over Brandfetch.
    * - Brand Search API icons (`asset.brandfetch.io` and signed `cdn.brandfetch.io/...?...`
    *   tokens) expire — never serve those; rewrite to Logo Link with our client id.
-   * - Stable form: `cdn.brandfetch.io/{domain|brandfetchId}/icon.png?c={CLIENT_ID}`.
+   * - Brand id wins over domain. A saved domain can belong to a different site, and
+   *   Logo API then answers with Brandfetch's own mark.
+   * - `fallback/lettermark` keeps a real icon when one exists, and uses a letter
+   *   when it does not, instead of Brandfetch's default logo.
+   * - Stable form: `cdn.brandfetch.io/{brandfetchId|domain}/w/400/h/400/fallback/lettermark/icon.png?c={CLIENT_ID}`.
    */
   resolvePublicLogoUrl(
     domain: string | null,
@@ -85,13 +95,10 @@ export class BrandService {
     brandfetchId?: string | null
   ): string | null {
     const stored = storedLogoUrl?.trim() || null;
-    const isBrandfetchUrl =
-      !!stored &&
-      (stored.includes("asset.brandfetch.io") || stored.includes("cdn.brandfetch.io"));
 
     // Uploaded or otherwise persisted logos override Brandfetch CDN.
     // (Custom "Beam" with a dashboard upload must not be replaced by onbeam.com's icon.)
-    if (stored && !isBrandfetchUrl) {
+    if (stored && !this.isBrandfetchHosted(stored)) {
       return rewriteExpiredStorageUrl(stored);
     }
 
@@ -100,21 +107,19 @@ export class BrandService {
 
     // Recover identifier from a stored Brandfetch CDN path when the row is incomplete
     // (common for city-catalog brands persisted from search icons).
-    if (!d && !bfid && stored?.includes("cdn.brandfetch.io")) {
+    if (!bfid && stored?.includes("cdn.brandfetch.io")) {
       try {
         const first = new URL(stored).pathname.split("/").filter(Boolean)[0];
-        if (first) {
-          if (first.includes(".")) d = first.toLowerCase();
-          else bfid = first;
-        }
+        if (first && !first.includes(".")) bfid = first;
+        else if (first && !d) d = first.toLowerCase();
       } catch {
         // ignore malformed stored URLs
       }
     }
 
-    if (this.brandfetchClientId && (d || bfid)) {
-      const identifier = d || bfid!;
-      return `https://cdn.brandfetch.io/${encodeURIComponent(identifier)}/icon.png?c=${encodeURIComponent(
+    const identifier = bfid || d;
+    if (this.brandfetchClientId && identifier) {
+      return `https://cdn.brandfetch.io/${encodeURIComponent(identifier)}/w/400/h/400/fallback/lettermark/icon.png?c=${encodeURIComponent(
         this.brandfetchClientId
       )}`;
     }
@@ -352,7 +357,9 @@ export class BrandService {
       }
 
       if (row) {
-        if (row.isCustom) {
+        // Keep a dashboard upload. A custom row with no upload (or an old Brandfetch
+        // URL) takes the search hit, so a stale domain does not keep serving Brandfetch's mark.
+        if (row.isCustom && row.logoUrl && !this.isBrandfetchHosted(row.logoUrl)) {
           return {
             id: row.id,
             name: row.name,
@@ -405,7 +412,7 @@ export class BrandService {
           where: { name: { equals: r.name, mode: "insensitive" } }
         });
         if (fallback) {
-          if (fallback.isCustom) {
+          if (fallback.isCustom && fallback.logoUrl && !this.isBrandfetchHosted(fallback.logoUrl)) {
             return {
               id: fallback.id,
               name: fallback.name,
@@ -418,16 +425,20 @@ export class BrandService {
               )
             };
           }
+          const updated = await this.prisma.brand.update({
+            where: { id: fallback.id },
+            data: {
+              logoUrl: r.logoUrl ?? fallback.logoUrl,
+              domain: r.domain ?? fallback.domain,
+              brandfetchId: r.brandfetchId ?? fallback.brandfetchId
+            }
+          });
           return {
-            id: fallback.id,
-            name: fallback.name,
-            domain: fallback.domain,
-            brandfetchId: r.brandfetchId ?? fallback.brandfetchId,
-            logoUrl: this.resolvePublicLogoUrl(
-              fallback.domain,
-              r.logoUrl ?? fallback.logoUrl,
-              r.brandfetchId ?? fallback.brandfetchId
-            )
+            id: updated.id,
+            name: updated.name,
+            domain: updated.domain,
+            brandfetchId: updated.brandfetchId,
+            logoUrl: this.resolvePublicLogoUrl(updated.domain, updated.logoUrl, updated.brandfetchId)
           };
         }
       }

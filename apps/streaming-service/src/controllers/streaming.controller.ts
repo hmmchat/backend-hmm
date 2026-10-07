@@ -476,7 +476,7 @@ export class StreamingController {
     @Body() body: { userId: string }
   ) {
     if (!body.userId) {
-      throw new BadRequestException("userId is required");
+      throw new BadRequestException("Sign in to join this Beam.");
     }
     await this.roomService.requestToJoin(roomId, body.userId);
     return { success: true, message: "Join request submitted" };
@@ -492,7 +492,7 @@ export class StreamingController {
     @Body() body: { userId: string }
   ) {
     if (!body.userId) {
-      throw new BadRequestException("userId is required");
+      throw new BadRequestException("Sign in to leave the waitlist.");
     }
     await this.roomService.cancelJoinRequest(roomId, body.userId);
     return { success: true, message: "Join request cancelled" };
@@ -518,10 +518,10 @@ export class StreamingController {
     @Body() body: { hostUserId: string; targetUserId: string }
   ) {
     if (!body.hostUserId || !body.targetUserId) {
-      throw new BadRequestException("hostUserId and targetUserId are required");
+      throw new BadRequestException("Choose someone on the waitlist to add.");
     }
     await this.roomService.acceptFromWaitlist(roomId, body.hostUserId, body.targetUserId);
-    return { success: true, message: "User added to call from waitlist" };
+    return { success: true, message: "Added to the Beam." };
   }
 
   /**
@@ -839,7 +839,7 @@ export class StreamingController {
     @Body() body: { userId: string }
   ) {
     if (!body.userId) {
-      throw new BadRequestException("userId is required");
+      throw new BadRequestException("Sign in to join this Beam.");
     }
     await this.roomService.requestToJoin(roomId, body.userId);
     return { success: true, message: "Join request submitted" };
@@ -855,7 +855,7 @@ export class StreamingController {
     @Body() body: { userId: string }
   ) {
     if (!body.userId) {
-      throw new BadRequestException("userId is required");
+      throw new BadRequestException("Sign in to leave the waitlist.");
     }
     await this.roomService.cancelJoinRequest(roomId, body.userId);
     return { success: true, message: "Join request cancelled" };
@@ -881,10 +881,10 @@ export class StreamingController {
     @Body() body: { hostUserId: string; targetUserId: string }
   ) {
     if (!body.hostUserId || !body.targetUserId) {
-      throw new BadRequestException("hostUserId and targetUserId are required");
+      throw new BadRequestException("Choose someone on the waitlist to add.");
     }
     await this.roomService.acceptFromWaitlist(roomId, body.hostUserId, body.targetUserId);
-    return { success: true, message: "User added to call from waitlist" };
+    return { success: true, message: "Added to the Beam." };
   }
 
   /**

@@ -980,7 +980,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     const { roomId, targetUserId: rawTarget } = data;
     const targetUserId = rawTarget != null ? String(rawTarget).trim() : "";
     if (!roomId || !targetUserId) {
-      this.sendError(ws, "roomId and targetUserId are required");
+      this.sendError(ws, "Choose someone to remove from the call.");
       return;
     }
 
@@ -1710,7 +1710,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       // Verify user is in the room
       const isParticipant = await this.roomService.isParticipant(roomId, userId);
       if (!isParticipant) {
-        this.sendError(ws, `User ${userId} is not a participant in room ${roomId}`);
+        this.sendError(ws, "You need to be in the call to do that.");
         return;
       }
 
@@ -1755,7 +1755,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
   ) {
     const { roomId, toUserId } = data;
     if (!roomId || !toUserId) {
-      this.sendError(ws, "roomId and toUserId are required");
+      this.sendError(ws, "Choose someone in the call.");
       return;
     }
 
@@ -1763,14 +1763,15 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       // Verify user is in the room
       const isParticipant = await this.roomService.isParticipant(roomId, userId);
       if (!isParticipant) {
-        this.sendError(ws, `User ${userId} is not a participant in room ${roomId}`);
+        this.sendError(ws, "You need to be in the call to do that.");
         return;
       }
 
       // Verify target user is also in the room
       const isTargetParticipant = await this.roomService.isParticipant(roomId, toUserId);
       if (!isTargetParticipant) {
-        this.sendError(ws, `Target user ${toUserId} is not a participant in room ${roomId}`);
+        const name = await this.roomService.personName(toUserId);
+        this.sendError(ws, `${name} isn't in this call anymore.`);
         return;
       }
 
@@ -2615,10 +2616,46 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
   /**
    * Send error message
    */
+  /**
+   * Copy safe to show in the call. Keeps "Room … not found" intact because the
+   * video-chat client uses that exact shape to leave a dead room.
+   */
+  private clientFacingError(message?: string): string {
+    const raw = String(message || "").trim();
+    if (!raw) return "Something went wrong. Please try again.";
+    if (/^Room\s+.+\s+not found$/i.test(raw)) return raw;
+    if (/participants cannot join as viewers/i.test(raw)) return "Participants cannot join as viewers";
+    if (/only the host can remove/i.test(raw)) return "Only the host can remove someone from this call.";
+    if (/can't be removed from this call/i.test(raw)) return raw;
+    if (/can't remove yourself/i.test(raw)) return raw;
+    if (/is already in this call/i.test(raw)) return raw;
+    if (/is already in another call/i.test(raw)) return raw;
+    if (/can't join this call right now/i.test(raw)) return raw;
+    if (/can't rejoin this call/i.test(raw)) return raw;
+    if (/this call is full/i.test(raw)) return raw;
+    if (/only the host can/i.test(raw)) return raw;
+    if (/isn't in this call anymore/i.test(raw)) return raw;
+    if (/not a participant/i.test(raw)) return "They're not in this call anymore.";
+    if (/room is full|cannot join/i.test(raw)) return "This call is full right now.";
+    if (/cannot kick|only hosts can kick/i.test(raw)) return "Only the host can remove someone from this call.";
+    if (/already in an active call|already in room|already a participant/i.test(raw)) return "They're already in this call.";
+    if (/was removed|cannot rejoin/i.test(raw)) return "They can't rejoin this call.";
+    if (/must be in MATCHED|current status:|compatible status/i.test(raw)) return "They can't join this call right now.";
+    if (/user-service|Exception|HTTP \d/i.test(raw)) return "Couldn't do that. Try again.";
+    if (
+      /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i.test(raw) ||
+      /\bUser [A-Za-z0-9:_-]{8,}/.test(raw) ||
+      /\banonymous:/i.test(raw)
+    ) {
+      return "Something went wrong. Please try again.";
+    }
+    return raw;
+  }
+
   private sendError(ws: any, error: string) {
     this.send(ws, {
       type: "error",
-      data: { error }
+      data: { error: this.clientFacingError(error) }
     });
   }
 

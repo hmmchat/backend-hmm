@@ -549,8 +549,12 @@ export class RoomService {
       }
 
       if (usersInRooms.length > 0) {
+        const names = await Promise.all(usersInRooms.map((id) => this.personName(id)));
+        const label = names.join(", ");
         throw new BadRequestException(
-          `Users ${usersInRooms.join(", ")} are already in an active room. Please leave the current room before creating a new one.`
+          names.length === 1
+            ? `${label} is already in a call.`
+            : `${label} are already in a call.`
         );
       }
 
@@ -564,31 +568,30 @@ export class RoomService {
 
             // Explicitly reject users with IN_SQUAD or IN_BROADCAST status (they're already in a call)
             if (userStatus === "IN_SQUAD" || userStatus === "IN_BROADCAST") {
-              invalidStatusUsers.push(`${userId} (status: ${userStatus} - user is already in an active call)`);
+              invalidStatusUsers.push(userId);
               continue; // Skip to next user
             }
 
             // Only MATCHED users can create/join rooms
             if (userStatus !== "MATCHED") {
-              invalidStatusUsers.push(`${userId} (status: ${userStatus})`);
+              invalidStatusUsers.push(userId);
             }
           } catch (error: any) {
             // If we can't check status (user-service unavailable), log warning but continue in TEST_MODE
             this.logger.warn(`Could not verify status for user ${userId}: ${error.message}`);
-            // In production, we should fail if we can't verify status
             if (process.env.TEST_MODE !== "true") {
-              throw new BadRequestException(
-                `Could not verify user status. Please ensure user-service is running and users are in MATCHED status.`
-              );
+              throw new BadRequestException("Couldn't start the call. Try again.");
             }
           }
         }
 
         if (invalidStatusUsers.length > 0) {
+          const names = await Promise.all(invalidStatusUsers.map((id) => this.personName(id)));
+          const label = names.join(", ");
           throw new BadRequestException(
-            `Users must be in MATCHED status to create/join rooms. Invalid users: ${invalidStatusUsers.join(", ")}. ` +
-            `Valid statuses to become MATCHED: AVAILABLE, IN_SQUAD_AVAILABLE, IN_BROADCAST_AVAILABLE. ` +
-            `Users with IN_SQUAD or IN_BROADCAST status cannot join new rooms (they are already in an active call).`
+            names.length === 1
+              ? `${label} can't join this call right now.`
+              : `${label} can't join this call right now.`
           );
         }
       } else {
@@ -952,20 +955,20 @@ export class RoomService {
     // Check participant count from database (source of truth)
     const activeParticipantCount = session.participants.length;
     if (activeParticipantCount >= this.maxParticipants) {
-      throw new BadRequestException(
-        `Room is full (${activeParticipantCount}/${this.maxParticipants} participants). Maximum ${this.maxParticipants} participants allowed.`
-      );
+      throw new BadRequestException("This call is full right now.");
     }
+
+    const name = await this.personName(userId);
 
     // Check if user is already a participant (check both memory and database)
     if (room && room.participants.has(userId)) {
-      throw new BadRequestException(`User ${userId} is already in room`);
+      throw new BadRequestException(`${name} is already in this call.`);
     }
 
     // Check database to see if user is already a participant
     const existingParticipant = session.participants.find(p => p.userId === userId);
     if (existingParticipant) {
-      throw new BadRequestException(`User ${userId} is already a participant in this room`);
+      throw new BadRequestException(`${name} is already in this call.`);
     }
 
     // BUSINESS RULE: Only users with status MATCHED can join rooms
@@ -981,17 +984,11 @@ export class RoomService {
 
         // Explicitly reject users with IN_SQUAD or IN_BROADCAST status (they're already in a call)
         if (userStatus === "IN_SQUAD" || userStatus === "IN_BROADCAST") {
-          throw new BadRequestException(
-            `User ${userId} cannot join a room because they are already in an active call (status: ${userStatus}). ` +
-            `Users must leave their current call before joining a new room.`
-          );
+          throw new BadRequestException(`${name} is already in another call.`);
         }
 
         if (userStatus !== "MATCHED") {
-          throw new BadRequestException(
-            `User ${userId} must be in MATCHED status to join a room. Current status: ${userStatus}. ` +
-            `Valid statuses to become MATCHED: AVAILABLE, IN_SQUAD_AVAILABLE, IN_BROADCAST_AVAILABLE`
-          );
+          throw new BadRequestException(`${name} can't join this call right now.`);
         }
       } catch (error: any) {
         // If we can't check status (user-service unavailable), log warning but continue in TEST_MODE
@@ -999,10 +996,7 @@ export class RoomService {
           throw error; // Re-throw validation errors
         }
         this.logger.warn(`Could not verify status for user ${userId}: ${error.message}`);
-        // In production, we should fail if we can't verify status
-        throw new BadRequestException(
-          `Could not verify user status. Please ensure user-service is running and user is in MATCHED status.`
-        );
+        throw new BadRequestException("Couldn't add them to the call. Try again.");
       }
     } else {
       const reason = skipStatusValidation ? "INTERNAL_LATE_JOIN_SQUAD" : "TEST_MODE";
@@ -1050,9 +1044,7 @@ export class RoomService {
     });
 
     if (existingAnyParticipant && await this.wasForceRemovedFromSession(session.id, userId)) {
-      throw new BadRequestException(
-        `User ${userId} was removed from this room and cannot rejoin.`
-      );
+      throw new BadRequestException(`${name} can't rejoin this call.`);
     }
 
     if (existingAnyParticipant) {
@@ -1200,6 +1192,18 @@ export class RoomService {
         `Failed to notify user-service of call ended for report streak (user=${userId}, session=${callSessionId}): ${err?.message || err}`
       );
     });
+  }
+
+  /** Display name for a person. Never returns an id. */
+  async personName(userId: string): Promise<string> {
+    try {
+      const profile = await this.discoveryClient.getUserProfile(userId);
+      const name = String(profile?.username || "").trim();
+      if (name) return name;
+    } catch (err: any) {
+      this.logger.warn(`Could not load a name for waitlist copy: ${err?.message || err}`);
+    }
+    return "This person";
   }
 
   /**
@@ -1384,9 +1388,15 @@ export class RoomService {
     // Validate that kicker can kick the target
     const canKick = await this.canKickUser(roomId, kickerUserId, targetUserId);
     if (!canKick) {
-      throw new BadRequestException(
-        `User ${kickerUserId} cannot kick ${targetUserId}. Only HOSTs can kick PARTICIPANTs.`
-      );
+      const isKickerHost = await this.isHost(roomId, kickerUserId);
+      if (!isKickerHost) {
+        throw new BadRequestException("Only the host can remove someone from this call.");
+      }
+      if (String(kickerUserId) === String(targetUserId)) {
+        throw new BadRequestException("You can't remove yourself from the call this way.");
+      }
+      const name = await this.personName(targetUserId);
+      throw new BadRequestException(`${name} can't be removed from this call.`);
     }
 
     // Capture loop intent before writing the kick event. Join events should not stop the loop;
@@ -1622,9 +1632,7 @@ export class RoomService {
     // Validate user is a HOST
     const isUserHost = await this.isHost(roomId, userId);
     if (!isUserHost) {
-      throw new BadRequestException(
-        `User ${userId} is not a HOST. Only HOSTs can enable broadcasting.`
-      );
+      throw new BadRequestException("Only the host can start a Beam.");
     }
 
     // Ensure room is in memory (will reload if needed)
@@ -1713,9 +1721,7 @@ export class RoomService {
     // Validate user is a HOST
     const isUserHost = await this.isHost(roomId, userId);
     if (!isUserHost) {
-      throw new BadRequestException(
-        `User ${userId} is not a HOST. Only HOSTs can disable broadcasting.`
-      );
+      throw new BadRequestException("Only the host can stop the Beam.");
     }
 
     // Ensure room is in memory (will reload if needed)
@@ -1855,14 +1861,12 @@ export class RoomService {
     // Verify user is HOST
     const isUserHost = await this.isHost(roomId, userId);
     if (!isUserHost) {
-      throw new BadRequestException(`Only HOST can enable pull stranger mode`);
+      throw new BadRequestException("Only the host can pull a stranger into this call.");
     }
 
     // Check if room is full
     if (session.participants.length >= this.maxParticipants) {
-      throw new BadRequestException(
-        `Room is full (${session.participants.length}/${this.maxParticipants} participants). Cannot enable pull stranger mode.`
-      );
+      throw new BadRequestException("This call is full right now.");
     }
 
     // Product rule: only the HOST who clicked "pull stranger" should appear in discovery.
@@ -1935,7 +1939,7 @@ export class RoomService {
 
     const isUserHost = await this.isHost(roomId, userId);
     if (!isUserHost) {
-      throw new BadRequestException(`Only HOST can disable pull stranger mode`);
+      throw new BadRequestException("Only the host can stop pulling strangers into this call.");
     }
 
     const participantUserIds = session.participants.map((p) => p.userId);
@@ -2039,16 +2043,13 @@ export class RoomService {
         }
       });
       if (previousParticipant && await this.wasForceRemovedFromSession(session.id, joiningUserId)) {
-        throw new BadRequestException(
-          `User ${joiningUserId} was removed from this room and cannot rejoin as a replacement.`
-        );
+        const name = await this.personName(joiningUserId);
+        throw new BadRequestException(`${name} can't rejoin this call.`);
       }
 
       // Verify pull stranger mode is enabled
       if (!session.pullStrangerEnabled) {
-        throw new BadRequestException(
-          `Pull stranger mode is not enabled for this room. A HOST must enable it first.`
-        );
+        throw new BadRequestException("Pulling a stranger isn't on for this call.");
       }
 
       // Pull mode has a fixed window. If expired, disable it and restore initiator.
@@ -2081,18 +2082,15 @@ export class RoomService {
             });
           }
 
-          throw new BadRequestException(
-            `Pull stranger window has expired. Host needs to enable it again.`
-          );
+          throw new BadRequestException("That timed out. Turn pull a stranger on again.");
         }
       }
 
       // Verify target user is in the room
       const targetParticipant = session.participants.find(p => p.userId === targetUserId);
       if (!targetParticipant) {
-        throw new BadRequestException(
-          `Target user ${targetUserId} is not a participant in room ${roomId}`
-        );
+        const name = await this.personName(targetUserId);
+        throw new BadRequestException(`${name} isn't in this call anymore.`);
       }
 
       // Verify target user has pull-stranger compatible status.
@@ -2109,33 +2107,28 @@ export class RoomService {
             "MATCHED"
           ]);
           if (!pullStrangerTargetStatuses.has(targetUserStatus)) {
-            throw new BadRequestException(
-              `Target user ${targetUserId} does not have pull-stranger compatible status (current: ${targetUserStatus}). ` +
-              `They may have already been matched or their status changed.`
-            );
+            const name = await this.personName(targetUserId);
+            throw new BadRequestException(`${name} can't join this call right now.`);
           }
         } catch (error: any) {
           if (error instanceof BadRequestException) {
             throw error;
           }
           this.logger.warn(`Could not verify target user status: ${error.message}`);
-          throw new BadRequestException(
-            `Could not verify target user status. Please ensure user-service is running.`
-          );
+          throw new BadRequestException("Couldn't add them to the call. Try again.");
         }
       }
 
       // Check room capacity
       if (session.participants.length >= this.maxParticipants) {
-        throw new BadRequestException(
-          `Room is full (${session.participants.length}/${this.maxParticipants} participants). Cannot join.`
-        );
+        throw new BadRequestException("This call is full right now.");
       }
 
       // Verify joining user is not already in the room
       const existingParticipant = session.participants.find(p => p.userId === joiningUserId);
       if (existingParticipant) {
-        throw new BadRequestException(`User ${joiningUserId} is already a participant in this room`);
+        const name = await this.personName(joiningUserId);
+        throw new BadRequestException(`${name} is already in this call.`);
       }
 
       // Verify joining user has an _AVAILABLE status or MATCHED.
@@ -2147,25 +2140,18 @@ export class RoomService {
           const allowedJoiningStatuses = new Set(["AVAILABLE", "IN_SQUAD_AVAILABLE", "IN_BROADCAST_AVAILABLE", "MATCHED"]);
           if (!allowedJoiningStatuses.has(joiningUserStatus)) {
             // Explicitly reject IN_SQUAD/IN_BROADCAST
+            const name = await this.personName(joiningUserId);
             if (joiningUserStatus === "IN_SQUAD" || joiningUserStatus === "IN_BROADCAST") {
-              throw new BadRequestException(
-                `User ${joiningUserId} cannot join because they are already in an active call (status: ${joiningUserStatus}). ` +
-                `Users must leave their current call before joining a new room.`
-              );
+              throw new BadRequestException(`${name} is already in another call.`);
             }
-            throw new BadRequestException(
-              `User ${joiningUserId} must be in AVAILABLE, IN_SQUAD_AVAILABLE, IN_BROADCAST_AVAILABLE, or MATCHED status to join via pull stranger. ` +
-              `Current status: ${joiningUserStatus}. Only users with _AVAILABLE statuses can join.`
-            );
+            throw new BadRequestException(`${name} can't join this call right now.`);
           }
         } catch (error: any) {
           if (error instanceof BadRequestException) {
             throw error;
           }
           this.logger.warn(`Could not verify joining user status: ${error.message}`);
-          throw new BadRequestException(
-            `Could not verify joining user status. Please ensure user-service is running.`
-          );
+          throw new BadRequestException("Couldn't add them to the call. Try again.");
         }
       }
 
@@ -2377,21 +2363,19 @@ export class RoomService {
     });
 
     if (!session) {
-      throw new NotFoundException(`Room ${roomId} not found`);
+      throw new NotFoundException("This Beam isn't available anymore.");
     }
 
     if (!session.isBroadcasting) {
-      throw new BadRequestException("Room is not broadcasting");
+      throw new BadRequestException("This Beam isn't live right now.");
     }
 
     if (session.participants.some((p) => String(p.userId) === String(userId))) {
-      throw new BadRequestException(`User ${userId} is already a participant in this room`);
+      throw new BadRequestException("You're already in this Beam.");
     }
 
     if (await this.wasForceRemovedFromSession(session.id, userId)) {
-      throw new BadRequestException(
-        `User ${userId} was removed from this room and cannot rejoin the waitlist.`
-      );
+      throw new BadRequestException("You can't rejoin this Beam.");
     }
 
     const existingWaitlist = await this.prisma.callWaitlist.findUnique({
@@ -2403,12 +2387,9 @@ export class RoomService {
       }
     });
 
-    if (session.participants.length >= this.maxParticipants) {
-      throw new BadRequestException(
-        `Room is full (${session.participants.length}/${this.maxParticipants} participants). Cannot add to waitlist.`
-      );
-    }
-
+    // A full call is why the waitlist exists. Capacity is enforced when the host
+    // accepts someone, not when a viewer asks to wait — including after they leave
+    // and come back.
     if (!existingWaitlist) {
       const anyViewer = await this.prisma.callViewer.findUnique({
         where: {
@@ -2420,7 +2401,7 @@ export class RoomService {
         select: { id: true }
       });
       if (!anyViewer) {
-        throw new BadRequestException(`User ${userId} is not a viewer of this broadcast`);
+        throw new BadRequestException("Still connecting you to this Beam. Try joining again.");
       }
     }
 
@@ -2478,7 +2459,7 @@ export class RoomService {
     });
 
     if (!session) {
-      throw new NotFoundException(`Room ${roomId} not found`);
+      throw new NotFoundException("This Beam isn't available anymore.");
     }
 
     const waitlistEntry = await this.prisma.callWaitlist.findFirst({
@@ -2572,9 +2553,7 @@ export class RoomService {
     // Verify hostUserId is a HOST
     const isUserHost = await this.isHost(roomId, hostUserId);
     if (!isUserHost) {
-      throw new BadRequestException(
-        `User ${hostUserId} is not a HOST. Only HOSTs can accept users from waitlist.`
-      );
+      throw new BadRequestException("Only the host can add someone to this Beam.");
     }
 
     const session = await this.prisma.callSession.findUnique({
@@ -2590,7 +2569,7 @@ export class RoomService {
     });
 
     if (!session) {
-      throw new NotFoundException(`Room ${roomId} not found`);
+      throw new NotFoundException("This Beam isn't available anymore.");
     }
 
     // Verify targetUserId has pending waitlist request
@@ -2603,20 +2582,18 @@ export class RoomService {
     });
 
     if (!waitlistEntry) {
-      throw new BadRequestException(
-        `User ${targetUserId} does not have a pending join request for this room`
-      );
+      const name = await this.personName(targetUserId);
+      throw new BadRequestException(`${name} isn't waiting to join.`);
     }
 
     if (session.participants.length >= this.maxParticipants) {
-      throw new BadRequestException(
-        `Room is full (${session.participants.length}/${this.maxParticipants} participants). Cannot add more participants.`
-      );
+      throw new BadRequestException("This Beam is full right now.");
     }
 
     const existingParticipant = session.participants.find(p => p.userId === targetUserId);
     if (existingParticipant) {
-      throw new BadRequestException(`User ${targetUserId} is already a participant in this room`);
+      const name = await this.personName(targetUserId);
+      throw new BadRequestException(`${name} is already in this Beam.`);
     }
 
     const existingAnyParticipant = await this.prisma.callParticipant.findUnique({
@@ -2632,9 +2609,8 @@ export class RoomService {
       existingAnyParticipant.status !== "active" &&
       await this.wasForceRemovedFromSession(session.id, targetUserId)
     ) {
-      throw new BadRequestException(
-        `User ${targetUserId} was removed from this room and cannot rejoin.`
-      );
+      const name = await this.personName(targetUserId);
+      throw new BadRequestException(`${name} can't rejoin this Beam.`);
     }
 
     await this.prisma.$transaction(async (tx) => {

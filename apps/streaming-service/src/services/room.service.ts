@@ -1048,11 +1048,14 @@ export class RoomService {
     }
 
     if (existingAnyParticipant) {
+      // New stay: joinedAt must move forward so host succession does not
+      // treat a returning participant as the oldest person in the call.
       await this.prisma.callParticipant.update({
         where: { id: existingAnyParticipant.id },
         data: {
           role: "PARTICIPANT",
           status: "active",
+          joinedAt: new Date(),
           leftAt: null,
           previousStatus
         }
@@ -2175,13 +2178,15 @@ export class RoomService {
         previousStatus = "AVAILABLE";
       }
 
-      // Add joining user to room (reactivate a voluntary-leave row if one exists)
+      // Add joining user to room (reactivate a voluntary-leave row if one exists).
+      // Refresh joinedAt so a returning participant is not treated as the oldest.
       if (previousParticipant) {
         await tx.callParticipant.update({
           where: { id: previousParticipant.id },
           data: {
             role: "PARTICIPANT",
             status: "active",
+            joinedAt: new Date(),
             leftAt: null,
             previousStatus
           }
@@ -2636,6 +2641,7 @@ export class RoomService {
           data: {
             role: "PARTICIPANT",
             status: "active",
+            joinedAt: new Date(),
             leftAt: null,
             previousStatus: "VIEWER"
           }

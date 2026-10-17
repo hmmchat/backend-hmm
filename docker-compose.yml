@@ -1,10 +1,17 @@
 version: '3.8'
 
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "3"
+
 services:
   # Edge reverse proxy (adds WebSocket upgrade support for /v1/friends/ws)
   edge-proxy:
     image: nginx:1.27-alpine
     container_name: hmm-edge-proxy
+    logging: *default-logging
     ports:
       - "80:80"
     volumes:
@@ -19,6 +26,7 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: hmm-postgres
+    logging: *default-logging
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -38,6 +46,10 @@ services:
   redis:
     image: redis:7-alpine
     container_name: hmm-redis
+    logging: *default-logging
+    # Rate limits, OTP, and room affinity all use TTLs. Cap memory so Redis
+    # cannot grow into the rest of the 4 GB API box.
+    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "volatile-lru"]
     ports:
       - "6379:6379"
     healthcheck:
@@ -52,6 +64,7 @@ services:
       context: .
       dockerfile: apps/auth-service/Dockerfile
     container_name: hmm-auth-service
+    logging: *default-logging
     environment:
       - NODE_ENV=production
       - PORT=3001
@@ -91,6 +104,7 @@ services:
       context: .
       dockerfile: apps/user-service/Dockerfile
     container_name: hmm-user-service
+    logging: *default-logging
     environment:
       - NODE_ENV=production
       - PORT=3002
@@ -129,6 +143,7 @@ services:
       context: .
       dockerfile: apps/moderation-service/Dockerfile
     container_name: hmm-moderation-service
+    logging: *default-logging
     environment:
       - NODE_ENV=production
       - PORT=3003
@@ -156,6 +171,7 @@ services:
       context: .
       dockerfile: apps/discovery-service/Dockerfile
     container_name: hmm-discovery-service
+    logging: *default-logging
     environment:
       - NODE_ENV=production
       - PORT=3004
@@ -201,6 +217,7 @@ services:
       context: .
       dockerfile: apps/streaming-service/Dockerfile
     container_name: hmm-streaming-service
+    logging: *default-logging
     environment:
       - NODE_ENV=production
       - PORT=3006
@@ -229,6 +246,7 @@ services:
       context: .
       dockerfile: apps/wallet-service/Dockerfile
     container_name: hmm-wallet-service
+    logging: *default-logging
     environment:
       - NODE_ENV=production
       - PORT=3005
@@ -252,6 +270,7 @@ services:
       context: .
       dockerfile: apps/payment-service/Dockerfile
     container_name: hmm-payment-service
+    logging: *default-logging
     environment:
       - NODE_ENV=production
       - PORT=3007
@@ -277,6 +296,7 @@ services:
       context: .
       dockerfile: apps/files-service/Dockerfile
     container_name: hmm-files-service
+    logging: *default-logging
     environment:
       - NODE_ENV=production
       - PORT=3008
@@ -306,6 +326,7 @@ services:
       context: .
       dockerfile: apps/friend-service/Dockerfile
     container_name: hmm-friend-service
+    logging: *default-logging
     environment:
       - NODE_ENV=production
       - PORT=3009
@@ -338,6 +359,7 @@ services:
       context: .
       dockerfile: apps/ads-service/Dockerfile
     container_name: hmm-ads-service
+    logging: *default-logging
     environment:
       - NODE_ENV=production
       - PORT=3010
@@ -363,6 +385,7 @@ services:
       context: .
       dockerfile: apps/api-gateway/Dockerfile
     container_name: hmm-api-gateway
+    logging: *default-logging
     environment:
       - NODE_ENV=production
       - PORT=3000
@@ -397,6 +420,7 @@ services:
   dozzle:
     image: amir20/dozzle:v10.8.0
     container_name: hmm-dozzle
+    logging: *default-logging
     restart: unless-stopped
     environment:
       DOZZLE_AUTH_PROVIDER: simple

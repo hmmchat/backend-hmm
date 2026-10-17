@@ -32,10 +32,15 @@ export class MediasoupService implements OnModuleInit {
     this.restartBackoffMaxMs = this.parsePositiveInt(process.env.MEDIASOUP_RESTART_BACKOFF_MAX_MS, 32000);
     this.rtcMinPort = this.parsePositiveInt(process.env.MEDIASOUP_RTC_MIN_PORT, 40000);
     this.rtcMaxPort = this.parsePositiveInt(process.env.MEDIASOUP_RTC_MAX_PORT, 49999);
+    // Safety rail for the 2 GB SFU. "0" turns the cap off.
     const incoming = process.env.MEDIASOUP_MAX_INCOMING_BITRATE;
-    this.maxIncomingBitrate = incoming && incoming !== ""
-      ? this.parsePositiveInt(incoming, 0)
-      : null;
+    if (incoming === "0") {
+      this.maxIncomingBitrate = null;
+    } else if (incoming === undefined || incoming === "") {
+      this.maxIncomingBitrate = 3_500_000;
+    } else {
+      this.maxIncomingBitrate = this.parsePositiveInt(incoming, 3_500_000);
+    }
     this.realtimeDebugLogs = process.env.STREAMING_REALTIME_DEBUG === "true";
   }
 
@@ -44,14 +49,14 @@ export class MediasoupService implements OnModuleInit {
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
   }
 
-  /** Higher default for multi-party SFU (2.5 Mbps); override with MEDIASOUP_INITIAL_OUT_BITRATE */
+  /** Start bandwidth estimation at 1.2 Mbps so a small SFU does not overshoot and stall. Override with MEDIASOUP_INITIAL_OUT_BITRATE. */
   private getInitialAvailableOutgoingBitrate(): number {
     const raw = process.env.MEDIASOUP_INITIAL_OUT_BITRATE;
     if (raw !== undefined && raw !== "") {
       const n = parseInt(raw, 10);
       if (Number.isFinite(n) && n >= 300000) return n;
     }
-    return 2_500_000;
+    return 1_200_000;
   }
 
   async onModuleInit() {

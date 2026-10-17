@@ -19,7 +19,7 @@ import { UserService } from "../services/user.service.js";
 import { BrandService } from "../services/brand.service.js";
 import { rewriteExpiredStorageUrl } from "@hmm/common";
 import { USERNAME_MAX_LEN } from "../dtos/profile.dto.js";
-import { ProductAnalyticsService } from "../services/product-analytics.service.js";
+import { istDayStart, ProductAnalyticsService } from "../services/product-analytics.service.js";
 
 const authBase = () => (process.env.AUTH_SERVICE_URL || "http://localhost:3001").replace(/\/$/, "");
 
@@ -472,6 +472,32 @@ export class UsersAdminController {
   async productAnalytics(@Headers("x-admin-token") token?: string | string[]) {
     assertProductAdminToken(token);
     return this.productAnalyticsService.overview();
+  }
+
+  /**
+   * POST /admin/users/product-analytics/coverage — how many of these ids are
+   * current signups (and active in the window, for today / last 7 days).
+   */
+  @Post("product-analytics/coverage")
+  async productAnalyticsCoverage(
+    @Headers("x-admin-token") token: string | string[] | undefined,
+    @Body() body: unknown
+  ) {
+    assertProductAdminToken(token);
+    const parsed = z
+      .object({
+        window: z.enum(["today", "last7", "lifetime"]),
+        userIds: z.array(z.string().max(80)).max(2000)
+      })
+      .parse(body);
+    const activeSince =
+      parsed.window === "today"
+        ? istDayStart(0)
+        : parsed.window === "last7"
+          ? istDayStart(6)
+          : null;
+    const matched = await this.productAnalyticsService.countKnownSignups(parsed.userIds, activeSince);
+    return { ok: true as const, matched };
   }
 
   /** POST /admin/users/product-analytics/cities — city counts for a set of user ids. */

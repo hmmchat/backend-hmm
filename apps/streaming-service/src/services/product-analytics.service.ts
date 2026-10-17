@@ -177,6 +177,32 @@ export class ProductAnalyticsService {
       JOIN call_sessions s ON s.id = p."sessionId"
     `;
 
+    const qualifiedPeopleRows = await this.prisma.$queryRaw<
+      Array<{ userId: string; today: boolean; last7: boolean }>
+    >`
+      WITH qualified AS (
+        SELECT s.id, s."createdAt" AS created_at
+        FROM call_sessions s
+        JOIN call_participants p ON p."sessionId" = s.id
+        WHERE s."isBroadcasting" = false
+        GROUP BY s.id, s."createdAt"
+        HAVING COUNT(*) >= 2
+          AND (ARRAY_AGG(
+            GREATEST(EXTRACT(EPOCH FROM (COALESCE(p."leftAt", s."endedAt", NOW()) - p."joinedAt")), 0)
+            ORDER BY GREATEST(EXTRACT(EPOCH FROM (COALESCE(p."leftAt", s."endedAt", NOW()) - p."joinedAt")), 0) DESC
+          ))[2] >= ${REAL_MEETING_SECONDS}
+      )
+      SELECT
+        p."userId" AS "userId",
+        BOOL_OR(q.created_at >= ${today}) AS today,
+        BOOL_OR(q.created_at >= ${last7}) AS last7
+      FROM call_participants p
+      JOIN qualified q ON q.id = p."sessionId"
+      GROUP BY p."userId"
+      LIMIT 25001
+    `;
+    const qualifiedPeopleTruncated = qualifiedPeopleRows.length > 25000;
+
     const recentQualified = await this.prisma.$queryRaw<Array<{ userId: string; at: Date }>>`
       WITH qualified AS (
         SELECT s.id
@@ -304,7 +330,13 @@ export class ProductAnalyticsService {
         userId: row.userId,
         at: new Date(row.at).toISOString()
       })),
-      recentQualifiedTruncated: recentTruncated
+      recentQualifiedTruncated: recentTruncated,
+      qualifiedPeople: qualifiedPeopleRows.slice(0, 25000).map((row) => ({
+        userId: row.userId,
+        today: Boolean(row.today),
+        last7: Boolean(row.last7)
+      })),
+      qualifiedPeopleTruncated
     };
   }
 }

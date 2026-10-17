@@ -229,4 +229,26 @@ export class ProductAnalyticsService {
       cities: rows.map((row) => ({ city: row.city, people: n(row.people) }))
     };
   }
+
+  /**
+   * How many of these call accounts are current non-moderator signups.
+   * `activeSince` also requires a heartbeat in that window, so coverage
+   * stays a share of the same people shown in the column.
+   */
+  async countKnownSignups(userIds: string[], activeSince: Date | null) {
+    const ids = [...new Set(userIds.map((id) => id.trim()).filter(Boolean))].slice(0, 2000);
+    if (ids.length === 0) return 0;
+    const idList = Prisma.join(ids);
+    const activeSql = activeSince
+      ? Prisma.sql`AND "lastActiveAt" >= ${activeSince}`
+      : Prisma.empty;
+    const [row] = await this.prisma.$queryRaw<Array<{ n: number }>>`
+      SELECT COUNT(*)::int AS n
+      FROM users
+      WHERE "isModerator" = false
+        AND id IN (${idList})
+        ${activeSql}
+    `;
+    return n(row?.n);
+  }
 }

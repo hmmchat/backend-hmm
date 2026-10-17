@@ -351,3 +351,14 @@ model UserBadge {
   @@index([userId, expiresAt])
   @@map("user_badges")
 }
+
+/// One row per user per IST calendar day they had the app open.
+/// Written from the presence heartbeat. Used for next-day return.
+model UserActiveDay {
+  userId String
+  day    DateTime @db.Date
+
+  @@id([userId, day])
+  @@index([day])
+  @@map("user_active_days")
+}

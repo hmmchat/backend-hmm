@@ -9,6 +9,8 @@ import { LoadingMemeController } from "../controllers/loading-meme.controller.js
 import { LoadingMemeAdminController } from "../controllers/loading-meme-admin.controller.js";
 import { BroadcastModerationAdminController } from "../controllers/broadcast-moderation-admin.controller.js";
 import { HealthController } from "../controllers/health.controller.js";
+import { ProductAnalyticsAdminController } from "../controllers/product-analytics-admin.controller.js";
+import { ProductAnalyticsService } from "../services/product-analytics.service.js";
 import { StreamingGateway } from "../gateways/streaming.gateway.js";
 import { MediasoupService } from "../services/mediasoup.service.js";
 import { RoomService } from "../services/room.service.js";
@@ -41,10 +43,12 @@ import { PrismaService } from "../prisma/prisma.service.js";
     LoadingMemeController,
     LoadingMemeAdminController,
     BroadcastModerationAdminController,
+    ProductAnalyticsAdminController,
     HealthController
   ],
   providers: [
     PrismaService,
+    ProductAnalyticsService,
     MediasoupService,
     RoomService,
     CallService,

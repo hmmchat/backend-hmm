@@ -6,6 +6,7 @@ import {
   HttpCode,
   HttpException,
   HttpStatus,
+  Headers,
   Logger,
   Param,
   Patch,
@@ -18,6 +19,7 @@ import { UserService } from "../services/user.service.js";
 import { BrandService } from "../services/brand.service.js";
 import { rewriteExpiredStorageUrl } from "@hmm/common";
 import { USERNAME_MAX_LEN } from "../dtos/profile.dto.js";
+import { ProductAnalyticsService } from "../services/product-analytics.service.js";
 
 const authBase = () => (process.env.AUTH_SERVICE_URL || "http://localhost:3001").replace(/\/$/, "");
 
@@ -329,6 +331,17 @@ async function parseAuthJsonResponse<T>(res: Awaited<ReturnType<typeof fetch>>, 
   }
 }
 
+function assertProductAdminToken(token: string | string[] | undefined) {
+  const expected = process.env.ADMIN_API_TOKEN;
+  if (!expected) {
+    throw new HttpException("Admin API not configured", HttpStatus.SERVICE_UNAVAILABLE);
+  }
+  const presented = Array.isArray(token) ? token[0] : token;
+  if (!presented || presented !== expected) {
+    throw new HttpException("Invalid admin token", HttpStatus.UNAUTHORIZED);
+  }
+}
+
 @Controller("admin/users")
 export class UsersAdminController {
   private readonly logger = new Logger(UsersAdminController.name);
@@ -336,7 +349,8 @@ export class UsersAdminController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly userService: UserService,
-    private readonly brandService: BrandService
+    private readonly brandService: BrandService,
+    private readonly productAnalyticsService: ProductAnalyticsService
   ) {}
 
   private async findManyAdminProfiles(ids: string[]) {
@@ -448,6 +462,27 @@ export class UsersAdminController {
       permaBanned,
       bannedTotal
     };
+  }
+
+  /**
+   * GET /admin/users/product-analytics — signup, activity, and city counts.
+   * Registered before :id so "product-analytics" is not treated as a user id.
+   */
+  @Get("product-analytics")
+  async productAnalytics(@Headers("x-admin-token") token?: string | string[]) {
+    assertProductAdminToken(token);
+    return this.productAnalyticsService.overview();
+  }
+
+  /** POST /admin/users/product-analytics/cities — city counts for a set of user ids. */
+  @Post("product-analytics/cities")
+  async productAnalyticsCities(
+    @Headers("x-admin-token") token: string | string[] | undefined,
+    @Body() body: unknown
+  ) {
+    assertProductAdminToken(token);
+    const ids = z.object({ userIds: z.array(z.string()).max(5000) }).parse(body).userIds;
+    return this.productAnalyticsService.citiesForUsers(ids);
   }
 
   /**

@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { PaymentController } from "../routes/payment.controller.js";
+import { ProductAnalyticsAdminController } from "../routes/product-analytics-admin.controller.js";
 import { PaymentService } from "../services/payment.service.js";
 import { RazorpayService } from "../services/razorpay.service.js";
 import { WalletClientService } from "../services/wallet-client.service.js";
@@ -11,7 +12,7 @@ import { EncryptionService } from "../services/encryption.service.js";
 
 @Module({
   imports: [ConfigModule.forRoot()],
-  controllers: [PaymentController],
+  controllers: [PaymentController, ProductAnalyticsAdminController],
   providers: [
     PrismaService,
     EnvValidationService,

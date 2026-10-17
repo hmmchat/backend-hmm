@@ -20,6 +20,7 @@ import { FriendController } from "../routes/friend.controller.js";
 import { HealthController } from "../routes/health.controller.js";
 import { GiftAdminController } from "../routes/gift-admin.controller.js";
 import { NotificationCampaignAdminController } from "../routes/notification-campaign-admin.controller.js";
+import { ProductAnalyticsAdminController } from "../routes/product-analytics-admin.controller.js";
 import { CleanupTasksService } from "../services/cleanup-tasks.service.js";
 import { MessagingGateway } from "../gateways/messaging.gateway.js";
 import { MessagingRealtimeService } from "../services/messaging-realtime.service.js";
@@ -37,7 +38,8 @@ import { AdminAuthGuard } from "../guards/admin-auth.guard.js";
     FriendController,
     HealthController,
     GiftAdminController,
-    NotificationCampaignAdminController
+    NotificationCampaignAdminController,
+    ProductAnalyticsAdminController
   ],
   providers: [
     PrismaService,

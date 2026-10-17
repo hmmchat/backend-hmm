@@ -1027,6 +1027,36 @@ export class AuthService implements OnModuleInit {
   }
 
   /**
+   * Signup counts split by whether the account arrived with a referral code.
+   * Windows are IST midnights supplied by the caller.
+   */
+  async getProductReferralAnalytics(bounds: { today: Date; last7: Date; prior7: Date }) {
+    const countWindow = async (start: Date, end?: Date) => {
+      const createdAt = end ? { gte: start, lt: end } : { gte: start };
+      const [signups, referred] = await Promise.all([
+        this.prisma.user.count({ where: { createdAt } }),
+        this.prisma.user.count({ where: { createdAt, referredBy: { not: null } } })
+      ]);
+      return { signups, referred };
+    };
+    const [today, last7, prior7, lifetimeSignups, lifetimeReferred] = await Promise.all([
+      countWindow(bounds.today),
+      countWindow(bounds.last7),
+      countWindow(bounds.prior7, bounds.last7),
+      this.prisma.user.count(),
+      this.prisma.user.count({ where: { referredBy: { not: null } } })
+    ]);
+    return {
+      ok: true as const,
+      generatedAt: new Date().toISOString(),
+      today,
+      last7,
+      prior7,
+      lifetime: { signups: lifetimeSignups, referred: lifetimeReferred }
+    };
+  }
+
+  /**
    * List auth users for admin dashboards (pagination kept simple)
    */
   async listUsersForAdminDashboard() {

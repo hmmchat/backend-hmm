@@ -160,7 +160,8 @@ export class RoutingService implements OnModuleInit {
     this.routes.set("/streaming/admin", {
       path: "/streaming/admin",
       serviceUrl: streamingServiceUrl,
-      requiresAuth: false
+      requiresAuth: false,
+      timeout: 20000
     });
 
     this.routes.set("/wallet", {
@@ -308,6 +309,20 @@ export class RoutingService implements OnModuleInit {
       path: "/admin/mining",
       serviceUrl: walletServiceUrl,
       requiresAuth: false
+    });
+
+    // Product analytics slices. Auth is X-Admin-Token inside each service.
+    this.routes.set("/admin/product-messages", {
+      path: "/admin/product-messages",
+      serviceUrl: friendServiceUrl,
+      requiresAuth: false,
+      timeout: 20000
+    });
+    this.routes.set("/admin/payments", {
+      path: "/admin/payments",
+      serviceUrl: paymentServiceUrl,
+      requiresAuth: false,
+      timeout: 20000
     });
 
     this.logger.log("Route configuration loaded");

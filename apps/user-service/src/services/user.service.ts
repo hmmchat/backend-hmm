@@ -2019,6 +2019,7 @@ export class UserService implements OnModuleInit {
           where: { id: userId },
           data: { lastActiveAt: new Date() } as any
         });
+        await this.markActiveDay(userId);
         return { user, applied: false };
       }
       const user = await this.prisma.user.update({
@@ -2028,6 +2029,7 @@ export class UserService implements OnModuleInit {
           lastActiveAt: new Date()
         } as any
       });
+      await this.markActiveDay(userId);
       return { user, applied: true };
     }
 
@@ -2052,11 +2054,34 @@ export class UserService implements OnModuleInit {
       where: { id: userId },
       data: { lastActiveAt: new Date() } as any
     });
+    await this.markActiveDay(userId);
 
     return {
       status: user.status,
       lastActiveAt: user.lastActiveAt
     };
+  }
+
+  /**
+   * One row per user per IST day. Powers next-day return on the product page.
+   * Missing table (migration not applied yet) must not fail the heartbeat.
+   */
+  private async markActiveDay(userId: string) {
+    try {
+      const day = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Kolkata",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit"
+      }).format(new Date());
+      await this.prisma.$executeRaw`
+        INSERT INTO user_active_days ("userId", day)
+        VALUES (${userId}, CAST(${day} AS date))
+        ON CONFLICT ("userId", day) DO NOTHING
+      `;
+    } catch {
+      // Table is created by the user_active_days migration.
+    }
   }
 
   async getEffectiveStatusesForUsers(

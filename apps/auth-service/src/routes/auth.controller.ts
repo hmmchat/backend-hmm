@@ -306,6 +306,37 @@ export class AuthController {
   }
 
   /**
+   * Referral share of signups for the product analytics page.
+   * GET /auth/admin/users/product-referrals
+   */
+  @Get("admin/users/product-referrals")
+  async getProductReferrals(@Headers("x-admin-token") token?: string | string[]) {
+    const expected = process.env.ADMIN_API_TOKEN;
+    if (!expected) {
+      throw new HttpException("Admin API not configured", HttpStatus.SERVICE_UNAVAILABLE);
+    }
+    const presented = Array.isArray(token) ? token[0] : token;
+    if (!presented || presented !== expected) {
+      throw new HttpException("Invalid admin token", HttpStatus.UNAUTHORIZED);
+    }
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Kolkata",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    }).formatToParts(new Date());
+    const y = Number(parts.find((p) => p.type === "year")?.value);
+    const m = Number(parts.find((p) => p.type === "month")?.value);
+    const d = Number(parts.find((p) => p.type === "day")?.value);
+    const start = (daysAgo: number) => new Date(Date.UTC(y, m - 1, d - daysAgo, -5, -30, 0, 0));
+    return this.auth.getProductReferralAnalytics({
+      today: start(0),
+      last7: start(6),
+      prior7: start(13)
+    });
+  }
+
+  /**
    * Single auth user for admin dashboards (merged with profile in user-service).
    * GET /auth/admin/users/:userId
    */

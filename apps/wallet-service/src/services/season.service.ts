@@ -107,14 +107,23 @@ export class SeasonService {
     }
   }
 
+  /**
+   * Season stranger count is people first met at or after this season started.
+   * Lifetime peers from before the season stay on user_call_peers and do not carry over.
+   */
   private async syncStrangerCount(userId: string, seasonId?: string) {
-    const peerCount = await this.prisma.userCallPeer.count({ where: { userId } });
     const season = seasonId
       ? await this.prisma.season.findUnique({ where: { id: seasonId } })
       : await this.getActiveSeason();
-    if (!season || season.status !== SeasonStatus.ACTIVE) {
-      return peerCount;
+    if (!season || season.status !== SeasonStatus.ACTIVE || !season.startedAt) {
+      return 0;
     }
+    const peerCount = await this.prisma.userCallPeer.count({
+      where: {
+        userId,
+        firstConnectedAt: { gte: season.startedAt }
+      }
+    });
     await this.getOrCreateProgress(season.id, userId);
     await this.prisma.userSeasonProgress.update({
       where: { seasonId_userId: { seasonId: season.id, userId } },
@@ -134,16 +143,21 @@ export class SeasonService {
     const progress = await this.prisma.userSeasonProgress.findUnique({
       where: { seasonId_userId: { seasonId, userId } }
     });
-    if (!progress || progress.tasksCompletedAt) return;
+    if (!progress) return;
 
     const enabled = season.tasks.filter((t) => t.enabled);
-    const allDone = enabled.every(
-      (t) => this.progressValue(t.taskType, progress) >= t.target
-    );
-    if (allDone && enabled.length > 0) {
+    const allDone =
+      enabled.length > 0 &&
+      enabled.every((t) => this.progressValue(t.taskType, progress) >= t.target);
+    if (allDone && !progress.tasksCompletedAt) {
       await this.prisma.userSeasonProgress.update({
         where: { seasonId_userId: { seasonId, userId } },
         data: { tasksCompletedAt: new Date() }
+      });
+    } else if (!allDone && progress.tasksCompletedAt) {
+      await this.prisma.userSeasonProgress.update({
+        where: { seasonId_userId: { seasonId, userId } },
+        data: { tasksCompletedAt: null }
       });
     }
   }
@@ -205,7 +219,6 @@ export class SeasonService {
       };
     }
 
-    // Keep stranger count in sync with lifetime peers
     await this.syncStrangerCount(userId, active.id);
     const progress = await this.getOrCreateProgress(active.id, userId);
     const claim = await this.prisma.seasonClaim.findUnique({
@@ -349,7 +362,8 @@ export class SeasonService {
 
   /**
    * Record a lifetime peer encounter (both directions recommended by caller).
-   * Updates active-season stranger counter for the user.
+   * The active season counts the peer only when this is their first meeting
+   * and it happens after the season started.
    */
   async recordPeerEncounter(userId: string, peerUserId: string) {
     if (!userId || !peerUserId || userId === peerUserId) {
@@ -599,10 +613,25 @@ export class SeasonService {
       );
     }
 
-    return this.prisma.season.update({
-      where: { id: seasonId },
-      data: { status: SeasonStatus.ACTIVE, startedAt: new Date(), endedAt: null },
-      include: { tasks: { orderBy: { sortOrder: "asc" } } }
+    const startedAt = new Date();
+    return this.prisma.$transaction(async (tx) => {
+      const started = await tx.season.update({
+        where: { id: seasonId },
+        data: { status: SeasonStatus.ACTIVE, startedAt, endedAt: null },
+        include: { tasks: { orderBy: { sortOrder: "asc" } } }
+      });
+      await tx.userSeasonProgress.updateMany({
+        where: { seasonId },
+        data: {
+          uniqueStrangers: 0,
+          beamSeconds: 0,
+          beamcastSeconds: 0,
+          diamondsEarned: 0,
+          tasksCompletedAt: null
+        }
+      });
+      await tx.seasonProgressEvent.deleteMany({ where: { seasonId } });
+      return started;
     });
   }
 

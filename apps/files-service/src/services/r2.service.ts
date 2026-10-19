@@ -105,6 +105,8 @@ export class R2Service implements OnModuleInit {
         Key: key,
         Body: buffer,
         ContentType: contentType,
+        // Filename is unique (timestamp + uuid) so this URL never changes.
+        CacheControl: "public, max-age=31536000, immutable",
         Metadata: metadata
       });
 

@@ -107,7 +107,8 @@ export class AuthMiddleware {
       "/music/search",
       "/payments/purchase/packages",
       "/payments/webhooks/razorpay", // Razorpay webhooks (HMAC-verified downstream)
-      "/files/upload" // Some file endpoints might be public
+      "/files/upload", // Some file endpoints might be public
+      "/files/media" // <img> loads; signs a fresh private-bucket GET
     ];
 
     // Check if path matches any public path

@@ -1,5 +1,5 @@
 import { Injectable, HttpException, HttpStatus, Logger, OnModuleInit } from "@nestjs/common";
-import { rewrittenStorageUrlOrNull } from "@hmm/common";
+import { deliveryUrlForStorageKey, sanitizeStorageKey } from "@hmm/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { R2Service } from "./r2.service.js";
 import { ImageProcessingService } from "./image-processing.service.js";
@@ -70,12 +70,19 @@ export class FilesService implements OnModuleInit {
     };
   }
 
-  private stableFileUrl(key: string, storedUrl: string): string {
-    const base = this.r2Service.getPublicUrl();
-    if (base) {
-      return `${base}/${key.replace(/^\//, "")}`;
+  private stableFileUrl(key: string, _storedUrl: string): string {
+    const safe = sanitizeStorageKey(key);
+    if (safe) return deliveryUrlForStorageKey(safe);
+    return _storedUrl;
+  }
+
+  /** Fresh private-bucket download for GET /files/media. The stored profile URL never carries the signature. */
+  async presignedViewForKey(rawKey: string): Promise<string> {
+    const key = sanitizeStorageKey(rawKey);
+    if (!key) {
+      throw new HttpException("Invalid photo key", HttpStatus.BAD_REQUEST);
     }
-    return rewrittenStorageUrlOrNull(storedUrl) || storedUrl;
+    return this.r2Service.generatePresignedViewUrl(key, 604800);
   }
 
   private async rewriteExpiredFileUrls() {
@@ -138,17 +145,20 @@ export class FilesService implements OnModuleInit {
     // Generate unique key
     const key = this.r2Service.generateKey(userId || null, filename, folder);
 
-    // Upload to R2
-    const url = await this.r2Service.uploadFile(key, buffer, mimeType, {
+    // Upload to R2. The bucket is private, so moderation must fetch a signed GET,
+    // and the URL we store is the stable media link (re-signed on each view).
+    await this.r2Service.uploadFile(key, buffer, mimeType, {
       userId: userId || "anonymous",
       originalFilename: filename
     });
+    const url = deliveryUrlForStorageKey(key);
 
     // Sightengine only for end-user profile photos (folder=profile-photos).
     // Dashboard catalog uploads (memes, zodiacs, gifts, …) are not moderated.
     if (this.moderationClient.shouldModerate(mimeType, folder)) {
       try {
-        await this.moderationClient.checkImage(url, options.moderationPurpose ?? "gallery");
+        const moderationUrl = await this.r2Service.generatePresignedViewUrl(key, 3600);
+        await this.moderationClient.checkImage(moderationUrl, options.moderationPurpose ?? "gallery");
       } catch (error) {
         try {
           await this.r2Service.deleteFile(key);

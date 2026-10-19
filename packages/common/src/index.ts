@@ -38,7 +38,11 @@ export {
 export {
   resolvePublicStorageBase,
   rewriteExpiredStorageUrl,
-  rewrittenStorageUrlOrNull
+  rewrittenStorageUrlOrNull,
+  storageObjectKey,
+  sanitizeStorageKey,
+  deliveryUrlForStorageKey,
+  profilePhotoMediaBase
 } from "./storage-url.js";
 
 /* ---------- Types ---------- */

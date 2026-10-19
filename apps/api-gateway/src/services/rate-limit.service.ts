@@ -17,6 +17,7 @@ export class RateLimitService implements OnModuleInit {
   private readonly defaultLimits: Map<string, RateLimitConfig> = new Map([
     ["/auth", { windowMs: 60000, maxRequests: 10 }], // 10 requests per minute
     ["/files/upload", { windowMs: 3600000, maxRequests: 20 }], // 20 uploads per hour
+    ["/files/media", { windowMs: 60000, maxRequests: 3000 }], // face-card images, one hop per view
     // Buy-coins: limit initiate/verify only (not package catalogue or webhooks)
     ["/payments/purchase/initiate", { windowMs: 3600000, maxRequests: 20 }],
     ["/payments/purchase/verify", { windowMs: 3600000, maxRequests: 40 }],

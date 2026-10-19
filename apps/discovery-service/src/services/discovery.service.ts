@@ -1,4 +1,5 @@
 import { Injectable, HttpException, HttpStatus, OnModuleInit, Logger, Optional, Inject, forwardRef } from "@nestjs/common";
+import fetch from "node-fetch";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { UserClientService } from "./user-client.service.js";
 import { GenderFilterService } from "./gender-filter.service.js";
@@ -42,7 +43,12 @@ import type { DiscoveryUser } from "./user-client.service.js";
 import {
   shouldUseModeratorFaceCard
 } from "../config/moderator-face-card.config.js";
-import { getMatchmakingProfileGap, isPreferredCityAnywhere, PREFERRED_CITY_ANYWHERE_IN_INDIA } from "@hmm/common";
+import {
+  getMatchmakingProfileGap,
+  isPlaceholderDisplayPicture,
+  isPreferredCityAnywhere,
+  PREFERRED_CITY_ANYWHERE_IN_INDIA
+} from "@hmm/common";
 import {
   SESSION_DISCOVERY_POOL_ANYWHERE as SESSION_POOL_ANYWHERE,
   countImmobileDiscoveryUsers,
@@ -1089,6 +1095,143 @@ export class DiscoveryService implements OnModuleInit {
     // Randomize within highest score group
     const randomIndex = Math.floor(Math.random() * highestScoreGroup.length);
     return highestScoreGroup[randomIndex];
+  }
+
+  /** Best offline-card candidates first. Immobile statuses do not apply to this pool. */
+  private rankOfflineCandidates(
+    candidates: DiscoveryUser[],
+    currentUser: UserProfile
+  ): DiscoveryUser[] {
+    return [...candidates].sort(
+      (a, b) => this.calculateMatchScore(currentUser, b) - this.calculateMatchScore(currentUser, a)
+    );
+  }
+
+  /**
+   * The card photo must actually respond as an image. A non-empty URL is not enough:
+   * FaceCard hides a failed <img>, which leaves a blank profile.
+   */
+  private async offlineCardPhotoLoads(
+    url: string
+  ): Promise<{ ok: boolean; detail: string }> {
+    let label = "invalid-url";
+    try {
+      const parsed = new URL(url);
+      label = `${parsed.host}${parsed.pathname}`;
+    } catch {
+      return { ok: false, detail: "invalid-url" };
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+    try {
+      const res = await fetch(url, {
+        method: "GET",
+        redirect: "follow",
+        signal: controller.signal,
+        headers: {
+          Accept: "image/*,*/*;q=0.8",
+          "User-Agent": "beam-offline-card-photo-check/1.0"
+        }
+      });
+      const contentType = (res.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
+      const body = res.body as { cancel?: () => Promise<void>; destroy?: () => void } | null;
+      try {
+        if (body?.cancel) await body.cancel();
+        else body?.destroy?.();
+      } catch {
+        // Response body is unused; closing it must not fail the check.
+      }
+      if (!res.ok) {
+        return { ok: false, detail: `status=${res.status} ${label}` };
+      }
+      if (
+        contentType.startsWith("text/") ||
+        contentType.includes("html") ||
+        contentType.includes("json") ||
+        contentType.includes("xml")
+      ) {
+        return { ok: false, detail: `content-type=${contentType || "missing"} ${label}` };
+      }
+      return { ok: true, detail: `status=${res.status} ${label}` };
+    } catch (error: any) {
+      const reason = error?.name === "AbortError" ? "timeout" : error?.message || "fetch-failed";
+      return { ok: false, detail: `${reason} ${label}` };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * Keep only photos the browser can show. Drop the user when every slot fails.
+   * A broken display picture is replaced by the first gallery photo that loads.
+   */
+  private async userWithLoadableOfflinePhotos(user: DiscoveryUser): Promise<DiscoveryUser | null> {
+    if (shouldUseModeratorFaceCard(user)) {
+      const mod = await this.userClient.getModeratorFaceCardPresentation();
+      const check = await this.offlineCardPhotoLoads(mod.displayPictureUrl || "");
+      if (!check.ok) {
+        this.logger.warn(`Skipping moderator offline card ${user.id}: ${check.detail}`);
+        return null;
+      }
+      return user;
+    }
+
+    const ordered: string[] = [];
+    if (user.displayPictureUrl) ordered.push(user.displayPictureUrl);
+    for (const photo of [...user.photos].sort((a, b) => a.order - b.order)) {
+      if (photo.url && !ordered.includes(photo.url)) ordered.push(photo.url);
+    }
+
+    const checks = await Promise.all(
+      ordered.slice(0, 3).map(async (url) => {
+        if (isPlaceholderDisplayPicture(url)) {
+          return { url, ok: false, detail: "placeholder" };
+        }
+        const check = await this.offlineCardPhotoLoads(url);
+        return { url, ok: check.ok, detail: check.detail };
+      })
+    );
+    const loadable = checks.filter((c) => c.ok).map((c) => c.url);
+    if (loadable.length === 0) {
+      const why = checks.map((c) => c.detail).join(" | ") || "no-photo";
+      this.logger.warn(
+        `Skipping offline card user=${user.id} username=${user.username ?? ""} photo=${why}`
+      );
+      return null;
+    }
+
+    const [displayPictureUrl, ...rest] = loadable;
+    return {
+      ...user,
+      displayPictureUrl,
+      photos: rest.map((url, order) => ({
+        id: `${user.id}-photo-${order}`,
+        url,
+        order
+      }))
+    };
+  }
+
+  /** First ranked offline candidate whose visible photos actually load. */
+  private async pickShowableOfflineCard(
+    candidates: DiscoveryUser[],
+    currentUser: UserProfile,
+    poolCity: string | null
+  ): Promise<Card | null> {
+    const ranked = this.rankOfflineCandidates(candidates, currentUser);
+    const limit = Math.min(ranked.length, 8);
+    for (let i = 0; i < limit; i++) {
+      const prepared = await this.userWithLoadableOfflinePhotos(ranked[i]);
+      if (!prepared) continue;
+      return this.buildCard(prepared, poolCity, currentUser);
+    }
+    if (ranked.length > 0) {
+      this.logger.warn(
+        `Offline card pool had ${ranked.length} profiles and no loadable photo in the first ${limit}`
+      );
+    }
+    return null;
   }
 
   /**
@@ -3091,8 +3234,8 @@ export class DiscoveryService implements OnModuleInit {
         excludeUserIds
       );
       if (matchingUsers.length === 0) return null;
-      const selectedUser = this.selectBestMatch(matchingUsers, currentUser);
-      const card = await this.buildCard(selectedUser, poolCity, currentUser);
+      const card = await this.pickShowableOfflineCard(matchingUsers, currentUser, poolCity);
+      if (!card) return null;
       if (hasActiveGenderFilter) {
         await this.genderFilterService.decrementScreen(userId);
       }
@@ -3390,8 +3533,8 @@ export class DiscoveryService implements OnModuleInit {
         excludeUserIds
       );
       if (matchingUsers.length === 0) return null;
-      const selectedUser = this.selectBestMatch(matchingUsers, currentUser);
-      const card = await this.buildCard(selectedUser, poolCity, currentUser);
+      const card = await this.pickShowableOfflineCard(matchingUsers, currentUser, poolCity);
+      if (!card) return null;
       if (hasActiveGenderFilter) {
         await this.genderFilterService.decrementScreen(userId);
       }

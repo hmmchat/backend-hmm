@@ -10,7 +10,8 @@ import {
   HttpStatus,
   HttpCode,
   Query,
-  Req
+  Req,
+  Res
 } from "@nestjs/common";
 import { FastifyRequest } from "fastify";
 import { FilesService } from "../services/files.service.js";
@@ -204,6 +205,18 @@ export class FilesController {
       contentType: safeContentType,
       dataUrl: `data:${safeContentType};base64,${base64}`,
     };
+  }
+
+  /**
+   * Stable profile-photo URL. The bucket is private, so this signs a fresh
+   * 7-day GET and redirects the browser at it. No auth: <img> cannot send a bearer token.
+   * GET /files/media?key=<object-key>
+   */
+  @Get("files/media")
+  async media(@Query("key") key: string | undefined, @Res() res: FastifyReply) {
+    const signed = await this.filesService.presignedViewForKey(key || "");
+    res.header("Cache-Control", "private, max-age=3600");
+    res.redirect(signed, 302);
   }
 
   /**

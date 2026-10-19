@@ -8,7 +8,12 @@ async function bootstrap() {
   const requestTimeout = parseInt(process.env.AUTH_REQUEST_TIMEOUT_MS || "8000", 10);
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
-    new FastifyAdapter({ logger: true, requestTimeout })
+    new FastifyAdapter({
+      logger: true,
+      requestTimeout,
+      // Admin list posts every profile id that matches an app-status filter.
+      bodyLimit: 16 * 1024 * 1024
+    })
   );
 
   const config = app.get(ConfigService);

@@ -10,7 +10,8 @@ import {
   Logger,
   Param,
   Patch,
-  Post
+  Post,
+  Query
 } from "@nestjs/common";
 import { z } from "zod";
 import fetch from "node-fetch";
@@ -22,6 +23,65 @@ import { USERNAME_MAX_LEN } from "../dtos/profile.dto.js";
 import { istDayStart, ProductAnalyticsService } from "../services/product-analytics.service.js";
 
 const authBase = () => (process.env.AUTH_SERVICE_URL || "http://localhost:3001").replace(/\/$/, "");
+
+const ADMIN_APP_STATUSES = new Set([
+  "AVAILABLE",
+  "ONLINE",
+  "OFFLINE",
+  "MATCHED",
+  "IN_SQUAD",
+  "IN_SQUAD_AVAILABLE",
+  "IN_BROADCAST",
+  "IN_BROADCAST_AVAILABLE",
+  "VIEWER"
+]);
+
+function adminJoinedSinceIso(joined?: string): string | undefined {
+  const windows: Record<string, number> = {
+    "24h": 24 * 60 * 60 * 1000,
+    "7d": 7 * 24 * 60 * 60 * 1000,
+    "30d": 30 * 24 * 60 * 60 * 1000
+  };
+  const span = joined ? windows[joined] : undefined;
+  if (!span) return undefined;
+  return new Date(Date.now() - span).toISOString();
+}
+
+type AuthAdminStub = {
+  id: string;
+  email: string | null;
+  name: string | null;
+  createdAt: string;
+  accountStatus: string;
+  deletedAt: string | null;
+};
+
+async function queryAuthAdminUsers(body: Record<string, unknown>) {
+  const res = await authFetchOrThrow(
+    "/auth/admin/users/query",
+    { method: "POST", body: JSON.stringify(body) },
+    "Admin user list"
+  );
+  return parseAuthJsonResponse<{
+    ok?: boolean;
+    users?: AuthAdminUser[];
+    total?: number;
+    stubs?: AuthAdminStub[];
+  }>(res, "admin user list");
+}
+
+/** `appple21` also searches `appple` — the face card draws the age flush against the name. */
+function adminUserSearchNeedles(query: string): string[] {
+  const q = query.trim();
+  if (!q) return [];
+  const needles = [q];
+  const gluedAge = q.match(/^([A-Za-z][A-Za-z0-9_ ]{1,})(\d{1,2})$/);
+  if (gluedAge) {
+    const name = gluedAge[1].trim();
+    if (name.length >= 3) needles.push(name);
+  }
+  return [...new Set(needles.map((n) => n.trim()).filter(Boolean))];
+}
 
 type AuthAdminUser = {
   id: string;
@@ -394,33 +454,122 @@ export class UsersAdminController {
   }
 
   /**
-   * GET /admin/users — merged auth + profile for Beam dashboard
+   * GET /admin/users — one page of every account, with search and filters applied
+   * before the page is cut. Username matches are included even though that column
+   * lives on the profile, not the auth row.
    */
   @Get()
-  async list() {
-    const authRes = await authFetchOrThrow("/auth/admin/users", { method: "GET" }, "Admin user list");
-    const authPayload = await parseAuthJsonResponse<{ ok?: boolean; users?: AuthAdminUser[] }>(
-      authRes,
-      "admin user list"
-    );
-    const authUsers = Array.isArray(authPayload.users) ? authPayload.users : [];
-    if (authUsers.length === 0) {
-      return { ok: true, users: [] };
+  async list(
+    @Query("q") q?: string,
+    @Query("limit") limitRaw?: string,
+    @Query("offset") offsetRaw?: string,
+    @Query("page") pageRaw?: string,
+    @Query("pageSize") pageSizeRaw?: string,
+    @Query("account") account?: string,
+    @Query("appStatus") appStatus?: string,
+    @Query("joined") joined?: string,
+    @Query("sort") sort?: string
+  ) {
+    const query = typeof q === "string" ? q.trim() : "";
+    const needles = adminUserSearchNeedles(query);
+    const limit = Math.min(200, Math.max(1, Number(limitRaw) || Number(pageSizeRaw) || 50));
+    const page = Math.max(1, Number(pageRaw) || 1);
+    const offset = limitRaw || offsetRaw
+      ? Math.max(0, Number(offsetRaw) || 0)
+      : (page - 1) * limit;
+    const sortKey = sort || "moderation";
+    const reportThreshold = this.userService.getReportThresholdForAdmin();
+    const joinedSince = adminJoinedSinceIso(joined);
+
+    let onlyIds: string[] | undefined;
+    if (appStatus && ADMIN_APP_STATUSES.has(appStatus)) {
+      const rows = await this.prisma.user.findMany({
+        where: { status: appStatus as any },
+        select: { id: true }
+      });
+      onlyIds = rows.map((row) => row.id);
+      if (onlyIds.length === 0) {
+        return { ok: true, users: [], total: 0, reportThreshold };
+      }
     }
 
-    const ids = authUsers.map((u) => u.id);
-    const profiles = await this.findManyAdminProfiles(ids);
-    const profileById = new Map(profiles.map((p) => [p.id, p]));
+    let usernameIds: string[] | undefined;
+    if (needles.length) {
+      const where: any = {
+        OR: needles.flatMap((needle) => [
+          { username: { contains: needle, mode: "insensitive" } },
+          { preferredCity: { contains: needle, mode: "insensitive" } },
+          { intent: { contains: needle, mode: "insensitive" } }
+        ])
+      };
+      if (onlyIds) where.id = { in: onlyIds };
+      const rows = await this.prisma.user.findMany({
+        where,
+        select: { id: true }
+      });
+      usernameIds = rows.map((row) => row.id);
+    }
 
-    const reportThreshold = this.userService.getReportThresholdForAdmin();
-    const users = authUsers.map((a) => {
-      const merged = mergeAuthUserWithProfile(a, profileById.get(a.id), (d, u) =>
-        this.brandService.resolvePublicLogoUrl(d, u)
+    const authBody = {
+      q: query || undefined,
+      limit,
+      offset,
+      account: account && account !== "all" ? account : undefined,
+      joinedSince,
+      sort: sortKey,
+      onlyIds,
+      usernameIds
+    };
+
+    let authUsers: AuthAdminUser[] = [];
+    let total = 0;
+
+    if (sortKey === "name_asc" || sortKey === "name_desc") {
+      const stubPayload = await queryAuthAdminUsers({ ...authBody, stubsOnly: true });
+      const stubs = Array.isArray(stubPayload.stubs) ? stubPayload.stubs : [];
+      total = Number(stubPayload.total) || stubs.length;
+      const nameById = new Map<string, string>();
+      for (let i = 0; i < stubs.length; i += 2000) {
+        const chunk = stubs.slice(i, i + 2000).map((stub) => stub.id);
+        const rows = await this.prisma.user.findMany({
+          where: { id: { in: chunk } },
+          select: { id: true, username: true }
+        });
+        for (const row of rows) nameById.set(row.id, row.username || "");
+      }
+      const label = (stub: { id: string; name: string | null; email: string | null }) =>
+        (nameById.get(stub.id) || stub.name || stub.email || stub.id).toLowerCase();
+      stubs.sort((a, b) => {
+        const cmp = label(a).localeCompare(label(b));
+        return sortKey === "name_asc" ? cmp : -cmp;
+      });
+      const pageIds = stubs.slice(offset, offset + limit).map((stub) => stub.id);
+      if (pageIds.length === 0) {
+        return { ok: true, users: [], total, reportThreshold };
+      }
+      const pagePayload = await queryAuthAdminUsers({ ids: pageIds });
+      authUsers = Array.isArray(pagePayload.users) ? pagePayload.users : [];
+    } else {
+      const payload = await queryAuthAdminUsers(authBody);
+      authUsers = Array.isArray(payload.users) ? payload.users : [];
+      total = Number(payload.total) || 0;
+    }
+
+    if (authUsers.length === 0) {
+      return { ok: true, users: [], total, reportThreshold };
+    }
+
+    const ids = authUsers.map((user) => user.id);
+    const profiles = await this.findManyAdminProfiles(ids);
+    const profileById = new Map(profiles.map((profile) => [profile.id, profile]));
+    const users = authUsers.map((authUser) => {
+      const merged = mergeAuthUserWithProfile(authUser, profileById.get(authUser.id), (domain, logoUrl) =>
+        this.brandService.resolvePublicLogoUrl(domain, logoUrl)
       );
       return { ...merged, reportThreshold };
     });
 
-    return { ok: true, users, reportThreshold };
+    return { ok: true, users, total, reportThreshold };
   }
 
   /**

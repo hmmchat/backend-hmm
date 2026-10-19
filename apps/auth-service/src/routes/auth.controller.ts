@@ -8,7 +8,8 @@ import {
   Delete,
   Get,
   Headers,
-  Param
+  Param,
+  Query
 } from "@nestjs/common";
 import { z } from "zod";
 import { AuthService } from "../services/auth.service.js";
@@ -291,8 +292,43 @@ export class AuthController {
    * GET /auth/admin/users
    */
   @Get("admin/users")
-  async listAdminUsers() {
-    return this.auth.listUsersForAdminDashboard();
+  async listAdminUsers(
+    @Query("q") q?: string,
+    @Query("limit") limit?: string,
+    @Query("offset") offset?: string,
+    @Query("account") account?: string,
+    @Query("joinedSince") joinedSince?: string,
+    @Query("sort") sort?: string
+  ) {
+    return this.auth.listUsersForAdminDashboard({
+      query: q,
+      limit: limit ? Number(limit) : undefined,
+      offset: offset ? Number(offset) : undefined,
+      account,
+      joinedSince,
+      sort
+    });
+  }
+
+  /**
+   * Paginated admin list with username-id and profile-id filters in the body
+   * (those lists are too large for a query string).
+   * POST /auth/admin/users/query
+   */
+  @Post("admin/users/query")
+  async queryAdminUsers(@Body() body: any) {
+    return this.auth.listUsersForAdminDashboard({
+      query: typeof body?.q === "string" ? body.q : undefined,
+      limit: Number(body?.limit),
+      offset: Number(body?.offset),
+      account: typeof body?.account === "string" ? body.account : undefined,
+      joinedSince: typeof body?.joinedSince === "string" ? body.joinedSince : undefined,
+      sort: typeof body?.sort === "string" ? body.sort : undefined,
+      onlyIds: Array.isArray(body?.onlyIds) ? body.onlyIds : undefined,
+      usernameIds: Array.isArray(body?.usernameIds) ? body.usernameIds : undefined,
+      stubsOnly: body?.stubsOnly === true,
+      ids: Array.isArray(body?.ids) ? body.ids : undefined
+    });
   }
 
   /**

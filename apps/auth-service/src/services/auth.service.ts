@@ -17,6 +17,116 @@ import type { JWK } from "jose";
 
 import * as argon2 from "argon2";
 
+/** `appple21` also searches `appple` — the face card draws the age flush against the name. */
+function adminUserSearchNeedles(query: string): string[] {
+  const q = query.trim();
+  if (!q) return [];
+  const needles = [q];
+  const gluedAge = q.match(/^([A-Za-z][A-Za-z0-9_ ]{1,})(\d{1,2})$/);
+  if (gluedAge) {
+    const name = gluedAge[1].trim();
+    if (name.length >= 3) needles.push(name);
+  }
+  return [...new Set(needles.map((n) => n.trim()).filter(Boolean))];
+}
+
+const ADMIN_USER_LIST_SELECT = {
+  id: true,
+  email: true,
+  phone: true,
+  name: true,
+  createdAt: true,
+  updatedAt: true,
+  accountStatus: true,
+  bannedAt: true,
+  banReason: true,
+  reportAutoBanActive: true,
+  reportBanNoLoginUntil: true,
+  permanentBan: true,
+  suspendedAt: true,
+  suspensionReason: true,
+  deactivatedAt: true,
+  deletedAt: true
+} as const;
+
+/** Postgres binds one parameter per id; chunk so a full-table filter stays under the limit. */
+function prismaIdIn(ids: string[]): any {
+  const size = 5000;
+  const parts: any[] = [];
+  for (let i = 0; i < ids.length; i += size) {
+    parts.push({ id: { in: ids.slice(i, i + size) } });
+  }
+  if (parts.length === 0) return { id: { in: [] } };
+  return parts.length === 1 ? parts[0] : { OR: parts };
+}
+
+const ADMIN_INACTIVE_ACCOUNT = {
+  NOT: { accountStatus: "BANNED" },
+  OR: [{ accountStatus: { in: ["DEACTIVATED", "SUSPENDED"] } }, { deletedAt: { not: null } }]
+};
+
+const ADMIN_REST_ACCOUNT = {
+  NOT: {
+    OR: [
+      { accountStatus: "BANNED" },
+      { accountStatus: { in: ["DEACTIVATED", "SUSPENDED"] } },
+      { deletedAt: { not: null } }
+    ]
+  }
+};
+
+function adminUserListWhere(opts: {
+  query?: string;
+  account?: string;
+  joinedSince?: string;
+  onlyIds?: string[];
+  usernameIds?: string[];
+}): any {
+  if (Array.isArray(opts.onlyIds) && opts.onlyIds.length === 0) return null;
+
+  const and: any[] = [];
+  if (opts.account === "banned") {
+    and.push({ accountStatus: "BANNED" });
+  } else if (opts.account === "inactive") {
+    and.push({
+      NOT: { accountStatus: "BANNED" },
+      OR: [
+        { accountStatus: { in: ["DEACTIVATED", "SUSPENDED"] } },
+        { deletedAt: { not: null } }
+      ]
+    });
+  } else if (opts.account === "active") {
+    and.push({ accountStatus: "ACTIVE", deletedAt: null });
+  }
+
+  if (opts.joinedSince) {
+    const since = new Date(opts.joinedSince);
+    if (!Number.isNaN(since.getTime())) {
+      and.push({ createdAt: { gte: since } });
+    }
+  }
+
+  if (Array.isArray(opts.onlyIds)) {
+    and.push(prismaIdIn(opts.onlyIds));
+  }
+
+  const needles = adminUserSearchNeedles(opts.query || "");
+  const usernameIds = Array.isArray(opts.usernameIds) ? opts.usernameIds.filter(Boolean) : [];
+  if (needles.length || usernameIds.length) {
+    const or: any[] = needles.flatMap((needle) => [
+      { email: { contains: needle, mode: "insensitive" } },
+      { phone: { contains: needle, mode: "insensitive" } },
+      { name: { contains: needle, mode: "insensitive" } },
+      { banReason: { contains: needle, mode: "insensitive" } },
+      { id: { contains: needle, mode: "insensitive" } }
+    ]);
+    if (usernameIds.length) or.push(prismaIdIn(usernameIds));
+    if (or.length) and.push({ OR: or });
+  }
+
+  return and.length ? { AND: and } : {};
+}
+
 @Injectable()
 export class AuthService implements OnModuleInit {
   private privateKey!: string;
@@ -1057,32 +1167,118 @@ export class AuthService implements OnModuleInit {
   }
 
   /**
-   * List auth users for admin dashboards (pagination kept simple)
+   * Paginated auth users for the dashboard. `total` is the full match count,
+   * not the page size. Search covers email, phone, name, and id; username hits
+   * are passed in as `usernameIds` because that column lives on user-service.
    */
-  async listUsersForAdminDashboard() {
-    const users = await this.prisma.user.findMany({
-      orderBy: { createdAt: "desc" },
-      take: 1000,
-      select: {
-        id: true,
-        email: true,
-        phone: true,
-        name: true,
-        createdAt: true,
-        updatedAt: true,
-        accountStatus: true,
-        bannedAt: true,
-        banReason: true,
-        reportAutoBanActive: true,
-        reportBanNoLoginUntil: true,
-        permanentBan: true,
-        suspendedAt: true,
-        suspensionReason: true,
-        deactivatedAt: true,
-        deletedAt: true
+  async listUsersForAdminDashboard(opts: {
+    query?: string;
+    limit?: number;
+    offset?: number;
+    account?: string;
+    joinedSince?: string;
+    sort?: string;
+    onlyIds?: string[];
+    usernameIds?: string[];
+    /** Return every matching stub so user-service can sort by display name. */
+    stubsOnly?: boolean;
+    /** Hydrate these ids, in this order. */
+    ids?: string[];
+  } = {}) {
+    if (Array.isArray(opts.ids)) {
+      const users = await this.loadAdminUsersInOrder(opts.ids);
+      return { ok: true, users, total: users.length };
+    }
+
+    const where = adminUserListWhere(opts);
+    if (where == null) {
+      return { ok: true, users: [], total: 0, stubs: [] };
+    }
+
+    const sort = opts.sort || "created_desc";
+    const limit = Math.min(200, Math.max(1, Number(opts.limit) || 50));
+    const offset = Math.max(0, Number(opts.offset) || 0);
+
+    if (opts.stubsOnly) {
+      const [total, stubs] = await Promise.all([
+        this.prisma.user.count({ where }),
+        this.prisma.user.findMany({
+          where,
+          select: {
+            id: true,
+            email: true,
+            name: true,
+            createdAt: true,
+            accountStatus: true,
+            deletedAt: true
+          }
+        })
+      ]);
+      return { ok: true, users: [], stubs, total };
+    }
+
+    if (sort === "moderation") {
+      const buckets = [
+        { AND: [where, { accountStatus: "BANNED" }] },
+        { AND: [where, ADMIN_INACTIVE_ACCOUNT] },
+        { AND: [where, ADMIN_REST_ACCOUNT] }
+      ];
+      const counts = await Promise.all(buckets.map((bucket) => this.prisma.user.count({ where: bucket })));
+      const total = counts.reduce((sum, count) => sum + count, 0);
+      let skip = offset;
+      let take = limit;
+      const pageIds: string[] = [];
+      for (let i = 0; i < buckets.length && take > 0; i++) {
+        const count = counts[i];
+        if (skip >= count) {
+          skip -= count;
+          continue;
+        }
+        const rows = await this.prisma.user.findMany({
+          where: buckets[i],
+          orderBy: { createdAt: "desc" },
+          skip,
+          take,
+          select: { id: true }
+        });
+        pageIds.push(...rows.map((row) => row.id));
+        take -= rows.length;
+        skip = 0;
       }
+      const users = await this.loadAdminUsersInOrder(pageIds);
+      return { ok: true, users, total };
+    }
+
+    const total = await this.prisma.user.count({ where });
+
+    const orderBy =
+      sort === "created_asc"
+        ? { createdAt: "asc" as const }
+        : sort === "email_asc"
+          ? { email: "asc" as const }
+          : sort === "email_desc"
+            ? { email: "desc" as const }
+            : { createdAt: "desc" as const };
+
+    const users = await this.prisma.user.findMany({
+      where,
+      orderBy,
+      skip: offset,
+      take: limit,
+      select: ADMIN_USER_LIST_SELECT
     });
-    return { ok: true, users };
+    return { ok: true, users, total };
+  }
+
+  private async loadAdminUsersInOrder(ids: string[]) {
+    const clean = ids.filter(Boolean);
+    if (clean.length === 0) return [];
+    const rows = await this.prisma.user.findMany({
+      where: { id: { in: clean } },
+      select: ADMIN_USER_LIST_SELECT
+    });
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    return clean.map((id) => byId.get(id)).filter(Boolean);
   }
 
   /**

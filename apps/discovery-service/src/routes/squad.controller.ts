@@ -307,7 +307,7 @@ export class SquadController {
     );
 
     // Generate deep link
-    const inviteLink = `${process.env.APP_URL || "https://app.hmmchat.live"}/squad?token=${encodeURIComponent(result.inviteToken || "")}`;
+    const inviteLink = `${(process.env.APP_URL || "https://app.hmmchat.live").replace(/\/+$/, "")}/invite/?squad=${encodeURIComponent(result.inviteToken || "")}`;
 
     return {
       success: true,
@@ -1039,7 +1039,7 @@ export class SquadController {
 
     const result = await this.squadService.createSquadInvitation(inviterId);
 
-    const inviteLink = `${process.env.APP_URL || "https://app.hmmchat.live"}/squad?token=${encodeURIComponent(result.inviteToken || "")}`;
+    const inviteLink = `${(process.env.APP_URL || "https://app.hmmchat.live").replace(/\/+$/, "")}/invite/?squad=${encodeURIComponent(result.inviteToken || "")}`;
 
     return {
       success: true,

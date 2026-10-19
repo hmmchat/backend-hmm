@@ -1050,53 +1050,6 @@ export class DiscoveryService implements OnModuleInit {
     }
   }
 
-  /**
-   * Select best match from candidates
-   */
-  private selectBestMatch(
-    candidates: DiscoveryUser[],
-    currentUser: UserProfile
-  ): DiscoveryUser {
-    if (candidates.length === 0) {
-      throw new HttpException("No candidates available", HttpStatus.NOT_FOUND);
-    }
-
-    // Calculate scores for all candidates
-    const scored = candidates.map((user) => ({
-      user,
-      score: this.calculateMatchScore(currentUser, user)
-    }));
-
-    const immobile = scored.filter(
-      (item) =>
-        item.user.status === "IN_SQUAD_AVAILABLE" ||
-        item.user.status === "IN_BROADCAST_AVAILABLE"
-    );
-    if (immobile.length > 0) {
-      immobile.sort((a, b) => b.score - a.score);
-      return immobile[0].user;
-    }
-
-    scored.sort((a, b) => b.score - a.score);
-
-    // Group by score and randomize within same score groups
-    const scoreGroups = new Map<number, DiscoveryUser[]>();
-    for (const item of scored) {
-      if (!scoreGroups.has(item.score)) {
-        scoreGroups.set(item.score, []);
-      }
-      scoreGroups.get(item.score)!.push(item.user);
-    }
-
-    // Get highest score group
-    const highestScore = Math.max(...Array.from(scoreGroups.keys()));
-    const highestScoreGroup = scoreGroups.get(highestScore)!;
-
-    // Randomize within highest score group
-    const randomIndex = Math.floor(Math.random() * highestScoreGroup.length);
-    return highestScoreGroup[randomIndex];
-  }
-
   /** Best offline-card candidates first. Immobile statuses do not apply to this pool. */
   private rankOfflineCandidates(
     candidates: DiscoveryUser[],

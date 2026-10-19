@@ -13,7 +13,7 @@ import {
   Req,
   Res
 } from "@nestjs/common";
-import { FastifyRequest } from "fastify";
+import { FastifyReply, FastifyRequest } from "fastify";
 import { FilesService } from "../services/files.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { z } from "zod";

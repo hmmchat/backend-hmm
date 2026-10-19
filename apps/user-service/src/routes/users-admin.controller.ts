@@ -67,7 +67,27 @@ async function queryAuthAdminUsers(body: Record<string, unknown>) {
     users?: AuthAdminUser[];
     total?: number;
     stubs?: AuthAdminStub[];
+    existingIds?: string[];
   }>(res, "admin user list");
+}
+
+function orphanAuthUser(id: string, createdAt?: Date): AuthAdminUser {
+  const created = createdAt ? createdAt.toISOString() : new Date(0).toISOString();
+  return {
+    id,
+    email: null,
+    phone: null,
+    name: null,
+    createdAt: created,
+    updatedAt: created,
+    accountStatus: "DEACTIVATED",
+    bannedAt: null,
+    banReason: null,
+    suspendedAt: null,
+    suspensionReason: null,
+    deactivatedAt: created,
+    deletedAt: created
+  };
 }
 
 /** `appple21` also searches `appple` — the face card draws the age flush against the name. */
@@ -493,22 +513,48 @@ export class UsersAdminController {
       }
     }
 
-    let usernameIds: string[] | undefined;
+    // Profiles with no auth row still show up in the app (offline cards). The
+    // auth list cannot see them, so search returned 0 for names like "appple".
+    const includeOrphans = !account || account === "all" || account === "inactive";
+    const profileWhere: any = {};
     if (needles.length) {
-      const where: any = {
-        OR: needles.flatMap((needle) => [
-          { username: { contains: needle, mode: "insensitive" } },
-          { preferredCity: { contains: needle, mode: "insensitive" } },
-          { intent: { contains: needle, mode: "insensitive" } }
-        ])
-      };
-      if (onlyIds) where.id = { in: onlyIds };
-      const rows = await this.prisma.user.findMany({
-        where,
-        select: { id: true }
-      });
-      usernameIds = rows.map((row) => row.id);
+      profileWhere.OR = needles.flatMap((needle) => [
+        { username: { contains: needle, mode: "insensitive" } },
+        { preferredCity: { contains: needle, mode: "insensitive" } },
+        { intent: { contains: needle, mode: "insensitive" } }
+      ]);
     }
+    if (onlyIds) profileWhere.id = { in: onlyIds };
+    if (joinedSince) {
+      const since = new Date(joinedSince);
+      if (!Number.isNaN(since.getTime())) profileWhere.createdAt = { gte: since };
+    }
+    const profileRows =
+      needles.length > 0 || includeOrphans
+        ? await this.prisma.user.findMany({
+            where: profileWhere,
+            select: { id: true, createdAt: true, username: true }
+          })
+        : [];
+    const usernameIds = needles.length ? profileRows.map((row) => row.id) : undefined;
+    const createdAtById = new Map(profileRows.map((row) => [row.id, row.createdAt]));
+    const usernameById = new Map(profileRows.map((row) => [row.id, row.username || ""]));
+
+    let orphanIds: string[] = [];
+    if (includeOrphans && profileRows.length > 0) {
+      const existingPayload = await queryAuthAdminUsers({
+        existsOnly: true,
+        ids: profileRows.map((row) => row.id)
+      });
+      const existing = new Set(
+        Array.isArray(existingPayload.existingIds) ? existingPayload.existingIds : []
+      );
+      orphanIds = profileRows
+        .filter((row) => !existing.has(row.id))
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+        .map((row) => row.id);
+    }
+    const orphanIdSet = new Set(orphanIds);
 
     const authBody = {
       q: query || undefined,
@@ -521,52 +567,57 @@ export class UsersAdminController {
       usernameIds
     };
 
-    let authUsers: AuthAdminUser[] = [];
+    let pageIds: string[] = [];
     let total = 0;
+    const authById = new Map<string, AuthAdminUser>();
 
     if (sortKey === "name_asc" || sortKey === "name_desc") {
       const stubPayload = await queryAuthAdminUsers({ ...authBody, stubsOnly: true });
       const stubs = Array.isArray(stubPayload.stubs) ? stubPayload.stubs : [];
-      total = Number(stubPayload.total) || stubs.length;
-      const nameById = new Map<string, string>();
-      for (let i = 0; i < stubs.length; i += 2000) {
-        const chunk = stubs.slice(i, i + 2000).map((stub) => stub.id);
-        const rows = await this.prisma.user.findMany({
-          where: { id: { in: chunk } },
-          select: { id: true, username: true }
-        });
-        for (const row of rows) nameById.set(row.id, row.username || "");
-      }
+      for (const row of profileRows) usernameById.set(row.id, row.username || "");
+      const combined = [
+        ...stubs.map((stub) => ({ id: stub.id, name: stub.name, email: stub.email })),
+        ...orphanIds.map((id) => ({ id, name: null as string | null, email: null as string | null }))
+      ];
       const label = (stub: { id: string; name: string | null; email: string | null }) =>
-        (nameById.get(stub.id) || stub.name || stub.email || stub.id).toLowerCase();
-      stubs.sort((a, b) => {
+        (usernameById.get(stub.id) || stub.name || stub.email || stub.id).toLowerCase();
+      combined.sort((a, b) => {
         const cmp = label(a).localeCompare(label(b));
         return sortKey === "name_asc" ? cmp : -cmp;
       });
-      const pageIds = stubs.slice(offset, offset + limit).map((stub) => stub.id);
-      if (pageIds.length === 0) {
-        return { ok: true, users: [], total, reportThreshold };
-      }
-      const pagePayload = await queryAuthAdminUsers({ ids: pageIds });
-      authUsers = Array.isArray(pagePayload.users) ? pagePayload.users : [];
+      total = combined.length;
+      pageIds = combined.slice(offset, offset + limit).map((stub) => stub.id);
     } else {
       const payload = await queryAuthAdminUsers(authBody);
-      authUsers = Array.isArray(payload.users) ? payload.users : [];
-      total = Number(payload.total) || 0;
+      const authUsers = Array.isArray(payload.users) ? payload.users : [];
+      const authTotal = Number(payload.total) || 0;
+      total = authTotal + orphanIds.length;
+      if (offset >= authTotal) {
+        pageIds = orphanIds.slice(offset - authTotal, offset - authTotal + limit);
+      } else {
+        pageIds = authUsers.map((user) => user.id);
+        if (pageIds.length < limit) pageIds.push(...orphanIds.slice(0, limit - pageIds.length));
+      }
     }
 
-    if (authUsers.length === 0) {
+    const authPageIds = pageIds.filter((id) => !orphanIdSet.has(id));
+    if (authPageIds.length > 0) {
+      const pagePayload = await queryAuthAdminUsers({ ids: authPageIds });
+      for (const user of pagePayload.users || []) authById.set(user.id, user);
+    }
+
+    if (pageIds.length === 0) {
       return { ok: true, users: [], total, reportThreshold };
     }
 
-    const ids = authUsers.map((user) => user.id);
-    const profiles = await this.findManyAdminProfiles(ids);
+    const profiles = await this.findManyAdminProfiles(pageIds);
     const profileById = new Map(profiles.map((profile) => [profile.id, profile]));
-    const users = authUsers.map((authUser) => {
-      const merged = mergeAuthUserWithProfile(authUser, profileById.get(authUser.id), (domain, logoUrl) =>
+    const users = pageIds.map((id) => {
+      const authUser = authById.get(id) ?? orphanAuthUser(id, createdAtById.get(id));
+      const merged = mergeAuthUserWithProfile(authUser, profileById.get(id), (domain, logoUrl) =>
         this.brandService.resolvePublicLogoUrl(domain, logoUrl)
       );
-      return { ...merged, reportThreshold };
+      return { ...merged, reportThreshold, orphanProfile: !authById.has(id) };
     });
 
     return { ok: true, users, total, reportThreshold };
@@ -966,16 +1017,13 @@ export class UsersAdminController {
   }
 
   /**
-   * Hard delete — wipe every service's user data, then remove the auth row.
+   * Hard delete — remove the profile first. The login is removed only after that
+   * succeeds, so a failed profile wipe cannot leave a card with no account.
    */
   @Delete(":id/hard")
   @HttpCode(HttpStatus.OK)
   async hardDelete(@Param("id") id: string) {
-    try {
-      await this.userService.purgeHardDelete(id);
-    } catch (err) {
-      this.logger.warn(`hardDelete ${id}: user-service profile missing or delete failed: ${String(err)}`);
-    }
+    await this.userService.purgeHardDelete(id);
     const res = await authFetch(`/auth/admin/users/${id}`, { method: "DELETE" });
     if (!res.ok && res.status !== 404) {
       const t = await res.text();

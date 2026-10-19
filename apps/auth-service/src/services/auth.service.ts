@@ -1093,7 +1093,8 @@ export class AuthService implements OnModuleInit {
   }
 
   /**
-   * Permanently remove auth user row (dashboard hard delete). Sessions cleared via cascade.
+   * Permanently remove the profile, then the auth row. Sessions clear via cascade.
+   * If the profile delete fails, the login stays so the account remains in the user table.
    */
   async adminHardDeleteUser(userId: string): Promise<void> {
     const exists = await this.prisma.user.findUnique({
@@ -1103,6 +1104,7 @@ export class AuthService implements OnModuleInit {
     if (!exists) {
       throw new HttpException("User not found", HttpStatus.NOT_FOUND);
     }
+    await this.deleteUserServiceProfile(userId, "hard", true);
     await this.prisma.referral.deleteMany({
       where: {
         OR: [{ referrerId: userId }, { referredUserId: userId }]
@@ -1184,7 +1186,23 @@ export class AuthService implements OnModuleInit {
     stubsOnly?: boolean;
     /** Hydrate these ids, in this order. */
     ids?: string[];
+    /** Return which of `ids` still exist. Does not hydrate rows. */
+    existsOnly?: boolean;
   } = {}) {
+    if (opts.existsOnly && Array.isArray(opts.ids)) {
+      const existingIds: string[] = [];
+      const ids = opts.ids.filter(Boolean);
+      for (let i = 0; i < ids.length; i += 5000) {
+        const chunk = ids.slice(i, i + 5000);
+        const rows = await this.prisma.user.findMany({
+          where: { id: { in: chunk } },
+          select: { id: true }
+        });
+        for (const row of rows) existingIds.push(row.id);
+      }
+      return { ok: true, users: [], existingIds, total: existingIds.length };
+    }
+
     if (Array.isArray(opts.ids)) {
       const users = await this.loadAdminUsersInOrder(opts.ids);
       return { ok: true, users, total: users.length };
@@ -1373,7 +1391,11 @@ export class AuthService implements OnModuleInit {
     return user;
   }
 
-  private async deleteUserServiceProfile(userId: string, mode: "self" | "hard" = "self"): Promise<void> {
+  private async deleteUserServiceProfile(
+    userId: string,
+    mode: "self" | "hard" = "self",
+    required = false
+  ): Promise<void> {
     const userServiceUrl = (process.env.USER_SERVICE_URL || "http://localhost:3002").replace(/\/$/, "");
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (process.env.INTERNAL_SERVICE_TOKEN) {
@@ -1389,14 +1411,19 @@ export class AuthService implements OnModuleInit {
       );
       if (!response.ok && response.status !== 404) {
         const body = await response.text();
-        console.warn(
-          `[AuthService] Failed to delete user-service profile ${userId}: ${response.status} ${body.slice(0, 200)}`
-        );
+        const message = `Failed to delete user-service profile ${userId}: ${response.status} ${body.slice(0, 200)}`;
+        if (required) {
+          throw new HttpException(message, HttpStatus.BAD_GATEWAY);
+        }
+        console.warn(`[AuthService] ${message}`);
       }
     } catch (error: any) {
-      console.warn(
-        `[AuthService] Failed to delete user-service profile ${userId}: ${error?.message || error}`
-      );
+      if (error instanceof HttpException) throw error;
+      const message = `Failed to delete user-service profile ${userId}: ${error?.message || error}`;
+      if (required) {
+        throw new HttpException(message, HttpStatus.BAD_GATEWAY);
+      }
+      console.warn(`[AuthService] ${message}`);
     }
   }
 

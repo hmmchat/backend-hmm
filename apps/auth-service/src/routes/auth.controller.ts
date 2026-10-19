@@ -327,6 +327,7 @@ export class AuthController {
       onlyIds: Array.isArray(body?.onlyIds) ? body.onlyIds : undefined,
       usernameIds: Array.isArray(body?.usernameIds) ? body.usernameIds : undefined,
       stubsOnly: body?.stubsOnly === true,
+      existsOnly: body?.existsOnly === true,
       ids: Array.isArray(body?.ids) ? body.ids : undefined
     });
   }

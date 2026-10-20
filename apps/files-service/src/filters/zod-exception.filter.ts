@@ -34,7 +34,11 @@ export class ZodExceptionFilter implements ExceptionFilter {
       return;
     }
 
-    // Unknown error
+    // Unknown error. Log the cause; the client only sees a generic message.
+    console.error(
+      "Unhandled files-service error:",
+      exception instanceof Error ? exception.stack || exception.message : exception
+    );
     reply.status(HttpStatus.INTERNAL_SERVER_ERROR).send({
       statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
       message: "Internal server error"

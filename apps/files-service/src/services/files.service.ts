@@ -76,13 +76,13 @@ export class FilesService implements OnModuleInit {
     return _storedUrl;
   }
 
-  /** Fresh private-bucket download for GET /files/media. The stored profile URL never carries the signature. */
-  async presignedViewForKey(rawKey: string): Promise<string> {
+  /** Bytes for GET /files/media. The stored profile URL never carries a signature. */
+  async readPhoto(rawKey: string): Promise<{ body: Buffer; contentType: string }> {
     const key = sanitizeStorageKey(rawKey);
     if (!key) {
       throw new HttpException("Invalid photo key", HttpStatus.BAD_REQUEST);
     }
-    return this.r2Service.generatePresignedViewUrl(key, 604800);
+    return this.r2Service.readObject(key);
   }
 
   private async rewriteExpiredFileUrls() {

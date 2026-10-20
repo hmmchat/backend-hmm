@@ -542,9 +542,16 @@ export class RoutingService implements OnModuleInit {
         }
 
         const contentType = (response.headers.get("content-type") || "").toLowerCase();
-        const responseData = contentType.includes("text/html") || contentType.includes("text/plain")
-          ? await response.text()
-          : await response.json().catch(() => ({}));
+        const binary =
+          contentType.startsWith("image/") ||
+          contentType.startsWith("video/") ||
+          contentType.startsWith("audio/") ||
+          contentType.includes("application/octet-stream");
+        const responseData = binary
+          ? Buffer.from(await response.arrayBuffer())
+          : contentType.includes("text/html") || contentType.includes("text/plain")
+            ? await response.text()
+            : await response.json().catch(() => ({}));
         const responseHeaders: Record<string, string> = {};
 
         // Copy relevant headers
@@ -553,6 +560,10 @@ export class RoutingService implements OnModuleInit {
             responseHeaders[key] = value;
           }
         });
+        if (Buffer.isBuffer(responseData)) {
+          delete responseHeaders["content-encoding"];
+          responseHeaders["content-length"] = String(responseData.length);
+        }
 
         return {
           status: response.status,

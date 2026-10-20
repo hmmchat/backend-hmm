@@ -48,6 +48,10 @@ export class R2Service implements OnModuleInit {
     };
 
     // If custom endpoint is provided (e.g., Backblaze B2), use it
+    // AWS SDK defaults to flexible checksums. Backblaze rejects those requests.
+    s3Config.requestChecksumCalculation = "WHEN_REQUIRED";
+    s3Config.responseChecksumValidation = "WHEN_REQUIRED";
+
     if (endpoint) {
       s3Config.endpoint = endpoint;
       console.log(`✅ Using custom S3-compatible endpoint: ${endpoint}`);
@@ -196,6 +200,44 @@ export class R2Service implements OnModuleInit {
       throw new HttpException(
         `Failed to generate presigned view URL: ${error.message}`,
         HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  /**
+   * Read a private object. Profile photos are served from here so the browser
+   * never has to follow a signed redirect through the API gateway.
+   */
+  async readObject(key: string): Promise<{ body: Buffer; contentType: string }> {
+    if (!this.s3Client) {
+      throw new HttpException("Storage not configured", HttpStatus.SERVICE_UNAVAILABLE);
+    }
+
+    try {
+      const result = await this.s3Client.send(
+        new GetObjectCommand({
+          Bucket: this.bucketName,
+          Key: key
+        })
+      );
+      const stream = result.Body as { transformToByteArray?: () => Promise<Uint8Array> } | undefined;
+      if (!stream?.transformToByteArray) {
+        throw new HttpException("Empty photo", HttpStatus.NOT_FOUND);
+      }
+      const bytes = await stream.transformToByteArray();
+      return {
+        body: Buffer.from(bytes),
+        contentType: result.ContentType || "application/octet-stream"
+      };
+    } catch (error: any) {
+      if (error instanceof HttpException) throw error;
+      const status = error?.$metadata?.httpStatusCode;
+      if (error?.name === "NoSuchKey" || status === 404) {
+        throw new HttpException("Photo not found", HttpStatus.NOT_FOUND);
+      }
+      throw new HttpException(
+        `Failed to load photo: ${error?.message || error?.name || "unknown"}`,
+        HttpStatus.BAD_GATEWAY
       );
     }
   }

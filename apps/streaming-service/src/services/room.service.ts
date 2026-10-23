@@ -3675,6 +3675,27 @@ export class RoomService {
   }
 
   /**
+   * Beam TV should not offer a room whose host is only a leftover database row.
+   * In-memory participant state exists only while that person is connected to this node.
+   * A room owned by a different streaming node is included when that node is still heartbeating.
+   */
+  private async broadcastHasConnectedParticipant(
+    roomId: string,
+    liveNodeIds: Set<string>
+  ): Promise<boolean> {
+    const local = this.rooms.get(roomId);
+    if (local) {
+      return local.isBroadcasting && local.participants.size > 0;
+    }
+
+    const assigned = await this.nodeRegistry.getRoomNode(roomId);
+    if (!assigned || this.nodeRegistry.isLocalNode(assigned.nodeId)) {
+      return false;
+    }
+    return liveNodeIds.has(assigned.nodeId);
+  }
+
+  /**
    * Get all active broadcasts (for HMM_TV feed)
    * Returns broadcasts with participant info and viewer count
    * Supports sorting, filtering, and pagination
@@ -3830,7 +3851,25 @@ export class RoomService {
 
     // Never list ghost broadcasts: a session flagged isBroadcasting with zero active
     // participants has a dead/cleaned-up host and must not be served to viewers.
+    // A participant row can also outlive the socket (process restart, dropped host).
+    // Only rooms with someone actually connected — or owned by another live node — are watchable.
     let filteredSessions = sessionsToReturn.filter(session => session.participants.length > 0);
+    if (filteredSessions.length > 0) {
+      const liveNodeIds = new Set(
+        (await this.nodeRegistry.listKnownNodes()).map((node) => node.nodeId)
+      );
+      const watchable: typeof filteredSessions = [];
+      for (const session of filteredSessions) {
+        if (await this.broadcastHasConnectedParticipant(session.roomId, liveNodeIds)) {
+          watchable.push(session);
+        } else {
+          this.logger.debug(
+            `Omitting broadcast ${session.roomId}: no connected participant`
+          );
+        }
+      }
+      filteredSessions = watchable;
+    }
     if (filter.participantCount) {
       filteredSessions = filteredSessions.filter(session => {
         const count = session.participants.length;

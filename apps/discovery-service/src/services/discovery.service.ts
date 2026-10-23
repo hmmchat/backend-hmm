@@ -4152,11 +4152,18 @@ export class DiscoveryService implements OnModuleInit {
         return null;
       }
 
-      // Get engagement metrics
-      const [commentCount, shareCount] = await Promise.all([
-        (this.prisma as any).broadcastComment.count({ where: { roomId, deletedAt: null } }),
-        (this.prisma as any).broadcastShare.count({ where: { roomId } })
-      ]);
+      // Engagement tables are optional for playback. A failure here must not 500
+      // the lookup — viewers treat 500 as "still live" and stay on a blank screen.
+      let commentCount = 0;
+      let shareCount = 0;
+      try {
+        [commentCount, shareCount] = await Promise.all([
+          (this.prisma as any).broadcastComment.count({ where: { roomId, deletedAt: null } }),
+          (this.prisma as any).broadcastShare.count({ where: { roomId } })
+        ]);
+      } catch (error) {
+        console.warn(`Broadcast engagement counts unavailable for ${roomId}:`, error);
+      }
 
       // Get participant profiles (if not already included)
       const participantUserIds = broadcast.participants?.map((p: any) => p.userId) || [];
@@ -4194,17 +4201,37 @@ export class DiscoveryService implements OnModuleInit {
         }
       }
 
-      // Get additional metadata from database if not in broadcast
-      const session = await (this.prisma as any).callSession.findUnique({
-        where: { roomId },
-        select: {
-          popularityScore: true,
-          isTrending: true,
-          broadcastTitle: true,
-          broadcastDescription: true,
-          broadcastTags: true
+      // Call sessions live in streaming-service. This client may not have that model;
+      // streaming already returns the same metadata on the broadcast payload.
+      let session: {
+        popularityScore?: number;
+        isTrending?: boolean;
+        broadcastTitle?: string | null;
+        broadcastDescription?: string | null;
+        broadcastTags?: string[];
+      } | null = null;
+      let callSession: { findUnique?: (args: unknown) => Promise<typeof session> } | null = null;
+      try {
+        callSession = (this.prisma as any).callSession ?? null;
+      } catch {
+        callSession = null;
+      }
+      if (typeof callSession?.findUnique === "function") {
+        try {
+          session = await callSession.findUnique({
+            where: { roomId },
+            select: {
+              popularityScore: true,
+              isTrending: true,
+              broadcastTitle: true,
+              broadcastDescription: true,
+              broadcastTags: true
+            }
+          });
+        } catch (error) {
+          console.warn(`Broadcast session metadata unavailable for ${roomId}:`, error);
         }
-      });
+      }
 
       return {
         roomId: broadcast.roomId,

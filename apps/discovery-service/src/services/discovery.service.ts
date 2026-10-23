@@ -236,7 +236,7 @@ export class DiscoveryService implements OnModuleInit {
 
   /**
    * Persistent offline-card exclusions for heart / message / gift.
-   * Survives session refresh and raincheck recycle (unlike X-only rainchecks).
+   * These stay out of the deck. An X pass waits until every unseen profile is gone.
    */
   private static readonly OFFLINE_ENGAGED_SESSION_ID = "offline-engaged";
 
@@ -3186,23 +3186,22 @@ export class DiscoveryService implements OnModuleInit {
         soloOnly,
         excludeUserIds
       );
-      if (matchingUsers.length === 0) return null;
+      if (matchingUsers.length === 0) return { card: null, poolEmpty: true };
       const card = await this.pickShowableOfflineCard(matchingUsers, currentUser, poolCity);
-      if (!card) return null;
+      if (!card) return { card: null, poolEmpty: false };
       if (hasActiveGenderFilter) {
         await this.genderFilterService.decrementScreen(userId);
       }
-      return card;
+      return { card, poolEmpty: false };
     };
 
-    const excludeIds = await this.getOfflineExcludeUserIds(userId, offlineSessionId);
-    const card = await tryPick(excludeIds);
+    const card = await this.selectOfflineCard(userId, offlineSessionId, tryPick);
     if (card) {
       return { card, exhausted: false };
     }
 
-    // Exhausted for this session. Refresh (new sessionId) recycles X-only rainchecks;
-    // heart/message/gift engagements persist via offline-engaged exclusions.
+    // Unseen profiles and this visit's passes are both done.
+    // A new session can show earlier passes again. Engagements stay excluded.
     return {
       card: null,
       exhausted: true
@@ -3242,6 +3241,63 @@ export class DiscoveryService implements OnModuleInit {
     return applyReportPoolBucket(users, poolMode).filter((user) =>
       this.isShowableOfflineCardProfile(user)
     );
+  }
+
+  /**
+   * Every offline-card pass this user has made, across visits.
+   * Heart/message/gift rows live under offline-engaged and are not passes.
+   */
+  private async getAllOfflineRaincheckedUserIds(userId: string): Promise<string[]> {
+    try {
+      const rainchecks = await (this.prisma as any).raincheckSession.findMany({
+        where: {
+          userId,
+          AND: [
+            { sessionId: { startsWith: "offline-" } },
+            { sessionId: { not: DiscoveryService.OFFLINE_ENGAGED_SESSION_ID } },
+          ],
+          raincheckedUserId: {
+            not: {
+              startsWith: "LOCATION:"
+            }
+          }
+        },
+        select: {
+          raincheckedUserId: true
+        }
+      });
+      return Array.from(new Set<string>(rainchecks.map((r: { raincheckedUserId: string }) => r.raincheckedUserId)));
+    } catch (error: any) {
+      if (error?.code === 'P2021' || error?.message?.includes('does not exist')) {
+        return [];
+      }
+      console.error("Error fetching all OFFLINE rainchecked users:", error);
+      return [];
+    }
+  }
+
+  /**
+   * Unseen profiles first. People they already passed come back only after
+   * that unseen pool is empty, and not again during this visit.
+   */
+  private async selectOfflineCard(
+    userId: string,
+    offlineSessionId: string,
+    tryPick: (excludeUserIds: string[]) => Promise<{ card: Card | null; poolEmpty: boolean }>
+  ): Promise<Card | null> {
+    const [sessionRainchecks, allRainchecks, engaged, friends] = await Promise.all([
+      this.getOfflineRaincheckedUserIds(userId, offlineSessionId),
+      this.getAllOfflineRaincheckedUserIds(userId),
+      this.getOfflineEngagedUserIds(userId),
+      this.getOfflineFriendUserIds(userId)
+    ]);
+    const blocked = [...engaged, ...friends];
+    const unseen = await tryPick([...new Set([...blocked, ...allRainchecks])]);
+    if (unseen.card) return unseen.card;
+    // Photos failed for people still in the unseen pool. Do not fill with passes.
+    if (!unseen.poolEmpty) return null;
+    const recycled = await tryPick([...new Set([...blocked, ...sessionRainchecks])]);
+    return recycled.card;
   }
 
   /**
@@ -3314,18 +3370,6 @@ export class DiscoveryService implements OnModuleInit {
       this.logger.warn(`Failed to exclude friends from offline cards: ${error?.message || error}`);
       return [];
     }
-  }
-
-  private async getOfflineExcludeUserIds(
-    userId: string,
-    offlineSessionId: string
-  ): Promise<string[]> {
-    const [rainchecked, engaged, friends] = await Promise.all([
-      this.getOfflineRaincheckedUserIds(userId, offlineSessionId),
-      this.getOfflineEngagedUserIds(userId),
-      this.getOfflineFriendUserIds(userId)
-    ]);
-    return [...new Set([...rainchecked, ...engaged, ...friends])];
   }
 
   /**
@@ -3485,17 +3529,16 @@ export class DiscoveryService implements OnModuleInit {
         soloOnly,
         excludeUserIds
       );
-      if (matchingUsers.length === 0) return null;
+      if (matchingUsers.length === 0) return { card: null, poolEmpty: true };
       const card = await this.pickShowableOfflineCard(matchingUsers, currentUser, poolCity);
-      if (!card) return null;
+      if (!card) return { card: null, poolEmpty: false };
       if (hasActiveGenderFilter) {
         await this.genderFilterService.decrementScreen(userId);
       }
-      return card;
+      return { card, poolEmpty: false };
     };
 
-    const excludeIds = await this.getOfflineExcludeUserIds(userId, offlineSessionId);
-    const card = await tryPick(excludeIds);
+    const card = await this.selectOfflineCard(userId, offlineSessionId, tryPick);
     if (card) {
       return { card, exhausted: false };
     }

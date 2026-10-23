@@ -8,7 +8,9 @@ export const GetCardQuerySchema = z.object({
 
 export const RaincheckRequestSchema = z.object({
   sessionId: z.string().min(1, "Session ID is required"),
-  raincheckedUserId: z.string().min(1, "Rainchecked user ID is required")
+  raincheckedUserId: z.string().min(1, "Rainchecked user ID is required"),
+  /** Call exit already loads the next card on the homepage. Skip the extra match here. */
+  includeNextCard: z.boolean().optional()
 });
 
 export const ResetSessionRequestSchema = z.object({

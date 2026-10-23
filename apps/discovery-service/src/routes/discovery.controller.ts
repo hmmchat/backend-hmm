@@ -162,6 +162,14 @@ export class DiscoveryController {
       city
     );
 
+    // A call exit ignores this card and fetches again after navigation.
+    if (dto.includeNextCard === false) {
+      return {
+        success: true,
+        nextCard: null
+      };
+    }
+
     // Return next card
     const soloOnly = false; // Could be passed in request if needed
     const nextCard = await this.discoveryService.getNextCard(

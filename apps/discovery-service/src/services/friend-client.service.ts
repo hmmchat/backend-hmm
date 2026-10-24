@@ -236,6 +236,45 @@ export class FriendClientService {
   }
 
   /**
+   * Friends, pending requests (both directions), and blocks (both directions).
+   * Falls back to accepted friends if the hidden-peer lookup fails.
+   */
+  async getOfflineHiddenPeerIds(userId: string): Promise<string[]> {
+    try {
+      const serviceToken = process.env.INTERNAL_SERVICE_TOKEN;
+      if (!serviceToken) {
+        this.logger.warn("INTERNAL_SERVICE_TOKEN not configured, falling back to friend ids for offline cards");
+        return this.getFriendIds(userId);
+      }
+
+      const params = new URLSearchParams({ userId });
+      const response = await fetch(
+        `${this.friendServiceUrl}/internal/friends/hidden-peers?${params.toString()}`,
+        {
+          method: "GET",
+          headers: {
+            "x-service-token": serviceToken,
+            "Content-Type": "application/json"
+          },
+          signal: AbortSignal.timeout(this.requestTimeoutMs)
+        } as any
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        this.logger.warn(`Failed to get offline hidden peers for ${userId}: ${errorText}`);
+        return this.getFriendIds(userId);
+      }
+
+      const result = await response.json() as { userIds?: string[] };
+      return [...new Set((result.userIds || []).filter((id) => typeof id === "string" && id.length > 0))];
+    } catch (error: any) {
+      this.logger.warn(`Error getting offline hidden peers for ${userId}: ${error?.message || error}`);
+      return this.getFriendIds(userId);
+    }
+  }
+
+  /**
    * Record squad invite or outcome in friend inbox (best-effort; logs on failure).
    */
   async postSquadInboxMessage(

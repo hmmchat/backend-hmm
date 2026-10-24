@@ -480,6 +480,38 @@ export class FriendService {
   }
 
   /**
+   * People who must not appear in offline cards: friends, pending requests
+   * either direction, and blocks either direction.
+   */
+  async listOfflineHiddenPeerIds(userId: string): Promise<string[]> {
+    const [friendships, requests] = await Promise.all([
+      this.prisma.friend.findMany({
+        where: {
+          OR: [{ userId1: userId }, { userId2: userId }]
+        },
+        select: { userId1: true, userId2: true }
+      }),
+      this.prisma.friendRequest.findMany({
+        where: {
+          status: { in: ["PENDING", "BLOCKED"] },
+          OR: [{ fromUserId: userId }, { toUserId: userId }]
+        },
+        select: { fromUserId: true, toUserId: true }
+      })
+    ]);
+
+    const ids = new Set<string>();
+    for (const friendship of friendships) {
+      ids.add(friendship.userId1 === userId ? friendship.userId2 : friendship.userId1);
+    }
+    for (const request of requests) {
+      ids.add(request.fromUserId === userId ? request.toUserId : request.fromUserId);
+    }
+    ids.delete(userId);
+    return [...ids];
+  }
+
+  /**
    * Get friends wall - paginated friends with their profile photos
    * Returns friends with displayPictureUrl for grid display
    */

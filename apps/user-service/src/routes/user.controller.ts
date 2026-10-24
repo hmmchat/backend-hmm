@@ -727,7 +727,8 @@ export class UserController {
       moderatorVisibility,
       onlyCriticalReview,
       excludeKycStatuses,
-      moderatorWorkQueue
+      moderatorWorkQueue,
+      acceptGalleryPhoto
     } = body;
 
     if (!Array.isArray(statuses) || statuses.length === 0) {
@@ -752,8 +753,8 @@ export class UserController {
     }
 
     const limitNum = limit !== undefined && limit !== "" ? parseInt(String(limit), 10) : DISCOVERY_USERS_DEFAULT_LIMIT;
-    if (isNaN(limitNum) || limitNum < 1 || limitNum > 500) {
-      throw new HttpException("Limit must be between 1 and 500", HttpStatus.BAD_REQUEST);
+    if (isNaN(limitNum) || limitNum < 1 || limitNum > 2000) {
+      throw new HttpException("Limit must be between 1 and 2000", HttpStatus.BAD_REQUEST);
     }
 
     const visibilityOk =
@@ -782,6 +783,7 @@ export class UserController {
         ? excludeKycStatuses.filter((v: string) => ["UNVERIFIED", "VERIFIED", "PENDING_REVIEW", "REVOKED", "EXPIRED"].includes(v)) as any[]
         : undefined,
       moderatorWorkQueue: moderatorWorkQueue === undefined ? undefined : Boolean(moderatorWorkQueue),
+      acceptGalleryPhoto: acceptGalleryPhoto === true,
       limit: limitNum
     });
   }

@@ -776,7 +776,12 @@ export class DiscoveryController {
     const dto = GetOfflineCardQuerySchema.parse(query || {});
     const soloOnly = dto.soloOnly || false;
 
-    return this.discoveryService.getNextOfflineCard(token, dto.sessionId, soloOnly);
+    return this.discoveryService.getNextOfflineCard(
+      token,
+      dto.sessionId,
+      soloOnly,
+      dto.holdUserId || null
+    );
   }
 
   /**
@@ -814,6 +819,10 @@ export class DiscoveryController {
       dto.raincheckedUserId,
       null
     );
+
+    if (dto.includeNext === false) {
+      return { success: true, nextCard: null };
+    }
 
     // Return next card
     const soloOnly = false;

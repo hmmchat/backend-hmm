@@ -101,12 +101,16 @@ export type CallEndedRequest = z.infer<typeof CallEndedRequestSchema>;
 // OFFLINE Cards DTOs
 export const GetOfflineCardQuerySchema = z.object({
   sessionId: z.string().min(1, "Session ID is required"),
-  soloOnly: z.string().optional().transform((val) => val === "true" || val === "1")
+  soloOnly: z.string().optional().transform((val) => val === "true" || val === "1"),
+  /** Card on screen. Excluded from this response only — not recorded as a pass. */
+  holdUserId: z.string().trim().min(1).max(128).optional()
 });
 
 export const OfflineRaincheckRequestSchema = z.object({
   sessionId: z.string().min(1, "Session ID is required"),
-  raincheckedUserId: z.string().min(1, "Rainchecked user ID is required")
+  raincheckedUserId: z.string().min(1, "Rainchecked user ID is required"),
+  /** When false, only record the pass. The client already has the next profile. */
+  includeNext: z.boolean().optional()
 });
 
 /** Heart / message / gift — persist across offline-card session refreshes. */

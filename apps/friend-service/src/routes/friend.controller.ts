@@ -1213,6 +1213,42 @@ export class FriendController {
   }
 
   /**
+   * Friends, pending requests, and blocks for offline-card exclusion.
+   * GET /internal/friends/hidden-peers?userId=xxx
+   */
+  @Get("internal/friends/hidden-peers")
+  async getOfflineHiddenPeersInternal(
+    @Headers("x-service-token") serviceToken: string | undefined,
+    @Query() query: any
+  ) {
+    const isTestMode = process.env.NODE_ENV === "test" || process.env.TEST_MODE === "true";
+    const expectedToken = process.env.INTERNAL_SERVICE_TOKEN;
+
+    if (!isTestMode) {
+      if (!expectedToken) {
+        throw new HttpException(
+          "Internal service token not configured",
+          HttpStatus.INTERNAL_SERVER_ERROR
+        );
+      }
+
+      if (serviceToken !== expectedToken) {
+        throw new HttpException(
+          "Invalid service token",
+          HttpStatus.UNAUTHORIZED
+        );
+      }
+    }
+
+    const { userId } = z.object({
+      userId: z.string().min(1)
+    }).parse(query);
+
+    const userIds = await this.friendService.listOfflineHiddenPeerIds(userId);
+    return { userIds };
+  }
+
+  /**
    * Record squad invite / outcome in friend inbox (internal — discovery-service)
    * POST /internal/messages/squad
    */

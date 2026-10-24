@@ -357,6 +357,7 @@ export class UserClientService implements OnModuleInit {
       onlyCriticalReview?: boolean;
       excludeKycStatuses?: ("UNVERIFIED" | "VERIFIED" | "PENDING_REVIEW" | "REVOKED" | "EXPIRED")[];
       moderatorWorkQueue?: boolean;
+      acceptGalleryPhoto?: boolean;
       limit?: number;
     }
   ): Promise<DiscoveryUser[]> {
@@ -408,6 +409,7 @@ export class UserClientService implements OnModuleInit {
       onlyCriticalReview?: boolean;
       excludeKycStatuses?: ("UNVERIFIED" | "VERIFIED" | "PENDING_REVIEW" | "REVOKED" | "EXPIRED")[];
       moderatorWorkQueue?: boolean;
+      acceptGalleryPhoto?: boolean;
       limit?: number;
     }
   ): Promise<DiscoveryUser[]> {

@@ -2739,6 +2739,11 @@ export class UserService implements OnModuleInit {
      * targets (those are for disguised mods only).
      */
     moderatorWorkQueue?: boolean;
+    /**
+     * Offline cards: a gallery photo satisfies the one-photo rule when the
+     * display picture is empty. Video matching leaves this unset.
+     */
+    acceptGalleryPhoto?: boolean;
     limit?: number;
   }) {
     const where: any = {
@@ -2843,6 +2848,15 @@ export class UserService implements OnModuleInit {
 
     // Same minimum as Meet Someone: name, DOB, gender, real photo URL, intent.
     // Moderator face-card personas are allowed through even if the personal profile is thin.
+    // Offline cards may accept a gallery photo when the display picture is empty.
+    const profilePhotoClause = filters.acceptGalleryPhoto
+      ? {
+          OR: [
+            { displayPictureUrl: { not: "" } },
+            { photos: { some: { url: { not: "" } } } }
+          ]
+        }
+      : { displayPictureUrl: { not: "" } };
     where.AND = [
       ...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []),
       {
@@ -2852,7 +2866,7 @@ export class UserService implements OnModuleInit {
               { username: { not: "" } },
               { dateOfBirth: { not: null } },
               { gender: { not: null } },
-              { displayPictureUrl: { not: "" } },
+              profilePhotoClause,
               { intent: { not: "" } }
             ]
           },
@@ -2888,11 +2902,15 @@ export class UserService implements OnModuleInit {
     return {
       users: users
         .map((u) => this.mapUserBrandLogos(u))
-        .filter(
-          (u) =>
-            (Boolean(u.isModerator) && Boolean(u.moderatorFaceCardActive)) ||
-            isMatchmakingProfileComplete(u)
-        )
+        .filter((u) => {
+          if (Boolean(u.isModerator) && Boolean(u.moderatorFaceCardActive)) return true;
+          if (!filters.acceptGalleryPhoto) return isMatchmakingProfileComplete(u);
+          if (!String(u.username || "").trim() || !u.dateOfBirth || !u.gender || !String(u.intent || "").trim()) {
+            return false;
+          }
+          if (!isPlaceholderDisplayPicture(u.displayPictureUrl)) return true;
+          return Array.isArray(u.photos) && u.photos.some((photo) => !isPlaceholderDisplayPicture(photo?.url));
+        })
     };
   }
 

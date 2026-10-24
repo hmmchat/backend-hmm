@@ -239,6 +239,12 @@ export class DiscoveryService implements OnModuleInit {
    * These stay out of the deck. An X pass waits until every unseen profile is gone.
    */
   private static readonly OFFLINE_ENGAGED_SESSION_ID = "offline-engaged";
+  /** Second look at passed profiles, scoped to one offline visit. */
+  private static readonly OFFLINE_RECYCLE_PREFIX = "offline-recycled-";
+  /** Onboarded people who are not in a live call or match. */
+  private static readonly OFFLINE_CARD_STATUSES = ["ONLINE", "OFFLINE", "VIEWER"] as const;
+  /** High enough to cover the onboarded pool without touching the video pool limit. */
+  private static readonly OFFLINE_CARD_POOL_LIMIT = 2000;
 
   private isKycPriorityEnabled(): boolean {
     return process.env.KYC_ENABLED === "true" && process.env.KYC_MODERATOR_PRIORITY_ENABLED === "true";
@@ -829,10 +835,18 @@ export class DiscoveryService implements OnModuleInit {
     };
   }
 
-  /** Same minimum profile as Meet Someone (`enterDiscoverySession`). */
+  /**
+   * Finished initial onboarding, with at least one real profile photo.
+   * A gallery photo counts when the display picture is missing or a placeholder.
+   */
   private isShowableOfflineCardProfile(user: DiscoveryUser): boolean {
     if (shouldUseModeratorFaceCard(user)) return true;
-    return !getMatchmakingProfileGap(user);
+    if (!String(user.username || "").trim()) return false;
+    if (!user.dateOfBirth) return false;
+    if (!user.gender) return false;
+    if (!String(user.intent || "").trim()) return false;
+    if (!isPlaceholderDisplayPicture(user.displayPictureUrl)) return true;
+    return (user.photos || []).some((photo) => !isPlaceholderDisplayPicture(photo.url));
   }
 
   private calculateMatchScore(user: UserProfile, targetUser: DiscoveryUser): number {
@@ -1050,14 +1064,36 @@ export class DiscoveryService implements OnModuleInit {
     }
   }
 
+  /**
+   * Same preference score as the video pool. Offline cards are not city-filtered,
+   * so a viewer's chosen city still ranks those people first without hiding anyone else.
+   * Equal scores prefer newer profiles.
+   */
+  private offlinePreferenceScore(currentUser: UserProfile, target: DiscoveryUser): number {
+    let score = this.calculateMatchScore(currentUser, target);
+    if (
+      currentUser.preferredCity &&
+      !isPreferredCityAnywhere(currentUser.preferredCity) &&
+      target.preferredCity &&
+      currentUser.preferredCity.toLowerCase() === target.preferredCity.toLowerCase()
+    ) {
+      score += MATCH_SCORE_SAME_CITY;
+    }
+    return score;
+  }
+
   /** Best offline-card candidates first. Immobile statuses do not apply to this pool. */
   private rankOfflineCandidates(
     candidates: DiscoveryUser[],
     currentUser: UserProfile
   ): DiscoveryUser[] {
-    return [...candidates].sort(
-      (a, b) => this.calculateMatchScore(currentUser, b) - this.calculateMatchScore(currentUser, a)
-    );
+    return [...candidates].sort((a, b) => {
+      const scoreDiff = this.offlinePreferenceScore(currentUser, b) - this.offlinePreferenceScore(currentUser, a);
+      if (scoreDiff !== 0) return scoreDiff;
+      const aCreated = Date.parse(String((a as { createdAt?: string }).createdAt || "")) || 0;
+      const bCreated = Date.parse(String((b as { createdAt?: string }).createdAt || "")) || 0;
+      return bCreated - aCreated;
+    });
   }
 
   /**
@@ -1166,22 +1202,29 @@ export class DiscoveryService implements OnModuleInit {
     };
   }
 
-  /** First ranked offline candidate whose visible photos actually load. */
+  /**
+   * First ranked offline candidate whose visible photos actually load.
+   * Walks the whole ranked list so a broken photo at the front cannot hide everyone behind it.
+   */
   private async pickShowableOfflineCard(
     candidates: DiscoveryUser[],
     currentUser: UserProfile,
     poolCity: string | null
   ): Promise<Card | null> {
     const ranked = this.rankOfflineCandidates(candidates, currentUser);
-    const limit = Math.min(ranked.length, 8);
-    for (let i = 0; i < limit; i++) {
-      const prepared = await this.userWithLoadableOfflinePhotos(ranked[i]);
-      if (!prepared) continue;
-      return this.buildCard(prepared, poolCity, currentUser);
+    const batchSize = 4;
+    for (let i = 0; i < ranked.length; i += batchSize) {
+      const prepared = await Promise.all(
+        ranked.slice(i, i + batchSize).map((user) => this.userWithLoadableOfflinePhotos(user))
+      );
+      for (const user of prepared) {
+        if (!user) continue;
+        return this.buildCard(user, poolCity, currentUser);
+      }
     }
     if (ranked.length > 0) {
       this.logger.warn(
-        `Offline card pool had ${ranked.length} profiles and no loadable photo in the first ${limit}`
+        `Offline card pool had ${ranked.length} profiles and none had a loadable photo`
       );
     }
     return null;
@@ -3104,15 +3147,16 @@ export class DiscoveryService implements OnModuleInit {
    * Get next OFFLINE card for user (users with ONLINE/OFFLINE/VIEWER status)
    * IMPORTANT: Does NOT create matches - this is for browsing only
    * Uses "offline-" prefix for sessionId to avoid conflicts with video call rainchecks
-   * Offline cards are NOT location-specific (always search anywhere).
-   * Refresh (new session) recycles X-only rainchecks; heart/message/gift stays excluded.
-   * Existing friends are always excluded so already-connected people never appear.
-   * Candidates must pass the same onboarding gate as Meet Someone (name, DOB, gender, real photo, intent).
+   * Offline cards are NOT location-specific and do not use the gender filter.
+   * Unseen onboarded profiles come first. Passed profiles return once after that
+   * set is finished, then wait until a new profile exists.
+   * Friends, pending requests, blocks, and heart/message/gift stay excluded.
    */
   async getNextOfflineCard(
     token: string,
     sessionId: string,
-    soloOnly: boolean = false
+    soloOnly: boolean = false,
+    holdUserId: string | null = null
   ): Promise<CardResponse> {
     // Get current user profile
     const userProfileResponse = await this.userClient.getUserFullProfile(token);
@@ -3157,41 +3201,24 @@ export class DiscoveryService implements OnModuleInit {
       moderatorFaceCardActive: Boolean((userProfileResponse as any).moderatorFaceCardActive)
     };
 
-    // Get gender filter preference
-    const genderFilter = await this.genderFilterService.getCurrentPreference(userId);
-    const hasActiveGenderFilter =
-      genderFilter && genderFilter.screensRemaining > 0 && (genderFilter.isActive ?? true);
-
-    // Determine gender filter - ONLY apply when screensRemaining > 0
-    let genders: ("MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY")[] | undefined;
-    if (hasActiveGenderFilter) {
-      const gendersJson = genderFilter.genders;
-      if (typeof gendersJson === "string") {
-        genders = JSON.parse(gendersJson);
-      } else if (Array.isArray(gendersJson)) {
-        genders = gendersJson as ("MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY")[];
-      }
-    }
-
-    // Determine statuses to filter - OFFLINE cards show ONLINE, OFFLINE, VIEWER
-    const statuses: ("ONLINE" | "OFFLINE" | "VIEWER")[] = ["ONLINE", "OFFLINE", "VIEWER"];
+    const held =
+      typeof holdUserId === "string" && holdUserId && holdUserId !== userId
+        ? holdUserId
+        : null;
 
     const tryPick = async (excludeUserIds: string[]) => {
+      const exclude = held ? [...excludeUserIds, held] : excludeUserIds;
       const matchingUsers = await this.findOfflineMatchingUsers(
         token,
         userId,
         poolCity,
-        statuses,
-        genders,
         soloOnly,
-        excludeUserIds
+        exclude
       );
       if (matchingUsers.length === 0) return { card: null, poolEmpty: true };
       const card = await this.pickShowableOfflineCard(matchingUsers, currentUser, poolCity);
-      if (!card) return { card: null, poolEmpty: false };
-      if (hasActiveGenderFilter) {
-        await this.genderFilterService.decrementScreen(userId);
-      }
+      // No loadable profile left in this candidate set. The next lap may run.
+      if (!card) return { card: null, poolEmpty: true };
       return { card, poolEmpty: false };
     };
 
@@ -3200,8 +3227,8 @@ export class DiscoveryService implements OnModuleInit {
       return { card, exhausted: false };
     }
 
-    // Unseen profiles and this visit's passes are both done.
-    // A new session can show earlier passes again. Engagements stay excluded.
+    // Unseen profiles and this visit's second look are both done.
+    // A new profile, or a new visit, can show passed people again. Engagements stay excluded.
     return {
       card: null,
       exhausted: true
@@ -3209,18 +3236,16 @@ export class DiscoveryService implements OnModuleInit {
   }
 
   /**
-   * Find matching users for OFFLINE cards (ONLINE/OFFLINE/VIEWER statuses)
+   * Find matching users for OFFLINE cards.
+   * No city or gender filter. Safety exclusions (reports, blocks via the caller) still apply.
    */
   private async findOfflineMatchingUsers(
     token: string,
     userId: string,
     city: string | null,
-    statuses: ("ONLINE" | "OFFLINE" | "VIEWER")[],
-    genders: ("MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY")[] | undefined,
     _soloOnly: boolean,
     excludeUserIds: string[]
   ): Promise<DiscoveryUser[]> {
-    // Add current user to exclude list
     const excludeIds = [...excludeUserIds, userId];
 
     const requesterProfile = await this.userClient.getUserFullProfile(token);
@@ -3229,15 +3254,19 @@ export class DiscoveryService implements OnModuleInit {
     );
     const { filters, poolMode } = buildReportAwareDiscoveryFilters({
       city,
-      statuses: statuses as any,
-      genders,
+      statuses: [...DiscoveryService.OFFLINE_CARD_STATUSES] as any,
       excludeUserIds: excludeIds,
-      limit: DISCOVERY_POOL_LIMIT,
+      limit: DiscoveryService.OFFLINE_CARD_POOL_LIMIT,
       requester: requesterProfile as any,
       prioritizeKyc: this.isKycPriorityEnabled()
     });
 
-    const users = await this.userClient.getUsersForDiscovery(token, filters as any);
+    const users = await this.userClient.getUsersForDiscovery(token, {
+      ...(filters as any),
+      genders: undefined,
+      acceptGalleryPhoto: true,
+      limit: DiscoveryService.OFFLINE_CARD_POOL_LIMIT
+    });
     return applyReportPoolBucket(users, poolMode).filter((user) =>
       this.isShowableOfflineCardProfile(user)
     );
@@ -3255,6 +3284,7 @@ export class DiscoveryService implements OnModuleInit {
           AND: [
             { sessionId: { startsWith: "offline-" } },
             { sessionId: { not: DiscoveryService.OFFLINE_ENGAGED_SESSION_ID } },
+            { NOT: { sessionId: { startsWith: DiscoveryService.OFFLINE_RECYCLE_PREFIX } } },
           ],
           raincheckedUserId: {
             not: {
@@ -3276,44 +3306,49 @@ export class DiscoveryService implements OnModuleInit {
     }
   }
 
+  /** Session id that remembers who already came back once during this visit. */
+  private offlineRecycleSessionId(offlineSessionId: string): string {
+    return `${DiscoveryService.OFFLINE_RECYCLE_PREFIX}${offlineSessionId}`;
+  }
+
   /**
-   * Unseen profiles first. People they already passed come back only after
-   * that unseen pool is empty, and not again during this visit.
+   * Unseen profiles first, ranked like the video pool.
+   * Passed profiles come back once only after no unseen profile is left.
+   * A new unseen profile clears that second look so it can happen again
+   * after the new profiles are gone. Engagements, friends, requests, and
+   * blocks never come back.
    */
   private async selectOfflineCard(
     userId: string,
     offlineSessionId: string,
     tryPick: (excludeUserIds: string[]) => Promise<{ card: Card | null; poolEmpty: boolean }>
   ): Promise<Card | null> {
-    const [sessionRainchecks, allRainchecks, engaged, friends] = await Promise.all([
-      this.getOfflineRaincheckedUserIds(userId, offlineSessionId),
+    const [allRainchecks, engaged, hiddenPeers] = await Promise.all([
       this.getAllOfflineRaincheckedUserIds(userId),
       this.getOfflineEngagedUserIds(userId),
-      this.getOfflineFriendUserIds(userId)
+      this.getOfflineHiddenPeerIds(userId)
     ]);
-    const blocked = [...engaged, ...friends];
-    const unseen = await tryPick([...new Set([...blocked, ...allRainchecks])]);
-    if (unseen.card) return unseen.card;
-    // Photos failed for people still in the unseen pool. Do not fill with passes.
-    if (!unseen.poolEmpty) return null;
-    const recycled = await tryPick([...new Set([...blocked, ...sessionRainchecks])]);
-    return recycled.card;
+    const alwaysHidden = [...engaged, ...hiddenPeers];
+    const unseen = await tryPick([...new Set([...alwaysHidden, ...allRainchecks])]);
+    if (unseen.card) {
+      await this.clearOfflineRecycleLap(userId, offlineSessionId);
+      return unseen.card;
+    }
+    const alreadyRecycled = await this.getOfflineRecycledUserIds(userId, offlineSessionId);
+    const again = await tryPick([...new Set([...alwaysHidden, ...alreadyRecycled])]);
+    return again.card;
   }
 
-  /**
-   * Get rainchecked user IDs for OFFLINE cards session (uses prefixed sessionId).
-   * City is ignored — offline cards are not location-specific.
-   */
-  private async getOfflineRaincheckedUserIds(
+  /** Passed people already shown once more during this visit. */
+  private async getOfflineRecycledUserIds(
     userId: string,
-    offlineSessionId: string,
-    _city?: string | null
+    offlineSessionId: string
   ): Promise<string[]> {
     try {
       const rainchecks = await (this.prisma as any).raincheckSession.findMany({
         where: {
           userId,
-          sessionId: offlineSessionId,
+          sessionId: this.offlineRecycleSessionId(offlineSessionId),
           raincheckedUserId: {
             not: {
               startsWith: "LOCATION:"
@@ -3328,11 +3363,30 @@ export class DiscoveryService implements OnModuleInit {
       return rainchecks.map((r: { raincheckedUserId: string }) => r.raincheckedUserId);
     } catch (error: any) {
       if (error?.code === 'P2021' || error?.message?.includes('does not exist')) {
-        console.warn("Raincheck table not found, returning empty array:", error.message);
         return [];
       }
-      console.error("Error fetching OFFLINE rainchecked users:", error);
+      console.error("Error fetching OFFLINE recycled users:", error);
       return [];
+    }
+  }
+
+  /**
+   * A new profile means the deck is not finished, so the second look can
+   * happen again after that profile is seen.
+   */
+  private async clearOfflineRecycleLap(userId: string, offlineSessionId: string): Promise<void> {
+    try {
+      await (this.prisma as any).raincheckSession.deleteMany({
+        where: {
+          userId,
+          sessionId: this.offlineRecycleSessionId(offlineSessionId)
+        }
+      });
+    } catch (error: any) {
+      if (error?.code === 'P2021' || error?.message?.includes('does not exist')) {
+        return;
+      }
+      this.logger.warn(`Failed to reset offline card recycle lap: ${error?.message || error}`);
     }
   }
 
@@ -3363,11 +3417,11 @@ export class DiscoveryService implements OnModuleInit {
     }
   }
 
-  private async getOfflineFriendUserIds(userId: string): Promise<string[]> {
+  private async getOfflineHiddenPeerIds(userId: string): Promise<string[]> {
     try {
-      return await this.friendClient.getFriendIds(userId);
+      return await this.friendClient.getOfflineHiddenPeerIds(userId);
     } catch (error: any) {
-      this.logger.warn(`Failed to exclude friends from offline cards: ${error?.message || error}`);
+      this.logger.warn(`Failed to exclude connected people from offline cards: ${error?.message || error}`);
       return [];
     }
   }
@@ -3421,6 +3475,40 @@ export class DiscoveryService implements OnModuleInit {
     try {
       // Use prefixed sessionId to avoid conflicts with video call rainchecks
       const offlineSessionId = this.toOfflineSessionId(sessionId);
+
+      // A pass that already exists is the second look. Remember it so this
+      // visit does not show them again until a new profile arrives.
+      const priorPass = await (this.prisma as any).raincheckSession.findFirst({
+        where: {
+          userId,
+          raincheckedUserId,
+          AND: [
+            { sessionId: { startsWith: "offline-" } },
+            { sessionId: { not: DiscoveryService.OFFLINE_ENGAGED_SESSION_ID } },
+            { NOT: { sessionId: { startsWith: DiscoveryService.OFFLINE_RECYCLE_PREFIX } } }
+          ]
+        }
+      });
+      if (priorPass) {
+        const recycleSessionId = this.offlineRecycleSessionId(offlineSessionId);
+        const existingRecycle = await (this.prisma as any).raincheckSession.findFirst({
+          where: {
+            userId,
+            sessionId: recycleSessionId,
+            raincheckedUserId
+          }
+        });
+        if (!existingRecycle) {
+          await (this.prisma as any).raincheckSession.create({
+            data: {
+              userId,
+              sessionId: recycleSessionId,
+              raincheckedUserId,
+              city: null
+            }
+          });
+        }
+      }
 
       // IMPORTANT: Do NOT check for matches or reset statuses - OFFLINE cards don't create matches
       const existing1 = await (this.prisma as any).raincheckSession.findFirst({
@@ -3501,40 +3589,16 @@ export class DiscoveryService implements OnModuleInit {
       moderatorFaceCardActive: Boolean((userProfileResponse as any).moderatorFaceCardActive)
     };
 
-    // Get gender filter preference
-    const genderFilter = await this.genderFilterService.getCurrentPreference(userId);
-    const hasActiveGenderFilter =
-      genderFilter && genderFilter.screensRemaining > 0 && (genderFilter.isActive ?? true);
-
-    // Determine gender filter
-    let genders: ("MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY")[] | undefined;
-    if (hasActiveGenderFilter) {
-      const gendersJson = genderFilter.genders;
-      if (typeof gendersJson === "string") {
-        genders = JSON.parse(gendersJson);
-      } else if (Array.isArray(gendersJson)) {
-        genders = gendersJson as ("MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY")[];
-      }
-    }
-
-    // Determine statuses - OFFLINE cards show ONLINE, OFFLINE, VIEWER
-    const statuses: ("ONLINE" | "OFFLINE" | "VIEWER")[] = ["ONLINE", "OFFLINE", "VIEWER"];
-
     const tryPick = async (excludeUserIds: string[]) => {
       const matchingUsers = await this.findOfflineMatchingUsersForUser(
         userId,
         poolCity,
-        statuses,
-        genders,
         soloOnly,
         excludeUserIds
       );
       if (matchingUsers.length === 0) return { card: null, poolEmpty: true };
       const card = await this.pickShowableOfflineCard(matchingUsers, currentUser, poolCity);
-      if (!card) return { card: null, poolEmpty: false };
-      if (hasActiveGenderFilter) {
-        await this.genderFilterService.decrementScreen(userId);
-      }
+      if (!card) return { card: null, poolEmpty: true };
       return { card, poolEmpty: false };
     };
 
@@ -3555,12 +3619,9 @@ export class DiscoveryService implements OnModuleInit {
   private async findOfflineMatchingUsersForUser(
     userId: string,
     city: string | null,
-    statuses: ("ONLINE" | "OFFLINE" | "VIEWER")[],
-    genders: ("MALE" | "FEMALE" | "NON_BINARY" | "PREFER_NOT_TO_SAY")[] | undefined,
     _soloOnly: boolean,
     excludeUserIds: string[]
   ): Promise<DiscoveryUser[]> {
-    // Add current user to exclude list
     const excludeIds = [...excludeUserIds, userId];
 
     const requesterProfile = await this.userClient.getUserFullProfileById(userId);
@@ -3569,16 +3630,20 @@ export class DiscoveryService implements OnModuleInit {
     );
     const { filters, poolMode } = buildReportAwareDiscoveryFilters({
       city,
-      statuses: statuses as any,
-      genders,
+      statuses: [...DiscoveryService.OFFLINE_CARD_STATUSES] as any,
       excludeUserIds: excludeIds,
-      limit: 500,
+      limit: DiscoveryService.OFFLINE_CARD_POOL_LIMIT,
       requester: requesterProfile as any,
       prioritizeKyc: this.isKycPriorityEnabled()
     });
 
     const users = applyReportPoolBucket(
-      await this.userClient.getUsersForDiscoveryById(userId, filters as any),
+      await this.userClient.getUsersForDiscoveryById(userId, {
+        ...(filters as any),
+        genders: undefined,
+        acceptGalleryPhoto: true,
+        limit: DiscoveryService.OFFLINE_CARD_POOL_LIMIT
+      }),
       poolMode
     );
 

@@ -1529,8 +1529,8 @@ export class UserService implements OnModuleInit {
   async updateValues(accessToken: string, data: UpdateValuesDto) {
     const userId = await this.verifyAccessToken(accessToken);
 
-    if (data.valueIds.length > 4) {
-      throw new HttpException("Maximum 4 values allowed", HttpStatus.BAD_REQUEST);
+    if (data.valueIds.length > 5) {
+      throw new HttpException("Maximum 5 values allowed", HttpStatus.BAD_REQUEST);
     }
 
     // Verify all values exist
@@ -3247,8 +3247,8 @@ export class UserService implements OnModuleInit {
    * Update values for user by ID (test endpoint, bypasses auth)
    */
   async updateValuesForUser(userId: string, data: UpdateValuesDto) {
-    if (data.valueIds.length > 4) {
-      throw new HttpException("Maximum 4 values allowed", HttpStatus.BAD_REQUEST);
+    if (data.valueIds.length > 5) {
+      throw new HttpException("Maximum 5 values allowed", HttpStatus.BAD_REQUEST);
     }
 
     // Verify all values exist

@@ -108,7 +108,7 @@ export const UpdateInterestsSchema = z.object({
 });
 
 export const UpdateValuesSchema = z.object({
-  valueIds: z.array(z.string()).min(0).max(4)
+  valueIds: z.array(z.string()).min(0).max(5)
 });
 
 // Location DTO

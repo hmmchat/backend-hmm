@@ -1984,19 +1984,7 @@ export class UserService implements OnModuleInit {
       }
     }
 
-    if (data.status === "ONLINE" || data.status === "OFFLINE") {
-      // Best-effort: discovery session/end is invoked by the client; no hard dependency here.
-    }
-
-    const user = await this.prisma.user.update({
-      where: { id: userId },
-      // @ts-ignore - Workspace Prisma client type resolution issue
-      data: {
-        status: data.status as UserStatus
-      }
-    });
-
-    return { user };
+    return this.writeUserStatus(userId, data.status, false);
   }
 
   /**
@@ -3477,15 +3465,44 @@ export class UserService implements OnModuleInit {
    * Update status for user by ID (test endpoint, bypasses auth)
    */
   async updateStatusForUser(userId: string, data: UpdateStatusDto) {
+    return this.writeUserStatus(userId, data.status, Boolean(data.force));
+  }
+
+  /**
+   * Statuses that mean "this person is in a live room". An idle write
+   * (ONLINE / OFFLINE / AVAILABLE) must not clobber them. Streaming passes
+   * force when someone actually leaves or the room ends.
+   */
+  private static readonly IN_ROOM_STATUSES = [
+    "IN_SQUAD",
+    "IN_SQUAD_AVAILABLE",
+    "IN_BROADCAST",
+    "IN_BROADCAST_AVAILABLE",
+    "VIEWER"
+  ];
+
+  private isIdleStatus(status: string): boolean {
+    return status === "ONLINE" || status === "OFFLINE" || status === "AVAILABLE";
+  }
+
+  private async writeUserStatus(userId: string, status: string, force: boolean) {
+    if (!force && this.isIdleStatus(status)) {
+      const updated = await this.prisma.user.updateMany({
+        where: {
+          id: userId,
+          status: { notIn: UserService.IN_ROOM_STATUSES as any }
+        },
+        data: { status: status as UserStatus }
+      });
+      const user = await this.prisma.user.findUnique({ where: { id: userId } });
+      return { user, applied: updated.count > 0 };
+    }
+
     const user = await this.prisma.user.update({
       where: { id: userId },
-      // @ts-ignore - Workspace Prisma client type resolution issue
-      data: {
-        status: data.status as UserStatus
-      }
+      data: { status: status as UserStatus }
     });
-
-    return { user };
+    return { user, applied: true };
   }
 }
 

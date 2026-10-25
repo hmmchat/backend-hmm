@@ -62,6 +62,10 @@ export class RoomService {
   private readonly activeBroadcastsCacheTtlMs: number;
   private readonly membershipCacheTtlMs: number;
   private lastParticipantReconcileAt = new Map<string, number>();
+  /** First time we saw an active participant whose presence was not an in-call status. */
+  private staleParticipantSince = new Map<string, number>();
+  /** One mismatched presence read must not end a call. Confirmed on a later reconcile. */
+  private static readonly STALE_PARTICIPANT_CONFIRM_MS = 20_000;
   private lastViewerReconcileAt = new Map<string, number>();
   private roomDetailsCache = new Map<string, { expiresAt: number; data: any | null }>();
   /** Registered by the WS gateway so endRoom can notify connected participants/viewers (room-ended / broadcast-stopped). */
@@ -71,6 +75,13 @@ export class RoomService {
         wasBroadcasting: boolean,
         meta?: { message?: string; reason?: string; endedBy?: string }
       ) => void)
+    | null = null;
+  /**
+   * Registered by the WS gateway. Fired after a pull-stranger join commits so
+   * people already in the room drop Summoning before any camera track exists.
+   */
+  private participantJoinedNotifier:
+    | ((payload: { roomId: string; userId: string; pullStrangerEnded: boolean }) => void)
     | null = null;
   /** Registered by the WS gateway so waitlist join/cancel/accept reaches host + accepted viewer sockets. */
   private waitlistNotifier:
@@ -277,6 +288,7 @@ export class RoomService {
 
     const row = await this.fetchActiveParticipantRoom(userId);
     if (!row) {
+      this.staleParticipantSince.delete(userId);
       return;
     }
 
@@ -288,8 +300,20 @@ export class RoomService {
     }
 
     if (RoomService.IN_CALL_PARTICIPANT_STATUSES.has(status)) {
+      this.staleParticipantSince.delete(userId);
       return;
     }
+
+    const now = Date.now();
+    const since = this.staleParticipantSince.get(userId) ?? 0;
+    if (!since || now - since < RoomService.STALE_PARTICIPANT_CONFIRM_MS) {
+      if (!since) this.staleParticipantSince.set(userId, now);
+      this.logger.warn(
+        `[Reconcile] User ${userId} is in room ${row.roomId} with status ${status}; waiting to confirm before removal`
+      );
+      return;
+    }
+    this.staleParticipantSince.delete(userId);
 
     this.logger.warn(
       `[Reconcile] User ${userId} has active participant row in room ${row.roomId} but user-service status is ${status}; removing stale participant`
@@ -2280,6 +2304,8 @@ export class RoomService {
       { roomId: result.roomId, sessionId: result.sessionId }
     );
 
+    this.emitParticipantJoined(result.roomId, result.joiningUserId);
+
     return { roomId: result.roomId, sessionId: result.sessionId, isBroadcasting };
   }
 
@@ -2923,6 +2949,22 @@ export class RoomService {
     ) => void
   ): void {
     this.roomEndedNotifier = notifier;
+  }
+
+  setParticipantJoinedNotifier(
+    notifier: (payload: { roomId: string; userId: string; pullStrangerEnded: boolean }) => void
+  ): void {
+    this.participantJoinedNotifier = notifier;
+  }
+
+  private emitParticipantJoined(roomId: string, userId: string): void {
+    try {
+      this.participantJoinedNotifier?.({ roomId, userId, pullStrangerEnded: true });
+    } catch (err: any) {
+      this.logger.warn(
+        `participant-joined notify failed for room ${roomId}: ${err?.message || err}`
+      );
+    }
   }
 
   setWaitlistNotifier(

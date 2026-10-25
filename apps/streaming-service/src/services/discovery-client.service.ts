@@ -131,7 +131,7 @@ export class DiscoveryClientService {
       let response = await fetch(serviceToken ? internalUrl : testUrl, {
         method: "PATCH",
         headers: jsonHeaders,
-        body: JSON.stringify({ status }),
+        body: JSON.stringify({ status, force: true }),
         signal: AbortSignal.timeout(this.userServiceRequestTimeoutMs)
       } as any);
 
@@ -139,7 +139,7 @@ export class DiscoveryClientService {
         response = await fetch(testUrl, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status }),
+          body: JSON.stringify({ status, force: true }),
           signal: AbortSignal.timeout(this.userServiceRequestTimeoutMs)
         } as any);
       }

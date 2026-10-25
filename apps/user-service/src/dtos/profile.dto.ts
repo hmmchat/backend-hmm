@@ -130,7 +130,9 @@ export const UpdatePreferredCitySchema = z.object({
 
 // Status DTO
 export const UpdateStatusSchema = z.object({
-  status: UserStatusEnum
+  status: UserStatusEnum,
+  /** Room leave/end may demote an in-call status. Discovery and clients may not. */
+  force: z.boolean().optional()
 });
 
 export const ReportAppPresenceSchema = z.object({

@@ -141,6 +141,9 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     this.roomService.setWaitlistNotifier((payload) => {
       this.notifyWaitlistUpdated(payload);
     });
+    this.roomService.setParticipantJoinedNotifier((payload) => {
+      void this.notifyParticipantJoined(payload);
+    });
 
     this.logger.log("WebSocket gateway initialized at /streaming/ws");
   }
@@ -787,6 +790,41 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       leftUserId
     );
     await this.broadcastRolesUpdated(roomId);
+  }
+
+  /**
+   * Pull-stranger join already committed. Tell sockets already in the room so
+   * Summoning ends before the new person's camera is produced.
+   */
+  private async notifyParticipantJoined(payload: {
+    roomId: string;
+    userId: string;
+    pullStrangerEnded: boolean;
+  }): Promise<void> {
+    try {
+      if (payload.pullStrangerEnded) {
+        const scene = this.cloneViewerScene(payload.roomId);
+        if (scene.summoningUserId) {
+          scene.summoningUserId = null;
+          this.saveViewerScene(payload.roomId, scene);
+        }
+      }
+      await this.broadcastToRoom(payload.roomId, {
+        type: "participant-joined",
+        data: {
+          roomId: payload.roomId,
+          userId: payload.userId,
+          pullStrangerEnded: payload.pullStrangerEnded
+        }
+      });
+      if (payload.pullStrangerEnded) {
+        await this.broadcastRolesUpdated(payload.roomId);
+      }
+    } catch (err: any) {
+      this.logger.warn(
+        `[ParticipantJoined] Failed to notify room ${payload.roomId}: ${err?.message || err}`
+      );
+    }
   }
 
   /** Push current HOST/PARTICIPANT roles so a newly promoted host unlocks host controls. */

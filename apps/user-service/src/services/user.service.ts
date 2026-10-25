@@ -3481,16 +3481,35 @@ export class UserService implements OnModuleInit {
     "VIEWER"
   ];
 
+  /**
+   * On-stream participant statuses. A non-force MATCHED write (duplicate accept
+   * after the room already exists) must not pull these back to MATCHED — streaming
+   * reconcile then treats the later ONLINE reset as "left the call".
+   */
+  private static readonly CALL_PARTICIPANT_STATUSES = [
+    "IN_SQUAD",
+    "IN_SQUAD_AVAILABLE",
+    "IN_BROADCAST",
+    "IN_BROADCAST_AVAILABLE"
+  ];
+
   private isIdleStatus(status: string): boolean {
     return status === "ONLINE" || status === "OFFLINE" || status === "AVAILABLE";
   }
 
   private async writeUserStatus(userId: string, status: string, force: boolean) {
-    if (!force && this.isIdleStatus(status)) {
+    const protectedStatuses = !force
+      ? this.isIdleStatus(status)
+        ? UserService.IN_ROOM_STATUSES
+        : status === "MATCHED"
+          ? UserService.CALL_PARTICIPANT_STATUSES
+          : null
+      : null;
+    if (protectedStatuses) {
       const updated = await this.prisma.user.updateMany({
         where: {
           id: userId,
-          status: { notIn: UserService.IN_ROOM_STATUSES as any }
+          status: { notIn: protectedStatuses as any }
         },
         data: { status: status as UserStatus }
       });

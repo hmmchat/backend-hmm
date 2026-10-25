@@ -2111,6 +2111,33 @@ export class DiscoveryService implements OnModuleInit {
   }
 
   /**
+   * Room already created by a parallel accept. Redis is written only after the
+   * winner commits; streaming is the fallback when that key is not visible yet.
+   */
+  private async findExistingCallRoom(
+    user1Id: string,
+    user2Id: string
+  ): Promise<{ roomId: string; sessionId?: string } | null> {
+    for (const uid of [user1Id, user2Id]) {
+      try {
+        const cached = await this.cache.get<{ roomId?: string; sessionId?: string }>(`room:${uid}`);
+        if (cached?.roomId) {
+          return { roomId: cached.roomId, sessionId: cached.sessionId };
+        }
+      } catch {
+        /* cache miss is fine */
+      }
+    }
+    for (const uid of [user1Id, user2Id]) {
+      const active = await this.streamingClient.getUserActiveRoom(uid);
+      if (active?.exists && active.roomId) {
+        return { roomId: active.roomId, sessionId: active.sessionId };
+      }
+    }
+    return null;
+  }
+
+  /**
    * Proceed with matched user (both users proceed to IN_SQUAD)
    * Removes the match and updates both users' status to IN_SQUAD
    */
@@ -2403,6 +2430,19 @@ export class DiscoveryService implements OnModuleInit {
         console.log(`[INFO] Stored room ${roomResult.roomId} in Redis for both users`);
         console.log(`[INFO] Both users accepted match - ${match.user1Id} and ${match.user2Id} moved to IN_SQUAD`);
       } else {
+        // A parallel accept often loses the create race ("already in a call").
+        // Writing MATCHED here used to clobber IN_SQUAD, then the acceptance
+        // timeout demoted them to ONLINE and streaming removed them mid-call.
+        const existing = await this.findExistingCallRoom(match.user1Id, match.user2Id);
+        if (existing?.roomId) {
+          const roomData = { roomId: existing.roomId, sessionId: existing.sessionId };
+          await this.cache.set(`room:${match.user1Id}`, roomData, 300);
+          await this.cache.set(`room:${match.user2Id}`, roomData, 300);
+          console.warn(
+            `[WARN] Room create raced for ${match.user1Id} and ${match.user2Id}; reusing room ${existing.roomId} and leaving in-call status unchanged.`
+          );
+          return roomData;
+        }
         // Keep match + acceptances + MATCHED so waiter polls stay stable while
         // the second accepter's frontend CREATE_ROOM + room-created hook finishes.
         await this.matchingService.updateUserStatus(match.user1Id, "MATCHED");

@@ -1204,26 +1204,55 @@ export class MatchingService {
         await this.removeMatch(user1Id, user2Id);
         await this.removeMatchAcceptances(user1Id, user2Id);
 
-        try {
-          await Promise.all([
-            this.cacheService.del(`room:${user1Id}`),
-            this.cacheService.del(`room:${user2Id}`)
-          ]);
-        } catch (_) {
-          /* best-effort */
-        }
-
+        const inCallStatuses = new Set([
+          "IN_SQUAD",
+          "IN_SQUAD_AVAILABLE",
+          "IN_BROADCAST",
+          "IN_BROADCAST_AVAILABLE",
+          "VIEWER"
+        ]);
+        let skippedInCall = false;
         for (const uid of [user1Id, user2Id]) {
+          let currentStatus = "";
+          try {
+            const profile = await this.userClient.getUserFullProfileById(uid);
+            currentStatus = String((profile as any)?.status || "");
+          } catch (error: any) {
+            console.warn(
+              `[WARN] acceptance timeout skipped status reset for ${uid}: ${error?.message || error}`
+            );
+            skippedInCall = true;
+            continue;
+          }
+          if (inCallStatuses.has(currentStatus)) {
+            skippedInCall = true;
+            console.log(
+              `[INFO] acceptance timeout: preserving in-call status ${currentStatus} for ${uid}`
+            );
+            continue;
+          }
           const hasSession = await this.discoverySessionService.hasActiveSession(uid);
           const nextStatus = resolveAcceptanceTimeoutStatus(uid, acceptedBy, hasSession);
           await this.updateUserStatus(uid, nextStatus);
         }
 
         // Wake waiters stuck on "Waiting for response" when WS/presence is down.
-        try {
-          await this.notifyDiscoveryRainchecked(user1Id, user2Id);
-        } catch (_) {
-          /* best-effort */
+        // Do not raincheck someone who is already inside the call this match created,
+        // and do not drop the Redis room pointer they are using to join.
+        if (!skippedInCall) {
+          try {
+            await Promise.all([
+              this.cacheService.del(`room:${user1Id}`),
+              this.cacheService.del(`room:${user2Id}`)
+            ]);
+          } catch (_) {
+            /* best-effort */
+          }
+          try {
+            await this.notifyDiscoveryRainchecked(user1Id, user2Id);
+          } catch (_) {
+            /* best-effort */
+          }
         }
 
         console.log(

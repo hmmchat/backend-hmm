@@ -98,8 +98,8 @@ model User {
   kycRiskScore  Int      @default(0)
   kycExpiresAt  DateTime?
   
-  // Intent/Bio (max 255 characters)
-  intent        String?  @db.VarChar(255)
+  // Intent/Bio (max 150 characters)
+  intent        String?  @db.VarChar(150)
   
   // Location (for "miles away" calculation)
   latitude      Float?
@@ -198,7 +198,7 @@ model ModeratorFaceCardSetting {
 // Catalog of suggested intent prompts shown during profile creation
 model IntentPrompt {
   id        String   @id @default(cuid())
-  text      String   @db.VarChar(100) // Prompt text shown to users
+  text      String   @db.VarChar(150) // Prompt text shown to users
   isActive  Boolean  @default(true)
   order     Int?
   createdAt DateTime @default(now())

@@ -8,11 +8,14 @@ const RealDisplayPictureUrl = z
     message: "A real profile photo is required"
   });
 
+/** User prompt / intent, and suggested intent-prompt catalog text. */
+export const INTENT_MAX_LEN = 150;
+
 const RequiredIntent = z
   .string()
   .trim()
   .min(1, "Intent is required")
-  .max(255);
+  .max(INTENT_MAX_LEN, `Intent must be at most ${INTENT_MAX_LEN} characters`);
 
 export const USERNAME_MAX_LEN = 20;
 

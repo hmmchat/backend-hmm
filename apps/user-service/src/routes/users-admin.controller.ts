@@ -19,7 +19,7 @@ import { PrismaService } from "../prisma/prisma.service.js";
 import { UserService } from "../services/user.service.js";
 import { BrandService } from "../services/brand.service.js";
 import { rewriteExpiredStorageUrl } from "@hmm/common";
-import { USERNAME_MAX_LEN } from "../dtos/profile.dto.js";
+import { INTENT_MAX_LEN, USERNAME_MAX_LEN } from "../dtos/profile.dto.js";
 import { istDayStart, ProductAnalyticsService } from "../services/product-analytics.service.js";
 
 const authBase = () => (process.env.AUTH_SERVICE_URL || "http://localhost:3001").replace(/\/$/, "");
@@ -331,7 +331,11 @@ const patchUserSchema = z.object({
   username: z.string().max(USERNAME_MAX_LEN, `Name must be at most ${USERNAME_MAX_LEN} characters`).nullable().optional(),
   email: z.string().nullable().optional(),
   phone: z.string().nullable().optional(),
-  bio: z.string().nullable().optional(),
+  bio: z
+    .string()
+    .max(INTENT_MAX_LEN, `Intent must be at most ${INTENT_MAX_LEN} characters`)
+    .nullable()
+    .optional(),
   isActive: z.boolean().optional(),
   reportCount: z.number().int().min(0).optional(),
   isModerator: z.boolean().optional(),

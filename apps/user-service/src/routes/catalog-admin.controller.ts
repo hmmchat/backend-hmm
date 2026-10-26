@@ -4,6 +4,7 @@ import { PREFERRED_CITY_ANYWHERE_IN_INDIA, rewriteExpiredStorageUrl } from "@hmm
 import { PrismaService } from "../prisma/prisma.service.js";
 import { BrandService } from "../services/brand.service.js";
 import { UserService } from "../services/user.service.js";
+import { INTENT_MAX_LEN } from "../dtos/profile.dto.js";
 
 const createInterestSchema = z.object({
   name: z.string().min(1).max(100),
@@ -24,12 +25,12 @@ const updateValueSchema = z.object({
 });
 
 const createIntentPromptSchema = z.object({
-  text: z.string().min(1).max(100),
+  text: z.string().min(1).max(INTENT_MAX_LEN),
   order: z.number().optional()
 });
 
 const updateIntentPromptSchema = z.object({
-  text: z.string().min(1).max(100).optional(),
+  text: z.string().min(1).max(INTENT_MAX_LEN).optional(),
   isActive: z.boolean().optional(),
   order: z.number().optional()
 });

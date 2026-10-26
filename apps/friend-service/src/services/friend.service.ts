@@ -792,7 +792,7 @@ export class FriendService {
     giftId?: string,
     giftAmount?: number,
     gif?: {
-      provider: "giphy";
+      provider: "giphy" | "upload";
       id: string;
       url: string;
       previewUrl?: string;
@@ -1068,7 +1068,7 @@ export class FriendService {
     giftId?: string,
     giftAmount?: number,
     gif?: {
-      provider: "giphy";
+      provider: "giphy" | "upload";
       id: string;
       url: string;
       previewUrl?: string;
@@ -1221,7 +1221,7 @@ export class FriendService {
     giftId?: string,
     giftAmount?: number,
     gif?: {
-      provider: "giphy";
+      provider: "giphy" | "upload";
       id: string;
       url: string;
       previewUrl?: string;
@@ -2230,7 +2230,7 @@ export class FriendService {
     giftId?: string,
     giftAmount?: number,
     gif?: {
-      provider: "giphy";
+      provider: "giphy" | "upload";
       id: string;
       url: string;
       previewUrl?: string;

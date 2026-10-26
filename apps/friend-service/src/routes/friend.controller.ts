@@ -47,7 +47,7 @@ function syntheticGifIdFromUrl(urlStr: string): string {
 
 const GifInputSchema = z
   .object({
-    provider: z.literal("giphy").optional().default("giphy"),
+    provider: z.enum(["giphy", "upload"]).optional().default("giphy"),
     id: z.string().optional(),
     /** Frontend (hmm) sends this instead of `id` — treat as alias */
     giphyId: z.string().optional(),
@@ -65,7 +65,7 @@ const GifInputSchema = z
     const fromUrl = deriveGiphyIdFromUrl(url) || deriveGiphyIdFromUrl(previewUrl || "");
     const id = explicit || fromUrl || (url ? syntheticGifIdFromUrl(url) : "");
     return {
-      provider: "giphy" as const,
+      provider: val.provider === "upload" ? ("upload" as const) : ("giphy" as const),
       id,
       url,
       previewUrl,

@@ -621,6 +621,8 @@ export class ConversationService {
               fromUserId: lastMessage.fromUserId,
               message: lastMessage.message,
               messageType: lastMessage.messageType,
+              gifProvider: lastMessage.gifProvider ?? null,
+              gifUrl: lastMessage.gifUrl ?? null,
               giftId: lastMessage.giftId,
               giftAmount: lastMessage.giftAmount,
               squadMeta: lastMessage.squadMeta ?? null,

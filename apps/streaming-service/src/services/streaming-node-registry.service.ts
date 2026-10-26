@@ -93,6 +93,26 @@ export class StreamingNodeRegistryService implements OnModuleInit, OnModuleDestr
     return Boolean(nodeId) && nodeId === this.nodeId;
   }
 
+  /**
+   * True when a browser can open this URL. ws:// to a raw IP is blocked from
+   * https pages and is not reachable through the public proxy.
+   */
+  isBrowserReachableSignalingUrl(raw?: string | null): boolean {
+    if (!raw) return false;
+    let parsed: URL;
+    try {
+      parsed = new URL(raw);
+    } catch {
+      return false;
+    }
+    const host = parsed.hostname.replace(/^\[|\]$/g, "");
+    if (host === "localhost" || host === "127.0.0.1") {
+      return parsed.protocol === "ws:" || parsed.protocol === "wss:" || parsed.protocol === "http:" || parsed.protocol === "https:";
+    }
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.includes(":")) return false;
+    return parsed.protocol === "wss:" || parsed.protocol === "https:";
+  }
+
   async assignRoomToLocalNode(roomId: string): Promise<StreamingNodeInfo> {
     const nodeInfo = this.getLocalNodeInfo();
     this.localRoomAssignments.set(roomId, nodeInfo);

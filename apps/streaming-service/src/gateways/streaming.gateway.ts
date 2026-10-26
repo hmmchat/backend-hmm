@@ -659,8 +659,20 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
   }
 
   private async ensureRoomRoutedToLocalNode(roomId: string, ws: any): Promise<boolean> {
+    if (this.roomService.isRoomInMemory(roomId)) {
+      return true;
+    }
+
     const assignedNode = await this.nodeRegistry.getRoomNode(roomId);
     if (!assignedNode || this.nodeRegistry.isLocalNode(assignedNode.nodeId)) {
+      return true;
+    }
+
+    const target = assignedNode.wsUrl || assignedNode.httpUrl;
+    if (!this.nodeRegistry.isBrowserReachableSignalingUrl(target)) {
+      this.logger.warn(
+        `[Reroute] Room ${roomId} is assigned to ${assignedNode.nodeId} but ${target || "wsUrl"} is not a browser signaling URL. Handling on this node.`
+      );
       return true;
     }
 

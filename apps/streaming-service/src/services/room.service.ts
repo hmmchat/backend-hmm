@@ -864,6 +864,10 @@ export class RoomService {
    * Check if room exists (checks both memory and database)
    * If room exists in database but not in memory, reloads it into memory
    */
+  isRoomInMemory(roomId: string): boolean {
+    return this.rooms.has(roomId);
+  }
+
   async roomExists(roomId: string): Promise<boolean> {
     // First check memory (fast)
     if (this.rooms.has(roomId)) {
@@ -872,10 +876,19 @@ export class RoomService {
 
     const assignedNode = await this.nodeRegistry.getRoomNode(roomId);
     if (assignedNode && !this.nodeRegistry.isLocalNode(assignedNode.nodeId)) {
+      const target = assignedNode.wsUrl || assignedNode.httpUrl;
+      // A ws:// raw IP is not a socket browsers can open. The public proxy
+      // already delivered this connection here, so reload the room locally
+      // instead of telling the client to leave.
+      if (this.nodeRegistry.isBrowserReachableSignalingUrl(target)) {
+        this.logger.warn(
+          `Room ${roomId} is assigned to streaming node ${assignedNode.nodeId}; refusing local reload on ${this.nodeRegistry.nodeId}`
+        );
+        return false;
+      }
       this.logger.warn(
-        `Room ${roomId} is assigned to streaming node ${assignedNode.nodeId}; refusing local reload on ${this.nodeRegistry.nodeId}`
+        `Room ${roomId} affinity points at ${assignedNode.nodeId} via ${target || "no url"}. Reloading on ${this.nodeRegistry.nodeId} because browsers cannot open that socket.`
       );
-      return false;
     }
 
     // If not in memory, check database

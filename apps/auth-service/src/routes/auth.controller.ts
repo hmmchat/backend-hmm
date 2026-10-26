@@ -514,6 +514,23 @@ export class AuthController {
   }
 
   /**
+   * Which of these accounts are ACTIVE and not deleted.
+   * POST /auth/internal/users/active-ids
+   */
+  @Post("internal/users/active-ids")
+  async listActiveUserIds(
+    @Body() body: unknown,
+    @Headers("x-internal-token") internalToken?: string
+  ) {
+    this.assertInternalRequest(internalToken);
+    const { userIds } = z
+      .object({ userIds: z.array(z.string()).max(500) })
+      .parse(body ?? {});
+    const activeIds = await this.auth.listActiveUserIds(userIds);
+    return { activeIds };
+  }
+
+  /**
    * Get referral status for a user (internal endpoint for user-service)
    * GET /auth/users/:userId/referral-status
    */

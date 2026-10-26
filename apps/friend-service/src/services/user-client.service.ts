@@ -51,6 +51,42 @@ export class UserClientService {
   }
 
   /**
+   * ACTIVE, non-deleted auth accounts. Returns null when the check cannot run
+   * so callers can fail open instead of hiding every friend.
+   * In test mode every id is treated as active.
+   */
+  async listActiveUserIds(userIds: string[]): Promise<string[] | null> {
+    const unique = [...new Set(userIds.filter(Boolean))];
+    if (unique.length === 0) return [];
+    if (process.env.TEST_MODE === "true" || process.env.NODE_ENV === "test") {
+      return unique;
+    }
+
+    try {
+      const response = await fetch(`${this.authServiceUrl}/auth/internal/users/active-ids`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-internal-token": process.env.INTERNAL_SERVICE_TOKEN || ""
+        },
+        body: JSON.stringify({ userIds: unique.slice(0, 500) }),
+        signal: AbortSignal.timeout(5000)
+      });
+
+      if (!response.ok) {
+        this.logger.warn(`active-ids failed: ${response.status}; keeping friends visible`);
+        return null;
+      }
+
+      const data = (await response.json()) as { activeIds?: string[] };
+      return Array.isArray(data.activeIds) ? data.activeIds : null;
+    } catch (error: any) {
+      this.logger.warn(`Error listing active users: ${error.message}; keeping friends visible`);
+      return null;
+    }
+  }
+
+  /**
    * Check if user is blocked by another user
    * This checks FriendRequest status = BLOCKED
    */

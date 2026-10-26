@@ -28,6 +28,12 @@ model FriendRequest {
   acceptedAt   DateTime?
   rejectedAt   DateTime?
   expiresAt    DateTime? // Auto-expire after 30 days
+  /// Status this row had before this user blocked the other. Null if the row exists only as a block.
+  statusBeforeBlock FriendRequestStatus?
+  /// This user started the block (not a request flipped by the other person's block).
+  blockInitiated Boolean @default(false)
+  /// Friendship existed when this user blocked, so unblock can recreate it.
+  restoreFriendship Boolean @default(false)
   
   @@unique([fromUserId, toUserId]) // Prevent duplicate requests
   @@index([fromUserId, status])
@@ -104,6 +110,10 @@ model Conversation {
   user1LastReadAt DateTime?
   /// When userId2 last read incoming messages from userId1
   user2LastReadAt DateTime?
+  /// Section to restore when the last block between this pair is lifted.
+  sectionBeforeBlock ConversationSection?
+  /// Pair were friends when the block started.
+  friendsBeforeBlock Boolean @default(false)
   createdAt       DateTime            @default(now())
   updatedAt       DateTime            @updatedAt
   

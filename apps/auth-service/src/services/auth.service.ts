@@ -1459,6 +1459,24 @@ export class AuthService implements OnModuleInit {
   }
 
   /**
+   * Ids that are ACTIVE and not deleted. Missing, deactivated, suspended,
+   * banned, and deleted accounts are omitted.
+   */
+  async listActiveUserIds(userIds: string[]): Promise<string[]> {
+    const unique = [...new Set(userIds.filter(Boolean))].slice(0, 500);
+    if (unique.length === 0) return [];
+    const rows = await this.prisma.user.findMany({
+      where: {
+        id: { in: unique },
+        accountStatus: "ACTIVE",
+        deletedAt: null
+      },
+      select: { id: true }
+    });
+    return rows.map((row: { id: string }) => row.id);
+  }
+
+  /**
    * Get account status
    */
   async getAccountStatus(userId: string): Promise<{

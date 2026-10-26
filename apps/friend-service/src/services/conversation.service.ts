@@ -31,6 +31,23 @@ export class ConversationService {
     });
   }
 
+  /** Peers with a BLOCKED request in either direction. Hidden from chat lists. */
+  async listBlockedPeerIds(userId: string): Promise<string[]> {
+    const rows = await this.prisma.friendRequest.findMany({
+      where: {
+        status: "BLOCKED",
+        OR: [{ fromUserId: userId }, { toUserId: userId }]
+      },
+      select: { fromUserId: true, toUserId: true }
+    });
+    const ids = new Set<string>();
+    for (const row of rows) {
+      const peer = row.fromUserId === userId ? row.toUserId : row.fromUserId;
+      if (peer && peer !== userId) ids.add(peer);
+    }
+    return [...ids];
+  }
+
   /** Peer user IDs the given user has a friendship row with (sorted-pair Friend table). */
   private async getFriendPeerIds(userId: string): Promise<string[]> {
     const rows = await this.prisma.friend.findMany({
@@ -202,12 +219,14 @@ export class ConversationService {
 
     // Build where clause based on section and user perspective
     let whereClause: any;
+    const blockedPeerIds = await this.listBlockedPeerIds(userId);
+    const blockedPeers = new Set(blockedPeerIds);
 
     if (section === ConversationSection.INBOX) {
       // Inbox listing is special:
       // - Friends should appear even if the Conversation.section was never updated (e.g. crossed FR -> friends).
       // - Non-friends should only appear in inbox when there's a real message thread (avoid ghost rows).
-      const friendIds = await this.getFriendPeerIds(userId);
+      const friendIds = (await this.getFriendPeerIds(userId)).filter((id) => !blockedPeers.has(id));
       const friendPairOr =
         friendIds.length > 0
           ? ([
@@ -272,6 +291,22 @@ export class ConversationService {
           AND: [whereClause, { lastMessageId: { not: null } }]
         };
       }
+    }
+
+    if (blockedPeerIds.length > 0) {
+      whereClause = {
+        AND: [
+          whereClause,
+          {
+            NOT: {
+              OR: [
+                { userId1: userId, userId2: { in: blockedPeerIds } },
+                { userId2: userId, userId1: { in: blockedPeerIds } }
+              ]
+            }
+          }
+        ]
+      };
     }
 
     // Note: Conversations with lastMessage: null are automatically excluded from
@@ -377,7 +412,7 @@ export class ConversationService {
     // Ensure friends appear in Inbox even with no messages by guaranteeing a Conversation row exists.
     // (Friend requests can be accepted without ever creating a conversation row.)
     if (section === ConversationSection.INBOX) {
-      const friendIds = await this.getFriendPeerIds(userId);
+      const friendIds = (await this.getFriendPeerIds(userId)).filter((id) => !blockedPeers.has(id));
       if (friendIds.length > 0) {
         const data = friendIds.map((otherUserId) => {
           const [id1, id2] = [userId, otherUserId].sort();
@@ -717,9 +752,14 @@ export class ConversationService {
       },
       take: limit + 1
     });
+    const blockedPeers = new Set(await this.listBlockedPeerIds(userId));
+    const visibleRequests = friendRequests.filter((request) => {
+      const otherUserId = request.fromUserId === userId ? request.toUserId : request.fromUserId;
+      return !blockedPeers.has(otherUserId);
+    });
 
-    const hasMore = friendRequests.length > limit;
-    const resultRequests = hasMore ? friendRequests.slice(0, limit) : friendRequests;
+    const hasMore = visibleRequests.length > limit;
+    const resultRequests = hasMore ? visibleRequests.slice(0, limit) : visibleRequests;
 
     if (resultRequests.length === 0) {
       return {
@@ -941,7 +981,8 @@ export class ConversationService {
     const MESSAGE_MATCH_CAP = 500;
 
     // Peers from conversations + pending friend requests
-    const [allConversations, friendIds, pendingReceived, pendingSent] = await Promise.all([
+    const [conversationRows, friendIds, pendingReceivedRows, pendingSentRows, blockedPeerIds] =
+      await Promise.all([
       this.prisma.conversation.findMany({
         where: {
           OR: [{ userId1: userId }, { userId2: userId }]
@@ -972,10 +1013,20 @@ export class ConversationService {
           OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }]
         },
         select: { id: true, toUserId: true, createdAt: true }
-      })
+      }),
+      this.listBlockedPeerIds(userId)
     ]);
 
-    const friendSet = new Set(friendIds);
+    const blockedPeers = new Set(blockedPeerIds);
+    const allConversations = conversationRows.filter((conv) => {
+      const peer = conv.userId1 === userId ? conv.userId2 : conv.userId1;
+      return !blockedPeers.has(peer);
+    });
+    const pendingReceived = pendingReceivedRows.filter((row) => !blockedPeers.has(row.fromUserId));
+    const pendingSent = pendingSentRows.filter((row) => !blockedPeers.has(row.toUserId));
+    const friendIdsVisible = friendIds.filter((id) => !blockedPeers.has(id));
+
+    const friendSet = new Set(friendIdsVisible);
     const peerIdSet = new Set<string>();
     for (const conv of allConversations) {
       peerIdSet.add(conv.userId1 === userId ? conv.userId2 : conv.userId1);

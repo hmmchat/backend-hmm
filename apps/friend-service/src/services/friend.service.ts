@@ -389,9 +389,10 @@ export class FriendService {
       requests.map((r) => r.fromUserId)
     );
     const valid = new Set(validIds);
+    const blockedPeers = new Set(await this.conversationService.listBlockedPeerIds(userId));
 
     return requests
-      .filter((req) => valid.has(req.fromUserId))
+      .filter((req) => valid.has(req.fromUserId) && !blockedPeers.has(req.fromUserId))
       .map((req) => ({
         id: req.id,
         fromUserId: req.fromUserId,
@@ -424,9 +425,10 @@ export class FriendService {
       requests.map((r) => r.toUserId)
     );
     const valid = new Set(validIds);
+    const blockedPeers = new Set(await this.conversationService.listBlockedPeerIds(userId));
 
     return requests
-      .filter((req) => valid.has(req.toUserId))
+      .filter((req) => valid.has(req.toUserId) && !blockedPeers.has(req.toUserId))
       .map((req) => ({
         id: req.id,
         toUserId: req.toUserId,
@@ -529,40 +531,110 @@ export class FriendService {
     hasMore: boolean;
     pageSize: number;
   }> {
-    // Use configured page size if limit not provided
-    const pageSize = limit || this.FRIENDS_WALL_PHOTOS_PER_PAGE;
+    const pageSize = Math.min(100, Math.max(1, limit || this.FRIENDS_WALL_PHOTOS_PER_PAGE));
+    const target = pageSize + 1;
+    const collected: Array<{ friendId: string; createdAt: Date; friendshipId: string }> = [];
+    let scanCursor = cursor;
+    let scanning = true;
+    let loops = 0;
 
-    // Get friends list using existing method
-    const friendsResult = await this.getFriends(userId, pageSize, cursor);
+    while (collected.length < target && scanning && loops < 20) {
+      loops += 1;
+      const friendships = await this.prisma.friend.findMany({
+        where: {
+          OR: [{ userId1: userId }, { userId2: userId }]
+        },
+        orderBy: { createdAt: "desc" },
+        take: pageSize + 1,
+        ...(scanCursor
+          ? {
+              cursor: { id: scanCursor },
+              skip: 1
+            }
+          : {})
+      });
 
-    if (friendsResult.friends.length === 0) {
-      return {
-        friends: [],
-        nextCursor: undefined,
-        hasMore: false,
-        pageSize
-      };
+      const pageHasMore = friendships.length > pageSize;
+      const page = pageHasMore ? friendships.slice(0, pageSize) : friendships;
+      if (page.length === 0) {
+        scanning = false;
+        break;
+      }
+
+      const friendIds = page.map((friendship) =>
+        friendship.userId1 === userId ? friendship.userId2 : friendship.userId1
+      );
+      const allowed = await this.eligibleWallFriendIds(userId, friendIds);
+      for (const friendship of page) {
+        const friendId = friendship.userId1 === userId ? friendship.userId2 : friendship.userId1;
+        if (!allowed.has(friendId)) continue;
+        collected.push({
+          friendId,
+          createdAt: friendship.createdAt,
+          friendshipId: friendship.id
+        });
+      }
+
+      scanning = pageHasMore;
+      scanCursor = page[page.length - 1].id;
     }
 
-    // Extract friend IDs
-    const friendIds = friendsResult.friends.map(f => f.friendId);
-
-    // Batch fetch display pictures from user-service
-    const photoMap = await this.userClient.getUsersDisplayPictures(friendIds);
-
-    // Enrich friends with photos
-    const enrichedFriends = friendsResult.friends.map(friend => ({
-      friendId: friend.friendId,
-      photoUrl: photoMap.get(friend.friendId) || null,
-      createdAt: friend.createdAt
-    }));
+    const hasMore = collected.length > pageSize;
+    const pageFriends = hasMore ? collected.slice(0, pageSize) : collected;
+    const photoMap = await this.userClient.getUsersDisplayPictures(
+      pageFriends.map((friend) => friend.friendId)
+    );
 
     return {
-      friends: enrichedFriends,
-      nextCursor: friendsResult.nextCursor,
-      hasMore: friendsResult.hasMore,
+      friends: pageFriends.map((friend) => ({
+        friendId: friend.friendId,
+        photoUrl: photoMap.get(friend.friendId) || null,
+        createdAt: friend.createdAt
+      })),
+      nextCursor: hasMore ? pageFriends[pageFriends.length - 1]?.friendshipId : undefined,
+      hasMore,
       pageSize
     };
+  }
+
+  /**
+   * Friend wall shows only a current friendship whose account still exists,
+   * is active, and is not blocked in either direction.
+   */
+  private async eligibleWallFriendIds(userId: string, friendIds: string[]): Promise<Set<string>> {
+    const unique = [...new Set(friendIds.filter(Boolean))];
+    if (unique.length === 0) return new Set();
+
+    const [blockedRows, validation, activeIds] = await Promise.all([
+      this.prisma.friendRequest.findMany({
+        where: {
+          status: "BLOCKED",
+          OR: [
+            { fromUserId: userId, toUserId: { in: unique } },
+            { toUserId: userId, fromUserId: { in: unique } }
+          ]
+        },
+        select: { fromUserId: true, toUserId: true }
+      }),
+      this.userClient.validateUserIds(unique),
+      this.userClient.listActiveUserIds(unique)
+    ]);
+
+    const blocked = new Set<string>();
+    for (const row of blockedRows) {
+      blocked.add(row.fromUserId === userId ? row.toUserId : row.fromUserId);
+    }
+    const existing = new Set(validation.validIds);
+    const active = activeIds ? new Set(activeIds) : null;
+
+    return new Set(
+      unique.filter((id) => {
+        if (blocked.has(id)) return false;
+        if (!existing.has(id)) return false;
+        if (active && !active.has(id)) return false;
+        return true;
+      })
+    );
   }
 
   /**
@@ -1332,6 +1404,22 @@ export class FriendService {
       });
 
       const [convId1, convId2] = [fromUserId, toUserId].sort();
+      const existingConv = await tx.conversation.findUnique({
+        where: {
+          userId1_userId2: {
+            userId1: convId1,
+            userId2: convId2
+          }
+        }
+      });
+      // A reply that opens a two-sided thread still promotes to Inbox.
+      // An unfriended pair already sitting in Requests/Sent stays there.
+      const section =
+        !promotedToInbox &&
+        existingConv &&
+        existingConv.section !== ConversationSection.INBOX
+          ? existingConv.section
+          : ConversationSection.INBOX;
       await tx.conversation.upsert({
         where: {
           userId1_userId2: {
@@ -1342,12 +1430,12 @@ export class FriendService {
         create: {
           userId1: convId1,
           userId2: convId2,
-          section: ConversationSection.INBOX,
+          section,
           lastMessageId: friendMessage.id,
           lastMessageAt: new Date()
         },
         update: {
-          section: ConversationSection.INBOX,
+          section,
           lastMessageId: friendMessage.id,
           lastMessageAt: new Date()
         }
@@ -1755,43 +1843,99 @@ export class FriendService {
     if (fromUserId === toUserId) {
       throw new BadRequestException("Cannot block yourself");
     }
+    this.assertNotSystemPeer(toUserId, "block");
 
-    // Update any pending or accepted requests to BLOCKED
-    await this.prisma.friendRequest.updateMany({
-      where: {
-        OR: [
-          { fromUserId, toUserId, status: { in: ["PENDING", "ACCEPTED"] } },
-          { fromUserId: toUserId, toUserId: fromUserId, status: { in: ["PENDING", "ACCEPTED"] } }
-        ]
-      },
-      data: {
-        status: "BLOCKED"
+    const [id1, id2] = [fromUserId, toUserId].sort();
+    const [friendship, conversation, requests] = await Promise.all([
+      this.prisma.friend.findUnique({
+        where: { userId1_userId2: { userId1: id1, userId2: id2 } }
+      }),
+      this.prisma.conversation.findUnique({
+        where: { userId1_userId2: { userId1: id1, userId2: id2 } }
+      }),
+      this.prisma.friendRequest.findMany({
+        where: {
+          OR: [
+            { fromUserId, toUserId },
+            { fromUserId: toUserId, toUserId: fromUserId }
+          ]
+        }
+      })
+    ]);
+
+    const outgoing = requests.find(
+      (request) => request.fromUserId === fromUserId && request.toUserId === toUserId
+    );
+    const alreadyMyBlock = outgoing?.status === "BLOCKED" && outgoing.blockInitiated;
+    const pairAlreadyBlocked = requests.some(
+      (request) => request.status === "BLOCKED" && request.blockInitiated
+    );
+    const wereFriends = !!friendship;
+    const takeSnapshot = !pairAlreadyBlocked;
+
+    await this.prisma.$transaction(async (tx) => {
+      if (outgoing) {
+        await tx.friendRequest.update({
+          where: { id: outgoing.id },
+          data: alreadyMyBlock
+            ? { status: "BLOCKED", blockInitiated: true }
+            : {
+                statusBeforeBlock:
+                  outgoing.status === "BLOCKED" ? outgoing.statusBeforeBlock : outgoing.status,
+                status: "BLOCKED",
+                blockInitiated: true,
+                restoreFriendship: takeSnapshot
+                  ? wereFriends
+                  : outgoing.restoreFriendship
+              }
+        });
+      } else {
+        await tx.friendRequest.create({
+          data: {
+            fromUserId,
+            toUserId,
+            status: "BLOCKED",
+            blockInitiated: true,
+            restoreFriendship: takeSnapshot ? wereFriends : false
+          }
+        });
+      }
+
+      if (takeSnapshot) {
+        if (conversation) {
+          await tx.conversation.update({
+            where: { id: conversation.id },
+            data: {
+              sectionBeforeBlock: conversation.section,
+              friendsBeforeBlock: wereFriends
+            }
+          });
+        } else if (wereFriends) {
+          await tx.conversation.create({
+            data: {
+              userId1: id1,
+              userId2: id2,
+              section: ConversationSection.INBOX,
+              sectionBeforeBlock: ConversationSection.INBOX,
+              friendsBeforeBlock: true
+            }
+          });
+        }
+      }
+
+      if (wereFriends) {
+        await tx.friend.deleteMany({
+          where: { userId1: id1, userId2: id2 }
+        });
       }
     });
-
-    // Always persist an outgoing BLOCKED row so this user can list/unblock them.
-    await this.prisma.friendRequest.upsert({
-      where: {
-        fromUserId_toUserId: { fromUserId, toUserId }
-      },
-      create: {
-        fromUserId,
-        toUserId,
-        status: "BLOCKED"
-      },
-      update: {
-        status: "BLOCKED",
-        acceptedAt: null,
-        rejectedAt: null
-      }
-    });
-
-    // Remove friendship if exists
-    await this.removeFriendship(fromUserId, toUserId);
 
     this.metrics.incrementUserBlocked();
-    // Invalidate friendship cache for both users
     await this.invalidateFriendshipCache(fromUserId, toUserId);
+    await Promise.all([
+      this.invalidateNotificationCache(fromUserId),
+      this.invalidateNotificationCache(toUserId)
+    ]);
 
     this.logger.log(`User ${fromUserId} blocked ${toUserId}`);
     this.emitRealtimeConversationRefresh(fromUserId, toUserId, "user_blocked");
@@ -1817,19 +1961,90 @@ export class FriendService {
       throw new NotFoundException("User is not blocked");
     }
 
-    await this.prisma.friendRequest.updateMany({
+    const [id1, id2] = [fromUserId, toUserId].sort();
+    const otherBlock = await this.prisma.friendRequest.findFirst({
       where: {
-        OR: [
-          { fromUserId, toUserId, status: "BLOCKED" },
-          { fromUserId: toUserId, toUserId: fromUserId, status: "BLOCKED" }
-        ]
-      },
-      data: {
-        status: "CANCELLED",
-        acceptedAt: null,
-        rejectedAt: null
+        fromUserId: toUserId,
+        toUserId: fromUserId,
+        status: "BLOCKED",
+        blockInitiated: true
       }
     });
+
+    await this.prisma.$transaction(async (tx) => {
+      if (outgoing.statusBeforeBlock) {
+        await tx.friendRequest.update({
+          where: { id: outgoing.id },
+          data: {
+            status: outgoing.statusBeforeBlock,
+            statusBeforeBlock: null,
+            blockInitiated: false,
+            restoreFriendship: false,
+            acceptedAt:
+              outgoing.statusBeforeBlock === "ACCEPTED"
+                ? outgoing.acceptedAt ?? new Date()
+                : outgoing.acceptedAt
+          }
+        });
+      } else {
+        await tx.friendRequest.delete({ where: { id: outgoing.id } });
+      }
+
+      // The other person still has their own block. Keep the saved place until they unblock.
+      if (otherBlock) return;
+
+      // Legacy blocks flipped both request rows and did not mark who started them.
+      await tx.friendRequest.updateMany({
+        where: {
+          fromUserId: toUserId,
+          toUserId: fromUserId,
+          status: "BLOCKED",
+          blockInitiated: false
+        },
+        data: {
+          status: "CANCELLED",
+          statusBeforeBlock: null,
+          restoreFriendship: false,
+          acceptedAt: null,
+          rejectedAt: null
+        }
+      });
+
+      const conversation = await tx.conversation.findUnique({
+        where: { userId1_userId2: { userId1: id1, userId2: id2 } }
+      });
+      const restoreFriends = Boolean(
+        outgoing.restoreFriendship || conversation?.friendsBeforeBlock
+      );
+
+      if (restoreFriends) {
+        await tx.friend.upsert({
+          where: { userId1_userId2: { userId1: id1, userId2: id2 } },
+          create: { userId1: id1, userId2: id2 },
+          update: {}
+        });
+      }
+
+      if (conversation) {
+        const section = restoreFriends
+          ? ConversationSection.INBOX
+          : conversation.sectionBeforeBlock ?? conversation.section;
+        await tx.conversation.update({
+          where: { id: conversation.id },
+          data: {
+            section,
+            sectionBeforeBlock: null,
+            friendsBeforeBlock: false
+          }
+        });
+      }
+    });
+
+    await this.invalidateFriendshipCache(fromUserId, toUserId);
+    await Promise.all([
+      this.invalidateNotificationCache(fromUserId),
+      this.invalidateNotificationCache(toUserId)
+    ]);
 
     this.logger.log(`User ${fromUserId} unblocked ${toUserId}`);
     this.emitRealtimeConversationRefresh(fromUserId, toUserId, "user_unblocked");
@@ -2012,7 +2227,12 @@ export class FriendService {
     });
     if (!conversation) return;
 
-    const section = await this.conversationService.determineSection(id1, id2, false);
+    // Leave Inbox. The person who unfriended sees Requests; the other sees Sent.
+    // A later message keeps this section so they can still write without returning to Inbox.
+    const section =
+      userId1 === id1
+        ? ConversationSection.RECEIVED_REQUESTS
+        : ConversationSection.SENT_REQUESTS;
     if (conversation.section !== section) {
       await this.prisma.conversation.update({
         where: { id: conversation.id },
@@ -2339,6 +2559,10 @@ export class FriendService {
 
     const otherUserId = conversation.userId1 === userId ? conversation.userId2 : conversation.userId1;
 
+    if (await this.isBlocked(userId, otherUserId)) {
+      throw new NotFoundException("Conversation not found");
+    }
+
     if (isSystemNotificationUserId(otherUserId)) {
       return this.notificationCampaigns.getSystemThreadMessages(
         userId,
@@ -2520,7 +2744,9 @@ export class FriendService {
       const inboxCutoff = inboxLastSeen ? inboxLastSeen.getTime() - 1000 : 0;
       const receivedCutoff = receivedLastSeen ? receivedLastSeen.getTime() - 1000 : 0;
       const sentCutoff = sentLastSeen ? sentLastSeen.getTime() - 1000 : 0;
+      const blockedPeers = new Set(await this.conversationService.listBlockedPeerIds(userId));
       for (const m of allUnread) {
+        if (blockedPeers.has(m.fromUserId)) continue;
         const t = m.createdAt.getTime();
         const p = pair(m.fromUserId, m.toUserId);
         if (inboxPairs.has(p) && t > inboxCutoff) inboxCount++;

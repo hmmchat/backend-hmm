@@ -147,46 +147,47 @@ export class MediasoupService implements OnModuleInit {
   async createRouterForRoom(): Promise<{ router: mediasoup.types.Router; workerIndex: number }> {
     const { worker, workerIndex } = this.getLeastLoadedWorker();
     
+    const videoRtcpFeedback: mediasoup.types.RtcpFeedback[] = [
+      { type: "nack" },
+      { type: "nack", parameter: "pli" },
+      { type: "ccm", parameter: "fir" },
+      { type: "goog-remb" },
+      { type: "transport-cc" }
+    ];
     const router = await worker.createRouter({
       mediaCodecs: [
         {
           kind: "audio",
           mimeType: "audio/opus",
           clockRate: 48000,
-          channels: 2
+          channels: 2,
+          parameters: {
+            minptime: 10,
+            useinbandfec: 1,
+            usedtx: 1
+          },
+          rtcpFeedback: [
+            { type: "nack" },
+            { type: "transport-cc" }
+          ]
         },
         {
           kind: "video",
           mimeType: "video/VP8",
           clockRate: 90000,
-          rtcpFeedback: [
-            { type: "nack" },
-            { type: "nack", parameter: "pli" },
-            { type: "ccm", parameter: "fir" },
-            { type: "goog-remb" }
-          ]
+          rtcpFeedback: videoRtcpFeedback
         },
         {
           kind: "video",
           mimeType: "video/VP9",
           clockRate: 90000,
-          rtcpFeedback: [
-            { type: "nack" },
-            { type: "nack", parameter: "pli" },
-            { type: "ccm", parameter: "fir" },
-            { type: "goog-remb" }
-          ]
+          rtcpFeedback: videoRtcpFeedback
         },
         {
           kind: "video",
           mimeType: "video/h264",
           clockRate: 90000,
-          rtcpFeedback: [
-            { type: "nack" },
-            { type: "nack", parameter: "pli" },
-            { type: "ccm", parameter: "fir" },
-            { type: "goog-remb" }
-          ],
+          rtcpFeedback: videoRtcpFeedback,
           parameters: {
             "packetization-mode": 1,
             "profile-level-id": "42e01f",

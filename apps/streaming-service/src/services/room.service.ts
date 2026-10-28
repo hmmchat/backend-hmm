@@ -1288,6 +1288,27 @@ export class RoomService {
   }
 
   /**
+   * Active participant row was created moments ago. An HTTP leave in this window is
+   * usually the home page clearing a "ghost" room while the call screen is still opening.
+   */
+  async participantJoinedRecently(roomId: string, userId: string, withinMs: number): Promise<boolean> {
+    const row = await this.prisma.callParticipant.findFirst({
+      where: {
+        userId,
+        status: "active",
+        leftAt: null,
+        session: {
+          roomId,
+          status: { not: "ENDED" }
+        }
+      },
+      select: { joinedAt: true }
+    });
+    if (!row?.joinedAt) return false;
+    return Date.now() - new Date(row.joinedAt).getTime() < withinMs;
+  }
+
+  /**
    * @returns true if this user was an active call participant and was marked left (DB row updated).
    */
   async removeParticipant(

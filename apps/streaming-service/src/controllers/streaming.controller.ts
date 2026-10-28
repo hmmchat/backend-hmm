@@ -702,11 +702,17 @@ export class StreamingController {
     if (!userId) {
       throw new HttpException("Missing x-user-id", HttpStatus.UNAUTHORIZED);
     }
-    const removed = await this.roomService.removeParticipant(roomId, userId);
-    if (removed) {
-      await this.streamingGateway.notifyParticipantLeft(roomId, userId);
-    }
-    return { success: true, message: `User ${userId} left room ${roomId}` };
+    const result = await this.streamingGateway.leaveRoomFromHttp(roomId, userId);
+    return {
+      success: true,
+      removed: result.removed,
+      deferred: result.deferred,
+      message: result.removed
+        ? `User ${userId} left room ${roomId}`
+        : result.deferred
+          ? `Leave for ${userId} held until the call socket attaches`
+          : `Leave ignored for ${userId}; call socket is live`
+    };
   }
 
   /**
@@ -721,11 +727,15 @@ export class StreamingController {
     if (!body.userId) {
       throw new BadRequestException("userId is required");
     }
-    const removed = await this.roomService.removeParticipant(roomId, body.userId);
-    if (removed) {
-      await this.streamingGateway.notifyParticipantLeft(roomId, body.userId);
-    }
-    return { success: true, message: `User ${body.userId} left room ${roomId}` };
+    const result = await this.streamingGateway.leaveRoomFromHttp(roomId, body.userId);
+    return {
+      success: true,
+      removed: result.removed,
+      deferred: result.deferred,
+      message: result.removed
+        ? `User ${body.userId} left room ${roomId}`
+        : `Leave for ${body.userId} was not applied yet`
+    };
   }
 
   /**

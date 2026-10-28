@@ -82,6 +82,23 @@ export class CallService {
     this.realtimeDebug(`Transport ${transportId} connected for user ${userId}`);
   }
 
+  /**
+   * New ICE credentials for the same transport. A network change keeps the
+   * producers and consumers; only the path is renegotiated.
+   */
+  async restartIce(
+    roomId: string,
+    userId: string,
+    transportId: string
+  ): Promise<MediasoupTypes.IceParameters> {
+    const participant = this.roomService.getParticipant(roomId, userId);
+    const transport = participant?.transports?.get(transportId);
+    if (!transport || transport.closed) {
+      throw new NotFoundException(`Transport ${transportId} not found`);
+    }
+    return transport.restartIce();
+  }
+
   private cleanupConsumersForProducer(roomId: string, producerId: string): void {
     const room = this.roomService.getRoom(roomId);
     for (const participant of room.participants.values()) {
@@ -316,6 +333,18 @@ export class CallService {
     this.realtimeDebug(`Consumer created: ${consumer.id} for producer ${producerId} (user ${userId})`);
 
     return consumer;
+  }
+
+  /** Ask the sender for a fresh video keyframe when a viewer's picture has stalled. */
+  async requestKeyFrame(roomId: string, userId: string, consumerId: string): Promise<boolean> {
+    const participant = this.roomService.getParticipant(roomId, userId);
+    if (!participant) return false;
+    for (const consumer of participant.consumers.values()) {
+      if (consumer.id !== consumerId || consumer.kind !== "video" || consumer.closed) continue;
+      await consumer.requestKeyFrame();
+      return true;
+    }
+    return false;
   }
 
   /**

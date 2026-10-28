@@ -48,6 +48,16 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
   private heartbeatTimer: NodeJS.Timeout | null = null;
   /** Delayed reap timers for preserve-participant-on-close sockets that never reconnect. Key: `${userId}|${roomId}` */
   private preserveReapTimers = new Map<string, NodeJS.Timeout>();
+  /**
+   * HTTP leave that arrived before the call socket attached. Key: `${userId}|${roomId}`.
+   * Cancelled when that person opens a participant socket for the room.
+   */
+  private deferredHttpLeaveTimers = new Map<string, NodeJS.Timeout>();
+  /** Home-page ghost cleanup races room creation. Hold the HTTP leave this long, then drop them if they never connected. */
+  private static readonly FRESH_JOIN_HTTP_LEAVE_GRACE_MS = 20_000;
+  /** Per consumer, ignore keyframe storms from a stalled tile. */
+  private keyframeRequestedAt = new Map<string, number>();
+  private static readonly KEYFRAME_REQUEST_COOLDOWN_MS = 2_000;
   private chatSenderProfileCache = new Map<string, {
     username: string | null;
     displayPictureUrl: string | null;
@@ -469,6 +479,14 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
           await this.handleConnectTransport(connectionId, userId, data);
           break;
 
+        case "restart-ice":
+          await this.handleRestartIce(connectionId, userId, data, ws);
+          break;
+
+        case "request-keyframe":
+          await this.handleRequestKeyframe(connectionId, userId, data);
+          break;
+
         case "produce":
           if (this.isAnonymousUser(userId)) {
             this.sendError(ws, "Authentication required. Please sign up to participate in calls.");
@@ -633,6 +651,8 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       "disable-pull-stranger",
       "create-transport",
       "connect-transport",
+      "restart-ice",
+      "request-keyframe",
       "produce",
       "close-producer",
       "stop-screen-share",
@@ -721,6 +741,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
         conn.membershipVerified = true;
         // Successful rejoin cancels a pending preserve-reap from a prior tab redirect / reconnect.
         this.clearPreserveReapTimer(userId, roomId);
+        this.clearDeferredHttpLeave(userId, roomId);
       }
 
       // Check if user is already a participant (from room creation or previous join)
@@ -860,6 +881,82 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
         `[RolesUpdated] Failed to broadcast roles for room ${roomId}: ${err?.message || err}`
       );
     }
+  }
+
+  /**
+   * HTTP leave from the home page or a tab close. A live call socket, or a room
+   * created in the last few seconds, must not be torn down by that request.
+   */
+  async leaveRoomFromHttp(roomId: string, userId: string): Promise<{ removed: boolean; deferred: boolean }> {
+    if (this.hasLiveParticipantSocket(userId, roomId)) {
+      this.logger.warn(
+        `[LeaveRoom] Ignored HTTP leave for ${userId} in ${roomId}; a call socket is still open`
+      );
+      return { removed: false, deferred: false };
+    }
+
+    const fresh = await this.roomService.participantJoinedRecently(
+      roomId,
+      userId,
+      StreamingGateway.FRESH_JOIN_HTTP_LEAVE_GRACE_MS
+    );
+    if (fresh) {
+      this.scheduleDeferredHttpLeave(roomId, userId);
+      return { removed: false, deferred: true };
+    }
+
+    this.clearDeferredHttpLeave(userId, roomId);
+    const removed = await this.roomService.removeParticipant(roomId, userId);
+    if (removed) {
+      await this.notifyParticipantLeft(roomId, userId);
+    }
+    return { removed, deferred: false };
+  }
+
+  private hasLiveParticipantSocket(userId: string, roomId: string): boolean {
+    const connIds = this.userConnections.get(userId);
+    if (!connIds) return false;
+    for (const connId of connIds) {
+      const conn = this.connections.get(connId);
+      if (!conn || conn.connectionKind === "viewer") continue;
+      if (conn.roomId !== roomId) continue;
+      if (conn.ws?.readyState === 1) return true;
+    }
+    return false;
+  }
+
+  private clearDeferredHttpLeave(userId: string, roomId: string): void {
+    const key = `${userId}|${roomId}`;
+    const existing = this.deferredHttpLeaveTimers.get(key);
+    if (!existing) return;
+    clearTimeout(existing);
+    this.deferredHttpLeaveTimers.delete(key);
+  }
+
+  private scheduleDeferredHttpLeave(roomId: string, userId: string): void {
+    const key = `${userId}|${roomId}`;
+    if (this.deferredHttpLeaveTimers.has(key)) return;
+    this.logger.warn(
+      `[LeaveRoom] Holding HTTP leave for ${userId} in ${roomId} for ${StreamingGateway.FRESH_JOIN_HTTP_LEAVE_GRACE_MS}ms so the call screen can connect`
+    );
+    const timer = setTimeout(() => {
+      this.deferredHttpLeaveTimers.delete(key);
+      void (async () => {
+        try {
+          if (this.hasLiveParticipantSocket(userId, roomId)) return;
+          const removed = await this.roomService.removeParticipant(roomId, userId);
+          if (removed) {
+            this.logger.warn(`[LeaveRoom] Deferred HTTP leave applied for ${userId} in ${roomId}`);
+            await this.notifyParticipantLeft(roomId, userId);
+          }
+        } catch (error: any) {
+          this.logger.warn(
+            `[LeaveRoom] Deferred HTTP leave failed for ${userId} in ${roomId}: ${error?.message || error}`
+          );
+        }
+      })();
+    }, StreamingGateway.FRESH_JOIN_HTTP_LEAVE_GRACE_MS);
+    this.deferredHttpLeaveTimers.set(key, timer);
   }
 
   /** HTTP leave / other non-WS paths: tell peers someone left and refresh host roles. */
@@ -1174,6 +1271,58 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     }
 
     await this.callService.connectTransport(roomId, userId, transportId, dtlsParameters);
+  }
+
+  /**
+   * Renegotiate ICE on the existing send or receive transport. Participants and
+   * broadcast viewers share this message. A miss on the call transport falls
+   * through to the viewer transport.
+   */
+  private async handleRestartIce(
+    _connectionId: string,
+    userId: string,
+    data: any,
+    ws: any
+  ) {
+    const { roomId, transportId } = data ?? {};
+    if (!roomId || !transportId) {
+      throw new Error("roomId and transportId are required");
+    }
+
+    let iceParameters;
+    try {
+      iceParameters = await this.callService.restartIce(roomId, userId, transportId);
+    } catch {
+      iceParameters = await this.broadcastService.restartViewerIce(roomId, userId, transportId);
+    }
+
+    this.send(ws, {
+      type: "ice-restarted",
+      data: { transportId, iceParameters }
+    });
+  }
+
+  private async handleRequestKeyframe(
+    _connectionId: string,
+    userId: string,
+    data: any
+  ) {
+    const { roomId, consumerId } = data ?? {};
+    if (!roomId || !consumerId) return;
+    const key = `${userId}|${consumerId}`;
+    const now = Date.now();
+    const previous = this.keyframeRequestedAt.get(key) || 0;
+    if (now - previous < StreamingGateway.KEYFRAME_REQUEST_COOLDOWN_MS) return;
+    this.keyframeRequestedAt.set(key, now);
+    if (this.keyframeRequestedAt.size > 500) {
+      for (const [entryKey, at] of this.keyframeRequestedAt) {
+        if (now - at > 60_000) this.keyframeRequestedAt.delete(entryKey);
+      }
+    }
+
+    const sent = await this.callService.requestKeyFrame(roomId, userId, String(consumerId));
+    if (sent) return;
+    await this.broadcastService.requestViewerKeyFrame(roomId, userId, String(consumerId));
   }
 
   /**
@@ -2898,6 +3047,10 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       clearTimeout(timer);
     }
     this.preserveReapTimers.clear();
+    for (const timer of this.deferredHttpLeaveTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.deferredHttpLeaveTimers.clear();
     if (this.wss) {
       this.wss.close();
     }

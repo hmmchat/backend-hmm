@@ -323,4 +323,27 @@ export class BroadcastService {
   }>> {
     return await this.callService.getProducers(roomId);
   }
+
+  async restartViewerIce(
+    roomId: string,
+    userId: string,
+    transportId: string
+  ): Promise<MediasoupTypes.IceParameters> {
+    const viewer = this.roomService.getViewer(roomId, userId);
+    if (!viewer?.transport || viewer.transport.closed || viewer.transport.id !== transportId) {
+      throw new NotFoundException(`Transport ${transportId} not found`);
+    }
+    return viewer.transport.restartIce();
+  }
+
+  async requestViewerKeyFrame(roomId: string, userId: string, consumerId: string): Promise<boolean> {
+    const viewer = this.roomService.getViewer(roomId, userId);
+    if (!viewer) return false;
+    for (const consumer of viewer.consumers.values()) {
+      if (consumer.id !== consumerId || consumer.kind !== "video" || consumer.closed) continue;
+      await consumer.requestKeyFrame();
+      return true;
+    }
+    return false;
+  }
 }

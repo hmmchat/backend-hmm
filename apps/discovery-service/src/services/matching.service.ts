@@ -1312,7 +1312,7 @@ export class MatchingService {
     try {
       const matchedIds = await this.getMatchedUserIds();
       if (matchedIds.size === 0) {
-        return { cleaned: 0 };
+        return { cleaned: await this.reconcileOrphanMatchedUsers() };
       }
 
       const processedPairs = new Set<string>();
@@ -1395,10 +1395,65 @@ export class MatchingService {
       if (cleaned > 0) {
         await this.cacheService.del("matched:user:ids");
       }
+
+      cleaned += await this.reconcileOrphanMatchedUsers();
     } catch (error: any) {
       console.error(`[ERROR] Failed to reconcile stale MATCHED users:`, error?.message || error);
     }
     return { cleaned };
+  }
+
+  /**
+   * Status MATCHED with no match row, no open acceptance, no squad lobby, and no
+   * live call. Room-create failures and abandoned squad accepts leave people here,
+   * and they then cannot join anything.
+   */
+  private async reconcileOrphanMatchedUsers(): Promise<number> {
+    const rows = await (this.prisma as any).$queryRawUnsafe(
+      `SELECT u.id
+       FROM public.users u
+       WHERE u.status = 'MATCHED'
+         AND u."updatedAt" < NOW() - INTERVAL '90 seconds'
+         AND NOT EXISTS (
+           SELECT 1 FROM discovery_service.active_matches m
+           WHERE m."user1Id" = u.id OR m."user2Id" = u.id
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM discovery_service.match_acceptances a
+           WHERE (a."user1Id" = u.id OR a."user2Id" = u.id)
+             AND a."expiresAt" > NOW()
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM discovery_service.squad_lobbies l
+           WHERE l.status::text IN ('WAITING', 'READY', 'IN_CALL')
+             AND (
+               l."inviterId" = u.id
+               OR l."memberIds"::text LIKE '%' || u.id || '%'
+             )
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM streaming_service.call_participants p
+           JOIN streaming_service.call_sessions s ON s.id = p."sessionId"
+           WHERE p."userId" = u.id
+             AND p.status = 'active'
+             AND p."leftAt" IS NULL
+             AND s.status::text <> 'ENDED'
+         )
+       LIMIT 100`
+    );
+    const ids: string[] = (rows || []).map((row: { id?: string }) => String(row.id || "")).filter(Boolean);
+    let cleaned = 0;
+    for (const userId of ids) {
+      try {
+        const hasSession = await this.discoverySessionService.hasActiveSession(userId);
+        await this.updateUserStatus(userId, hasSession ? "AVAILABLE" : "ONLINE");
+        cleaned += 1;
+        console.log(`[INFO] Cleared orphan MATCHED status for ${userId} -> ${hasSession ? "AVAILABLE" : "ONLINE"}`);
+      } catch (error: any) {
+        console.warn(`[WARN] Failed to clear orphan MATCHED for ${userId}: ${error?.message || error}`);
+      }
+    }
+    return cleaned;
   }
 }
 

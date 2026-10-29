@@ -10,12 +10,13 @@ async function bootstrap() {
     AppModule,
     new FastifyAdapter({
       logger: true,
-      requestTimeout: 8000  // 8 second request timeout (less than gateway's 10s)
+      requestTimeout: 55000,
+      bodyLimit: 52 * 1024 * 1024
     })
   );
 
-  // Register multipart plugin for file uploads (align max size with IMAGE_MAX_FILE_SIZE_MB)
-  const uploadMaxMb = parseInt(process.env.FILE_UPLOAD_MAX_SIZE_MB || "10", 10);
+  // Incoming camera photos can be large. Sharp shrinks them before they are stored.
+  const uploadMaxMb = parseInt(process.env.FILE_UPLOAD_MAX_SIZE_MB || "50", 10);
   await app.register(multipart, {
     limits: {
       fileSize: uploadMaxMb * 1024 * 1024,

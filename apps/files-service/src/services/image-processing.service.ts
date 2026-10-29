@@ -39,7 +39,7 @@ export class ImageProcessingService {
   constructor() {
     this.maxWidth = parseInt(process.env.IMAGE_MAX_WIDTH || "2000", 10);
     this.maxHeight = parseInt(process.env.IMAGE_MAX_HEIGHT || "2000", 10);
-    const maxSizeMb = parseInt(process.env.IMAGE_MAX_FILE_SIZE_MB || "10", 10);
+    const maxSizeMb = parseInt(process.env.IMAGE_MAX_FILE_SIZE_MB || "50", 10);
     this.maxFileSize = maxSizeMb * 1024 * 1024;
     this.thumbnailSize = parseInt(process.env.IMAGE_THUMBNAIL_SIZE || "200", 10);
   }

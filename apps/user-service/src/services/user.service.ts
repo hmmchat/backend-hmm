@@ -1089,6 +1089,31 @@ export class UserService implements OnModuleInit {
     return filtered;
   }
 
+  /**
+   * A real gender (male, female, non-binary) is permanent.
+   * Prefer not to say, or no gender yet, can still be set to a real gender once.
+   * Sending the current value again is a no-op.
+   */
+  private resolveGenderUpdate(
+    existingGender: string | null | undefined,
+    nextGender: string | undefined
+  ): { gender: Gender; genderChanged: boolean } | null {
+    if (!nextGender || nextGender === existingGender) return null;
+    const choosingReal =
+      nextGender === "MALE" || nextGender === "FEMALE" || nextGender === "NON_BINARY";
+    const stillOpen = !existingGender || existingGender === "PREFER_NOT_TO_SAY";
+    if (stillOpen && choosingReal) {
+      return { gender: nextGender as Gender, genderChanged: true };
+    }
+    if (stillOpen && nextGender === "PREFER_NOT_TO_SAY") {
+      return { gender: nextGender as Gender, genderChanged: false };
+    }
+    throw new HttpException(
+      "Gender cannot be changed once it is set.",
+      HttpStatus.BAD_REQUEST
+    );
+  }
+
   async updateProfile(accessToken: string, data: UpdateProfileDto) {
     const userId = await this.verifyAccessToken(accessToken);
 
@@ -1102,23 +1127,7 @@ export class UserService implements OnModuleInit {
 
     // Username is not required to be unique - can be common names like "John", "Sarah"
 
-    // Gender change validation: Can only change once from PREFER_NOT_TO_SAY to any other
-    if (data.gender) {
-      if (existingUser.gender === "PREFER_NOT_TO_SAY" && !existingUser.genderChanged) {
-        // Allow change from PREFER_NOT_TO_SAY to any other
-        // Update will proceed with genderChanged = true
-      } else if (existingUser.gender !== "PREFER_NOT_TO_SAY") {
-        throw new HttpException(
-          "Gender cannot be changed. It can only be changed once from 'prefer not to say' to another value.",
-          HttpStatus.BAD_REQUEST
-        );
-      } else if (existingUser.genderChanged) {
-        throw new HttpException(
-          "Gender has already been changed once and cannot be changed again",
-          HttpStatus.BAD_REQUEST
-        );
-      }
-    }
+    const genderPatch = this.resolveGenderUpdate(existingUser.gender, data.gender);
 
     if (
       data.displayPictureUrl !== undefined &&
@@ -1131,9 +1140,9 @@ export class UserService implements OnModuleInit {
     // Update user
     const updateData: any = {};
     if (data.username) updateData.username = data.username;
-    if (data.gender) {
-      updateData.gender = data.gender as Gender;
-      updateData.genderChanged = true;
+    if (genderPatch) {
+      updateData.gender = genderPatch.gender;
+      updateData.genderChanged = genderPatch.genderChanged;
     }
     if (data.displayPictureUrl !== undefined) updateData.displayPictureUrl = data.displayPictureUrl;
     if (data.intent !== undefined) updateData.intent = data.intent;
@@ -3018,29 +3027,14 @@ export class UserService implements OnModuleInit {
       throw new HttpException("User profile not found", HttpStatus.NOT_FOUND);
     }
 
-    // Gender change validation: Can only change once from PREFER_NOT_TO_SAY to any other
-    if (data.gender) {
-      if (existingUser.gender === "PREFER_NOT_TO_SAY" && !existingUser.genderChanged) {
-        // Allow change from PREFER_NOT_TO_SAY to any other
-      } else if (existingUser.gender !== "PREFER_NOT_TO_SAY") {
-        throw new HttpException(
-          "Gender cannot be changed. It can only be changed once from 'prefer not to say' to another value.",
-          HttpStatus.BAD_REQUEST
-        );
-      } else if (existingUser.genderChanged) {
-        throw new HttpException(
-          "Gender has already been changed once and cannot be changed again",
-          HttpStatus.BAD_REQUEST
-        );
-      }
-    }
+    const genderPatch = this.resolveGenderUpdate(existingUser.gender, data.gender);
 
     // Update user
     const updateData: any = {};
     if (data.username) updateData.username = data.username;
-    if (data.gender) {
-      updateData.gender = data.gender as Gender;
-      updateData.genderChanged = true;
+    if (genderPatch) {
+      updateData.gender = genderPatch.gender;
+      updateData.genderChanged = genderPatch.genderChanged;
     }
     if (data.intent !== undefined) updateData.intent = data.intent;
     if (data.musicPreferenceId !== undefined) updateData.musicPreferenceId = data.musicPreferenceId;

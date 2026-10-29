@@ -275,6 +275,50 @@ export class FriendClientService {
   }
 
   /**
+   * Peers blocked in either direction, keyed by the requested user id.
+   * Empty object on failure so a friend-service blip does not take matching down.
+   */
+  async getBlockedPeerIdsForUsers(userIds: string[]): Promise<Record<string, string[]>> {
+    const ids = [...new Set(userIds.filter((id) => typeof id === "string" && id.length > 0))];
+    if (ids.length === 0) return {};
+    try {
+      const serviceToken = process.env.INTERNAL_SERVICE_TOKEN;
+      if (!serviceToken) {
+        this.logger.warn("INTERNAL_SERVICE_TOKEN not configured, skipping blocked-peer lookup");
+        return {};
+      }
+
+      const response = await fetch(`${this.friendServiceUrl}/internal/friends/blocked-peers`, {
+        method: "POST",
+        headers: {
+          "x-service-token": serviceToken,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ userIds: ids }),
+        signal: AbortSignal.timeout(this.requestTimeoutMs)
+      } as any);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        this.logger.warn(`Failed to get blocked peers: ${errorText}`);
+        return {};
+      }
+
+      const result = await response.json() as { blocks?: Record<string, string[]> };
+      const blocks = result.blocks || {};
+      const out: Record<string, string[]> = {};
+      for (const id of ids) {
+        const peers = Array.isArray(blocks[id]) ? blocks[id] : [];
+        out[id] = peers.filter((peer) => typeof peer === "string" && peer.length > 0);
+      }
+      return out;
+    } catch (error: any) {
+      this.logger.warn(`Error getting blocked peers: ${error?.message || error}`);
+      return {};
+    }
+  }
+
+  /**
    * Record squad invite or outcome in friend inbox (best-effort; logs on failure).
    */
   async postSquadInboxMessage(

@@ -514,6 +514,39 @@ export class FriendService {
   }
 
   /**
+   * Blocked peers for each user, either direction.
+   * Used so matchmaking never pairs two people who blocked each other.
+   */
+  async listBlockedPeerIdsByUser(userIds: string[]): Promise<Record<string, string[]>> {
+    const unique = [...new Set(userIds.filter((id) => typeof id === "string" && id.length > 0))];
+    const result = new Map<string, Set<string>>();
+    for (const id of unique) result.set(id, new Set());
+    if (unique.length === 0) return {};
+
+    const rows = await this.prisma.friendRequest.findMany({
+      where: {
+        status: "BLOCKED",
+        OR: [{ fromUserId: { in: unique } }, { toUserId: { in: unique } }]
+      },
+      select: { fromUserId: true, toUserId: true }
+    });
+
+    const known = new Set(unique);
+    for (const row of rows) {
+      if (known.has(row.fromUserId) && row.toUserId && row.toUserId !== row.fromUserId) {
+        result.get(row.fromUserId)!.add(row.toUserId);
+      }
+      if (known.has(row.toUserId) && row.fromUserId && row.fromUserId !== row.toUserId) {
+        result.get(row.toUserId)!.add(row.fromUserId);
+      }
+    }
+
+    const out: Record<string, string[]> = {};
+    for (const [id, peers] of result) out[id] = [...peers];
+    return out;
+  }
+
+  /**
    * Get friends wall - paginated friends with their profile photos
    * Returns friends with displayPictureUrl for grid display
    */
@@ -1824,11 +1857,23 @@ export class FriendService {
     });
   }
 
-  private emitRealtimeConversationRefresh(userA: string, userB: string, reason: string) {
+  private emitRealtimeConversationRefresh(
+    userA: string,
+    userB: string,
+    reason: string,
+    actorUserId?: string
+  ) {
     // Generic "refresh your lists" hint (keeps client logic simple and robust).
     // Clients can call loadLists + loadNotificationBadge on receipt.
+    // actorUserId is set for block/unblock so each client knows who froze the chat.
+    // Both people keep the thread; only the blocker can unblock.
     try {
-      const data = { reason, at: new Date().toISOString(), users: [userA, userB] };
+      const data = {
+        reason,
+        at: new Date().toISOString(),
+        users: [userA, userB],
+        ...(actorUserId ? { actorUserId } : {})
+      };
       this.realtime.emitToUser(userA, "friend:refresh", data);
       this.realtime.emitToUser(userB, "friend:refresh", data);
     } catch {
@@ -1910,14 +1955,15 @@ export class FriendService {
               friendsBeforeBlock: wereFriends
             }
           });
-        } else if (wereFriends) {
+        } else {
+          // Keep a row so the blocker's chat line can stay frozen instead of vanishing.
           await tx.conversation.create({
             data: {
               userId1: id1,
               userId2: id2,
               section: ConversationSection.INBOX,
-              sectionBeforeBlock: ConversationSection.INBOX,
-              friendsBeforeBlock: true
+              sectionBeforeBlock: wereFriends ? ConversationSection.INBOX : null,
+              friendsBeforeBlock: wereFriends
             }
           });
         }
@@ -1938,7 +1984,7 @@ export class FriendService {
     ]);
 
     this.logger.log(`User ${fromUserId} blocked ${toUserId}`);
-    this.emitRealtimeConversationRefresh(fromUserId, toUserId, "user_blocked");
+    this.emitRealtimeConversationRefresh(fromUserId, toUserId, "user_blocked", fromUserId);
   }
 
   /**
@@ -2047,7 +2093,7 @@ export class FriendService {
     ]);
 
     this.logger.log(`User ${fromUserId} unblocked ${toUserId}`);
-    this.emitRealtimeConversationRefresh(fromUserId, toUserId, "user_unblocked");
+    this.emitRealtimeConversationRefresh(fromUserId, toUserId, "user_unblocked", fromUserId);
   }
 
   // Helper methods
@@ -2558,10 +2604,6 @@ export class FriendService {
     }
 
     const otherUserId = conversation.userId1 === userId ? conversation.userId2 : conversation.userId1;
-
-    if (await this.isBlocked(userId, otherUserId)) {
-      throw new NotFoundException("Conversation not found");
-    }
 
     if (isSystemNotificationUserId(otherUserId)) {
       return this.notificationCampaigns.getSystemThreadMessages(

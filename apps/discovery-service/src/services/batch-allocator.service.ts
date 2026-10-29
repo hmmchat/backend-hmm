@@ -13,6 +13,7 @@ import { CacheService } from "./cache.service.js";
 import { MatchingService } from "./matching.service.js";
 import { SemanticScorerService } from "./semantic-scorer.service.js";
 import { UserClientService } from "./user-client.service.js";
+import { FriendClientService } from "./friend-client.service.js";
 import { HostedEmbeddingAdapter } from "./embedding-adapters/hosted.adapter.js";
 import {
   MATCHING_ALLOCATOR_INTERVAL_MS,
@@ -66,6 +67,7 @@ export class BatchAllocatorService implements OnModuleInit {
     private readonly matching: MatchingService,
     private readonly semanticScorer: SemanticScorerService,
     private readonly userClient: UserClientService,
+    private readonly friendClient: FriendClientService,
     @Optional() private readonly embeddingAdapter?: HostedEmbeddingAdapter
   ) {}
 
@@ -300,6 +302,11 @@ export class BatchAllocatorService implements OnModuleInit {
       ) {
         ensureSet(rc.raincheckedUserId).add(rc.userId);
       }
+    }
+
+    const blockedByUser = await this.friendClient.getBlockedPeerIdsForUsers(userIds);
+    for (const [uid, peers] of Object.entries(blockedByUser)) {
+      for (const peer of peers) ensureSet(uid).add(peer);
     }
 
     const fairnessCounters = await this.getFairnessCounters(userIds);

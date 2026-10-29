@@ -459,8 +459,11 @@ export class DiscoveryService implements OnModuleInit {
       moderatorFaceCardActive: Boolean((userProfileResponse as any).moderatorFaceCardActive)
     };
 
-    // Session-scope raincheck exclusions must apply before honoring existing matches.
-    const raincheckedUserIds = await this.getRaincheckedUserIds(userId, sessionId, storedPreferred);
+    // Rainchecks plus blocks, either direction. A blocked person must not be matched.
+    const raincheckedUserIds = await this.excludeBlockedPeers(
+      userId,
+      await this.getRaincheckedUserIds(userId, sessionId, storedPreferred)
+    );
 
     // Check if user is already matched (batch allocator may have created one)
     const servedExisting = await this.tryServeExistingMatch(
@@ -1934,10 +1937,9 @@ export class DiscoveryService implements OnModuleInit {
       ? await this.locationService.getPreferredCity(args.token)
       : { city: await this.userClient.getPreferredCityById(args.userId) };
     const storedPreferred = cityResponse.city;
-    const raincheckedUserIds = await this.getRaincheckedUserIds(
+    const raincheckedUserIds = await this.excludeBlockedPeers(
       args.userId,
-      args.sessionId,
-      storedPreferred
+      await this.getRaincheckedUserIds(args.userId, args.sessionId, storedPreferred)
     );
 
     const genderFilter = await this.genderFilterService.getCurrentPreference(args.userId);
@@ -2525,8 +2527,11 @@ export class DiscoveryService implements OnModuleInit {
       moderatorFaceCardActive: Boolean((userProfileResponse as any).moderatorFaceCardActive)
     };
 
-    // Session-scope raincheck exclusions must apply before honoring existing matches.
-    const raincheckedUserIds = await this.getRaincheckedUserIds(userId, sessionId, storedPreferred);
+    // Rainchecks plus blocks, either direction. A blocked person must not be matched.
+    const raincheckedUserIds = await this.excludeBlockedPeers(
+      userId,
+      await this.getRaincheckedUserIds(userId, sessionId, storedPreferred)
+    );
 
     const servedExisting = await this.tryServeExistingMatch(
       userId,
@@ -3463,6 +3468,19 @@ export class DiscoveryService implements OnModuleInit {
     } catch (error: any) {
       this.logger.warn(`Failed to exclude connected people from offline cards: ${error?.message || error}`);
       return [];
+    }
+  }
+
+  /** Union raincheck/session excludes with peers blocked in either direction. */
+  private async excludeBlockedPeers(userId: string, excluded: string[]): Promise<string[]> {
+    try {
+      const blocks = await this.friendClient.getBlockedPeerIdsForUsers([userId]);
+      const blocked = blocks[userId] || [];
+      if (blocked.length === 0) return excluded;
+      return [...new Set([...excluded, ...blocked])];
+    } catch (error: any) {
+      this.logger.warn(`Failed to exclude blocked peers from matchmaking: ${error?.message || error}`);
+      return excluded;
     }
   }
 

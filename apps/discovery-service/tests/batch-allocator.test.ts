@@ -9,6 +9,7 @@ function makeAllocator(): BatchAllocatorService {
     { get: async () => null, set: async () => {}, del: async () => {} } as any,
     {} as any,
     {} as any,
+    {} as any,
     {} as any
   );
 }

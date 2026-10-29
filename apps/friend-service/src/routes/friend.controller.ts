@@ -1249,6 +1249,42 @@ export class FriendController {
   }
 
   /**
+   * Blocked peers either direction, for matchmaking exclusion.
+   * POST /internal/friends/blocked-peers  { userIds: string[] }
+   */
+  @Post("internal/friends/blocked-peers")
+  async getBlockedPeersInternal(
+    @Headers("x-service-token") serviceToken: string | undefined,
+    @Body() body: unknown
+  ) {
+    const isTestMode = process.env.NODE_ENV === "test" || process.env.TEST_MODE === "true";
+    const expectedToken = process.env.INTERNAL_SERVICE_TOKEN;
+
+    if (!isTestMode) {
+      if (!expectedToken) {
+        throw new HttpException(
+          "Internal service token not configured",
+          HttpStatus.INTERNAL_SERVER_ERROR
+        );
+      }
+
+      if (serviceToken !== expectedToken) {
+        throw new HttpException(
+          "Invalid service token",
+          HttpStatus.UNAUTHORIZED
+        );
+      }
+    }
+
+    const { userIds } = z.object({
+      userIds: z.array(z.string().min(1)).max(500)
+    }).parse(body);
+
+    const blocks = await this.friendService.listBlockedPeerIdsByUser(userIds);
+    return { blocks };
+  }
+
+  /**
    * Record squad invite / outcome in friend inbox (internal — discovery-service)
    * POST /internal/messages/squad
    */

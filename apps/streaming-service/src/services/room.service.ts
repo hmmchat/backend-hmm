@@ -1247,8 +1247,10 @@ export class RoomService {
   }
 
   /**
-   * True when this user was kicked/removed from the session and must not rejoin
-   * via pull-stranger, waitlist, or addParticipant. Voluntary leavers are allowed back.
+   * True when this user was kicked/removed from the session and must not walk
+   * back into the call via pull-stranger or addParticipant.
+   * The waitlist is open: they can ask again, and the host can accept them.
+   * Voluntary leavers are allowed back on every path.
    * Uses participant.status === "kicked" plus historical participant_kicked events
    * (older kicks were stored as status "left").
    */
@@ -2439,10 +2441,6 @@ export class RoomService {
       throw new BadRequestException("You're already in this Beam.");
     }
 
-    if (await this.wasForceRemovedFromSession(session.id, userId)) {
-      throw new BadRequestException("You can't rejoin this Beam.");
-    }
-
     const existingWaitlist = await this.prisma.callWaitlist.findUnique({
       where: {
         sessionId_userId: {
@@ -2669,14 +2667,6 @@ export class RoomService {
         }
       }
     });
-    if (
-      existingAnyParticipant &&
-      existingAnyParticipant.status !== "active" &&
-      await this.wasForceRemovedFromSession(session.id, targetUserId)
-    ) {
-      const name = await this.personName(targetUserId);
-      throw new BadRequestException(`${name} can't rejoin this Beam.`);
-    }
 
     await this.prisma.$transaction(async (tx) => {
       await tx.callWaitlist.update({

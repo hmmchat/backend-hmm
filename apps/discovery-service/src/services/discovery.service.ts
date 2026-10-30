@@ -2066,7 +2066,9 @@ export class DiscoveryService implements OnModuleInit {
       const catalogAnywhere = catalog.find((row) => row.value === PREFERRED_CITY_ANYWHERE_IN_INDIA);
       candidates.push({
         value: PREFERRED_CITY_ANYWHERE_IN_INDIA,
-        label: catalogAnywhere?.label || "Anywhere in India",
+        label: !catalogAnywhere?.label || catalogAnywhere.label === "Anywhere in India" || catalogAnywhere.label === "Anywhere"
+          ? "India"
+          : catalogAnywhere.label,
         intent: (catalogAnywhere?.intent || "").trim() || "Anywhere in India",
         faceCardImageUrl: catalogAnywhere?.faceCardImageUrl ?? null,
         brands: catalogAnywhere?.brands || [],
@@ -2096,7 +2098,10 @@ export class DiscoveryService implements OnModuleInit {
             );
         return {
           city: row.value,
-          label: row.label || row.value,
+          label:
+            row.value === PREFERRED_CITY_ANYWHERE_IN_INDIA || row.label === "Anywhere in India" || row.label === "Anywhere"
+              ? "India"
+              : (row.label || row.value),
           intent:
             (row.intent || "").trim() ||
             (row.value === PREFERRED_CITY_ANYWHERE_IN_INDIA ? "Anywhere in India" : ""),

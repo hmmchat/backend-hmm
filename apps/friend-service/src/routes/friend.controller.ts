@@ -595,8 +595,10 @@ export class FriendController {
   ) {
     const token = this.getTokenFromHeader(authz);
     const userId = await this.verifyTokenAndGetUserId(token!);
-    // Auto-mark INBOX section as seen
-    await this.friendService.markSectionAsSeen(userId, "INBOX");
+    // Background refresh passes markSeen=0 so looking up Inbox does not clear badges the user has not opened.
+    if (query?.markSeen !== "0" && query?.markSeen !== "false") {
+      await this.friendService.markSectionAsSeen(userId, "INBOX");
+    }
     const parsed = ConversationQuerySchema.parse(query);
     return this.friendService.getInboxConversations(
       userId,
@@ -618,8 +620,9 @@ export class FriendController {
   ) {
     const token = this.getTokenFromHeader(authz);
     const userId = await this.verifyTokenAndGetUserId(token!);
-    // Auto-mark RECEIVED_REQUESTS section as seen
-    await this.friendService.markSectionAsSeen(userId, "RECEIVED_REQUESTS");
+    if (query?.markSeen !== "0" && query?.markSeen !== "false") {
+      await this.friendService.markSectionAsSeen(userId, "RECEIVED_REQUESTS");
+    }
     const parsed = ConversationQuerySchema.parse(query);
     return this.friendService.getReceivedRequestsConversations(
       userId,
@@ -641,8 +644,9 @@ export class FriendController {
   ) {
     const token = this.getTokenFromHeader(authz);
     const userId = await this.verifyTokenAndGetUserId(token!);
-    // Auto-mark SENT_REQUESTS section as seen
-    await this.friendService.markSectionAsSeen(userId, "SENT_REQUESTS");
+    if (query?.markSeen !== "0" && query?.markSeen !== "false") {
+      await this.friendService.markSectionAsSeen(userId, "SENT_REQUESTS");
+    }
     const parsed = ConversationQuerySchema.parse(query);
     return this.friendService.getSentRequestsConversations(
       userId,

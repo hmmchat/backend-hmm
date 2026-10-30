@@ -1159,6 +1159,9 @@ export class FriendService {
     });
     // Realtime emit (best-effort)
     this.emitRealtimeMessageUpdate(fromUserId, toUserId, result.messageId).catch(() => undefined);
+    if (result.promotedToInbox) {
+      this.emitRealtimeConversationRefresh(fromUserId, toUserId, "promoted_to_inbox");
+    }
     return result;
   }
 
@@ -1489,6 +1492,9 @@ export class FriendService {
       };
     });
     this.emitRealtimeMessageUpdate(fromUserId, toUserId, result.messageId).catch(() => undefined);
+    if (result.promotedToInbox) {
+      this.emitRealtimeConversationRefresh(fromUserId, toUserId, "promoted_to_inbox");
+    }
     return result;
   }
 

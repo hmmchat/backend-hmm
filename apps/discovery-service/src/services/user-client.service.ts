@@ -61,6 +61,7 @@ export interface DiscoveryUser {
   kycStatus?: "UNVERIFIED" | "VERIFIED" | "PENDING_REVIEW" | "REVOKED" | "EXPIRED";
   kycRiskScore?: number;
   kycExpiresAt?: string | null;
+  criticalReviewActive?: boolean;
   zodiac?: { id: string; name: string; imageUrl: string } | null;
 }
 
@@ -355,6 +356,7 @@ export class UserClientService implements OnModuleInit {
       onlyModerators?: boolean;
       moderatorVisibility?: "show_as_mod" | "show_as_user" | "exclude_disguised";
       onlyCriticalReview?: boolean;
+      excludeCriticalReview?: boolean;
       excludeKycStatuses?: ("UNVERIFIED" | "VERIFIED" | "PENDING_REVIEW" | "REVOKED" | "EXPIRED")[];
       moderatorWorkQueue?: boolean;
       acceptGalleryPhoto?: boolean;
@@ -407,6 +409,7 @@ export class UserClientService implements OnModuleInit {
       onlyModerators?: boolean;
       moderatorVisibility?: "show_as_mod" | "show_as_user" | "exclude_disguised";
       onlyCriticalReview?: boolean;
+      excludeCriticalReview?: boolean;
       excludeKycStatuses?: ("UNVERIFIED" | "VERIFIED" | "PENDING_REVIEW" | "REVOKED" | "EXPIRED")[];
       moderatorWorkQueue?: boolean;
       acceptGalleryPhoto?: boolean;

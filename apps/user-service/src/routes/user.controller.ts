@@ -726,6 +726,7 @@ export class UserController {
       onlyModerators,
       moderatorVisibility,
       onlyCriticalReview,
+      excludeCriticalReview,
       excludeKycStatuses,
       moderatorWorkQueue,
       acceptGalleryPhoto
@@ -779,6 +780,7 @@ export class UserController {
       onlyModerators: onlyModerators === undefined ? undefined : Boolean(onlyModerators),
       moderatorVisibility,
       onlyCriticalReview: onlyCriticalReview === undefined ? undefined : Boolean(onlyCriticalReview),
+      excludeCriticalReview: excludeCriticalReview === true,
       excludeKycStatuses: Array.isArray(excludeKycStatuses)
         ? excludeKycStatuses.filter((v: string) => ["UNVERIFIED", "VERIFIED", "PENDING_REVIEW", "REVOKED", "EXPIRED"].includes(v)) as any[]
         : undefined,

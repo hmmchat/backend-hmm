@@ -29,6 +29,7 @@ import {
   isBatchPrimaryForCity
 } from "../config/matching-admin.config.js";
 import { DISCOVERY_MATCHMAKING_STATUSES } from "../config/discovery-pool-filters.js";
+import { canPairForMatchmaking } from "../config/report-pool.config.js";
 import {
   SESSION_DISCOVERY_POOL_ANYWHERE,
   sameDiscoveryPoolCity
@@ -43,6 +44,9 @@ interface AllocatorUser {
   semantic: SemanticProfile | null;
   fairnessCycles: number;
   raincheckedUserIds: Set<string>;
+  criticalReviewActive: boolean;
+  isModerator: boolean;
+  moderatorFaceCardActive: boolean;
 }
 
 interface PairResult {
@@ -325,7 +329,10 @@ export class BatchAllocatorService implements OnModuleInit {
         city: cityByUser.get(userId) ?? u.preferredCity ?? null,
         semantic: this.buildSemanticProfile(u),
         fairnessCycles: fairnessCounters.get(userId) || 0,
-        raincheckedUserIds: raincheckMap.get(userId) || new Set()
+        raincheckedUserIds: raincheckMap.get(userId) || new Set(),
+        criticalReviewActive: Boolean(u.criticalReviewActive),
+        isModerator: Boolean(u.isModerator),
+        moderatorFaceCardActive: Boolean(u.moderatorFaceCardActive)
       });
 
       // Increment fairness wait counter for this cycle
@@ -395,6 +402,11 @@ export class BatchAllocatorService implements OnModuleInit {
         const u2 = users[j];
 
         if (u1.raincheckedUserIds.has(u2.userId) || u2.raincheckedUserIds.has(u1.userId)) {
+          continue;
+        }
+
+        // Critical review only meets a hidden moderator. Everyone else stays out of that pair.
+        if (!canPairForMatchmaking(u1, u2)) {
           continue;
         }
 

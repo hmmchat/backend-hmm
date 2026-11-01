@@ -266,7 +266,7 @@ export class MatchingService {
     matchedUserIds?: Set<string>, // Accept as parameter to avoid N+1 query
     requestingUser?: UserProfile
   ): Promise<DiscoveryUser[]> {
-    const { isShowAsUserModerator, isShowAsModerator } = await import("../config/report-pool.config.js");
+    const { isShowAsUserModerator, isShowAsModerator, keepDiscoveryCandidate } = await import("../config/report-pool.config.js");
     const { buildReportAwareDiscoveryFilters, applyReportPoolBucket } = await import(
       "../config/discovery-pool-filters.js"
     );
@@ -286,7 +286,6 @@ export class MatchingService {
       requester: requestingUser as any,
       prioritizeKyc: priorityEnabled
     });
-
     const allUsers = await this.userClient.getUsersForDiscoveryById("", discoveryFilters as any);
 
     console.log(`[DEBUG] getPoolUsers - allUsers from user-service: ${allUsers.length} mode=${poolMode.mode}`);
@@ -301,6 +300,9 @@ export class MatchingService {
     console.log(`[DEBUG] getPoolUsers - matchedUserIds count: ${matched.size}`);
     
     const filteredUsers = allUsers.filter(user => {
+      if (!keepDiscoveryCandidate(user, requestingUser as any)) {
+        return false;
+      }
       // Exclude if user is in exclude list
       if (excludeUserIds.includes(user.id)) {
         return false;

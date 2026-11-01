@@ -2671,6 +2671,7 @@ export class UserService implements OnModuleInit {
         AND "preferredCity" != ''
         AND "preferredCity" <> ${PREFERRED_CITY_ANYWHERE_IN_INDIA}
         AND "profileCompleted" = true
+        AND "criticalReviewActive" = false
         AND status IN ('AVAILABLE', 'IN_SQUAD_AVAILABLE', 'IN_BROADCAST_AVAILABLE')
       GROUP BY "preferredCity"
       ORDER BY count DESC
@@ -2694,6 +2695,7 @@ export class UserService implements OnModuleInit {
       FROM users
       WHERE ("preferredCity" IS NULL OR "preferredCity" = ${PREFERRED_CITY_ANYWHERE_IN_INDIA})
         AND "profileCompleted" = true
+        AND "criticalReviewActive" = false
         AND status IN ('AVAILABLE', 'IN_SQUAD_AVAILABLE', 'IN_BROADCAST_AVAILABLE')
     `;
     return Number(result[0]?.count || 0);
@@ -2730,6 +2732,8 @@ export class UserService implements OnModuleInit {
     moderatorVisibility?: "show_as_mod" | "show_as_user" | "exclude_disguised";
     /** When true, only users currently in critical review (for disguised mods matching out). */
     onlyCriticalReview?: boolean;
+    /** When true, people in critical review stay out of this deck. */
+    excludeCriticalReview?: boolean;
     excludeKycStatuses?: KycStatus[];
     /**
      * Show-as-moderator work queue: needs-KYC ∪ T1–T3 report score, excluding critical-review
@@ -2779,6 +2783,8 @@ export class UserService implements OnModuleInit {
 
     if (filters.onlyCriticalReview === true) {
       where.criticalReviewActive = true;
+    } else if (filters.excludeCriticalReview === true) {
+      where.criticalReviewActive = false;
     }
 
     if (filters.onlyModerators === true) {

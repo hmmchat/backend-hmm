@@ -55,13 +55,16 @@ export function buildReportAwareDiscoveryFilters(args: {
     statuses: args.statuses,
     genders: args.genders,
     excludeUserIds: args.excludeUserIds,
-    limit: args.limit
+    limit: args.limit,
+    // Ordinary decks never include someone in critical review.
+    // Hidden moderators opt into that pool with onlyCriticalReview instead.
+    excludeCriticalReview: true
   };
 
   if (requesterIsDisguisedMod) {
     return {
       poolMode,
-      filters: { ...base, onlyCriticalReview: true }
+      filters: { ...base, onlyCriticalReview: true, excludeCriticalReview: undefined }
     };
   }
   // Show-as-moderator: FCFS work queue — needs-KYC ∪ T1–T3 only (no general verified users).

@@ -65,3 +65,16 @@ export function computeReportLayer(reportCount: number, cfg: DiscoveryReportLaye
   if (c < cfg.ban) return 3;
   return 3;
 }
+
+/**
+ * Layer painted on a facecard. Critical review always uses the strongest red glow,
+ * even when the report score itself is still below that tier.
+ */
+export function cardReportLayer(
+  reportCount: number,
+  cfg: DiscoveryReportLayerConfig,
+  criticalReviewActive?: boolean | null
+): 0 | 1 | 2 | 3 {
+  if (criticalReviewActive) return 3;
+  return computeReportLayer(reportCount, cfg);
+}

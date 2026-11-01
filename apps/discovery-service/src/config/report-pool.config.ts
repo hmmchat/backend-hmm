@@ -56,11 +56,58 @@ export function isShowAsModerator(user: {
   return Boolean(user.isModerator && user.moderatorFaceCardActive);
 }
 
-export function isShowAsUserModerator(user: {
+export function isShowAsUserModerator(user?: {
   isModerator?: boolean | null;
   moderatorFaceCardActive?: boolean | null;
-}): boolean {
-  return Boolean(user.isModerator && !user.moderatorFaceCardActive);
+} | null): boolean {
+  return Boolean(user?.isModerator && !user.moderatorFaceCardActive);
+}
+
+type DiscoveryPoolPerson = {
+  criticalReviewActive?: boolean | null;
+  reportModeratorCardsOnly?: boolean | null;
+  reportCount?: number | null;
+  isModerator?: boolean | null;
+  moderatorFaceCardActive?: boolean | null;
+};
+
+/**
+ * A critical-review user only meets a hidden moderator, who looks like a normal profile.
+ * A hidden moderator only meets someone in critical review.
+ * Neither appears in the ordinary pool.
+ */
+export function canPairForMatchmaking(a: DiscoveryPoolPerson, b: DiscoveryPoolPerson): boolean {
+  const aCritical = Boolean(a.criticalReviewActive);
+  const bCritical = Boolean(b.criticalReviewActive);
+  const aHidden = isShowAsUserModerator(a);
+  const bHidden = isShowAsUserModerator(b);
+  if (aCritical || bCritical || aHidden || bHidden) {
+    return (aCritical && bHidden && !bCritical) || (bCritical && aHidden && !aCritical);
+  }
+  return true;
+}
+
+/** Drop candidates this requester must not be shown. */
+export function keepDiscoveryCandidate(
+  candidate: DiscoveryPoolPerson,
+  requester?: DiscoveryPoolPerson | null
+): boolean {
+  if (isShowAsUserModerator(requester)) {
+    return candidate.criticalReviewActive === true;
+  }
+  // A visible moderator stays on the work queue. Report flags do not turn that into the hidden-mod pool.
+  if (!isShowAsModerator(requester)) {
+    const poolMode = resolveReportPoolMode(requester);
+    if (poolMode.mode === "critical_disguise") {
+      return isShowAsUserModerator(candidate);
+    }
+    if (poolMode.mode === "post_ban_show_as_mod") {
+      return isShowAsModerator(candidate);
+    }
+  }
+  if (isShowAsUserModerator(candidate)) return false;
+  if (candidate.criticalReviewActive) return false;
+  return true;
 }
 
 export function reportLayerThresholdsPayload(

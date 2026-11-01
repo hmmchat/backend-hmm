@@ -31,7 +31,7 @@ import {
 import { DISCOVERY_POOL_LIMIT } from "../config/limits.config.js";
 import { DISCOVERY_MATCHMAKING_STATUSES } from "../config/discovery-pool-filters.js";
 import {
-  computeReportLayer,
+  cardReportLayer,
   getDiscoveryReportLayerConfig
 } from "../config/report-layers.config.js";
 import { resolveRaincheckPartnerStatus } from "../status/status-rules.js";
@@ -756,8 +756,10 @@ export class DiscoveryService implements OnModuleInit {
       requester: requesterProfile as any,
       prioritizeKyc: priorityEnabled
     });
+    const { keepDiscoveryCandidate } = await import("../config/report-pool.config.js");
 
-    const users = await this.userClient.getUsersForDiscovery(token, filters as any);
+    const users = (await this.userClient.getUsersForDiscovery(token, filters as any))
+      .filter((user) => keepDiscoveryCandidate(user, requesterProfile as any));
     const locallyEligibleUsers = applyReportPoolBucket(users, poolMode);
 
     const sessionEligibleUsers = await this.discoverySessionService.filterSoloPoolCandidates(locallyEligibleUsers);
@@ -828,6 +830,7 @@ export class DiscoveryService implements OnModuleInit {
       kycRiskScore: profile.kycRiskScore || 0,
       kycExpiresAt: profile.kycExpiresAt || null,
       moderatorFaceCardActive: Boolean(profile.moderatorFaceCardActive),
+      criticalReviewActive: Boolean(profile.criticalReviewActive),
       zodiac: profile.zodiac?.id
         ? {
             id: profile.zodiac.id,
@@ -1391,7 +1394,7 @@ export class DiscoveryService implements OnModuleInit {
 
     const layerCfg = getDiscoveryReportLayerConfig();
     const rc = user.reportCount || 0;
-    const reportLayer = computeReportLayer(rc, layerCfg);
+    const reportLayer = cardReportLayer(rc, layerCfg, user.criticalReviewActive);
 
     // Calculate match explanation if currentUser is provided
     let matchExplanation: Card["matchExplanation"] | undefined;
@@ -2893,11 +2896,13 @@ export class DiscoveryService implements OnModuleInit {
       requester: requesterProfile as any,
       prioritizeKyc: priorityEnabled
     });
+    const { keepDiscoveryCandidate } = await import("../config/report-pool.config.js");
 
     // Call user service discovery endpoint directly (will need to modify to accept userId)
     // For now, we'll use the existing method but with a workaround
     const users = applyReportPoolBucket(
-      await this.userClient.getUsersForDiscoveryById(userId, filters as any),
+      (await this.userClient.getUsersForDiscoveryById(userId, filters as any))
+        .filter((user) => keepDiscoveryCandidate(user, requesterProfile as any)),
       poolMode
     );
 
@@ -3211,6 +3216,11 @@ export class DiscoveryService implements OnModuleInit {
     // Get current user profile
     const userProfileResponse = await this.userClient.getUserFullProfile(token);
     const userId = userProfileResponse.id;
+
+    // Critical review stays invisible. Offline cards would show real people, so this deck stays empty.
+    if (Boolean((userProfileResponse as any).criticalReviewActive)) {
+      return { card: null, exhausted: true };
+    }
 
     const cityResponse = await this.locationService.getPreferredCity(token);
     const storedPreferred = cityResponse.city;
@@ -3613,6 +3623,9 @@ export class DiscoveryService implements OnModuleInit {
   ): Promise<CardResponse> {
     // Get current user profile directly by userId
     const userProfileResponse = await this.userClient.getUserFullProfileById(userId);
+    if (Boolean((userProfileResponse as any).criticalReviewActive)) {
+      return { card: null, exhausted: true };
+    }
 
     const storedPreferred = await this.userClient.getPreferredCityById(userId);
     const offlineSessionId = this.toOfflineSessionId(sessionId);
@@ -4764,6 +4777,34 @@ export class DiscoveryService implements OnModuleInit {
     }
 
     const matchedUser = await this.userClient.getUserFullProfileById(matchedUserId);
+
+    const { canPairForMatchmaking } = await import("../config/report-pool.config.js");
+    const pairAllowed = canPairForMatchmaking(
+      {
+        criticalReviewActive: Boolean((userProfileResponse as any).criticalReviewActive),
+        isModerator: Boolean((userProfileResponse as any).isModerator),
+        moderatorFaceCardActive: Boolean((userProfileResponse as any).moderatorFaceCardActive)
+      },
+      {
+        criticalReviewActive: Boolean((matchedUser as any).criticalReviewActive),
+        isModerator: Boolean((matchedUser as any).isModerator),
+        moderatorFaceCardActive: Boolean((matchedUser as any).moderatorFaceCardActive)
+      }
+    );
+    if (!pairAllowed) {
+      await this.matchingService.removeMatchAcceptances(existingMatch.user1Id, existingMatch.user2Id);
+      await this.matchingService.removeMatch(existingMatch.user1Id, existingMatch.user2Id);
+      for (const id of [userId, matchedUserId]) {
+        const profile = id === userId ? userProfileResponse : matchedUser;
+        if (String(profile?.status || "") !== "MATCHED") continue;
+        const hasSession = await this.discoverySessionService.hasActiveSession(id);
+        await this.matchingService.updateUserStatus(id, hasSession ? "AVAILABLE" : "ONLINE");
+        if (!hasSession) {
+          await this.discoverySessionService.clearSession(id);
+        }
+      }
+      return null;
+    }
 
     // Always serve an active match to both sides. Preferred cities can differ after a
     // LOCATION handoff (session pool override); city scoping applies only when creating matches.

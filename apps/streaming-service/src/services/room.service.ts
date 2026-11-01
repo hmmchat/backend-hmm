@@ -1,4 +1,5 @@
 import { Injectable, Logger, NotFoundException, BadRequestException } from "@nestjs/common";
+import { Prisma } from "../../node_modules/.prisma/client/index.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { MediasoupService } from "./mediasoup.service.js";
 import { DiscoveryClientService } from "./discovery-client.service.js";
@@ -1084,38 +1085,65 @@ export class RoomService {
       throw new BadRequestException(`${name} can't rejoin this call.`);
     }
 
-    if (existingAnyParticipant) {
-      // New stay: joinedAt must move forward so host succession does not
-      // treat a returning participant as the oldest person in the call.
-      await this.prisma.callParticipant.update({
-        where: { id: existingAnyParticipant.id },
-        data: {
-          role: "PARTICIPANT",
-          status: "active",
-          joinedAt: new Date(),
-          leftAt: null,
-          previousStatus
-        }
-      });
-    } else {
-      await this.prisma.callParticipant.create({
-        data: {
+    // Recount under a lock. The check above can both succeed for two joins
+    // that read "one seat left" before either insert commits.
+    await this.prisma.$transaction(async (tx) => {
+      const activeCount = await this.countActiveParticipantsForUpdate(tx, session.id);
+      const alreadyActive = await tx.callParticipant.findFirst({
+        where: {
           sessionId: session.id,
           userId,
-          role: "PARTICIPANT",
           status: "active",
-          previousStatus
+          leftAt: null
         }
       });
-    }
-
-    await this.prisma.callEvent.create({
-      data: {
-        sessionId: session.id,
-        eventType: "participant_joined",
-        userId,
-        metadata: JSON.stringify({ roomId })
+      if (alreadyActive) {
+        throw new BadRequestException(`${name} is already in this call.`);
       }
+      if (activeCount >= this.maxParticipants) {
+        throw new BadRequestException("This call is full right now.");
+      }
+
+      const seat = await tx.callParticipant.findUnique({
+        where: {
+          sessionId_userId: {
+            sessionId: session.id,
+            userId
+          }
+        }
+      });
+
+      if (seat) {
+        await tx.callParticipant.update({
+          where: { id: seat.id },
+          data: {
+            role: "PARTICIPANT",
+            status: "active",
+            joinedAt: new Date(),
+            leftAt: null,
+            previousStatus
+          }
+        });
+      } else {
+        await tx.callParticipant.create({
+          data: {
+            sessionId: session.id,
+            userId,
+            role: "PARTICIPANT",
+            status: "active",
+            previousStatus
+          }
+        });
+      }
+
+      await tx.callEvent.create({
+        data: {
+          sessionId: session.id,
+          eventType: "participant_joined",
+          userId,
+          metadata: JSON.stringify({ roomId })
+        }
+      });
     });
 
     // Mystery Beam Box: lifetime unique peer edges (non-blocking)
@@ -2070,8 +2098,9 @@ export class RoomService {
   /**
    * Join room via pull stranger (one-way acceptance)
    * C accepts A's card → C joins room directly (no match record needed)
-   * Uses transaction with Serializable isolation to prevent race conditions
-   * (e.g., C sees A and E sees B, both accept simultaneously - only one succeeds)
+   * Capacity is decided under a row lock on the session, after the status
+   * checks. A serializable snapshot would still count people who joined
+   * while those checks were in flight.
    */
   async joinViaPullStranger(
     roomId: string,
@@ -2240,9 +2269,28 @@ export class RoomService {
 
       // Add joining user to room (reactivate a voluntary-leave row if one exists).
       // Refresh joinedAt so a returning participant is not treated as the oldest.
-      if (previousParticipant) {
+      // Lock first so a waitlist accept that committed during the status checks
+      // is included in this count.
+      const activeCount = await this.countActiveParticipantsForUpdate(tx, session.id);
+      if (activeCount >= this.maxParticipants) {
+        throw new BadRequestException("This call is full right now.");
+      }
+      const seat = await tx.callParticipant.findUnique({
+        where: {
+          sessionId_userId: {
+            sessionId: session.id,
+            userId: joiningUserId
+          }
+        }
+      });
+      if (seat?.status === "active" && seat.leftAt == null) {
+        const name = await this.personName(joiningUserId);
+        throw new BadRequestException(`${name} is already in this call.`);
+      }
+
+      if (seat) {
         await tx.callParticipant.update({
-          where: { id: previousParticipant.id },
+          where: { id: seat.id },
           data: {
             role: "PARTICIPANT",
             status: "active",
@@ -2319,7 +2367,7 @@ export class RoomService {
       this.clearHotReadCaches(roomId, allParticipantUserIds);
       return { roomId, sessionId: session.id, joiningUserId };
     }, {
-      isolationLevel: "Serializable", // Highest isolation to prevent concurrent joins (race condition protection)
+      isolationLevel: "ReadCommitted",
       timeout: 10000 // 10 seconds timeout
     });
 
@@ -2609,6 +2657,25 @@ export class RoomService {
   }
 
   /**
+   * Lock the session, then count active people. Callers must insert only
+   * after this returns. Two joins that each read the count first can both
+   * pass a "one seat left" check and land a fifth person in the call.
+   */
+  private async countActiveParticipantsForUpdate(
+    tx: Prisma.TransactionClient,
+    sessionId: string
+  ): Promise<number> {
+    await tx.$queryRaw`SELECT id FROM call_sessions WHERE id = ${sessionId} FOR UPDATE`;
+    return tx.callParticipant.count({
+      where: {
+        sessionId,
+        status: "active",
+        leftAt: null
+      }
+    });
+  }
+
+  /**
    * Accept user from waitlist (host adds viewer to call)
    * Reuses addParticipant logic
    */
@@ -2620,15 +2687,7 @@ export class RoomService {
     }
 
     const session = await this.prisma.callSession.findUnique({
-      where: { roomId },
-      include: {
-        participants: {
-          where: {
-            status: "active",
-            leftAt: null
-          }
-        }
-      }
+      where: { roomId }
     });
 
     if (!session) {
@@ -2649,26 +2708,44 @@ export class RoomService {
       throw new BadRequestException(`${name} isn't waiting to join.`);
     }
 
-    if (session.participants.length >= this.maxParticipants) {
-      throw new BadRequestException("This Beam is full right now.");
-    }
-
-    const existingParticipant = session.participants.find(p => p.userId === targetUserId);
-    if (existingParticipant) {
-      const name = await this.personName(targetUserId);
-      throw new BadRequestException(`${name} is already in this Beam.`);
-    }
-
-    const existingAnyParticipant = await this.prisma.callParticipant.findUnique({
-      where: {
-        sessionId_userId: {
-          sessionId: session.id,
-          userId: targetUserId
-        }
-      }
-    });
+    const targetName = await this.personName(targetUserId);
 
     await this.prisma.$transaction(async (tx) => {
+      const activeCount = await this.countActiveParticipantsForUpdate(tx, session.id);
+      const pending = await tx.callWaitlist.findFirst({
+        where: {
+          id: waitlistEntry.id,
+          status: "pending"
+        }
+      });
+      if (!pending) {
+        throw new BadRequestException(`${targetName} isn't waiting to join.`);
+      }
+
+      const alreadyActive = await tx.callParticipant.findFirst({
+        where: {
+          sessionId: session.id,
+          userId: targetUserId,
+          status: "active",
+          leftAt: null
+        }
+      });
+      if (alreadyActive) {
+        throw new BadRequestException(`${targetName} is already in this Beam.`);
+      }
+      if (activeCount >= this.maxParticipants) {
+        throw new BadRequestException("This Beam is full right now.");
+      }
+
+      const existingAnyParticipant = await tx.callParticipant.findUnique({
+        where: {
+          sessionId_userId: {
+            sessionId: session.id,
+            userId: targetUserId
+          }
+        }
+      });
+
       await tx.callWaitlist.update({
         where: { id: waitlistEntry.id },
         data: { status: "accepted" }

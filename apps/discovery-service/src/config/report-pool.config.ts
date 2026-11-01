@@ -49,11 +49,11 @@ export function resolveReportPoolMode(user?: {
   return { mode: "score_mix", modRatio, reportLayer: layer };
 }
 
-export function isShowAsModerator(user: {
+export function isShowAsModerator(user?: {
   isModerator?: boolean | null;
   moderatorFaceCardActive?: boolean | null;
-}): boolean {
-  return Boolean(user.isModerator && user.moderatorFaceCardActive);
+} | null): boolean {
+  return Boolean(user?.isModerator && user.moderatorFaceCardActive);
 }
 
 export function isShowAsUserModerator(user?: {

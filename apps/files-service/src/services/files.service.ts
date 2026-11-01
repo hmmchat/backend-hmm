@@ -1,5 +1,5 @@
 import { Injectable, HttpException, HttpStatus, Logger, OnModuleInit } from "@nestjs/common";
-import { deliveryUrlForStorageKey, sanitizeStorageKey } from "@hmm/common";
+import { deliveryUrlForStorageKey, sanitizeStorageKey, storageObjectKey } from "@hmm/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { R2Service } from "./r2.service.js";
 import { ImageProcessingService } from "./image-processing.service.js";
@@ -155,10 +155,13 @@ export class FilesService implements OnModuleInit {
 
     // Sightengine only for end-user profile photos (folder=profile-photos).
     // Dashboard catalog uploads (memes, zodiacs, gifts, …) are not moderated.
-    if (this.moderationClient.shouldModerate(mimeType, folder)) {
+    let moderationPurpose: "display" | "gallery" | undefined;
+    if (this.moderationClient.shouldModerate(mimeType, folder) && this.moderationClient.checksRun()) {
+      const purpose = options.moderationPurpose ?? "gallery";
       try {
         const moderationUrl = await this.r2Service.generatePresignedViewUrl(key, 3600);
-        await this.moderationClient.checkImage(moderationUrl, options.moderationPurpose ?? "gallery");
+        await this.moderationClient.checkImage(moderationUrl, purpose);
+        moderationPurpose = purpose;
       } catch (error) {
         try {
           await this.r2Service.deleteFile(key);
@@ -191,7 +194,8 @@ export class FilesService implements OnModuleInit {
         metadata: {
           originalFilename: filename,
           processed: shouldProcessImage,
-          animationPreserved: preserveBytes
+          animationPreserved: preserveBytes,
+          ...(moderationPurpose ? { moderationPurpose } : {})
         }
       }
     });
@@ -212,6 +216,23 @@ export class FilesService implements OnModuleInit {
     }
 
     return this.toFileInfo(file);
+  }
+
+  /**
+   * Purpose recorded when this upload already passed Sightengine.
+   * Display is stricter than gallery, so a display pass also covers gallery.
+   * Null when the file is unknown or was stored before this was recorded.
+   */
+  async moderationPurposeForUrl(url: string): Promise<"display" | "gallery" | null> {
+    const key = storageObjectKey(url);
+    if (!key) return null;
+    const file = await this.prisma.file.findUnique({
+      where: { key },
+      select: { metadata: true }
+    });
+    const purpose = (file?.metadata as { moderationPurpose?: unknown } | null)?.moderationPurpose;
+    if (purpose === "display" || purpose === "gallery") return purpose;
+    return null;
   }
 
   /**

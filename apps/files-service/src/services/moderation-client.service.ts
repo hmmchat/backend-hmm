@@ -64,6 +64,11 @@ export class ModerationClientService {
     return true;
   }
 
+  /** True when this process will actually call Sightengine. */
+  checksRun(): boolean {
+    return !this.skipModeration;
+  }
+
   /**
    * Validate a public image URL. Throws 400 with user-facing message on rejection.
    *

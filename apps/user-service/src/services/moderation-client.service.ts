@@ -54,6 +54,51 @@ export class ModerationClientService {
    * (Upload-time DP rejection lives in files-service; swap only goes through here —
    * skipping display here is how object gallery photos used to become the DP.)
    */
+  /**
+   * Same rules as checkImage, but skip Sightengine when files-service already
+   * passed this exact photo at a sufficient strictness during upload.
+   * A gallery pass does not cover a display (main photo) check.
+   * Lookup failure falls through to a live check.
+   */
+  async checkImageUnlessAlreadyPassed(
+    imageUrl: string,
+    purpose: ModerationPurpose = "display"
+  ): Promise<boolean> {
+    if (await this.alreadyPassed(imageUrl, purpose)) {
+      return true;
+    }
+    return this.checkImage(imageUrl, purpose);
+  }
+
+  private async alreadyPassed(imageUrl: string, required: ModerationPurpose): Promise<boolean> {
+    const token = process.env.INTERNAL_SERVICE_TOKEN;
+    if (!token || !imageUrl) return false;
+    const files = (process.env.FILES_SERVICE_URL || "http://localhost:3008").replace(/\/$/, "");
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2500);
+    try {
+      const response = await fetch(`${files}/internal/files/moderation-pass`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-service-token": token
+        },
+        body: JSON.stringify({ url: imageUrl }),
+        signal: controller.signal as any
+      });
+      if (!response.ok) return false;
+      const body = (await response.json()) as { purpose?: unknown };
+      const passed = body.purpose;
+      if (passed !== "display" && passed !== "gallery") return false;
+      if (required === "gallery") return true;
+      return passed === "display";
+    } catch {
+      return false;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
   async checkImage(
     imageUrl: string,
     purpose: ModerationPurpose = "display"

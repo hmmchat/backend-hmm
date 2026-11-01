@@ -710,7 +710,7 @@ export class UserService implements OnModuleInit {
       }
 
       // Validate display picture (production-only Sightengine via moderation-service)
-      await this.moderationClient.checkImage(data.displayPictureUrl, "display");
+      await this.moderationClient.checkImageUnlessAlreadyPassed(data.displayPictureUrl, "display");
 
       const zodiac = await this.resolveZodiacFromDob(data.dateOfBirth);
 
@@ -1134,7 +1134,7 @@ export class UserService implements OnModuleInit {
       data.displayPictureUrl &&
       data.displayPictureUrl !== existingUser.displayPictureUrl
     ) {
-      await this.moderationClient.checkImage(data.displayPictureUrl, "display");
+      await this.moderationClient.checkImageUnlessAlreadyPassed(data.displayPictureUrl, "display");
     }
 
     // Update user
@@ -1220,7 +1220,7 @@ export class UserService implements OnModuleInit {
     }
 
     // Gallery slots: groups and objects allowed; still reject NSFW / AI / minors
-    await this.moderationClient.checkImage(data.url, "gallery");
+    await this.moderationClient.checkImageUnlessAlreadyPassed(data.url, "gallery");
 
     // Upsert: Update existing photo or create new one
     const photo = await this.prisma.userPhoto.upsert({
@@ -1304,7 +1304,7 @@ export class UserService implements OnModuleInit {
     // used gallery rules (objects OK); slot 1 requires display rules.
     if (newDpUrl && newDpUrl !== user.displayPictureUrl) {
       try {
-        await this.moderationClient.checkImage(newDpUrl, "display");
+        await this.moderationClient.checkImageUnlessAlreadyPassed(newDpUrl, "display");
       } catch (error) {
         if (error instanceof HttpException && error.getStatus() === HttpStatus.BAD_REQUEST) {
           const response = error.getResponse();
@@ -3088,7 +3088,7 @@ export class UserService implements OnModuleInit {
     }
 
     // Gallery slots: groups and objects allowed; still reject NSFW / AI / minors
-    await this.moderationClient.checkImage(data.url, "gallery");
+    await this.moderationClient.checkImageUnlessAlreadyPassed(data.url, "gallery");
 
     // Check if order is already taken
     const existingPhoto = await this.prisma.userPhoto.findFirst({

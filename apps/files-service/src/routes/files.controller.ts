@@ -372,6 +372,23 @@ export class FilesController {
   }
 
   /**
+   * Whether this stored photo already passed Sightengine, and at which strictness.
+   * POST /internal/files/moderation-pass  { url }
+   */
+  @Post("internal/files/moderation-pass")
+  @HttpCode(HttpStatus.OK)
+  async moderationPass(
+    @Body() body: unknown,
+    @Headers("x-internal-token") internalToken?: string,
+    @Headers("x-service-token") serviceToken?: string
+  ) {
+    this.assertInternalRequest(internalToken, serviceToken);
+    const { url } = z.object({ url: z.string().min(1).max(4000) }).parse(body);
+    const purpose = await this.filesService.moderationPurposeForUrl(url);
+    return { purpose };
+  }
+
+  /**
    * DELETE /internal/users/:userId
    */
   @Delete("internal/users/:userId")

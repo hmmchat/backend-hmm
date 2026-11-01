@@ -850,9 +850,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
           pullStrangerEnded: payload.pullStrangerEnded
         }
       });
-      if (payload.pullStrangerEnded) {
-        await this.broadcastRolesUpdated(payload.roomId);
-      }
+      await this.broadcastRolesUpdated(payload.roomId);
     } catch (err: any) {
       this.logger.warn(
         `[ParticipantJoined] Failed to notify room ${payload.roomId}: ${err?.message || err}`

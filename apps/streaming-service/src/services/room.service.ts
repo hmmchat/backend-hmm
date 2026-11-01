@@ -2747,6 +2747,9 @@ export class RoomService {
     });
 
     await this.emitWaitlistUpdated(roomId, "accepted", targetUserId);
+    // Hosts need a participant tile and a PARTICIPANT role so they can kick
+    // this guest. Do not close an in-progress pull-stranger window.
+    this.emitParticipantJoined(roomId, targetUserId, false);
 
     this.logger.log(
       `User ${targetUserId} accepted from waitlist and added to room ${roomId} as PARTICIPANT by HOST ${hostUserId}. Status: MATCHED → ${statusToSet}`
@@ -2981,9 +2984,9 @@ export class RoomService {
     this.participantJoinedNotifier = notifier;
   }
 
-  private emitParticipantJoined(roomId: string, userId: string): void {
+  private emitParticipantJoined(roomId: string, userId: string, pullStrangerEnded = true): void {
     try {
-      this.participantJoinedNotifier?.({ roomId, userId, pullStrangerEnded: true });
+      this.participantJoinedNotifier?.({ roomId, userId, pullStrangerEnded });
     } catch (err: any) {
       this.logger.warn(
         `participant-joined notify failed for room ${roomId}: ${err?.message || err}`

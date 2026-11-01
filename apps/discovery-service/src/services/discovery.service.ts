@@ -1118,7 +1118,7 @@ export class DiscoveryService implements OnModuleInit {
     }
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 6000);
+    const timer = setTimeout(() => controller.abort(), 1800);
     try {
       const res = await fetch(url, {
         method: "GET",
@@ -1172,40 +1172,41 @@ export class DiscoveryService implements OnModuleInit {
       return user;
     }
 
-    const ordered: string[] = [];
-    if (user.displayPictureUrl) ordered.push(user.displayPictureUrl);
+    const gallery: string[] = [];
+    if (user.displayPictureUrl && !isPlaceholderDisplayPicture(user.displayPictureUrl)) {
+      const display = await this.offlineCardPhotoLoads(user.displayPictureUrl);
+      if (display.ok) return user;
+    }
     for (const photo of [...user.photos].sort((a, b) => a.order - b.order)) {
-      if (photo.url && !ordered.includes(photo.url)) ordered.push(photo.url);
+      if (!photo.url || photo.url === user.displayPictureUrl || gallery.includes(photo.url)) continue;
+      if (isPlaceholderDisplayPicture(photo.url)) continue;
+      gallery.push(photo.url);
     }
 
-    const checks = await Promise.all(
-      ordered.slice(0, 3).map(async (url) => {
-        if (isPlaceholderDisplayPicture(url)) {
-          return { url, ok: false, detail: "placeholder" };
-        }
-        const check = await this.offlineCardPhotoLoads(url);
-        return { url, ok: check.ok, detail: check.detail };
-      })
+    for (const url of gallery.slice(0, 2)) {
+      const check = await this.offlineCardPhotoLoads(url);
+      if (!check.ok) {
+        this.logger.warn(
+          `Skipping offline photo user=${user.id} username=${user.username ?? ""} photo=${check.detail}`
+        );
+        continue;
+      }
+      const rest = gallery.filter((item) => item !== url);
+      return {
+        ...user,
+        displayPictureUrl: url,
+        photos: rest.map((photoUrl, order) => ({
+          id: `${user.id}-photo-${order}`,
+          url: photoUrl,
+          order
+        }))
+      };
+    }
+
+    this.logger.warn(
+      `Skipping offline card user=${user.id} username=${user.username ?? ""} photo=no-loadable-photo`
     );
-    const loadable = checks.filter((c) => c.ok).map((c) => c.url);
-    if (loadable.length === 0) {
-      const why = checks.map((c) => c.detail).join(" | ") || "no-photo";
-      this.logger.warn(
-        `Skipping offline card user=${user.id} username=${user.username ?? ""} photo=${why}`
-      );
-      return null;
-    }
-
-    const [displayPictureUrl, ...rest] = loadable;
-    return {
-      ...user,
-      displayPictureUrl,
-      photos: rest.map((url, order) => ({
-        id: `${user.id}-photo-${order}`,
-        url,
-        order
-      }))
-    };
+    return null;
   }
 
   /**
@@ -1218,15 +1219,10 @@ export class DiscoveryService implements OnModuleInit {
     poolCity: string | null
   ): Promise<Card | null> {
     const ranked = this.rankOfflineCandidates(candidates, currentUser);
-    const batchSize = 4;
-    for (let i = 0; i < ranked.length; i += batchSize) {
-      const prepared = await Promise.all(
-        ranked.slice(i, i + batchSize).map((user) => this.userWithLoadableOfflinePhotos(user))
-      );
-      for (const user of prepared) {
-        if (!user) continue;
-        return this.buildCard(user, poolCity, currentUser);
-      }
+    for (const user of ranked) {
+      const prepared = await this.userWithLoadableOfflinePhotos(user);
+      if (!prepared) continue;
+      return this.buildCard(prepared, poolCity, currentUser);
     }
     if (ranked.length > 0) {
       this.logger.warn(
@@ -3222,25 +3218,22 @@ export class DiscoveryService implements OnModuleInit {
       return { card: null, exhausted: true };
     }
 
-    const cityResponse = await this.locationService.getPreferredCity(token);
+    const profileLat = (userProfileResponse as any).latitude;
+    const profileLng = (userProfileResponse as any).longitude;
+    const [cityResponse, locationResult] = await Promise.all([
+      this.locationService.getPreferredCity(token),
+      profileLat && profileLng
+        ? this.locationService.locateMe(profileLat, profileLng).catch((error) => {
+            console.warn("Failed to get actual city from location:", error);
+            return null;
+          })
+        : Promise.resolve(null)
+    ]);
     const storedPreferred = cityResponse.city;
     const offlineSessionId = this.toOfflineSessionId(sessionId);
     // Offline cards always browse the global pool (not location-specific)
     const poolCity: string | null = null;
-
-    // Get viewer's actual city from location for same-city scoring bonus only
-    let actualCity: string | null = null;
-    if ((userProfileResponse as any).latitude && (userProfileResponse as any).longitude) {
-      try {
-        const locationResult = await this.locationService.locateMe(
-          (userProfileResponse as any).latitude,
-          (userProfileResponse as any).longitude
-        );
-        actualCity = locationResult.city;
-      } catch (error) {
-        console.warn("Failed to get actual city from location:", error);
-      }
-    }
+    const actualCity = locationResult?.city ?? null;
 
     // Convert to UserProfile interface
     const currentUser: UserProfile = {
@@ -3273,7 +3266,8 @@ export class DiscoveryService implements OnModuleInit {
         userId,
         poolCity,
         soloOnly,
-        exclude
+        exclude,
+        userProfileResponse
       );
       if (matchingUsers.length === 0) return { card: null, poolEmpty: true };
       const card = await this.pickShowableOfflineCard(matchingUsers, currentUser, poolCity);
@@ -3304,11 +3298,10 @@ export class DiscoveryService implements OnModuleInit {
     userId: string,
     city: string | null,
     _soloOnly: boolean,
-    excludeUserIds: string[]
+    excludeUserIds: string[],
+    requesterProfile: unknown
   ): Promise<DiscoveryUser[]> {
     const excludeIds = [...excludeUserIds, userId];
-
-    const requesterProfile = await this.userClient.getUserFullProfile(token);
     const { buildReportAwareDiscoveryFilters, applyReportPoolBucket } = await import(
       "../config/discovery-pool-filters.js"
     );

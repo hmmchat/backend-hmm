@@ -85,6 +85,15 @@ function excludeAnd(excludeIds: string[] = []) {
   return Prisma.sql`AND id NOT IN (${Prisma.join(safeExclude.map((id) => Prisma.sql`${id}`))})`;
 }
 
+/**
+ * Homepage "beaming now" is a full users-table count. Share one result so a
+ * burst of homepage loads does not time out the gateway or starve the wallet query.
+ */
+const ACTIVE_MEETINGS_TTL_MS = 20_000;
+let activeMeetingsCachedCount = -1;
+let activeMeetingsCachedAt = 0;
+let activeMeetingsInflight: Promise<number> | null = null;
+
 @Injectable()
 export class UserService implements OnModuleInit {
   async listActiveDiscoveryCityOptions() {
@@ -2706,7 +2715,29 @@ export class UserService implements OnModuleInit {
    * Used for the homepage “beaming now” counter, GET /metrics/active-meetings, and discovery `/metrics/meetings`.
    */
   async getActiveMeetingsCount(): Promise<number> {
-    return this.prisma.user.count();
+    const now = Date.now();
+    const fresh =
+      activeMeetingsCachedCount >= 0 &&
+      now - activeMeetingsCachedAt < ACTIVE_MEETINGS_TTL_MS;
+    if (fresh) return activeMeetingsCachedCount;
+
+    if (!activeMeetingsInflight) {
+      const pending = this.prisma.user
+        .count()
+        .then((count) => {
+          activeMeetingsCachedCount = count;
+          activeMeetingsCachedAt = Date.now();
+          return count;
+        })
+        .finally(() => {
+          activeMeetingsInflight = null;
+        });
+      activeMeetingsInflight = pending;
+      if (activeMeetingsCachedCount >= 0) pending.catch(() => {});
+    }
+
+    if (activeMeetingsCachedCount >= 0) return activeMeetingsCachedCount;
+    return activeMeetingsInflight;
   }
 
   /**

@@ -47,18 +47,20 @@ export class GiftService {
       throw new NotFoundException(`Session for room ${roomId} not found`);
     }
 
-    // Verify both users are in the room (participant or viewer)
-    const fromUserInRoom = session.participants.some(p => p.userId === fromUserId) ||
-                          session.viewers.some(v => v.userId === fromUserId);
-    const toUserInRoom = session.participants.some(p => p.userId === toUserId) ||
-                        session.viewers.some(v => v.userId === toUserId);
+    const isActiveParticipant = (userId: string) =>
+      session.participants.some(
+        (p) => p.userId === userId && p.leftAt == null && p.status !== "left"
+      );
+    const isActiveViewer = (userId: string) =>
+      session.viewers.some((v) => v.userId === userId && v.leftAt == null);
 
-    if (!fromUserInRoom) {
+    // A viewer may send. The recipient has to be on the call right now.
+    if (!isActiveParticipant(fromUserId) && !isActiveViewer(fromUserId)) {
       throw new BadRequestException("Sender is not in the room");
     }
 
-    if (!toUserInRoom) {
-      throw new BadRequestException("Recipient is not in the room");
+    if (!isActiveParticipant(toUserId)) {
+      throw new BadRequestException("Recipient is not in the call");
     }
 
     // Transfer diamonds from sender to receiver (gifts give diamonds)

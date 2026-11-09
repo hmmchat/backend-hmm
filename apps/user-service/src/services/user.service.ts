@@ -5,6 +5,7 @@ import { ProfileCompletionService } from "./profile-completion.service.js";
 import { ModerationClientService } from "./moderation-client.service.js";
 import { BrandService } from "./brand.service.js";
 import { WalletClientService } from "./wallet-client.service.js";
+import { BadgeService } from "./badge.service.js";
 import { AuthClientService } from "./auth-client.service.js";
 import { DiscoveryClientService } from "./discovery-client.service.js";
 import { AccountPurgeClientService } from "./account-purge-client.service.js";
@@ -183,29 +184,14 @@ export class UserService implements OnModuleInit {
     private readonly walletClient: WalletClientService,
     private readonly authClient: AuthClientService,
     private readonly discoveryClient: DiscoveryClientService,
-    private readonly accountPurgeClient: AccountPurgeClientService
+    private readonly accountPurgeClient: AccountPurgeClientService,
+    private readonly badgeService: BadgeService
   ) { }
 
   private async resolveActiveBadgeForUser(userId: string, activeBadgeId: string | null) {
     if (!activeBadgeId) return null;
-    const now = new Date();
     try {
-      const badge = await this.prisma.userBadge.findFirst({
-        where: {
-          userId,
-          OR: [{ id: activeBadgeId }, { giftId: activeBadgeId }],
-          expiresAt: { gt: now }
-        },
-        orderBy: { receivedAt: "desc" }
-      });
-      if (!badge) return null;
-      return {
-        id: badge.id,
-        giftId: badge.giftId,
-        giftName: badge.giftName,
-        giftEmoji: badge.giftEmoji,
-        expiresAt: badge.expiresAt
-      };
+      return await this.badgeService.resolveActiveBadgeForUser(userId, activeBadgeId);
     } catch (error: any) {
       console.warn(`[WARN] Failed to fetch badge for user ${userId}:`, error?.message || error);
       return null;

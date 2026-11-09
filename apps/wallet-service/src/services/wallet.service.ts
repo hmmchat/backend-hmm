@@ -598,7 +598,7 @@ export class WalletService {
       giftId: string;
       amount: number;
       description: string | null;
-      createdAt: Date;
+      createdAt: string;
     }>>(
       Prisma.sql`
         SELECT
@@ -606,7 +606,7 @@ export class WalletService {
           t."giftId",
           t.amount,
           t.description,
-          t."createdAt"
+          to_char(t."createdAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAt"
         FROM transactions t
         WHERE t."walletId" = ${userId}
           AND t.type = 'CREDIT'
@@ -621,7 +621,7 @@ export class WalletService {
       giftId: t.giftId,
       amount: t.amount,
       description: t.description,
-      createdAt: t.createdAt
+      createdAt: new Date(t.createdAt)
     }));
   }
 

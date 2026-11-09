@@ -2155,6 +2155,8 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       const controlKeys = [
         "isGift",
         "isGiftDismissed",
+        "isDareSession",
+        "isDareSessionClose",
         "isDareSync",
         "isDareResponse",
         "isDareClose",

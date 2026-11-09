@@ -79,6 +79,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     unavailableUserIds: string[];
     summoningUserId: string | null;
     icebreaker: string | null;
+    dareSession: Record<string, unknown> | null;
   }>();
   private static readonly MAX_ROOM_OVERLAYS = 8;
 
@@ -527,6 +528,10 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
           await this.handleGetProducers(connectionId, userId, data, ws);
           break;
 
+        case "sync-room-scene":
+          this.sendRoomScene(ws, String(data?.roomId || ""));
+          break;
+
         // Broadcasting
         case "start-broadcast":
           if (this.isAnonymousUser(userId)) {
@@ -658,6 +663,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       "stop-screen-share",
       "consume",
       "get-producers",
+      "sync-room-scene",
       "start-broadcast",
       "stop-broadcast",
       "join-as-viewer",
@@ -1582,6 +1588,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
         type: "producers-list",
         data: producers
       });
+      this.sendRoomScene(ws, String(roomId));
     } catch (error: any) {
       this.logger.error(`Error in handleGetProducers: ${error.message}`);
       this.sendError(ws, error.message || "Failed to get producers");
@@ -2182,7 +2189,8 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       camOffUserIds: [] as string[],
       unavailableUserIds: [] as string[],
       summoningUserId: null as string | null,
-      icebreaker: null as string | null
+      icebreaker: null as string | null,
+      dareSession: null as Record<string, unknown> | null
     };
   }
 
@@ -2194,7 +2202,8 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       camOffUserIds: [...cur.camOffUserIds],
       unavailableUserIds: [...cur.unavailableUserIds],
       summoningUserId: cur.summoningUserId,
-      icebreaker: cur.icebreaker
+      icebreaker: cur.icebreaker,
+      dareSession: cur.dareSession ? { ...cur.dareSession } : null
     };
   }
 
@@ -2206,7 +2215,8 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       scene.camOffUserIds.length === 0 &&
       scene.unavailableUserIds.length === 0 &&
       !scene.summoningUserId &&
-      !scene.icebreaker;
+      !scene.icebreaker &&
+      !scene.dareSession;
     if (empty) {
       this.roomViewerScenes.delete(rid);
       return;
@@ -2220,6 +2230,13 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       viewerScene,
       activeOverlays: viewerScene.overlays
     };
+  }
+
+  /** Late callers and viewers ask again once their video tiles exist. */
+  private sendRoomScene(ws: any, roomId: string): void {
+    const rid = String(roomId || "");
+    if (!rid) return;
+    this.send(ws, { type: "room-scene", data: { roomId: rid, ...this.viewerScenePayload(rid) } });
   }
 
   private toggleSceneUserId(list: string[], userId: string, on: boolean): string[] {
@@ -2243,6 +2260,9 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
     scene.camOffUserIds = scene.camOffUserIds.filter((item) => item !== id);
     scene.unavailableUserIds = scene.unavailableUserIds.filter((item) => item !== id);
     if (scene.summoningUserId === id) scene.summoningUserId = null;
+    if (scene.dareSession && String(scene.dareSession.senderId || "") === id) {
+      scene.dareSession = null;
+    }
     scene.overlays = scene.overlays.filter((item) => String(item.targetUserId) !== id);
     this.saveViewerScene(roomId, scene);
   }
@@ -2279,6 +2299,27 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
       });
       scene.overlays.push(next);
       scene.overlays = scene.overlays.slice(-StreamingGateway.MAX_ROOM_OVERLAYS);
+      if (isDare) scene.dareSession = null;
+    } else if (control.isDareSession) {
+      scene.dareSession = {
+        dareText: typeof control.dareText === "string" ? control.dareText : "",
+        isLoading: Boolean(control.isLoading),
+        marqueeStartAt: typeof control.marqueeStartAt === "number" ? control.marqueeStartAt : Date.now(),
+        giftId: control.giftId,
+        giftImg: control.giftImg,
+        giftPrice: control.giftPrice,
+        hasSufficientCoins: control.hasSufficientCoins !== false,
+        targetUserIds: Array.isArray(control.targetUserIds) ? control.targetUserIds.map(String) : [],
+        senderId: String(control.senderId || senderId || ""),
+        senderName: typeof control.senderName === "string" ? control.senderName : "Someone",
+        startedAt: Number(control.startedAt) || Date.now(),
+        sessionSeq: Number(control.sessionSeq) || 0
+      };
+    } else if (control.isDareSessionClose) {
+      const from = String(control.senderId || senderId || "");
+      if (!scene.dareSession || !from || String(scene.dareSession.senderId || "") === from) {
+        scene.dareSession = null;
+      }
     } else if (control.isGiftDismissed) {
       const mid = String(control.messageId || "");
       if (mid) {
@@ -2986,6 +3027,7 @@ export class StreamingGateway implements OnModuleInit, OnModuleDestroy {
           producers
         }
       });
+      this.sendRoomScene(ws, String(roomId));
     } catch (error: any) {
       this.sendError(ws, error.message || "Failed to get broadcast producers");
     }

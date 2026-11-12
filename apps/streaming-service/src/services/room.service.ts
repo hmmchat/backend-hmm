@@ -2321,13 +2321,9 @@ export class RoomService {
       // Get all participant user IDs (including new joiner)
       const allParticipantUserIds = [...session.participants.map(p => p.userId), joiningUserId];
 
-      // Determine status to restore based on room's broadcasting state
+      // In-call, not discoverable. Applied after commit so a stranger cannot
+      // stay AVAILABLE / IN_SQUAD_AVAILABLE and keep showing a face card.
       const statusToRestore = session.isBroadcasting ? "IN_BROADCAST" : "IN_SQUAD";
-
-      // Update all participants (including new joiner) to restored status
-      this.discoveryClient.updateUserStatuses(allParticipantUserIds, statusToRestore).catch((err) => {
-        this.logger.error(`Failed to update user statuses to ${statusToRestore}: ${err.message}`);
-      });
 
       // Log event
       await tx.callEvent.create({
@@ -2361,7 +2357,7 @@ export class RoomService {
 
       this.logger.log(
         `User ${joiningUserId} joined room ${roomId} via pull stranger (target: ${targetUserId}). ` +
-        `All participants restored to ${statusToRestore} status. Pull stranger mode disabled.`
+        `Pull stranger mode disabled. Discovery status sync follows commit.`
       );
 
       this.clearHotReadCaches(roomId, allParticipantUserIds);
@@ -2387,6 +2383,33 @@ export class RoomService {
       this.coinMining.participantBucket(isBroadcasting),
       { roomId: result.roomId, sessionId: result.sessionId }
     );
+
+    const joinedParticipants = await this.prisma.callParticipant.findMany({
+      where: {
+        sessionId: result.sessionId,
+        status: "active",
+        leftAt: null
+      },
+      select: { userId: true, role: true }
+    });
+    const hostId =
+      joinedParticipants.find((p) => p.role === "HOST")?.userId || result.joiningUserId;
+    try {
+      // Pull stranger is off, so nobody in this room — including the person who
+      // just joined — stays in the matchmaking pool.
+      await this.applyCallVisibilityStatuses({
+        sessionId: result.sessionId,
+        roomId: result.roomId,
+        fallbackHostUserId: hostId,
+        participants: joinedParticipants
+      });
+    } catch (err: any) {
+      this.logger.error(
+        `Failed to hide pull-stranger joiner ${result.joiningUserId} from matchmaking: ${err?.message || err}`
+      );
+      const hiddenStatus = isBroadcasting ? "IN_BROADCAST" : "IN_SQUAD";
+      await this.discoveryClient.updateUserStatus(result.joiningUserId, hiddenStatus);
+    }
 
     this.emitParticipantJoined(result.roomId, result.joiningUserId);
 

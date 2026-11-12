@@ -142,14 +142,10 @@ export class UserClientService {
 
       return photoMap;
     } catch (error: any) {
-      // Graceful degradation - log error but return empty map
+      // Empty map means the lookup failed. Callers must not treat that as
+      // "every user has no photo", or one timeout would hide the whole wall.
       this.logger.warn(`Error fetching display pictures: ${error.message}`);
-      // Return map with null values for all requested users
-      const photoMap = new Map<string, string | null>();
-      for (const userId of userIds) {
-        photoMap.set(userId, null);
-      }
-      return photoMap;
+      return new Map();
     }
   }
 

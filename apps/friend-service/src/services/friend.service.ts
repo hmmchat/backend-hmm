@@ -10,6 +10,7 @@ import { MessagingRealtimeService } from "./messaging-realtime.service.js";
 import { NotificationCampaignService } from "./notification-campaign.service.js";
 import { MessageType, ConversationSection } from "../../node_modules/.prisma/client/index.js";
 import * as crypto from "crypto";
+import { isPlaceholderDisplayPicture } from "@hmm/common";
 import {
   getLineForSystemUserId,
   isSystemNotificationUserId
@@ -568,8 +569,8 @@ export class FriendService {
   }
 
   /**
-   * Get friends wall - paginated friends with their profile photos
-   * Returns friends with displayPictureUrl for grid display
+   * Get friends wall - paginated friends who still have a real profile photo.
+   * A missing or deleted photo is skipped. A failed picture lookup is not.
    */
   async getFriendsWall(
     userId: string,
@@ -587,7 +588,12 @@ export class FriendService {
   }> {
     const pageSize = Math.min(100, Math.max(1, limit || this.FRIENDS_WALL_PHOTOS_PER_PAGE));
     const target = pageSize + 1;
-    const collected: Array<{ friendId: string; createdAt: Date; friendshipId: string }> = [];
+    const collected: Array<{
+      friendId: string;
+      createdAt: Date;
+      friendshipId: string;
+      photoUrl: string | null;
+    }> = [];
     let scanCursor = cursor;
     let scanning = true;
     let loops = 0;
@@ -619,11 +625,21 @@ export class FriendService {
         friendship.userId1 === userId ? friendship.userId2 : friendship.userId1
       );
       const allowed = await this.eligibleWallFriendIds(userId, friendIds);
+      const eligibleIds = friendIds.filter((friendId) => allowed.has(friendId));
+      const photoMap = await this.userClient.getUsersDisplayPictures(eligibleIds);
+      // An empty map means user-service did not answer. Keep those friends
+      // rather than wiping the wall. A successful map includes every id,
+      // with null when the account has no real profile photo.
+      const photosKnown = photoMap.size > 0;
+
       for (const friendship of page) {
         const friendId = friendship.userId1 === userId ? friendship.userId2 : friendship.userId1;
         if (!allowed.has(friendId)) continue;
+        const rawPhoto = photoMap.get(friendId) || "";
+        if (photosKnown && isPlaceholderDisplayPicture(rawPhoto)) continue;
         collected.push({
           friendId,
+          photoUrl: rawPhoto.trim() || null,
           createdAt: friendship.createdAt,
           friendshipId: friendship.id
         });
@@ -635,14 +651,11 @@ export class FriendService {
 
     const hasMore = collected.length > pageSize;
     const pageFriends = hasMore ? collected.slice(0, pageSize) : collected;
-    const photoMap = await this.userClient.getUsersDisplayPictures(
-      pageFriends.map((friend) => friend.friendId)
-    );
 
     return {
       friends: pageFriends.map((friend) => ({
         friendId: friend.friendId,
-        photoUrl: photoMap.get(friend.friendId) || null,
+        photoUrl: friend.photoUrl,
         createdAt: friend.createdAt
       })),
       nextCursor: hasMore ? pageFriends[pageFriends.length - 1]?.friendshipId : undefined,

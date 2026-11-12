@@ -1163,7 +1163,8 @@ export class UserService implements OnModuleInit {
         values: {
           include: { value: true },
           orderBy: { order: "asc" }
-        }
+        },
+        zodiac: true
       }
     });
 
@@ -3096,7 +3097,8 @@ export class UserService implements OnModuleInit {
         values: {
           include: { value: true },
           orderBy: { order: "asc" }
-        }
+        },
+        zodiac: true
       }
     });
 

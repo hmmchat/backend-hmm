@@ -72,7 +72,13 @@ export class AuthController {
       throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
     }
     await this.initializeJWT();
-    const payload = await this.verifyAccess(token);
+    let payload: AccessPayload;
+    try {
+      payload = await this.verifyAccess(token);
+    } catch (err) {
+      if (err instanceof HttpException) throw err;
+      throw new HttpException("Invalid or expired token", HttpStatus.UNAUTHORIZED);
+    }
     const userId = payload.sub;
     // Default: reject JWTs for hard-deleted / soft-deleted accounts.
     // Opt out for idempotent self-delete so clients can clear a stale session cleanly.

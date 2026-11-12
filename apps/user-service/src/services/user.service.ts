@@ -2050,16 +2050,24 @@ export class UserService implements OnModuleInit {
    */
   async heartbeatPresence(accessToken: string) {
     const userId = await this.verifyAccessToken(accessToken);
-    const user = await this.prisma.user.update({
-      where: { id: userId },
-      data: { lastActiveAt: new Date() } as any
-    });
-    await this.markActiveDay(userId);
+    try {
+      const user = await this.prisma.user.update({
+        where: { id: userId },
+        data: { lastActiveAt: new Date() } as any
+      });
+      await this.markActiveDay(userId);
 
-    return {
-      status: user.status,
-      lastActiveAt: user.lastActiveAt
-    };
+      return {
+        status: user.status,
+        lastActiveAt: user.lastActiveAt
+      };
+    } catch (error: any) {
+      // Auth can exist before the FaceCard row. Heartbeat must not 500 the new session.
+      if (error?.code === "P2025") {
+        return { status: "OFFLINE", lastActiveAt: null };
+      }
+      throw error;
+    }
   }
 
   /**

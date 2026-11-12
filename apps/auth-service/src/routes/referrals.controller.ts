@@ -43,8 +43,13 @@ export class ReferralsController {
       throw new HttpException("Missing token", HttpStatus.UNAUTHORIZED);
     }
     await this.initializeJWT();
-    const payload = await this.verifyAccess(token);
-    return payload.sub;
+    try {
+      const payload = await this.verifyAccess(token);
+      return payload.sub;
+    } catch (err) {
+      if (err instanceof HttpException) throw err;
+      throw new HttpException("Invalid or expired token", HttpStatus.UNAUTHORIZED);
+    }
   }
 
   @Get("me/overview")

@@ -639,6 +639,9 @@ export class ConversationService {
     const friendshipSet = new Set(
       friendships.map(f => `${f.userId1}_${f.userId2}`)
     );
+    const friendshipAt = new Map(
+      friendships.map((f) => [`${f.userId1}_${f.userId2}`, f.createdAt])
+    );
 
     const blockRows = uniqueOtherUserIds.length
       ? await this.prisma.friendRequest.findMany({
@@ -740,6 +743,7 @@ export class ConversationService {
             : null,
           unreadCount: unreadCountMap.get(conv.id) || 0,
           isFriend,
+          friendshipCreatedAt: isFriend ? friendshipAt.get(`${id1}_${id2}`) || null : null,
           blockedByMe: blockedByViewer.has(otherUserId),
           blockedByThem: blockedViewer.has(otherUserId) && !blockedByViewer.has(otherUserId),
           userStatus: userStatus.status,
@@ -927,7 +931,9 @@ export class ConversationService {
     const friendshipMap = new Map(
       uniquePairs.map((pair, i) => [
         `${pair.id1}_${pair.id2}`,
-        friendships[i] !== null
+        friendships[i]
+          ? { isFriend: true, createdAt: friendships[i].createdAt }
+          : null
       ])
     );
 
@@ -943,7 +949,8 @@ export class ConversationService {
         roomId: null,
         broadcastUrl: null
       };
-      const isFriend = friendshipMap.get(`${id1}_${id2}`) || false;
+      const friend = friendshipMap.get(`${id1}_${id2}`);
+      const isFriend = Boolean(friend?.isFriend);
 
       return {
         id: `follow_${request.id}`, // Consistent ID format for frontend
@@ -953,6 +960,7 @@ export class ConversationService {
         lastMessage: null, // No messages for follow requests
         unreadCount: 0,
         isFriend,
+        friendshipCreatedAt: isFriend ? friend?.createdAt || null : null,
         userStatus: userStatus.status,
         isBroadcasting: userStatus.isBroadcasting,
         broadcastRoomId: userStatus.roomId,

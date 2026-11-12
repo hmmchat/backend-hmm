@@ -8,6 +8,7 @@ import { WalletClientService } from "./wallet-client.service.js";
 import { BadgeService } from "./badge.service.js";
 import { AuthClientService } from "./auth-client.service.js";
 import { DiscoveryClientService } from "./discovery-client.service.js";
+import { FriendPresenceClientService } from "./friend-presence-client.service.js";
 import { AccountPurgeClientService } from "./account-purge-client.service.js";
 import {
   verifyToken,
@@ -184,6 +185,7 @@ export class UserService implements OnModuleInit {
     private readonly walletClient: WalletClientService,
     private readonly authClient: AuthClientService,
     private readonly discoveryClient: DiscoveryClientService,
+    private readonly friendPresenceClient: FriendPresenceClientService,
     private readonly accountPurgeClient: AccountPurgeClientService,
     private readonly badgeService: BadgeService
   ) { }
@@ -2022,6 +2024,9 @@ export class UserService implements OnModuleInit {
         } as any
       });
       await this.markActiveDay(userId);
+      if (currentStatus !== "ONLINE") {
+        this.friendPresenceClient.notifyStatusChanged(userId, "ONLINE");
+      }
       return { user, applied: true };
     }
 
@@ -2033,6 +2038,9 @@ export class UserService implements OnModuleInit {
       where: { id: userId },
       data: { status: "OFFLINE" as UserStatus } as any
     });
+    if (currentStatus !== "OFFLINE") {
+      this.friendPresenceClient.notifyStatusChanged(userId, "OFFLINE");
+    }
 
     return { user, applied: true };
   }
@@ -3515,6 +3523,11 @@ export class UserService implements OnModuleInit {
   }
 
   private async writeUserStatus(userId: string, status: string, force: boolean) {
+    const existing = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { status: true }
+    });
+    const previous = String(existing?.status || "");
     const protectedStatuses = !force
       ? this.isIdleStatus(status)
         ? UserService.IN_ROOM_STATUSES
@@ -3522,6 +3535,8 @@ export class UserService implements OnModuleInit {
           ? UserService.CALL_PARTICIPANT_STATUSES
           : null
       : null;
+    let user;
+    let applied = false;
     if (protectedStatuses) {
       const updated = await this.prisma.user.updateMany({
         where: {
@@ -3530,15 +3545,19 @@ export class UserService implements OnModuleInit {
         },
         data: { status: status as UserStatus }
       });
-      const user = await this.prisma.user.findUnique({ where: { id: userId } });
-      return { user, applied: updated.count > 0 };
+      user = await this.prisma.user.findUnique({ where: { id: userId } });
+      applied = updated.count > 0;
+    } else {
+      user = await this.prisma.user.update({
+        where: { id: userId },
+        data: { status: status as UserStatus }
+      });
+      applied = true;
     }
-
-    const user = await this.prisma.user.update({
-      where: { id: userId },
-      data: { status: status as UserStatus }
-    });
-    return { user, applied: true };
+    if (applied && previous !== status) {
+      this.friendPresenceClient.notifyStatusChanged(userId, status);
+    }
+    return { user, applied };
   }
 }
 

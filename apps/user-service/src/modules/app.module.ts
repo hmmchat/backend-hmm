@@ -17,6 +17,7 @@ import { BadgeService } from "../services/badge.service.js";
 import { WalletClientService } from "../services/wallet-client.service.js";
 import { AuthClientService } from "../services/auth-client.service.js";
 import { DiscoveryClientService } from "../services/discovery-client.service.js";
+import { FriendPresenceClientService } from "../services/friend-presence-client.service.js";
 import { AccountPurgeClientService } from "../services/account-purge-client.service.js";
 import { StorageUrlBackfillService } from "../services/storage-url-backfill.service.js";
 import { ProductAnalyticsService } from "../services/product-analytics.service.js";
@@ -32,7 +33,7 @@ import { ProductAnalyticsService } from "../services/product-analytics.service.j
     ZodiacAdminController,
     UsersAdminController
   ],
-  providers: [PrismaService, UserService, ProfileCompletionService, ModerationClientService, MusicService, BrandService, BadgeService, WalletClientService, AuthClientService, DiscoveryClientService, AccountPurgeClientService, StorageUrlBackfillService, ProductAnalyticsService]
+  providers: [PrismaService, UserService, ProfileCompletionService, ModerationClientService, MusicService, BrandService, BadgeService, WalletClientService, AuthClientService, DiscoveryClientService, FriendPresenceClientService, AccountPurgeClientService, StorageUrlBackfillService, ProductAnalyticsService]
 })
 export class AppModule {}
 

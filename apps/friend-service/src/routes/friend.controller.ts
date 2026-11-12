@@ -1168,6 +1168,39 @@ export class FriendController {
   }
 
   /**
+   * Push a user's new online/broadcast state to people who have a chat with them.
+   * POST /internal/friends/presence
+   */
+  @Post("internal/friends/presence")
+  async publishPresenceInternal(
+    @Headers("x-service-token") serviceToken: string | undefined,
+    @Body() body: unknown
+  ) {
+    const isTestMode = process.env.NODE_ENV === "test" || process.env.TEST_MODE === "true";
+    const expectedToken = process.env.INTERNAL_SERVICE_TOKEN;
+
+    if (!isTestMode) {
+      if (!expectedToken) {
+        throw new HttpException(
+          "Internal service token not configured",
+          HttpStatus.INTERNAL_SERVER_ERROR
+        );
+      }
+      if (serviceToken !== expectedToken) {
+        throw new HttpException("Invalid service token", HttpStatus.UNAUTHORIZED);
+      }
+    }
+
+    const { userId, status } = z.object({
+      userId: z.string().min(1),
+      status: z.string().min(1)
+    }).parse(body ?? {});
+
+    const peers = await this.friendService.publishPresenceToConversationPeers(userId, status);
+    return { ok: true, peers };
+  }
+
+  /**
    * Get friends list (internal endpoint)
    * GET /internal/friends?userId=xxx&limit=50
    */

@@ -56,6 +56,27 @@ export class FriendService {
     private readonly notificationCampaigns: NotificationCampaignService
   ) {}
 
+  /**
+   * Tell everyone who has a chat with this user that their online or
+   * broadcasting state just changed. Fire-and-forget from user-service.
+   */
+  async publishPresenceToConversationPeers(userId: string, rawStatus: string): Promise<number> {
+    const presence = await this.conversationService.messagingPresenceForStatus(userId, rawStatus);
+    const peers = await this.conversationService.listConversationPeerIds(userId);
+    const data = {
+      userId,
+      status: presence.status,
+      isBroadcasting: presence.isBroadcasting,
+      broadcastUrl: presence.broadcastUrl,
+      broadcastRoomId: presence.broadcastRoomId,
+      at: Date.now()
+    };
+    for (const peerId of peers) {
+      this.realtime.emitToUser(peerId, "friend:presence", data);
+    }
+    return peers.length;
+  }
+
   private assertNotSystemPeer(otherUserId: string, action = "message") {
     if (isSystemNotificationUserId(otherUserId)) {
       throw new BadRequestException(`Cannot ${action} BEAM / BEAM MOD threads (read-only)`);

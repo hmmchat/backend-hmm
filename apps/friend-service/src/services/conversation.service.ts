@@ -1,4 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { mapUserStatusToMessagingPresence } from "@hmm/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { ConversationSection, MessageType } from "../../node_modules/.prisma/client/index.js";
 import { StreamingClientService } from "./streaming-client.service.js";
@@ -13,6 +14,36 @@ export class ConversationService {
     private readonly streamingClient: StreamingClientService,
     private readonly userClient: UserClientService
   ) { }
+
+  /**
+   * People who have a chat with this user, newest first.
+   * Inbox presence is pushed to this set when their status changes.
+   */
+  async listConversationPeerIds(userId: string, limit = 200): Promise<string[]> {
+    const rows = await this.prisma.conversation.findMany({
+      where: {
+        OR: [{ userId1: userId }, { userId2: userId }]
+      },
+      orderBy: { lastMessageAt: "desc" },
+      take: limit,
+      select: { userId1: true, userId2: true }
+    });
+    const ids = rows.map((row) => (row.userId1 === userId ? row.userId2 : row.userId1));
+    return [...new Set(ids.filter((id) => id && id !== userId))];
+  }
+
+  /**
+   * Same online / offline / broadcasting snapshot the inbox list uses.
+   */
+  async messagingPresenceForStatus(userId: string, rawStatus: string) {
+    const broadcast = await this.streamingClient.getUserBroadcastStatus(userId);
+    return {
+      status: mapUserStatusToMessagingPresence(rawStatus, broadcast.isBroadcasting),
+      isBroadcasting: broadcast.isBroadcasting,
+      broadcastUrl: broadcast.broadcastUrl,
+      broadcastRoomId: broadcast.roomId
+    };
+  }
 
   /**
    * Inbound unread count: messages from peer to viewer.
